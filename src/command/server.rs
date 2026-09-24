@@ -2363,6 +2363,8 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 pub(crate) struct ServerVerified {
     app_name: String,
     app_config_digest: Option<String>,
+    exec_platform_mode: Option<crate::config::server::ExecActivitiesMode>,
+    platform_allowed_exec_activities: AllowExecActivities,
     launch: ServerVerifiedLaunch,
     allowed_exec_activities: AllowExecActivities,
     http_servers: Vec<HttpServer>,
@@ -2541,6 +2543,8 @@ impl ServerVerified {
         Ok(Self {
             app_name: config.app_name.clone(),
             app_config_digest: config.app_config_digest.clone(),
+            exec_platform_mode: config.exec_activities,
+            platform_allowed_exec_activities: config.platform_allowed_exec_activities.clone(),
             launch: ServerVerifiedLaunch {
                 engines,
                 v8_executor,
@@ -3916,7 +3920,16 @@ async fn record_server_configuration_audit(
         app_config_digest: server_verified.app_config_digest.clone(),
         environment: server_verified.environment_audit.clone(),
         deployment_security: DeploymentSecurityAuditV2 {
-            exec: audit_exec_activities(&server_verified.allowed_exec_activities),
+            exec: serde_json::json!({
+                "platform_mode": match server_verified.exec_platform_mode {
+                    Some(crate::config::server::ExecActivitiesMode::On) => "on",
+                    Some(crate::config::server::ExecActivitiesMode::Off) => "off",
+                    None if server_verified.platform_allowed_exec_activities.is_empty() => "off",
+                    None => "allowlist",
+                },
+                "platform_allowlist": audit_exec_activities(&server_verified.platform_allowed_exec_activities),
+                "app_allowlist": audit_exec_activities(&server_verified.allowed_exec_activities),
+            }),
             http: server_verified.server_http_policy_audit.clone(),
         },
     };

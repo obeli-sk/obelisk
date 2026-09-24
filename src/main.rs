@@ -303,38 +303,38 @@ fn prepare_server_startup(
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
     app.resolve_env_vars(&env_vars)?;
     anyhow::ensure!(
-        config.exec_activities != ExecActivitiesMode::On
-            || config.allowed_exec_activities.is_empty(),
-        "server.toml cannot combine `exec_activities = \"on\"` with `[allowed_exec_activities]`"
+        config.exec_activities.is_none() || config.allowed_exec_activities.is_empty(),
+        "server.toml cannot combine `exec_activities` with `[allowed_exec_activities]`"
     );
-    match config.exec_activities {
-        ExecActivitiesMode::Off if config.allowed_exec_activities.is_empty() => {
+    if config.exec_activities == Some(ExecActivitiesMode::On) {
+        eprintln!(
+            "warning: server.toml enables unrestricted platform exec activity allowance; app.toml still controls deployments"
+        );
+    } else if config.allowed_exec_activities.is_empty() {
+        anyhow::ensure!(
+            app.allowed_exec_activities.is_empty(),
+            "app.toml allows exec activities, but server.toml has exec activities off"
+        );
+    } else {
+        for (name, digests) in &app.allowed_exec_activities {
+            let server_digests = config.allowed_exec_activities.get(name);
             anyhow::ensure!(
-                app.allowed_exec_activities.is_empty(),
-                "app.toml allows exec activities, but server.toml has exec activities off"
+                digests
+                    .iter()
+                    .all(|digest| server_digests.is_some_and(|allowed| allowed.contains(digest))),
+                "app.toml `[allowed_exec_activities].{name}` is not covered by server.toml `[allowed_exec_activities]`"
             );
         }
-        ExecActivitiesMode::Off => {
-            for (name, digests) in &app.allowed_exec_activities {
-                let server_digests = config.allowed_exec_activities.get(name);
-                anyhow::ensure!(
-                    digests.iter().all(
-                        |digest| server_digests.is_some_and(|allowed| allowed.contains(digest))
-                    ),
-                    "app.toml `[allowed_exec_activities].{name}` is not covered by server.toml `[allowed_exec_activities]`"
-                );
-            }
-        }
-        ExecActivitiesMode::On => eprintln!(
-            "server.toml enables unrestricted platform exec activity allowance; app.toml still controls deployments"
-        ),
     }
     config.secrets = app.secrets;
     config.public_env = app.public_env;
+    config.platform_allowed_exec_activities = config.allowed_exec_activities.clone();
     config.allowed_exec_activities = app.allowed_exec_activities;
     config.outbound_http = app.outbound_http;
-    config.source_path = config_holder.app_source.clone();
-    config.app_name = config_holder.path_prefixes.app_name.clone();
+    config.source_path.clone_from(&config_holder.app_source);
+    config
+        .app_name
+        .clone_from(&config_holder.path_prefixes.app_name);
     config.app_config_digest = Some(app_config_digest);
 
     let legacy_api_token = legacy_env.filter(|token| !token.is_empty()).map(|token| {
@@ -362,6 +362,56 @@ fn prepare_server_startup(
 
 pub(crate) fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("", "obelisk", "obelisk")
+}
+
+#[cfg(test)]
+mod app_policy_tests {
+    use super::*;
+
+    #[test]
+    fn platform_exec_allowlist_must_cover_app_allowlist() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = dir.path().join("server.toml");
+        let app = dir.path().join("app.toml");
+        let digest = "sha256:abababababababababababababababababababababababababababababababab";
+        std::fs::write(
+            &app,
+            format!("[allowed_exec_activities]\nworker = '{digest}'\n"),
+        )
+        .unwrap();
+        std::fs::write(&server, "").unwrap();
+        let load = || {
+            prepare_server_startup(
+                Some(server.clone()),
+                Some(app.clone()),
+                EnvVarSecretsCleanup::Noop,
+                RuntimeConfigAvailability::AllowUnavailable,
+            )
+        };
+        assert!(
+            load()
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("exec activities off")
+        );
+        std::fs::write(&server, "[allowed_exec_activities]\nother = 'sha256:abababababababababababababababababababababababababababababababab'\n").unwrap();
+        assert!(load().err().unwrap().to_string().contains("not covered"));
+        std::fs::write(
+            &server,
+            format!("[allowed_exec_activities]\nworker = '{digest}'\n"),
+        )
+        .unwrap();
+        assert!(load().is_ok());
+        std::fs::write(
+            &server,
+            format!("exec_activities = 'off'\n[allowed_exec_activities]\nworker = '{digest}'\n"),
+        )
+        .unwrap();
+        assert!(load().err().unwrap().to_string().contains("cannot combine"));
+        std::fs::write(&server, "exec_activities = 'on'\n").unwrap();
+        assert!(load().is_ok());
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd)]

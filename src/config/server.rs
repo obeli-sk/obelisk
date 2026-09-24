@@ -62,13 +62,16 @@ pub(crate) struct ServerConfigToml {
     /// component name and the accepted secret exposure digest set.
     #[serde(default)]
     pub(crate) allowed_exec_activities: AllowExecActivities,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) platform_allowed_exec_activities: AllowExecActivities,
     /// Operator-owned allowlist for component-originated HTTP requests.
     /// An empty allowlist denies every outbound request.
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) outbound_http: OutboundHttpToml,
     #[serde(default)]
-    pub(crate) exec_activities: ExecActivitiesMode,
+    pub(crate) exec_activities: Option<ExecActivitiesMode>,
     #[serde(default)]
     pub(crate) limits: LimitsToml,
     #[serde(default)]
@@ -478,10 +481,9 @@ impl Default for MaxDeploymentFileBytes {
 /// Exec activity policy: component name -> reviewed secret exposure digests.
 pub(crate) type AllowExecActivities = BTreeMap<String, SecretExposureDigests>;
 
-#[derive(Debug, Default, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ExecActivitiesMode {
-    #[default]
     Off,
     On,
 }

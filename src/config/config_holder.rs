@@ -72,10 +72,10 @@ impl PathPrefixes {
 
     fn resolve_relative(&self, value: &str) -> String {
         let path = Path::new(value);
-        if path.is_relative() {
-            if let Some(config_dir) = &self.server_config_dir {
-                return config_dir.join(path).to_string_lossy().into_owned();
-            }
+        if path.is_relative()
+            && let Some(config_dir) = &self.server_config_dir
+        {
+            return config_dir.join(path).to_string_lossy().into_owned();
         }
         value.to_owned()
     }
@@ -306,7 +306,7 @@ mod tests {
         let config: ServerConfigToml = toml::from_str(OBELISK_TRUSTED_SERVER_TOML).unwrap();
         let app: AppConfigToml = toml::from_str(OBELISK_TRUSTED_APP_TOML).unwrap();
 
-        assert_eq!(config.exec_activities, ExecActivitiesMode::On);
+        assert_eq!(config.exec_activities, Some(ExecActivitiesMode::On));
         assert!(config.allowed_exec_activities.is_empty());
         assert!(app.secrets.is_empty());
         let [host] = app.outbound_http.allowed_hosts.as_slice() else {
@@ -316,5 +316,30 @@ mod tests {
         assert!(matches!(host.methods, Some(MethodsInput::Star(_))));
         assert!(host.secrets.is_empty());
         assert!(host.replace_in.is_empty());
+    }
+
+    #[test]
+    fn server_policy_field_points_to_split_command() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "[secrets]\nTOKEN = {}\n").unwrap();
+        let holder = super::ConfigHolder::new(None, None, Some(file.path().to_path_buf())).unwrap();
+        let err = holder.load_config().unwrap_err().to_string();
+        assert!(err.contains("obelisk generate split-config"));
+    }
+
+    #[test]
+    fn omitted_app_config_has_empty_file_digest() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let default = super::ConfigHolder::new(None, None, None)
+            .unwrap()
+            .load_app_config()
+            .unwrap();
+        let explicit = super::ConfigHolder::new(None, None, None)
+            .unwrap()
+            .with_app_source(Some(file.path().to_path_buf()))
+            .unwrap()
+            .load_app_config()
+            .unwrap();
+        assert_eq!(default.digest().unwrap(), explicit.digest().unwrap());
     }
 }

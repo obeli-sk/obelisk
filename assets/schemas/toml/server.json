@@ -19,7 +19,14 @@
       "default": {}
     },
     "exec_activities": {
-      "$ref": "#/$defs/ExecActivitiesMode"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExecActivitiesMode"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "limits": {
       "$ref": "#/$defs/LimitsToml"
