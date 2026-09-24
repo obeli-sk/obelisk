@@ -830,7 +830,7 @@
           ]
         },
         {
-          "name": "get",
+          "name": "pull",
           "about": "Retrieve a deployment as editable TOML without generated metadata, plus its source files",
           "options": [
             {

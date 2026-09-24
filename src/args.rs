@@ -517,7 +517,7 @@ pub(crate) enum Deployment {
         api_url: String,
     },
     /// Retrieve a deployment as editable TOML without generated metadata, plus its source files.
-    Get {
+    Pull {
         /// Deployment ID
         #[arg(value_name = "ID")]
         id: DeploymentId,

@@ -909,7 +909,7 @@ mod export {
     #[test]
     fn submit_rejects_owned_file_name_collision() {
         // Two distinct owned scripts resolving to the same `file_name` must be rejected
-        // at submit time, since `deployment get` could never write both to disk.
+        // at submit time, since `deployment pull` could never write both to disk.
         let mut deployment = DeploymentResolved::default();
         deployment.activities_js.push(js_activity(
             "a",

@@ -479,5 +479,5 @@
 ##     containing this deployment.toml. It must stay within that directory ("../" escapes are rejected).
 ##   - An absolute path (e.g. "/opt/wasm/a.wasm") is rejected.
 ## JS/exec components and backtrace sources are attached as deployment files at deploy time and referenced by the
-## processed manifest's generated `component_files` map. `obelisk deployment get` recreates these files (mirroring
+## processed manifest's generated `component_files` map. `obelisk deployment pull` recreates these files (mirroring
 ## subfolders), along with deployment-owned WASM components, from the content-addressed store.
