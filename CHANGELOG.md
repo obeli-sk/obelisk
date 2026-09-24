@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Configuration now mirrors three responsibilities. `server.toml` belongs to the platform admin and
+sets host limits, listeners, webhook servers, and the ceiling for exec activities. `app.toml`
+belongs to the app admin and records reviewed allowances for secrets, public environment values,
+outbound HTTP, and exec activities. `deployment.toml` belongs to the deployment admin and describes
+the components to run; activation requires the deployment to fit the current app and platform
+policy. Existing single-file configurations must be split before starting the server.
+
 ### Added
 
 - *(activity-js, webhook-js, workflow-js)* Added experimental native V8 runtimes, enabled for all
