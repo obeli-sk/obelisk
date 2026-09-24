@@ -36,17 +36,22 @@ policy. Existing single-file configurations must be split before starting the se
   reference is optional.
 - *(config)* Added app identity and a canonical `app_config_digest` for the authored app policy.
   `OBELISK_APP_NAME` overrides the configured name. Server starts record the app digest and a
-  resolved security audit; named apps use separate default SQLite directories.
+  resolved security audit; apps use name-keyed default SQLite directories.
 
 ### Changed
 
 - *(config)* **Breaking:** app-owned secret registrations, public environment allowances, outbound
   HTTP policy, exec activity allowances, and `app_name` move from `server.toml` to `app.toml`.
   Pass `--app-config` with `server run`, `server verify`, or `deployment verify`; omitting it uses
-  default app policy without discovering a file. Use
+  default app policy without discovering a file when `OBELISK_APP_NAME` is set. Use
   `obelisk generate split-config --server-config server.toml` to split an existing configuration.
   Registered secrets now read same-named environment variables. `OBELISK__...` overrides apply
   only to `server.toml`.
+- *(config)* **Breaking:** server startup now requires `app_name` in `app.toml` or
+  `OBELISK_APP_NAME`. Omitting it fails before opening a database. The implicit `default` name and
+  its `${DATA_DIR}/obelisk-sqlite` directory are gone; the default SQLite directory is
+  `${DATA_DIR}/apps/${APP_NAME}/sqlite` for every app. A migration guide will cover renaming the
+  existing SQLite directory.
 - *(server)* **Breaking:** platform exec activity policy uses one `allowed_exec_activities` field:
   omitted or `false` disables exec, `"*"` permits app-approved exec with a startup warning, and a
   component/digest table limits the platform grant. App and server tables accept digest arrays for
