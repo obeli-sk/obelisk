@@ -27,9 +27,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key. A required reference to an absent secret fails deployment verification, and references
   within one component must agree on optionality. `--fix` scaffolds `optional = true` when every
   reference is optional.
+- *(config)* Added app identity and a canonical `app_config_digest` for the authored app policy.
+  `OBELISK_APP_NAME` overrides the configured name. Server starts record the app digest and a
+  resolved security audit; named apps use separate default SQLite directories.
 
 ### Changed
 
+- *(config)* **Breaking:** app-owned secret registrations, public environment allowances, outbound
+  HTTP policy, exec activity allowances, and `app_name` move from `server.toml` to `app.toml`.
+  Pass `--app-config` with `server run`, `server verify`, or `deployment verify`; omitting it uses
+  default app policy without discovering a file. Use
+  `obelisk generate split-config --server-config server.toml` to split an existing configuration.
+  Registered secrets now read same-named environment variables. `OBELISK__...` overrides apply
+  only to `server.toml`.
+- *(server)* **Breaking:** platform exec activity policy uses one `allowed_exec_activities` field:
+  omitted or `false` disables exec, `"*"` permits app-approved exec with a startup warning, and a
+  component/digest table limits the platform grant. App and server tables accept digest arrays for
+  migrations; `true` is invalid.
 - *(cli)* **Breaking:** renamed `obelisk deployment get` to `obelisk deployment pull`.
 
 - *(server)* **Breaking:** `[wasm].global_executor_instance_limiter` and
