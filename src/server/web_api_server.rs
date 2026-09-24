@@ -408,6 +408,10 @@ pub(crate) mod admin {
         deployment_id: Option<DeploymentId>,
         #[param(value_type = Option<String>)]
         before: Option<SystemEventId>,
+        /// Inclusive lower bound of `created_at` (RFC 3339, millisecond precision).
+        created_from: Option<DateTime<Utc>>,
+        /// Exclusive upper bound of `created_at` (RFC 3339, millisecond precision).
+        created_to: Option<DateTime<Utc>>,
         limit: Option<u32>,
     }
 
@@ -443,6 +447,8 @@ pub(crate) mod admin {
                 code: query.code,
                 deployment_id: query.deployment_id,
                 before_event_id: query.before,
+                created_from: query.created_from,
+                created_to: query.created_to,
                 limit,
             })
             .await

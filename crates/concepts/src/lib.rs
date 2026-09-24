@@ -864,6 +864,14 @@ pub mod prefixed_ulid {
             Self::new(Ulid::from_parts(timestamp_ms, random))
         }
 
+        /// Smallest ID in the millisecond of `at`, clamped to the ULID time range.
+        #[must_use]
+        pub fn min_at(at: chrono::DateTime<chrono::Utc>) -> Self {
+            const MAX_TIMESTAMP_MS: u64 = (1 << Ulid::TIME_BITS) - 1;
+            let timestamp_ms = u64::try_from(at.timestamp_millis()).unwrap_or_default();
+            Self::from_parts(timestamp_ms.min(MAX_TIMESTAMP_MS), 0)
+        }
+
         #[must_use]
         pub fn timestamp_part(&self) -> u64 {
             self.ulid.timestamp_ms()

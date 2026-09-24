@@ -234,6 +234,26 @@
             }
           },
           {
+            "name": "created_from",
+            "in": "query",
+            "description": "Inclusive lower bound of `created_at` (RFC 3339, millisecond precision).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "created_to",
+            "in": "query",
+            "description": "Exclusive upper bound of `created_at` (RFC 3339, millisecond precision).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,

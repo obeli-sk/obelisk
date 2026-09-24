@@ -196,6 +196,12 @@ pub(crate) enum AdminEvents {
         level: Option<String>,
         #[arg(long)]
         code: Option<String>,
+        /// Only show events created at or after this RFC 3339 time.
+        #[arg(long)]
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        /// Only show events created before this RFC 3339 time.
+        #[arg(long)]
+        to: Option<chrono::DateTime<chrono::Utc>>,
         #[arg(long, default_value_t = 100)]
         limit: u32,
         #[arg(long)]
