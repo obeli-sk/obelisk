@@ -331,6 +331,57 @@
         }
       }
     },
+    "/v1/app-config": {
+      "get": {
+        "tags": [
+          "app config"
+        ],
+        "operationId": "get",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfigResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/app-config-digest": {
+      "get": {
+        "tags": [
+          "app config"
+        ],
+        "operationId": "digest",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/components": {
       "get": {
         "tags": [
@@ -2296,6 +2347,19 @@
           }
         ]
       },
+      "AppConfigResponse": {
+        "type": "object",
+        "required": [
+          "app_config_digest",
+          "policy"
+        ],
+        "properties": {
+          "app_config_digest": {
+            "type": "string"
+          },
+          "policy": {}
+        }
+      },
       "BacktraceInfoSer": {
         "type": "object",
         "description": "Serializable version of `BacktraceInfo`",
@@ -2919,6 +2983,12 @@
             },
             "description": "Files the manifest references."
           },
+          "last_active_app_config_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "last_active_at": {
             "type": [
               "string",
@@ -3018,6 +3088,12 @@
             "format": "int32",
             "description": "Number of executions finished successfully",
             "minimum": 0
+          },
+          "last_active_app_config_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "last_active_at": {
             "type": [
@@ -4054,6 +4130,12 @@
           "details"
         ],
         "properties": {
+          "app_config_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "code": {
             "type": "string"
           },
@@ -4126,6 +4208,10 @@
     {
       "name": "deployments",
       "description": "Deployment management"
+    },
+    {
+      "name": "app config",
+      "description": "Running app policy"
     },
     {
       "name": "admin",

@@ -2367,7 +2367,8 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 #[derive(Clone)]
 pub(crate) struct ServerVerified {
     app_name: String,
-    app_config_digest: Option<String>,
+    pub(crate) app_config_digest: Option<String>,
+    pub(crate) app_policy_json: Option<String>,
     platform_exec_activities: crate::config::server::PlatformExecActivities,
     launch: ServerVerifiedLaunch,
     allowed_exec_activities: AllowExecActivities,
@@ -2547,6 +2548,7 @@ impl ServerVerified {
         Ok(Self {
             app_name: config.app_name.clone(),
             app_config_digest: config.app_config_digest.clone(),
+            app_policy_json: config.app_policy_json.clone(),
             platform_exec_activities: config.platform_exec_activities.clone(),
             launch: ServerVerifiedLaunch {
                 engines,

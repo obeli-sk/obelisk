@@ -38,6 +38,9 @@ pub(crate) struct ServerConfigToml {
     pub(crate) app_config_digest: Option<String>,
     #[serde(skip)]
     #[schemars(skip)]
+    pub(crate) app_policy_json: Option<String>,
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) source_path: Option<PathBuf>,
     #[cfg(feature = "tokio-console")]
     #[serde(skip)]
