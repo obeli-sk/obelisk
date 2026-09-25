@@ -35,5 +35,6 @@ jobs:
           nix develop --command scripts/update-schemas.sh
           if [ -n "$(git status --porcelain assets/schemas/)" ]; then
             echo "::error::Uncommitted changes after running 'update-schemas.sh'"
+            git diff -- assets/schemas/
             exit 1
           fi
