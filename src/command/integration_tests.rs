@@ -624,7 +624,7 @@ struct TestServer {
     termination_sender: watch::Sender<()>,
     server_handle: JoinHandle<anyhow::Result<()>>,
     sqlite_file: std::path::PathBuf,
-    _tmp_dir: tempfile::TempDir,
+    tmp_dir: tempfile::TempDir,
 }
 
 impl TestServer {
@@ -936,7 +936,7 @@ impl TestServer {
             termination_sender,
             server_handle,
             sqlite_file,
-            _tmp_dir: tmp_dir,
+            tmp_dir,
         }
     }
 
@@ -970,7 +970,7 @@ impl TestServer {
             ip,
             termination_sender,
             server_handle,
-            _tmp_dir: tmp_dir,
+            tmp_dir,
             ..
         } = self;
         drop(termination_sender);
@@ -2462,7 +2462,7 @@ async fn list_components_grpc_filters_with_explicit_deployment_id() {
 async fn app_config_webapi_reports_running_policy() {
     let server = TestServer::start(test_addr!(40_144)).await;
     let app: crate::config::app::AppConfigToml =
-        toml::from_str(&std::fs::read_to_string(server._tmp_dir.path().join("app.toml")).unwrap())
+        toml::from_str(&std::fs::read_to_string(server.tmp_dir.path().join("app.toml")).unwrap())
             .unwrap();
     let expected_digest = app.digest().unwrap();
     let digest = server

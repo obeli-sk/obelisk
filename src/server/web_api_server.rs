@@ -377,6 +377,7 @@ pub(crate) mod app_config {
     use super::*;
 
     #[derive(ToSchema)]
+    #[allow(dead_code)]
     pub(crate) struct AppConfigResponse {
         pub(crate) app_config_digest: String,
         pub(crate) policy: serde_json::Value,
