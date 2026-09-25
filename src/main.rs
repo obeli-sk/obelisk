@@ -287,15 +287,7 @@ fn prepare_server_startup(
     let app_config_digest = app.digest()?;
     tracing::info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");
     let env_vars = StartupEnvVars::capture();
-    let js_runtime = if env_vars
-        .lookup("OBELISK_UNSTABLE_V8")
-        .and_then(|value| value.parse::<bool>().ok())
-        .unwrap_or_default()
-    {
-        crate::command::server::JsRuntimeMode::V8
-    } else {
-        crate::command::server::JsRuntimeMode::BoaWasm
-    };
+    let js_runtime = parse_js_runtime(env_vars.lookup("OBELISK_JS_RUNTIME").as_deref())?;
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
     app.resolve_env_vars(&env_vars)?;
     match &config.platform_exec_activities {
@@ -354,6 +346,18 @@ fn prepare_server_startup(
     })
 }
 
+fn parse_js_runtime(value: Option<&str>) -> anyhow::Result<crate::command::server::JsRuntimeMode> {
+    use crate::command::server::JsRuntimeMode;
+    match value {
+        None => Ok(JsRuntimeMode::V8),
+        Some(value) if value.eq_ignore_ascii_case("v8") => Ok(JsRuntimeMode::V8),
+        Some(value) if value.eq_ignore_ascii_case("boawasm") => Ok(JsRuntimeMode::BoaWasm),
+        Some(value) => {
+            anyhow::bail!("invalid OBELISK_JS_RUNTIME value {value:?}; expected `v8` or `boawasm`")
+        }
+    }
+}
+
 pub(crate) fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("", "obelisk", "obelisk")
 }
@@ -361,6 +365,20 @@ pub(crate) fn project_dirs() -> Option<ProjectDirs> {
 #[cfg(test)]
 mod app_policy_tests {
     use super::*;
+
+    #[test]
+    fn js_runtime_selection() {
+        use crate::command::server::JsRuntimeMode;
+        assert_eq!(parse_js_runtime(None).unwrap(), JsRuntimeMode::V8);
+        assert_eq!(parse_js_runtime(Some("v8")).unwrap(), JsRuntimeMode::V8);
+        assert_eq!(parse_js_runtime(Some("V8")).unwrap(), JsRuntimeMode::V8);
+        assert_eq!(
+            parse_js_runtime(Some("BoaWasm")).unwrap(),
+            JsRuntimeMode::BoaWasm
+        );
+        assert!(parse_js_runtime(Some("true")).is_err());
+        assert!(parse_js_runtime(Some("")).is_err());
+    }
 
     #[test]
     fn platform_exec_allowlist_must_cover_app_allowlist() {

@@ -18,9 +18,8 @@ policy. Existing single-file configurations must be split before starting the se
 - *(web API)* Added SSE follow streams for execution status, result, and submit, with heartbeat
   comments and event IDs. Added a consistent events-and-responses snapshot, exact function and
   state filters for execution lists, deployment list options, and component source lookup.
-- *(activity-js, webhook-js, workflow-js)* Added experimental native V8 runtimes, enabled for all
-  JavaScript components with `OBELISK_UNSTABLE_V8=true`. The default remains Boa compiled to WASM.
-  These V8 runtimes may change incompatibly or be removed.
+- *(activity-js, webhook-js, workflow-js)* Added native V8 runtimes for JavaScript components.
+  V8 is the default; set `OBELISK_JS_RUNTIME=boawasm` to use Boa compiled to WASM.
 - *(server)* Added bounded native V8 execution: the `v8` cells of `[limits]` reserve concurrency
   and isolate heap for workflows, activities and webhooks, and `[v8].thread_stack_size` sizes the
   isolate thread. Every isolate runs on its own OS thread and is created from a build-time V8
@@ -43,6 +42,8 @@ policy. Existing single-file configurations must be split before starting the se
 
 ### Changed
 
+- *(server)* `OBELISK_JS_RUNTIME` selects the JavaScript runtime (`v8` or `boawasm`, ignoring
+  case). Unknown values fail startup.
 - *(API)* gRPC and gRPC-web are deprecated. In-repo clients are moving to the `/v1` Web API;
   gRPC remains available in this release candidate.
 - *(config)* **Breaking:** app-owned secret registrations, public environment allowances, outbound
