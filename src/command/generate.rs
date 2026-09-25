@@ -33,6 +33,33 @@ use toml_edit::{DocumentMut, Item};
 use utils::{wasm_tools::WasmComponent, wit};
 use wasm_workers::registry::WitOrigin;
 
+const JS_HTTP_STARTER_FILES: &[(&str, &str)] = &[
+    (
+        "app.toml",
+        include_str!("../../examples/templates/js-http/app.toml"),
+    ),
+    (
+        "deployment.toml",
+        include_str!("../../examples/templates/js-http/deployment.toml"),
+    ),
+    (
+        "activity/fetch-status.js",
+        include_str!("../../examples/templates/js-http/activity/fetch-status.js"),
+    ),
+    (
+        "workflow/run.js",
+        include_str!("../../examples/templates/js-http/workflow/run.js"),
+    ),
+    (
+        "webhook/handle.js",
+        include_str!("../../examples/templates/js-http/webhook/handle.js"),
+    ),
+    (
+        "README.md",
+        include_str!("../../examples/templates/js-http/README.md"),
+    ),
+];
+
 impl Generate {
     pub(crate) async fn run(
         self,
@@ -274,35 +301,42 @@ async fn generate_new(directory: &Path, name: Option<&str>) -> anyhow::Result<()
     };
     validate_app_name(&app_name)?;
 
-    let app_path = directory.join("app.toml");
-    let deployment_path = directory.join("deployment.toml");
-    ensure!(
-        !app_path.exists() && !deployment_path.exists(),
-        "app.toml or deployment.toml already exists in {directory:?}"
-    );
+    for (relative_path, _) in JS_HTTP_STARTER_FILES {
+        let path = directory.join(relative_path);
+        ensure!(
+            !path.exists(),
+            "cannot generate app: {path:?} already exists"
+        );
+    }
 
-    let app_contents = format!("app_name = \"{app_name}\"\n{}", app_config_template(false));
-    let mut app_file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&app_path)
-        .await
-        .with_context(|| format!("cannot create {app_path:?}"))?;
-    app_file.write_all(app_contents.as_bytes()).await?;
-    ConfigHolder::generate_default_deployment_config(deployment_path.clone(), false).await?;
-    print_generated_path_statuses(
-        &[
-            GeneratedPathStatus {
-                path: app_path,
-                status: "generated",
-            },
-            GeneratedPathStatus {
-                path: deployment_path,
-                status: "generated",
-            },
-        ],
-        false,
-    )?;
+    let mut generated = Vec::with_capacity(JS_HTTP_STARTER_FILES.len());
+    for (relative_path, template) in JS_HTTP_STARTER_FILES {
+        let path = directory.join(relative_path);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("cannot create {parent:?}"))?;
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await
+            .with_context(|| format!("cannot create {path:?}"))?;
+        let contents = if *relative_path == "app.toml" {
+            template.replace("__APP_NAME__", &app_name)
+        } else {
+            (*template).to_owned()
+        };
+        file.write_all(contents.as_bytes())
+            .await
+            .with_context(|| format!("cannot write {path:?}"))?;
+        generated.push(GeneratedPathStatus {
+            path,
+            status: "generated",
+        });
+    }
+    print_generated_path_statuses(&generated, false)?;
     Ok(())
 }
 
@@ -1201,7 +1235,12 @@ mod tests {
         let app = std::fs::read_to_string(directory.join("app.toml")).unwrap();
         let parsed: crate::config::app::AppConfigToml = toml::from_str(&app).unwrap();
         assert_eq!(parsed.app_name.as_deref(), Some("my-cool-app"));
-        assert!(directory.join("deployment.toml").exists());
+        let deployment = std::fs::read_to_string(directory.join("deployment.toml")).unwrap();
+        assert!(deployment.contains("starter:app/activity.fetch-status"));
+        assert!(directory.join("activity/fetch-status.js").exists());
+        assert!(directory.join("workflow/run.js").exists());
+        assert!(directory.join("webhook/handle.js").exists());
+        assert!(directory.join("README.md").exists());
         assert!(
             generate_new(&directory, Some("different-name"))
                 .await
@@ -1216,6 +1255,14 @@ mod tests {
         std::fs::create_dir(&invalid).unwrap();
         assert!(generate_new(&invalid, Some("Invalid Name")).await.is_err());
         assert!(!invalid.join("app.toml").exists());
+
+        std::fs::write(invalid.join("README.md"), "keep me").unwrap();
+        assert!(generate_new(&invalid, Some("valid-name")).await.is_err());
+        assert!(!invalid.join("app.toml").exists());
+        assert_eq!(
+            std::fs::read_to_string(invalid.join("README.md")).unwrap(),
+            "keep me"
+        );
     }
 
     #[tokio::test]

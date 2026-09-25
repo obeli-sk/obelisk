@@ -1,0 +1,6 @@
+app_name = "__APP_NAME__"
+
+# The app admin reviews which external requests a deployment may make.
+[[outbound_http.allowed_host]]
+pattern = "https://example.com"
+methods = ["GET"]

@@ -1,0 +1,22 @@
+[[activity_js]]
+name = "fetch_status"
+location = "activity/fetch-status.js"
+ffqn = "starter:app/activity.fetch-status"
+params = []
+return_type = "result<u32, string>"
+
+[[activity_js.allowed_host]]
+pattern = "https://example.com"
+methods = ["GET"]
+
+[[workflow_js]]
+name = "run"
+location = "workflow/run.js"
+ffqn = "starter:app/workflow.run"
+params = []
+return_type = "result<u32, string>"
+
+[[webhook_endpoint_js]]
+name = "webhook"
+location = "webhook/handle.js"
+routes = [{ methods = ["GET"], route = "/run" }]
