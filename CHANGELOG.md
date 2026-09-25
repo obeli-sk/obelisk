@@ -120,6 +120,9 @@ policy. Existing single-file configurations must be split before starting the se
   nothing behind but the process exit.
 - *(server)* A component that fails to link is now named in the error, instead of reporting only
   the unresolved import.
+- *(activity-exec)* An exec activity whose lock expires, or whose executor shuts down, now has its
+  process group killed. Previously the process kept running while the timed-out execution was
+  retried, so a retry could overlap with it.
 
 ## [0.42.0-rc.3](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.2...v0.42.0-rc.3)
 

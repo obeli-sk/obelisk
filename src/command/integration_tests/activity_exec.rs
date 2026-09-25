@@ -334,3 +334,41 @@ env_vars = ["PATH"] # for sleep
     );
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn lock_expiry_kills_child() {
+    let deployment_toml = r#"[[activity_exec]]
+ffqn = "testing:integration/exec-hang.hang"
+exec.lock_expiry.seconds = 1
+max_retries = 0
+content = '''#!/usr/bin/env bash
+echo $$ > "$(echo "$1" | tr -d '"')"
+exec sleep 600
+'''
+params = [{ name = "pid-file", type = "string" }]
+return_type = "result<string, string>"
+env_vars = ["PATH"] # for sleep
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("pid");
+    let server =
+        TestServer::start_inline_deployment(test_addr!(177), "", deployment_toml, &[]).await;
+    let response = server
+        .submit_follow(
+            "testing:integration/exec-hang.hang",
+            vec![json!(pid_file.to_str().unwrap())],
+        )
+        .await;
+    assert_eq!(response.status().as_u16(), 201);
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({ "execution_failed": { "kind": "timed_out" } })
+    );
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    // The expired-lock watcher alone would time the execution out but leave the child running.
+    assert!(
+        !std::path::Path::new(&format!("/proc/{}", pid.trim())).exists(),
+        "child {pid} must be killed on lock expiry"
+    );
+    server.shutdown().await;
+}

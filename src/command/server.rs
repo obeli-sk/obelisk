@@ -6832,6 +6832,8 @@ impl WorkerLinked {
                     cancel_registry,
                     log_forwarder_sender,
                     logs_storage_config,
+                    Now.clone_box(),
+                    Arc::new(TokioSleep),
                 ))
             }
             LinkedWorkerKind::ActivityVm(vm_activity_compiled) => {
