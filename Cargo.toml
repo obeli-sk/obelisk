@@ -210,7 +210,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.42.0-rc.3"
+version = "0.42.0-rc.4"
 description = "Deterministic workflow engine"
 license = "AGPL-3.0-only"
 repository = "https://github.com/obeli-sk/obelisk"
@@ -222,16 +222,16 @@ rust-version = "1.96.0"
 activity-js-runtime-builder = { path = "crates/activity-js-runtime/builder" }
 boa-common = { path = "crates/boa-common" }
 webhook-js-runtime-builder = { path = "crates/webhook-js-runtime/builder" }
-concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.42.0-rc.3" }
-db-common = { package = "obeli-sk-db-common", path = "crates/db-common", version = "0.42.0-rc.3" }
-db-postgres = { package = "obeli-sk-db-postgres", path = "crates/db-postgres", version = "0.42.0-rc.3" }
-db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.42.0-rc.3" }
+concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.42.0-rc.4" }
+db-common = { package = "obeli-sk-db-common", path = "crates/db-common", version = "0.42.0-rc.4" }
+db-postgres = { package = "obeli-sk-db-postgres", path = "crates/db-postgres", version = "0.42.0-rc.4" }
+db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.42.0-rc.4" }
 db-tests = { package = "obeli-db-tests", path = "crates/testing/db-tests" }
 deno_core = "0.412.0"
 deno_error = "=0.7.1"
-embedded-assets = { package = "obeli-sk-embedded-assets", path = "crates/embedded-assets", version = "0.42.0-rc.3" }
-executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.42.0-rc.3" }
-grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.42.0-rc.3" }
+embedded-assets = { package = "obeli-sk-embedded-assets", path = "crates/embedded-assets", version = "0.42.0-rc.4" }
+executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.42.0-rc.4" }
+grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.42.0-rc.4" }
 obelisk-component-builder = { path = "crates/testing/component-builder", features = [
     "genrs",
 ] }
@@ -252,12 +252,12 @@ test-programs-stub-workflow-builder = { path = "crates/testing/test-programs/stu
 test-programs-wasip3-activity-builder = { path = "crates/testing/test-programs/wasip3/activity/builder" }
 test-programs-wasip3-webhook-builder = { path = "crates/testing/test-programs/wasip3/webhook/builder" }
 test-utils = { path = "crates/testing/test-utils" }
-activity-vm-runner = { package = "obelisk-activity-vm-runner", path = "crates/activity-vm-runner", version = "0.42.0-rc.3" }
-activity-vm-worker = { package = "obelisk-activity-vm-worker", path = "crates/activity-vm-worker", version = "0.42.0-rc.3" }
-worker-common = { package = "obeli-sk-worker-common", path = "crates/worker-common", version = "0.42.0-rc.3" }
-utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.42.0-rc.3" }
-val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.42.0-rc.3" }
-wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.42.0-rc.3" }
+activity-vm-runner = { package = "obelisk-activity-vm-runner", path = "crates/activity-vm-runner", version = "0.42.0-rc.4" }
+activity-vm-worker = { package = "obelisk-activity-vm-worker", path = "crates/activity-vm-worker", version = "0.42.0-rc.4" }
+worker-common = { package = "obeli-sk-worker-common", path = "crates/worker-common", version = "0.42.0-rc.4" }
+utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.42.0-rc.4" }
+val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.42.0-rc.4" }
+wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.42.0-rc.4" }
 workflow-js-runtime-builder = { path = "crates/workflow-js-runtime/builder" }
 
 anyhow = { version = "1.0", features = ["backtrace"] }
