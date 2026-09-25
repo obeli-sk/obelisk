@@ -2064,6 +2064,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             event: Some(grpc_gen::SystemEvent {
                 event_id: event.event_id.to_string(),
                 node_run_id: event.node_run_id.to_string(),
+                app_config_digest: event.app_config_digest,
                 created_at: Some(event.created_at.into()),
                 level: match event.level {
                     storage::SystemEventLevel::Debug => grpc_gen::SystemEventLevel::Debug as i32,
@@ -2150,6 +2151,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                     grpc_gen::SystemEvent {
                         event_id: event.event_id.to_string(),
                         node_run_id: event.node_run_id.to_string(),
+                        app_config_digest: event.app_config_digest,
                         created_at: Some(event.created_at.into()),
                         level: match event.level {
                             storage::SystemEventLevel::Debug => {
@@ -2705,6 +2707,7 @@ fn deployment_record_to_grpc(record: concepts::storage::DeploymentRecord) -> grp
         description: record.description,
         digest: record.digest.to_string(),
         files: file_refs_to_grpc(record.files),
+        last_active_app_config_digest: record.last_active_app_config_digest,
     }
 }
 
@@ -2791,6 +2794,7 @@ fn deployment_summary_to_grpc(
         description: dep.description,
         digest: dep.digest.to_string(),
         files: Vec::new(),
+        last_active_app_config_digest: dep.last_active_app_config_digest,
     };
     grpc_gen::DeploymentSummary {
         deployment: Some(deployment),

@@ -825,6 +825,8 @@ impl TestServer {
             .unwrap();
         let mut config = config_holder.load_config().unwrap();
         let app = config_holder.load_app_config().unwrap();
+        config.app_config_digest = Some(app.digest().unwrap());
+        config.app_policy_json = Some(String::from_utf8(app.policy_json().unwrap()).unwrap());
         config.secrets = app.secrets;
         config.public_env = app.public_env;
         config.allowed_exec_activities = app.allowed_exec_activities;
@@ -2452,6 +2454,106 @@ async fn list_components_grpc_filters_with_explicit_deployment_id() {
         NEW_STUB_NAME,
         filtered.components[0].component_id.as_ref().unwrap().name
     );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn app_config_webapi_reports_running_policy() {
+    let server = TestServer::start(test_addr!(40_144)).await;
+    let app: crate::config::app::AppConfigToml =
+        toml::from_str(&std::fs::read_to_string(server._tmp_dir.path().join("app.toml")).unwrap())
+            .unwrap();
+    let expected_digest = app.digest().unwrap();
+    let digest = server
+        .client
+        .get(format!("{}/v1/app-config-digest", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(digest.status(), reqwest::StatusCode::OK);
+    assert_eq!(digest.text().await.unwrap(), expected_digest);
+
+    let config = server
+        .client
+        .get(format!("{}/v1/app-config", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(config.status(), reqwest::StatusCode::OK);
+    let config: Value = config.json().await.unwrap();
+    assert_eq!(config["app_config_digest"], expected_digest);
+    assert_eq!(
+        config["policy"],
+        serde_json::from_slice::<Value>(&app.policy_json().unwrap()).unwrap()
+    );
+
+    let deployments: Value = server
+        .client
+        .get(format!("{}/v1/deployments", server.base_url))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let active = deployments
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["status"] == "active")
+        .unwrap();
+    assert_eq!(active["last_active_app_config_digest"], expected_digest);
+    let deployment: Value = server
+        .client
+        .get(format!(
+            "{}/v1/deployments/{}",
+            server.base_url,
+            active["deployment_id"].as_str().unwrap()
+        ))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(deployment["last_active_app_config_digest"], expected_digest);
+
+    let db_pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+        .await
+        .unwrap();
+    let mut event = concepts::storage::SystemEvent::new(
+        concepts::storage::SystemEventCode::MaintenanceGcFailed,
+        None,
+        None,
+        json!({"reason": "test"}),
+    )
+    .unwrap();
+    event.app_config_digest = Some(expected_digest.clone());
+    let event_id = event.event_id;
+    db_pool
+        .admin_conn()
+        .await
+        .unwrap()
+        .append_system_event(event)
+        .await
+        .unwrap();
+    db_pool.close().await;
+    let event: Value = server
+        .client
+        .get(format!(
+            "{}/v1/admin/system-events/{event_id}",
+            server.base_url
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(event["app_config_digest"], expected_digest);
 
     server.shutdown().await;
 }

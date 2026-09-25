@@ -97,6 +97,7 @@ async fn until_terminated<T>(
         (name = "components", description = "Component management"),
         (name = "functions", description = "Function management"),
         (name = "deployments", description = "Deployment management"),
+        (name = "app config", description = "Running app policy"),
         (name = "admin", description = "Operator-only destructive maintenance"),
         (name = "delays", description = "Delay management")
     ),
@@ -136,6 +137,8 @@ async fn until_terminated<T>(
         deployment::submit_put,
         deployment::switch,
         deployment::get_file,
+        app_config::get,
+        app_config::digest,
         admin::delete_execution_tree,
         admin::retain_executions,
         admin::delete_deployment,
@@ -183,6 +186,7 @@ async fn until_terminated<T>(
         admin::RetainSystemEventsRequest,
         admin::RetainSystemEventsResponse,
         deployment::DeploymentSubmitErrorBody,
+        app_config::AppConfigResponse,
         deployment::GenericErrorBody,
         deployment::SubmitPackageErrorBody,
         deployment::MissingRuntimeConfigErrorBody,
@@ -325,6 +329,8 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
             routing::put(deployment::switch),
         )
         .route("/deployment-id", routing::get(deployment::current))
+        .route("/app-config", routing::get(app_config::get))
+        .route("/app-config-digest", routing::get(app_config::digest))
         .route(
             "/executions/{execution-id}/backtrace",
             routing::get(execution_backtrace),
@@ -367,6 +373,58 @@ fn admin_router() -> Router<Arc<WebApiState>> {
         .route("/node-run-id", routing::get(admin::node_run_id))
 }
 
+pub(crate) mod app_config {
+    use super::*;
+
+    #[derive(ToSchema)]
+    pub(crate) struct AppConfigResponse {
+        pub(crate) app_config_digest: String,
+        pub(crate) policy: serde_json::Value,
+    }
+
+    #[utoipa::path(get, path = "/v1/app-config", tag = "app config", responses((status = 200, body = AppConfigResponse), (status = 404)))]
+    pub(crate) async fn get(
+        State(state): State<Arc<WebApiState>>,
+    ) -> Result<Response, HttpResponse> {
+        let digest = state
+            .server_verified
+            .app_config_digest
+            .as_deref()
+            .ok_or_else(|| HttpResponse::not_found(AcceptHeader::Json, "app config"))?;
+        let policy = state
+            .server_verified
+            .app_policy_json
+            .as_deref()
+            .ok_or_else(|| HttpResponse::not_found(AcceptHeader::Json, "app config"))?;
+        let body = format!(
+            "{{\"app_config_digest\":{},\"policy\":{policy}}}",
+            serde_json::to_string(digest).expect("digest is valid JSON string")
+        );
+        Ok((
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json")],
+            body,
+        )
+            .into_response())
+    }
+
+    #[utoipa::path(get, path = "/v1/app-config-digest", tag = "app config", responses((status = 200, content((String = "text/plain"), (String = "application/json"))), (status = 404)))]
+    pub(crate) async fn digest(
+        State(state): State<Arc<WebApiState>>,
+        accept: TextDefaultAcceptHeader,
+    ) -> Result<Response, HttpResponse> {
+        let digest = state
+            .server_verified
+            .app_config_digest
+            .as_deref()
+            .ok_or_else(|| HttpResponse::not_found(accept.into(), "app config digest"))?;
+        Ok(match accept.into() {
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &digest),
+            AcceptHeader::Text => digest.to_owned().into_response(),
+        })
+    }
+}
+
 pub(crate) mod admin {
     use super::*;
     use concepts::storage::{DeleteDeploymentResult, DeleteExecutionTreeResult, SystemEventCode};
@@ -383,6 +441,8 @@ pub(crate) mod admin {
         pub(crate) event_id: SystemEventId,
         #[schema(value_type = String)]
         pub(crate) node_run_id: NodeRunId,
+        // backcompat: 0.42.0-rc.3 event responses had no policy digest.
+        pub(crate) app_config_digest: Option<String>,
         pub(crate) created_at: DateTime<Utc>,
         pub(crate) level: String,
         pub(crate) code: String,
@@ -484,6 +544,7 @@ pub(crate) mod admin {
                 SystemEventResponse {
                     event_id: event.event_id,
                     node_run_id: event.node_run_id,
+                    app_config_digest: event.app_config_digest,
                     created_at: event.created_at,
                     level: event.level.as_str().into(),
                     code: event.code,
@@ -528,6 +589,7 @@ pub(crate) mod admin {
         let response = SystemEventResponse {
             event_id: event.event_id,
             node_run_id: event.node_run_id,
+            app_config_digest: event.app_config_digest,
             created_at: event.created_at,
             level: event.level.as_str().into(),
             code: event.code,
@@ -4419,6 +4481,8 @@ pub(crate) mod deployment {
         pub created_at: DateTime<Utc>,
         /// When this deployment was last active; None if never active
         pub last_active_at: Option<DateTime<Utc>>,
+        // backcompat: 0.42.0-rc.3 deployment responses had no policy digest.
+        pub last_active_app_config_digest: Option<String>,
         /// Number of locked executions
         pub locked: u32,
         /// Number of pending executions
@@ -4464,6 +4528,9 @@ pub(crate) mod deployment {
                 status: DeploymentStatusSer::from(&deployment_state.status),
                 created_at: deployment_state.created_at,
                 last_active_at: deployment_state.last_active_at,
+                last_active_app_config_digest: deployment_state
+                    .last_active_app_config_digest
+                    .clone(),
                 locked: deployment_state.locked,
                 pending: deployment_state.pending,
                 scheduled: deployment_state.scheduled,
@@ -4660,6 +4727,8 @@ pub(crate) mod deployment {
         pub status: DeploymentStatusSer,
         pub created_at: DateTime<Utc>,
         pub last_active_at: Option<DateTime<Utc>>,
+        // backcompat: 0.42.0-rc.3 deployment responses had no policy digest.
+        pub last_active_app_config_digest: Option<String>,
         /// Processed deployment manifest (`deployment.toml`), stored byte-for-byte
         pub deployment_toml: String,
         /// Files the manifest references.
@@ -4675,6 +4744,7 @@ pub(crate) mod deployment {
                 status: DeploymentStatusSer::from(&r.status),
                 created_at: r.created_at,
                 last_active_at: r.last_active_at,
+                last_active_app_config_digest: r.last_active_app_config_digest.clone(),
                 deployment_toml: r.deployment_toml.clone(),
                 files: r.files.iter().map(FileRefSer::from).collect(),
             }

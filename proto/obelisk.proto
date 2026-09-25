@@ -1188,6 +1188,8 @@ message Deployment {
     string digest = 7;
     // Files the manifest references: (relative path, content digest).
     repeated FileRef files = 8;
+    // backcompat: 0.42.0-rc.3 deployment responses did not include this digest.
+    optional string last_active_app_config_digest = 9;
 }
 
 // A deployment-owned file the manifest references, named by both its
@@ -1394,6 +1396,8 @@ message SystemEvent {
     optional DeploymentId deployment_id = 7;
     string details_json = 8;
     string node_run_id = 9;
+    // backcompat: 0.42.0-rc.3 event responses did not include this digest.
+    optional string app_config_digest = 10;
 }
 message ListSystemEventsRequest {
     optional SystemEventLevel level = 1;
