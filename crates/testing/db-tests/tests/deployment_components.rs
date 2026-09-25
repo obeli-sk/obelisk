@@ -35,6 +35,7 @@ fn mk_deployment_record(
         digest: DeploymentRecord::compute_digest("{}"),
         created_at: now,
         last_active_at: None,
+        last_active_app_config_digest: None,
         status: DeploymentStatus::Inactive,
         deployment_toml: "{}".to_string(),
         obelisk_version: "0.0.0-test".to_string(),

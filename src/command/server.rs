@@ -368,6 +368,7 @@ impl DeploymentSwitchManagerHandle {
         let webhook_registry = self.inner.webhook_registry.clone();
         let cancel_registry = self.inner.cancel_registry.clone();
         let log_forwarder_sender = self.inner.log_forwarder_sender.clone();
+        let app_config_digest = self.inner.server_verified.app_config_digest.clone();
         let server_configuration_event_id = self
             .inner
             .server_verified
@@ -393,7 +394,11 @@ impl DeploymentSwitchManagerHandle {
                     .await
                     .map_err(|e| SwitchError::Other(e.into()))?;
                 db_conn
-                    .activate_deployment(deployment_id, chrono::Utc::now())
+                    .activate_deployment(
+                        deployment_id,
+                        chrono::Utc::now(),
+                        app_config_digest.as_deref(),
+                    )
                     .await
                     .map_err(|e| SwitchError::Other(e.into()))?;
                 prepared
@@ -665,6 +670,9 @@ pub(crate) async fn run(
     secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
     let node_run_id = concepts::storage::initialize_node_run_id();
+    if let Some(digest) = config.app_config_digest.clone() {
+        concepts::storage::initialize_app_config_digest(digest);
+    }
     let _guard: Guard = init::init(&config)?;
     info!(%node_run_id, "Starting Obelisk {PKG_VERSION}");
     let deployment = if let Some(deployment_path) = deployment {
@@ -1700,6 +1708,7 @@ async fn write_to_cas_prepare_deployment_record(
             digest,
             created_at: now,
             last_active_at: None,
+            last_active_app_config_digest: None,
             status: DeploymentStatus::Inactive,
             deployment_toml,
             obelisk_version: PKG_VERSION.to_string(),
@@ -1831,6 +1840,7 @@ async fn persist_startup_deployment(
     deployment_id: DeploymentId,
     persist: DeploymentPersist,
     component_registry_ro: &ComponentConfigRegistryRO,
+    app_config_digest: Option<&str>,
 ) -> Result<(), anyhow::Error> {
     match persist {
         DeploymentPersist::AlreadyActive => {}
@@ -1840,7 +1850,7 @@ async fn persist_startup_deployment(
                 .await
                 .context("cannot get db connection for deployment activation")?;
             api_conn
-                .activate_deployment(deployment_id, chrono::Utc::now())
+                .activate_deployment(deployment_id, chrono::Utc::now(), app_config_digest)
                 .await
                 .context("cannot activate enqueued deployment")?;
             info!("Activated enqueued deployment");
@@ -1865,7 +1875,7 @@ async fn persist_startup_deployment(
                 .await
                 .context("cannot insert deployment")?;
             api_conn
-                .activate_deployment(deployment_id, chrono::Utc::now())
+                .activate_deployment(deployment_id, chrono::Utc::now(), app_config_digest)
                 .await
                 .context("cannot activate deployment")?;
             info!("Activated new deployment");
@@ -2085,6 +2095,7 @@ pub(crate) async fn run_internal(
             active_deployment_id,
             persist,
             &compiled_and_linked.component_registry_ro,
+            server_verified.app_config_digest.as_deref(),
         )
         .await,
     )
@@ -3322,6 +3333,7 @@ async fn submit_deployment_manifest(
                         digest: digest_ref.clone(),
                         created_at: now,
                         last_active_at: None,
+                        last_active_app_config_digest: None,
                         status: DeploymentStatus::Inactive,
                         obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
                         created_by,

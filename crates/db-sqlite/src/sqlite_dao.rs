@@ -476,6 +476,7 @@ fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecor
         digest: row.get("digest")?,
         created_at: row.get("created_at")?,
         last_active_at: row.get("last_active_at")?,
+        last_active_app_config_digest: row.get("last_active_app_config_digest")?,
         status,
         deployment_toml: row.get("deployment_toml")?,
         obelisk_version: row.get("obelisk_version")?,
@@ -3677,6 +3678,7 @@ impl SqlitePool {
             {deployment_toml_col},
             d.created_at,
             d.last_active_at,
+            d.last_active_app_config_digest,
             d.status
         FROM t_deployment d{join}",
             join = match execution_counts {
@@ -3720,7 +3722,7 @@ impl SqlitePool {
         if include_execution_counts {
             write!(
                 sql,
-                " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.status"
+                " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.last_active_app_config_digest, d.status"
             )
             .expect("writing to string");
         }
@@ -3770,6 +3772,7 @@ impl SqlitePool {
                         deployment_toml: row.get("deployment_toml")?,
                         created_at: row.get("created_at")?,
                         last_active_at: row.get("last_active_at")?,
+                        last_active_app_config_digest: row.get("last_active_app_config_digest")?,
                         status,
                     })
                 },
@@ -4014,6 +4017,7 @@ impl SqlitePool {
         tx: &Transaction,
         deployment_id: DeploymentId,
         now: DateTime<Utc>,
+        app_config_digest: Option<&str>,
     ) -> Result<(), DbErrorWrite> {
         // Demote the currently active or enqueued deployment to inactive.
         tx.execute(
@@ -4024,9 +4028,10 @@ impl SqlitePool {
         // Set target deployment to active, recording activation time.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', last_active_at = :now, inactive_at = NULL WHERE deployment_id = :deployment_id",
+                "UPDATE t_deployment SET status = 'active', last_active_at = :now, last_active_app_config_digest = :app_config_digest, inactive_at = NULL WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! {
                     ":now": now,
+                    ":app_config_digest": app_config_digest,
                     ":deployment_id": deployment_id.to_string(),
                 },
             )
@@ -4084,7 +4089,7 @@ impl SqlitePool {
     ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         let Some(record) = tx
             .query_row(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! { ":deployment_id": deployment_id.to_string() },
                 deployment_record_from_row,
@@ -4101,7 +4106,7 @@ impl SqlitePool {
     fn get_active_deployment_tx(tx: &Transaction) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         let Some(record) = tx
             .query_row(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment WHERE status = 'active' LIMIT 1",
                 [],
                 deployment_record_from_row,
@@ -4120,7 +4125,7 @@ impl SqlitePool {
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
         let mut sql = String::from(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment",
         );
 
@@ -5334,9 +5339,13 @@ impl DbExternalApi for SqlitePool {
         &self,
         deployment_id: DeploymentId,
         now: DateTime<Utc>,
+        app_config_digest: Option<&str>,
     ) -> Result<(), DbErrorWrite> {
+        let app_config_digest = app_config_digest.map(str::to_owned);
         self.transaction(
-            move |tx| Self::activate_deployment_tx(tx, deployment_id, now),
+            move |tx| {
+                Self::activate_deployment_tx(tx, deployment_id, now, app_config_digest.as_deref())
+            },
             TxType::MultipleWrites,
             "activate_deployment",
         )
@@ -5385,7 +5394,7 @@ impl DbExternalApi for SqlitePool {
             move |tx| {
                 let Some(record) = tx
                     .query_row(
-                    "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
+                    "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
                      FROM t_deployment WHERE status IN ('enqueued', 'active') \
                      ORDER BY CASE status WHEN 'enqueued' THEN 0 ELSE 1 END LIMIT 1",
                         [],
@@ -5652,8 +5661,8 @@ impl DbAdmin for SqlitePool {
                 let details = serde_json::to_string(&event.details)
                     .map_err(|err| RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err))))?;
                 tx.execute(
-                    "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-                    rusqlite::params![event.event_id.to_string(), event.node_run_id.to_string(), event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, event.cas_digest.as_ref().map(ToString::to_string)],
+                    "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest, app_config_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+                    rusqlite::params![event.event_id.to_string(), event.node_run_id.to_string(), event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, event.cas_digest.as_ref().map(ToString::to_string), event.app_config_digest],
                 )?;
                 Ok(())
             },
@@ -5675,8 +5684,8 @@ impl DbAdmin for SqlitePool {
                     RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err)))
                 })?;
                 tx.execute(
-                    "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-                    rusqlite::params![event.event_id.to_string(), event.node_run_id.to_string(), event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, digest.to_string()],
+                    "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest, app_config_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+                    rusqlite::params![event.event_id.to_string(), event.node_run_id.to_string(), event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, digest.to_string(), event.app_config_digest],
                 )?;
                 Ok(())
             },
@@ -5693,7 +5702,7 @@ impl DbAdmin for SqlitePool {
         self.transaction(
             move |tx| {
                 let mut statement = tx.prepare(
-                    "SELECT event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, cas_digest FROM t_system_event
+                    "SELECT event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, cas_digest, app_config_digest FROM t_system_event
                      WHERE (?1 IS NULL OR event_id = ?1) AND (?2 IS NULL OR node_run_id = ?2)
                        AND (?3 IS NULL OR level = ?3) AND (?4 IS NULL OR code = ?4)
                        AND (?5 IS NULL OR deployment_id = ?5) AND (?6 IS NULL OR event_id < ?6)
@@ -5714,6 +5723,7 @@ impl DbAdmin for SqlitePool {
                         code: row.get(4)?,
                         dedupe_key: None,
                         cas_digest: row.get::<_, Option<String>>(8)?.map(|digest| digest.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(err)))?,
+                        app_config_digest: row.get(9)?,
                         execution_id: row.get::<_, Option<String>>(5)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(err)))?,
                         deployment_id: row.get::<_, Option<String>>(6)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(err)))?,
                         details: serde_json::from_str(&details).map_err(|err| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err)))?,

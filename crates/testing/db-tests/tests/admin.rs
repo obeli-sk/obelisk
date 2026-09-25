@@ -27,6 +27,7 @@ fn deployment_record(
         digest: DeploymentRecord::compute_digest("{}"),
         created_at,
         last_active_at: None,
+        last_active_app_config_digest: None,
         status: DeploymentStatus::Inactive,
         deployment_toml: "{}".into(),
         obelisk_version: "test".into(),
@@ -51,6 +52,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     .unwrap();
     first.level = SystemEventLevel::Debug;
     first.node_run_id = "NodeRun_01M281KSH954NC9NHNMCN09S6W".parse().unwrap();
+    first.app_config_digest = Some("app-config:v1:sha256:test".into());
     let first_id = first.event_id;
     admin.append_system_event(first).await.unwrap();
     assert_eq!(
@@ -100,6 +102,10 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         .unwrap();
     assert_eq!(debug.len(), 1);
     assert_eq!(debug[0].event_id, first_id);
+    assert_eq!(
+        debug[0].app_config_digest.as_deref(),
+        Some("app-config:v1:sha256:test")
+    );
     let first_run = admin
         .list_system_events(SystemEventFilter {
             node_run_id: Some(
@@ -431,7 +437,7 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
         .external_api_conn()
         .await
         .unwrap()
-        .activate_deployment(active_deployment, clock.now())
+        .activate_deployment(active_deployment, clock.now(), Some("test-app-config"))
         .await
         .unwrap();
     let active_execution =
@@ -927,14 +933,14 @@ async fn age_retention_uses_completion_and_inactive_times(database: Database) {
         .external_api_conn()
         .await
         .unwrap()
-        .activate_deployment(old_deployment, clock.now())
+        .activate_deployment(old_deployment, clock.now(), Some("test-app-config"))
         .await
         .unwrap();
     db_pool
         .external_api_conn()
         .await
         .unwrap()
-        .activate_deployment(new_deployment, clock.now())
+        .activate_deployment(new_deployment, clock.now(), Some("test-app-config"))
         .await
         .unwrap();
     let cutoff = clock.now() - Duration::days(30);

@@ -1506,6 +1506,8 @@ impl SystemEventLevel {
 pub struct SystemEvent {
     pub event_id: SystemEventId,
     pub node_run_id: NodeRunId,
+    // backcompat: 0.42.0-rc.3 events have no app config digest.
+    pub app_config_digest: Option<String>,
     pub created_at: DateTime<Utc>,
     pub level: SystemEventLevel,
     pub code: String,
@@ -1636,6 +1638,13 @@ pub enum SystemEventValidationError {
 }
 
 static NODE_RUN_ID: std::sync::OnceLock<NodeRunId> = std::sync::OnceLock::new();
+static APP_CONFIG_DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn initialize_app_config_digest(digest: String) {
+    APP_CONFIG_DIGEST
+        .set(digest)
+        .expect("app config digest initialized once");
+}
 
 #[must_use]
 pub fn initialize_node_run_id() -> NodeRunId {
@@ -1663,6 +1672,7 @@ impl SystemEvent {
         Ok(Self {
             event_id: SystemEventId::generate(),
             node_run_id: node_run_id(),
+            app_config_digest: APP_CONFIG_DIGEST.get().cloned(),
             created_at: Utc::now(),
             level: code.level(),
             code: code.as_str().to_owned(),
@@ -2356,6 +2366,7 @@ pub trait DbExternalApi: DbConnection {
         &self,
         deployment_id: DeploymentId,
         now: DateTime<Utc>,
+        app_config_digest: Option<&str>,
     ) -> Result<(), DbErrorWrite>;
 
     /// Mark a deployment as Enqueued (pending next server restart).
@@ -2445,6 +2456,8 @@ pub struct DeploymentState {
     pub created_at: DateTime<Utc>,
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,
+    // backcompat: 0.42.0-rc.3 deployments have no activation policy digest.
+    pub last_active_app_config_digest: Option<String>,
     pub status: DeploymentStatus,
 }
 
@@ -2506,6 +2519,8 @@ pub struct DeploymentRecord {
     pub created_at: DateTime<Utc>,
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,
+    // backcompat: 0.42.0-rc.3 deployments have no activation policy digest.
+    pub last_active_app_config_digest: Option<String>,
     pub status: DeploymentStatus,
     pub deployment_toml: String, // `deployment.toml` manifest that client enriched with generated metadata like `content_digest`, see `prepare_deployment_manifest`.
     pub obelisk_version: String,
