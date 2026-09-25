@@ -23,7 +23,7 @@ pub(crate) const OBELISK_HELP_DEPLOYMENT_TOML: &str = include_str!("../../deploy
 const HOME_DIR_PREFIX: &str = "~/";
 pub(crate) const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct PathPrefixes {
     /// Directory containing server.toml; None when no --server-config was provided.
     pub(crate) server_config_dir: Option<PathBuf>,
@@ -112,7 +112,7 @@ impl PathPrefixes {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct ConfigHolder {
     pub(crate) config_source: Option<PathBuf>,
     pub(crate) app_source: Option<PathBuf>,

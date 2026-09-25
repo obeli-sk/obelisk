@@ -249,6 +249,7 @@ fn main() -> Result<(), anyhow::Error> {
     runtime.block_on(future)
 }
 
+#[derive(Debug)]
 struct ServerStartup {
     config_holder: ConfigHolder,
     config: ServerConfigToml,
@@ -369,7 +370,7 @@ mod app_policy_tests {
         let digest = "sha256:abababababababababababababababababababababababababababababababab";
         std::fs::write(
             &app,
-            format!("[allowed_exec_activities]\nworker = '{digest}'\n"),
+            format!("app_name='foo'\n[allowed_exec_activities]\nworker = '{digest}'\n"),
         )
         .unwrap();
         std::fs::write(&server, "").unwrap();
@@ -381,13 +382,9 @@ mod app_policy_tests {
                 RuntimeConfigAvailability::AllowUnavailable,
             )
         };
-        assert!(
-            load()
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("exec activities off")
-        );
+        const ERR_ACTIVITIES_ARE_OFF: &str =
+            "app.toml allows exec activities, but server.toml has exec activities off";
+        assert_eq!(ERR_ACTIVITIES_ARE_OFF, load().unwrap_err().to_string());
         std::fs::write(&server, "[allowed_exec_activities]\nother = 'sha256:abababababababababababababababababababababababababababababababab'\n").unwrap();
         assert!(load().err().unwrap().to_string().contains("not covered"));
         std::fs::write(
@@ -397,13 +394,7 @@ mod app_policy_tests {
         .unwrap();
         assert!(load().is_ok());
         std::fs::write(&server, "allowed_exec_activities = false\n").unwrap();
-        assert!(
-            load()
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("exec activities off")
-        );
+        assert_eq!(ERR_ACTIVITIES_ARE_OFF, load().unwrap_err().to_string());
         std::fs::write(&server, "allowed_exec_activities = '*'\n").unwrap();
         assert!(load().is_ok());
     }
