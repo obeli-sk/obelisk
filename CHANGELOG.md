@@ -15,6 +15,9 @@ policy. Existing single-file configurations must be split before starting the se
 
 ### Added
 
+- *(web API)* Added SSE follow streams for execution status, result, and submit, with heartbeat
+  comments and event IDs. Added a consistent events-and-responses snapshot, exact function and
+  state filters for execution lists, deployment list options, and component source lookup.
 - *(activity-js, webhook-js, workflow-js)* Added experimental native V8 runtimes, enabled for all
   JavaScript components with `OBELISK_UNSTABLE_V8=true`. The default remains Boa compiled to WASM.
   These V8 runtimes may change incompatibly or be removed.
@@ -40,6 +43,8 @@ policy. Existing single-file configurations must be split before starting the se
 
 ### Changed
 
+- *(API)* gRPC and gRPC-web are deprecated. In-repo clients are moving to the `/v1` Web API;
+  gRPC remains available in this release candidate.
 - *(config)* **Breaking:** app-owned secret registrations, public environment allowances, outbound
   HTTP policy, exec activity allowances, and `app_name` move from `server.toml` to `app.toml`.
   Pass `--app-config` with `server run`, `server verify`, or `deployment verify`; omitting it uses
