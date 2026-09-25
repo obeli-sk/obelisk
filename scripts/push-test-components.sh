@@ -55,7 +55,7 @@ printf '%s\n' \
     'routes = [{ methods = ["GET"], route = "/wasip3" }]' \
     > "$WASIP3_SOURCE_TOML"
 
-obelisk server verify --deployment "$WASIP3_SOURCE_TOML"
+OBELISK_APP_NAME=test-components obelisk server verify --deployment "$WASIP3_SOURCE_TOML"
 
 push() {
     COMPONENT_NAME=$1

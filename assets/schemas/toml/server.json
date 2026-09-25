@@ -10,32 +10,9 @@
       ],
       "default": null
     },
-    "secrets": {
-      "description": "Operator-owned secret registry. Maps a logical secret name to a source\n(currently only `{ env = \"VAR\" }`). Env-backed secrets are resolved and\ntheir source variables wiped from the process environment at startup, before\nthe tokio runtime starts. Deployments reference these names in\ncomponent `exposed_secrets` and\n`allowed_host[].secrets`; they cannot interpolate them.",
-      "type": "object",
-      "additionalProperties": {
-        "$ref": "#/$defs/SecretConfigToml"
-      },
-      "default": {}
-    },
-    "public_env": {
-      "description": "Operator-owned allowlist of process environment variables that deployments may read.",
-      "$ref": "#/$defs/PublicEnvToml",
-      "default": {
-        "allowed": []
-      }
-    },
     "allowed_exec_activities": {
-      "description": "Permit deployments to run host processes through `activity_exec`, keyed by\ncomponent name and the accepted secret exposure digest set.",
-      "type": "object",
-      "additionalProperties": {
-        "type": "string"
-      },
-      "default": {}
-    },
-    "outbound_http": {
-      "description": "Operator-owned allowlist for component-originated HTTP requests.\nAn empty allowlist denies every outbound request.",
-      "$ref": "#/$defs/OutboundHttpToml"
+      "description": "Platform exec gate: `false` (default), `\"*\"`, or a reviewed component/digest set.",
+      "$ref": "#/$defs/PlatformExecActivities"
     },
     "limits": {
       "$ref": "#/$defs/LimitsToml"
@@ -95,160 +72,33 @@
   },
   "additionalProperties": false,
   "$defs": {
-    "SecretConfigToml": {
-      "description": "Source and exposure authorization for a secret in the `[secrets]` table.",
-      "type": "object",
-      "properties": {
-        "env": {
-          "description": "Read the secret from a process environment variable at startup.",
-          "type": "string"
+    "PlatformExecActivities": {
+      "oneOf": [
+        {
+          "const": false
         },
-        "optional": {
-          "description": "Allow `env` to be unset; the secret is then absent and only optional references accept it.",
-          "type": "boolean"
+        {
+          "const": "*"
         },
-        "exposed_to": {
+        {
           "type": "object",
           "additionalProperties": {
-            "type": "string"
-          },
-          "default": {}
+            "$ref": "#/$defs/SecretExposureDigests"
+          }
         }
-      },
-      "additionalProperties": false,
-      "required": [
-        "env"
       ]
     },
-    "PublicEnvToml": {
-      "description": "Public environment variables that deployments may read.",
-      "type": "object",
-      "properties": {
-        "allowed": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": []
-        }
-      },
-      "additionalProperties": false
-    },
-    "OutboundHttpToml": {
-      "type": "object",
-      "properties": {
-        "allowed_host": {
-          "description": "Global outbound HTTP entries use the same grammar as deployment\n`allowed_host` entries.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/AllowedHostToml"
-          },
-          "default": []
-        }
-      },
-      "additionalProperties": false
-    },
-    "AllowedHostToml": {
-      "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.",
-      "type": "object",
-      "properties": {
-        "pattern": {
-          "description": "Host pattern (e.g. `\"api.example.com\"`, `\"*.example.com\"`, `\"http://localhost:8080\"`).",
-          "type": "string"
-        },
-        "methods": {
-          "description": "Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = \"*\"` or `methods = [\"*\"]` to allow all methods.\n- `methods = [\"GET\", \"POST\"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/MethodsInput"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "request_url_regex": {
-          "description": "Optional regex restriction checked against `METHOD URL` with query params removed.\nFor example, `GET https://api.example.com/v1/items`.\nSupports `${VAR}` and `${VAR:-default}` env var interpolation.\nEnv var values are interpreted as regex syntax; use regex-escaped values when precision matters.\nOmit to allow all paths accepted by the host and method restrictions.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "secrets": {
-          "description": "Registered secret names (from the operator-owned `server.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SecretRef"
-          },
-          "default": []
-        },
-        "replace_in": {
-          "description": "Where in the request to perform placeholder replacement:\n- `headers` searches textual header values, including placeholders within larger values.\n- `params` searches URL query parameter values.\n- `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.\n\nDefault: empty (no replacement, deny by default).",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ReplaceIn"
-          },
-          "default": []
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "pattern"
-      ]
-    },
-    "MethodsInput": {
-      "description": "Input for method restrictions in TOML configuration.\nSupports both `methods = \"*\"` and `methods = [\"GET\", \"POST\"]` syntax.",
+    "SecretExposureDigests": {
       "anyOf": [
         {
-          "description": "All methods allowed (from `methods = \"*\"`).",
-          "$ref": "#/$defs/MethodsInputStar"
+          "type": "string"
         },
         {
-          "description": "Specific methods list (from `methods = [\"GET\", \"POST\"]`).",
           "type": "array",
           "items": {
             "type": "string"
           }
         }
-      ]
-    },
-    "MethodsInputStar": {
-      "type": "null"
-    },
-    "SecretRef": {
-      "description": "A reference to a secret registered in server.toml `[secrets]`.\nEither `\"NAME\"` (required) or `{ name = \"NAME\", optional = true }`.",
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "$ref": "#/$defs/SecretRefTableToml"
-        }
-      ]
-    },
-    "SecretRefTableToml": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "optional": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name"
-      ]
-    },
-    "ReplaceIn": {
-      "description": "Where in the outgoing request placeholders are replaced.",
-      "type": "string",
-      "enum": [
-        "headers",
-        "body",
-        "params"
       ]
     },
     "LimitsToml": {

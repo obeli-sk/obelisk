@@ -1,0 +1,25 @@
+## App policy. Pass this file explicitly with --app-config.
+## Set an app name before starting the server; it selects the default SQLite directory.
+# app_name = "my-app"
+
+## Registered secrets read same-named environment variables at startup.
+## They are removed from the process environment before workers start.
+# [secrets]
+# OPENAI_API_KEY = {}
+# GITHUB_TOKEN = { optional = true }
+## Exposed plaintext requires a reviewed component digest.
+# [secrets.OPENAI_API_KEY.exposed_to]
+# worker = "sha256:..."
+
+## Public environment variables available to deployments.
+# [public_env]
+# allowed = ["REGION"]
+
+## App-reviewed exec components. Use a digest array during migrations; the platform must cover each digest.
+# [allowed_exec_activities]
+# worker = "sha256:..."
+
+## Outbound HTTP requires matching entries here and in deployment.toml.
+# [[outbound_http.allowed_host]]
+# pattern = "api.example.com"
+# methods = ["POST"]

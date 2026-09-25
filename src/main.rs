@@ -25,7 +25,7 @@ use client::ClientStartup;
 use config::config_holder::ConfigHolder;
 use config::env_var::StartupEnvVars;
 use config::secret_registry::{PublicEnvToml, SecretRegistry, SecretsToml};
-use config::server::ServerConfigToml;
+use config::server::{PlatformExecActivities, ServerConfigToml};
 use directories::{BaseDirs, ProjectDirs};
 use std::future::Future;
 use std::path::PathBuf;
@@ -46,6 +46,7 @@ fn main() -> Result<(), anyhow::Error> {
     let future: CommandFuture = match command {
         Subcommand::Server(Server::Run {
             server_config,
+            app_config,
             clean_sqlite_directory,
             clean_cache,
             clean_codegen_cache,
@@ -64,6 +65,7 @@ fn main() -> Result<(), anyhow::Error> {
                 js_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
+                app_config,
                 EnvVarSecretsCleanup::Wipe,
                 RuntimeConfigAvailability::Strict,
             )?;
@@ -102,6 +104,7 @@ fn main() -> Result<(), anyhow::Error> {
 
         Subcommand::Server(Server::Verify(VerifyArgs {
             server_config,
+            app_config,
             allow_unavailable_runtime_config,
             clean_cache,
             clean_codegen_cache,
@@ -123,6 +126,7 @@ fn main() -> Result<(), anyhow::Error> {
                 js_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
+                app_config,
                 EnvVarSecretsCleanup::Noop,
                 runtime_config_availability,
             )?;
@@ -155,6 +159,7 @@ fn main() -> Result<(), anyhow::Error> {
                 clean_cache,
                 clean_codegen_cache,
                 server_config,
+                app_config,
                 deployment,
                 allow_unavailable_runtime_config,
                 suppress_type_checking_errors,
@@ -173,6 +178,7 @@ fn main() -> Result<(), anyhow::Error> {
                 js_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
+                app_config,
                 EnvVarSecretsCleanup::Noop,
                 runtime_config_availability,
             )?;
@@ -243,6 +249,7 @@ fn main() -> Result<(), anyhow::Error> {
     runtime.block_on(future)
 }
 
+#[derive(Debug)]
 struct ServerStartup {
     config_holder: ConfigHolder,
     config: ServerConfigToml,
@@ -255,6 +262,7 @@ struct ServerStartup {
 /// before the runtime starts.
 fn prepare_server_startup(
     server_config: Option<PathBuf>,
+    app_config: Option<PathBuf>,
     env_var_cleanup: EnvVarSecretsCleanup,
     runtime_config_availability: RuntimeConfigAvailability,
 ) -> anyhow::Result<ServerStartup> {
@@ -264,7 +272,8 @@ fn prepare_server_startup(
             runtime_config_availability,
         );
     }
-    let config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?;
+    let mut config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?
+        .with_app_source(app_config)?;
     // backcompat: 0.41 exposed OBELISK__API__TOKEN as api.token; remove after 0.43.
     let legacy_env = std::env::var(API_TOKEN_LEGACY).ok();
     if legacy_env.is_some() {
@@ -273,6 +282,10 @@ fn prepare_server_startup(
         unsafe { std::env::remove_var(API_TOKEN_LEGACY) };
     }
     let mut config = config_holder.load_config()?;
+    let mut app = config_holder.load_app_config()?;
+    config_holder.path_prefixes.app_name = app.effective_name()?;
+    let app_config_digest = app.digest()?;
+    tracing::info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");
     let env_vars = StartupEnvVars::capture();
     let js_runtime = if env_vars
         .lookup("OBELISK_UNSTABLE_V8")
@@ -284,6 +297,39 @@ fn prepare_server_startup(
         crate::command::server::JsRuntimeMode::BoaWasm
     };
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
+    app.resolve_env_vars(&env_vars)?;
+    match &config.platform_exec_activities {
+        PlatformExecActivities::Disabled => {
+            anyhow::ensure!(
+                app.allowed_exec_activities.is_empty(),
+                "app.toml allows exec activities, but server.toml has exec activities off"
+            );
+        }
+        PlatformExecActivities::All => eprintln!(
+            "warning: server.toml enables unrestricted platform exec activity allowance; app.toml still controls deployments"
+        ),
+        PlatformExecActivities::Allowlist(platform) => {
+            for (name, digests) in &app.allowed_exec_activities {
+                let platform_digests = platform.get(name);
+                anyhow::ensure!(
+                    digests
+                        .iter()
+                        .all(|digest| platform_digests
+                            .is_some_and(|allowed| allowed.contains(digest))),
+                    "app.toml `[allowed_exec_activities].{name}` is not covered by server.toml `[allowed_exec_activities]`"
+                );
+            }
+        }
+    }
+    config.secrets = app.secrets;
+    config.public_env = app.public_env;
+    config.allowed_exec_activities = app.allowed_exec_activities;
+    config.outbound_http = app.outbound_http;
+    config.source_path.clone_from(&config_holder.app_source);
+    config
+        .app_name
+        .clone_from(&config_holder.path_prefixes.app_name);
+    config.app_config_digest = Some(app_config_digest);
 
     let legacy_api_token = legacy_env.filter(|token| !token.is_empty()).map(|token| {
         eprintln!(
@@ -310,6 +356,48 @@ fn prepare_server_startup(
 
 pub(crate) fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("", "obelisk", "obelisk")
+}
+
+#[cfg(test)]
+mod app_policy_tests {
+    use super::*;
+
+    #[test]
+    fn platform_exec_allowlist_must_cover_app_allowlist() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = dir.path().join("server.toml");
+        let app = dir.path().join("app.toml");
+        let digest = "sha256:abababababababababababababababababababababababababababababababab";
+        std::fs::write(
+            &app,
+            format!("app_name='foo'\n[allowed_exec_activities]\nworker = '{digest}'\n"),
+        )
+        .unwrap();
+        std::fs::write(&server, "").unwrap();
+        let load = || {
+            prepare_server_startup(
+                Some(server.clone()),
+                Some(app.clone()),
+                EnvVarSecretsCleanup::Noop,
+                RuntimeConfigAvailability::AllowUnavailable,
+            )
+        };
+        const ERR_ACTIVITIES_ARE_OFF: &str =
+            "app.toml allows exec activities, but server.toml has exec activities off";
+        assert_eq!(ERR_ACTIVITIES_ARE_OFF, load().unwrap_err().to_string());
+        std::fs::write(&server, "[allowed_exec_activities]\nother = 'sha256:abababababababababababababababababababababababababababababababab'\n").unwrap();
+        assert!(load().err().unwrap().to_string().contains("not covered"));
+        std::fs::write(
+            &server,
+            format!("[allowed_exec_activities]\nworker = '{digest}'\n"),
+        )
+        .unwrap();
+        assert!(load().is_ok());
+        std::fs::write(&server, "allowed_exec_activities = false\n").unwrap();
+        assert_eq!(ERR_ACTIVITIES_ARE_OFF, load().unwrap_err().to_string());
+        std::fs::write(&server, "allowed_exec_activities = '*'\n").unwrap();
+        assert!(load().is_ok());
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd)]

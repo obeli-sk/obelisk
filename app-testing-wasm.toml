@@ -1,0 +1,14 @@
+app_name = "testing-wasm"
+
+[[outbound_http.allowed_host]]
+pattern = "*"
+methods = "*"
+
+[[outbound_http.allowed_host]]
+pattern = "httpbin.org"
+methods = "*"
+secrets = ["MY_SECRET"]
+replace_in = ["headers", "params", "body"]
+
+[secrets]
+MY_SECRET = {}

@@ -13,7 +13,7 @@ mc mb myminio/litestream-bucket
 Use the same command on an empty VM and for regular restarts:
 
 ```sh
-litestream replicate -restore-if-db-not-exists --config litestream.yml --exec 'obelisk server run'
+litestream replicate -restore-if-db-not-exists --config litestream.yml --exec 'env OBELISK_APP_NAME=litestream-demo obelisk server run'
 ```
 
 On an empty VM, Litestream restores the database from the replica before starting Obelisk. If no

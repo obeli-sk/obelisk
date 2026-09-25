@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ServerConfigurationAuditV2",
+  "type": "object",
+  "properties": {
+    "format": {
+      "$ref": "#/$defs/ServerConfigurationFormatV2"
+    },
+    "obelisk_version": {
+      "type": "string"
+    },
+    "app_config_digest": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "environment": {
+      "$ref": "#/$defs/EnvironmentAuditV2"
+    },
+    "deployment_security": {
+      "$ref": "#/$defs/DeploymentSecurityAuditV2"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "obelisk_version",
+    "environment",
+    "deployment_security"
+  ],
+  "$defs": {
+    "ServerConfigurationFormatV2": {
+      "type": "string",
+      "enum": [
+        "obelisk-server-configuration-v2"
+      ]
+    },
+    "EnvironmentAuditV2": {
+      "type": "object",
+      "properties": {
+        "public_env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "boolean"
+          }
+        },
+        "secrets": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretEnvironmentAuditV2"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "public_env",
+        "secrets"
+      ]
+    },
+    "SecretEnvironmentAuditV2": {
+      "type": "object",
+      "properties": {
+        "present": {
+          "type": "boolean"
+        },
+        "optional": {
+          "type": "boolean"
+        },
+        "exposed_to": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/AuditDigestSetV2"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "present",
+        "optional",
+        "exposed_to"
+      ]
+    },
+    "AuditDigestSetV2": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "DeploymentSecurityAuditV2": {
+      "type": "object",
+      "properties": {
+        "exec": {
+          "$ref": "#/$defs/ExecSecurityAuditV2"
+        },
+        "http": {
+          "$ref": "#/$defs/HttpSecurityAuditV2"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "exec",
+        "http"
+      ]
+    },
+    "ExecSecurityAuditV2": {
+      "type": "object",
+      "properties": {
+        "platform_mode": {
+          "$ref": "#/$defs/ExecPlatformModeAuditV2"
+        },
+        "platform_allowlist": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecAllowlistAuditV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "app_allowlist": {
+          "$ref": "#/$defs/ExecAllowlistAuditV2"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "platform_mode",
+        "app_allowlist"
+      ]
+    },
+    "ExecPlatformModeAuditV2": {
+      "type": "string",
+      "enum": [
+        "off",
+        "all",
+        "allowlist"
+      ]
+    },
+    "ExecAllowlistAuditV2": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ExecAllowlistModeAuditV2"
+        },
+        "entries": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "entries"
+      ]
+    },
+    "ExecAllowlistModeAuditV2": {
+      "type": "string",
+      "enum": [
+        "deny",
+        "allowlist"
+      ]
+    },
+    "HttpSecurityAuditV2": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "$ref": "#/$defs/HttpPolicyFormatAuditV2"
+        },
+        "server_policy_hash": {
+          "type": "string"
+        },
+        "server_policy": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostAuditV2"
+          }
+        },
+        "webui_server_policy_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "webui_server_policy": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/AllowedHostAuditV2"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "server_policy_hash",
+        "server_policy"
+      ]
+    },
+    "HttpPolicyFormatAuditV2": {
+      "type": "string",
+      "enum": [
+        "obelisk-http-policy-v1"
+      ]
+    },
+    "AllowedHostAuditV2": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string"
+        },
+        "methods": {
+          "$ref": "#/$defs/AuditMethodsV2"
+        },
+        "request_url_regex": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "replace_in": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pattern",
+        "methods",
+        "secrets",
+        "replace_in"
+      ]
+    },
+    "AuditMethodsV2": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,7 +1,7 @@
 # A few JavaScript demos to sanity-check a local server. Everything is inline, so the file
 # doubles as a readable starting point.
 #
-#   obelisk server run -s server-testing-js.toml -d deployment-testing-js-local.toml --no-auth
+#   obelisk server run -s server-testing-js.toml --app-config app-testing-js.toml -d deployment-testing-js-local.toml --no-auth
 #   obelisk execution submit --follow testing:demo/workflow.add-via-activity '[1, 2]'
 #   obelisk execution submit --follow testing:demo/workflow.my-ip '[]'
 #   curl localhost:9090/hello

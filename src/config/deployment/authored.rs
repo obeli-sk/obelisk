@@ -786,7 +786,7 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// Not used when `return_type` is result (default), since the response carries no data.
     #[serde(default = "default_max_output_bytes")]
     pub(crate) max_output_bytes: u64,
-    /// Registered secret names (from the operator-owned `server.toml` `[secrets]`
+    /// Registered secret names (from the app-owned `app.toml` `[secrets]`
     /// table) to expose to the script in the stdin JSON `secrets` object.
     #[serde(default)]
     pub(crate) exposed_secrets: Vec<SecretRef>,

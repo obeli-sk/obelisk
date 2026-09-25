@@ -1,0 +1,11 @@
+app_name = "testing-vm"
+
+[[outbound_http.allowed_host]]
+pattern = "*://*:*"
+methods = ["GET"]
+secrets = ["VM_SECRET"]
+replace_in = ["headers"]
+
+[secrets]
+# Supply this fixture secret through the VM_SECRET environment variable.
+VM_SECRET = { exposed_to = { "stdin.run" = "sha256:9997cc3a3424f2e42697574c6368451c2e994c4f03834fb521f1f188e73b64cb" } }

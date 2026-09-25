@@ -2,7 +2,7 @@
 //! globals, watchers, allocator, and telemetry. Orthogonal to the deployment manifest.
 
 use self::log::{LoggingConfig, LoggingStyle};
-use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX, PathPrefixes};
+use crate::config::config_holder::{CACHE_DIR_PREFIX, PathPrefixes};
 use crate::config::deployment::{
     AllowedHostToml, ByteSizeConfig, ConfigName, DurationConfig, DurationConfigOptional,
     InflightSemaphore, ValueOrUnlimited,
@@ -32,6 +32,12 @@ use std::time::Duration;
 pub(crate) struct ServerConfigToml {
     #[serde(skip)]
     #[schemars(skip)]
+    pub(crate) app_name: String,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) app_config_digest: Option<String>,
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) source_path: Option<PathBuf>,
     #[cfg(feature = "tokio-console")]
     #[serde(skip)]
@@ -39,24 +45,24 @@ pub(crate) struct ServerConfigToml {
     pub(crate) tokio_console_enabled: bool,
     #[serde(default, rename = "obelisk-version")]
     pub(crate) obelisk_version: Option<String>,
-    /// Operator-owned secret registry. Maps a logical secret name to a source
-    /// (currently only `{ env = "VAR" }`). Env-backed secrets are resolved and
-    /// their source variables wiped from the process environment at startup, before
-    /// the tokio runtime starts. Deployments reference these names in
-    /// component `exposed_secrets` and
-    /// `allowed_host[].secrets`; they cannot interpolate them.
-    #[serde(default)]
+    /// App-owned secret registry supplied after app.toml is loaded.
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) secrets: SecretsToml,
-    /// Operator-owned allowlist of process environment variables that deployments may read.
-    #[serde(default)]
+    /// App-owned public environment allowance supplied after app.toml is loaded.
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) public_env: PublicEnvToml,
-    /// Permit deployments to run host processes through `activity_exec`, keyed by
-    /// component name and the accepted secret exposure digest set.
-    #[serde(default)]
+    /// App-reviewed exec components used by the runtime after startup validation.
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) allowed_exec_activities: AllowExecActivities,
-    /// Operator-owned allowlist for component-originated HTTP requests.
-    /// An empty allowlist denies every outbound request.
-    #[serde(default)]
+    /// Platform exec gate: `false` (default), `"*"`, or a reviewed component/digest set.
+    #[serde(default, rename = "allowed_exec_activities")]
+    pub(crate) platform_exec_activities: PlatformExecActivities,
+    /// App-owned outbound HTTP allowance supplied after app.toml is loaded.
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) outbound_http: OutboundHttpToml,
     #[serde(default)]
     pub(crate) limits: LimitsToml,
@@ -140,12 +146,6 @@ impl ServerConfigToml {
         }
         if let Some(directory) = &mut self.wasm_global_config.codegen_cache.directory {
             *directory = path_prefixes.resolve_server_path(directory, env_vars)?;
-        }
-        for allowed_host in &mut self.outbound_http.allowed_hosts {
-            allowed_host.pattern = interpolate_startup_env_vars(&allowed_host.pattern, env_vars)?;
-            if let Some(regex) = &mut allowed_host.request_url_regex {
-                *regex = interpolate_startup_env_vars(regex, env_vars)?;
-            }
         }
         Ok(())
     }
@@ -450,7 +450,7 @@ const fn default_max_transport_message_size_bytes() -> u64 {
     crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES as u64
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OutboundHttpToml {
     /// Global outbound HTTP entries use the same grammar as deployment
@@ -472,6 +472,75 @@ impl Default for MaxDeploymentFileBytes {
 
 /// Exec activity policy: component name -> reviewed secret exposure digests.
 pub(crate) type AllowExecActivities = BTreeMap<String, SecretExposureDigests>;
+
+#[derive(Debug, Default, Clone)]
+pub(crate) enum PlatformExecActivities {
+    #[default]
+    Disabled,
+    All,
+    Allowlist(AllowExecActivities),
+}
+
+impl<'de> Deserialize<'de> for PlatformExecActivities {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = PlatformExecActivities;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("false, \"*\", or a component/digest allowlist")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Self::Value, E> {
+                if value {
+                    Err(E::custom("use `\"*\"` to allow all exec activities"))
+                } else {
+                    Ok(PlatformExecActivities::Disabled)
+                }
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                if value == "*" {
+                    Ok(PlatformExecActivities::All)
+                } else {
+                    Err(E::custom(format!(
+                        "invalid exec allowance `{value}`; expected `\"*\"`"
+                    )))
+                }
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> Result<Self::Value, M::Error> {
+                let mut entries = AllowExecActivities::new();
+                while let Some((name, digests)) = map.next_entry()? {
+                    entries.insert(name, digests);
+                }
+                Ok(PlatformExecActivities::Allowlist(entries))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl JsonSchema for PlatformExecActivities {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "PlatformExecActivities".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "oneOf": [
+                { "const": false },
+                { "const": "*" },
+                generator.subschema_for::<AllowExecActivities>()
+            ]
+        })
+    }
+}
 
 pub(crate) fn audit_exec_activities(entries: &AllowExecActivities) -> serde_json::Value {
     serde_json::json!({
@@ -631,13 +700,12 @@ impl SqliteConfigToml {
         path_prefixes: &PathPrefixes,
         secret_registry: &SecretRegistry,
     ) -> Result<PathBuf, anyhow::Error> {
-        let sqlite_file = self.directory.as_deref().unwrap_or_else(|| {
-            if path_prefixes.project_dirs.is_some() {
-                DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS
-            } else {
-                DEFAULT_SQLITE_DIR
-            }
-        });
+        let default_dir = if path_prefixes.project_dirs.is_some() {
+            format!("${{DATA_DIR}}/apps/{}/sqlite", path_prefixes.app_name)
+        } else {
+            format!("apps/{}/sqlite", path_prefixes.app_name)
+        };
+        let sqlite_file = self.directory.as_deref().unwrap_or(&default_dir);
         path_prefixes
             .server_config_replace_path_prefix_mkdir(sqlite_file, secret_registry)
             .await
@@ -1275,9 +1343,6 @@ pub(crate) struct HttpServer {
 
 // Default on-disk locations and size limits for the server's data/cache directories.
 
-const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
-    const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
-const DEFAULT_SQLITE_DIR: &str = "obelisk-sqlite";
 pub(crate) const SQLITE_FILE_NAME: &str = "obelisk.sqlite";
 const DEFAULT_WASM_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}wasm", CACHE_DIR_PREFIX);
@@ -1474,11 +1539,11 @@ mod tests {
         use super::*;
 
         #[test]
-        fn server_allowlist_uses_deployment_allowed_host_shape() {
-            let config: ServerConfigToml = toml::from_str(
+        fn app_allowlist_uses_deployment_allowed_host_shape() {
+            let config: crate::config::app::AppConfigToml = toml::from_str(
                 r#"
                 [secrets]
-                API_KEY = { env = "API_KEY_SOURCE" }
+                API_KEY = {}
 
                 [[outbound_http.allowed_host]]
                 pattern = "api.example.com"
@@ -1501,8 +1566,8 @@ mod tests {
         }
 
         #[test]
-        fn omitted_server_allowlist_is_empty() {
-            let config: ServerConfigToml = toml::from_str("").unwrap();
+        fn omitted_app_allowlist_is_empty() {
+            let config: crate::config::app::AppConfigToml = toml::from_str("").unwrap();
             assert!(config.outbound_http.allowed_hosts.is_empty());
         }
     }
@@ -1518,6 +1583,46 @@ mod tests {
 
         const DIGEST: &str =
             "sha256:abababababababababababababababababababababababababababababababab";
+
+        #[test]
+        fn platform_gate_accepts_false_wildcard_or_reviewed_entries() {
+            let default: ServerConfigToml = toml::from_str("").unwrap();
+            assert!(matches!(
+                default.platform_exec_activities,
+                PlatformExecActivities::Disabled
+            ));
+            let disabled: ServerConfigToml =
+                toml::from_str("allowed_exec_activities = false").unwrap();
+            assert!(matches!(
+                disabled.platform_exec_activities,
+                PlatformExecActivities::Disabled
+            ));
+            let all: ServerConfigToml = toml::from_str("allowed_exec_activities = '*' ").unwrap();
+            assert!(matches!(
+                all.platform_exec_activities,
+                PlatformExecActivities::All
+            ));
+            let reviewed: ServerConfigToml =
+                toml::from_str(&format!("[allowed_exec_activities]\nworker = '{DIGEST}'")).unwrap();
+            assert!(
+                matches!(reviewed.platform_exec_activities, PlatformExecActivities::Allowlist(ref entries) if entries.contains_key("worker"))
+            );
+            let next_digest = DIGEST.replace("ab", "cd");
+            let allowlist_toml =
+                format!("[allowed_exec_activities]\nworker = ['{DIGEST}', '{next_digest}']");
+            let reviewed: ServerConfigToml = toml::from_str(&allowlist_toml).unwrap();
+            assert!(
+                matches!(reviewed.platform_exec_activities, PlatformExecActivities::Allowlist(ref entries) if entries["worker"].iter().count() == 2)
+            );
+            let app_toml = format!(
+                "{allowlist_toml}\n[secrets]\nTOKEN = {{ exposed_to = {{ worker = ['{DIGEST}', '{next_digest}'] }} }}"
+            );
+            let app: crate::config::app::AppConfigToml = toml::from_str(&app_toml).unwrap();
+            assert_eq!(app.allowed_exec_activities["worker"].iter().count(), 2);
+            assert_eq!(app.secrets["TOKEN"].exposed_to["worker"].iter().count(), 2);
+            assert!(toml::from_str::<ServerConfigToml>("allowed_exec_activities = true").is_err());
+            assert!(toml::from_str::<ServerConfigToml>("allowed_exec_activities = 'all'").is_err());
+        }
 
         #[test]
         fn deserialize_scalar_or_list_map() {

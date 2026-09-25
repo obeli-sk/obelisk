@@ -4,7 +4,7 @@ socket:
   permissions: 0600
 
 dbs:
-  - path: "~/.local/share/obelisk/obelisk-sqlite/obelisk.sqlite"
+  - path: "~/.local/share/obelisk/apps/litestream-demo/sqlite/obelisk.sqlite"
     replica:
       url: "s3://litestream-bucket.127.0.0.1:9000/litestream/obelisk"
       access-key-id: "minioadmin"

@@ -564,9 +564,12 @@ async fn authorize_test_deployment(
         crate::command::server::generate_secret_config_digests(deployment_path, None, registry)
             .await
             .unwrap();
-    crate::command::server::fix_server_secret_config_digests(server_path, &outputs)
-        .await
-        .unwrap();
+    crate::command::server::fix_server_secret_config_digests(
+        &server_path.with_file_name("app.toml"),
+        &outputs,
+    )
+    .await
+    .unwrap();
 }
 
 struct TestServer {
@@ -772,8 +775,16 @@ impl TestServer {
 
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
-        let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(server_path)).unwrap();
-        let config = config_holder.load_config().unwrap();
+        let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(server_path.clone()))
+            .unwrap()
+            .with_app_source(Some(server_path.with_file_name("app.toml")))
+            .unwrap();
+        let mut config = config_holder.load_config().unwrap();
+        let app = config_holder.load_app_config().unwrap();
+        config.secrets = app.secrets;
+        config.public_env = app.public_env;
+        config.allowed_exec_activities = app.allowed_exec_activities;
+        config.outbound_http = app.outbound_http;
         let secret_registry = std::sync::Arc::new(
             crate::config::secret_registry::SecretRegistry::from_test_values([
                 (

@@ -1,4 +1,4 @@
-//! Operator-owned secret registry built from `server.toml`.
+//! App-owned secret registry built from `app.toml`.
 
 use crate::command::server::RuntimeConfigAvailability;
 use crate::config::env_var::StartupEnvVars;
@@ -17,9 +17,23 @@ use worker_common::SecretResolver;
 pub(crate) const API_TOKEN: &str = "OBELISK_API_TOKEN";
 pub(crate) const API_TOKEN_LEGACY: &str = "OBELISK__API__TOKEN";
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
-#[schemars(with = "String")]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct SecretExposureDigests(Vec<SecretExposureDigest>);
+
+impl JsonSchema for SecretExposureDigests {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SecretExposureDigests".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "anyOf": [
+                { "type": "string" },
+                { "type": "array", "items": { "type": "string" } }
+            ]
+        })
+    }
+}
 
 impl SecretExposureDigests {
     #[cfg(test)]
@@ -38,25 +52,40 @@ impl SecretExposureDigests {
 
 impl<'de> Deserialize<'de> for SecretExposureDigests {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum OneOrMany {
-            One(SecretExposureDigest),
-            Many(Vec<SecretExposureDigest>),
-        }
-        let values = match OneOrMany::deserialize(deserializer)? {
-            OneOrMany::One(value) => vec![value],
-            OneOrMany::Many(values) => values,
-        };
-        let mut seen = HashSet::new();
-        for value in &values {
-            if !seen.insert(value.clone()) {
-                return Err(serde::de::Error::custom(format!(
-                    "duplicate secret exposure digest `{value}`"
-                )));
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = SecretExposureDigests;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a secret exposure digest or an array of digests")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(SecretExposureDigests(vec![
+                    value.parse().map_err(E::custom)?,
+                ]))
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut sequence: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut values = Vec::new();
+                let mut seen = HashSet::new();
+                while let Some(value) = sequence.next_element::<SecretExposureDigest>()? {
+                    if !seen.insert(value.clone()) {
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate secret exposure digest `{value}`"
+                        )));
+                    }
+                    values.push(value);
+                }
+                Ok(SecretExposureDigests(values))
             }
         }
-        Ok(Self(values))
+
+        deserializer.deserialize_any(Visitor)
     }
 }
 
@@ -73,7 +102,9 @@ impl Serialize for SecretExposureDigests {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SecretConfigToml {
-    /// Read the secret from a process environment variable at startup.
+    /// Internal source override used by older tests; app.toml always uses the secret name.
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) env: String,
     /// Allow `env` to be unset; the secret is then absent and only optional references accept it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -96,7 +127,7 @@ pub(crate) struct PublicEnvToml {
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PublicEnvViolation {
     #[error(
-        "environment variable `{0}` is not declared in server.toml `[public_env].allowed`; add it, or remove the deployment reference:\n\n[public_env]\nallowed = [\"{0}\"]"
+        "environment variable `{0}` is not declared in app.toml `[public_env].allowed`; add it, or remove the deployment reference:\n\n[public_env]\nallowed = [\"{0}\"]"
     )]
     Undeclared(String),
     #[error(
@@ -292,6 +323,11 @@ impl SecretRegistry {
                 optional,
                 exposed_to,
             } = config;
+            let env = if env.is_empty() {
+                logical_name.clone()
+            } else {
+                env
+            };
             let present = env_vars.lookup(&env).is_some()
                 || was_legacy_token_wiped.is_some_and(|_| env == API_TOKEN_LEGACY);
             secret_audit.insert(

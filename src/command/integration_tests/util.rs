@@ -42,6 +42,24 @@ methods = "*"
     );
     let server_path = tmp_dir.path().join("server.toml");
     let deployment_path = tmp_dir.path().join("deployment.toml");
-    std::fs::write(&server_path, server_contents).unwrap();
+    let mut server_doc = server_contents.parse::<toml_edit::DocumentMut>().unwrap();
+    let mut app_doc = toml_edit::DocumentMut::new();
+    for key in ["public_env", "secrets", "outbound_http"] {
+        if let Some(item) = server_doc.as_table_mut().remove(key) {
+            app_doc.as_table_mut().insert(key, item);
+        }
+    }
+    if let Some(secrets) = app_doc
+        .get_mut("secrets")
+        .and_then(toml_edit::Item::as_table_mut)
+    {
+        for (_, secret) in secrets.iter_mut() {
+            if let Some(inline) = secret.as_inline_table_mut() {
+                inline.remove("env");
+            }
+        }
+    }
+    std::fs::write(&server_path, server_doc.to_string()).unwrap();
+    std::fs::write(tmp_dir.path().join("app.toml"), app_doc.to_string()).unwrap();
     (tmp_dir, server_path, deployment_path)
 }

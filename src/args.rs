@@ -611,7 +611,7 @@ pub(crate) enum Generate {
         /// Output as JSON instead of human-readable text.
         #[arg(short, long)]
         json: bool,
-        /// Generate a single-party config that allows all exec activities and outbound HTTP.
+        /// Generate a single-party server config that enables exec activities.
         #[arg(long)]
         trusted: bool,
         /// Filename to write the TOML to, defaults to <stdout>.
@@ -619,6 +619,29 @@ pub(crate) enum Generate {
         /// Overwrite existing file.
         #[arg(long, short)]
         force: bool,
+    },
+    /// Generate a default app.toml.
+    AppConfig {
+        /// Output as JSON instead of human-readable text.
+        #[arg(short, long)]
+        json: bool,
+        /// Allow outbound HTTP from any component with a matching deployment rule.
+        #[arg(long)]
+        trusted: bool,
+        /// Filename to write the TOML to, defaults to stdout.
+        output: Option<PathBuf>,
+        /// Overwrite existing file.
+        #[arg(long, short)]
+        force: bool,
+    },
+    /// Split policy fields from an existing server.toml into app.toml.
+    SplitConfig {
+        /// Existing server.toml to update.
+        #[arg(long)]
+        server_config: PathBuf,
+        /// Output app.toml, defaulting to a sibling of server.toml.
+        #[arg(short, long)]
+        app_config: Option<PathBuf>,
     },
     /// Generate a default deployment.toml.
     Deployment {
@@ -691,6 +714,9 @@ pub(crate) enum Server {
         /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
         #[arg(short, long)]
         server_config: Option<PathBuf>,
+        /// Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`.
+        #[arg(short, long)]
+        app_config: Option<PathBuf>,
         /// Path to the deployment TOML file. If provided, the deployment is inserted and activated on startup,
         /// overriding any existing Enqueued or Active deployment in the database.
         #[arg(short, long, conflicts_with = "empty")]
@@ -741,6 +767,9 @@ pub(crate) struct VerifyArgs {
     /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
     #[arg(short, long)]
     pub(crate) server_config: Option<PathBuf>,
+    /// Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`.
+    #[arg(short, long)]
+    pub(crate) app_config: Option<PathBuf>,
     /// Path to the deployment TOML file. If omitted, the database's Enqueued deployment is used,
     /// falling back to the Active deployment. Errors if neither is found.
     #[arg(short, long)]
@@ -755,7 +784,7 @@ pub(crate) struct VerifyArgs {
     /// since with no database there is no active deployment to fall back to.
     #[arg(long, requires = "deployment")]
     pub(crate) skip_db: bool,
-    /// Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds.
+    /// Clean generated deployment metadata and, when `--app-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds.
     #[arg(long, requires = "deployment")]
     pub(crate) fix: bool,
 }
@@ -772,6 +801,9 @@ pub(crate) struct DeploymentVerifyArgs {
     /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
     #[arg(short, long)]
     pub(crate) server_config: Option<PathBuf>,
+    /// Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`.
+    #[arg(short, long)]
+    pub(crate) app_config: Option<PathBuf>,
     /// Path to the local deployment TOML file.
     #[arg(short, long)]
     pub(crate) deployment: PathBuf,
@@ -781,7 +813,7 @@ pub(crate) struct DeploymentVerifyArgs {
     /// Do not fail when a component's imports/exports fail type checking against the deployment.
     #[arg(long)]
     pub(crate) suppress_type_checking_errors: bool,
-    /// Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds.
+    /// Clean generated deployment metadata and, when `--app-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds.
     #[arg(long)]
     pub(crate) fix: bool,
 }

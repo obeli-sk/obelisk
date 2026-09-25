@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Configuration now mirrors three responsibilities. `server.toml` belongs to the platform admin and
+sets host limits, listeners, webhook servers, and the ceiling for exec activities. `app.toml`
+belongs to the app admin and records reviewed allowances for secrets, public environment values,
+outbound HTTP, and exec activities. `deployment.toml` belongs to the deployment admin and describes
+the components to run; activation requires the deployment to fit the current app and platform
+policy. Existing single-file configurations must be split before starting the server.
+
 ### Added
 
 - *(activity-js, webhook-js, workflow-js)* Added experimental native V8 runtimes, enabled for all
@@ -27,9 +34,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key. A required reference to an absent secret fails deployment verification, and references
   within one component must agree on optionality. `--fix` scaffolds `optional = true` when every
   reference is optional.
+- *(config)* Added app identity and a canonical `app_config_digest` for the authored app policy.
+  `OBELISK_APP_NAME` overrides the configured name. Server starts record the app digest and a
+  resolved security audit; apps use name-keyed default SQLite directories.
 
 ### Changed
 
+- *(config)* **Breaking:** app-owned secret registrations, public environment allowances, outbound
+  HTTP policy, exec activity allowances, and `app_name` move from `server.toml` to `app.toml`.
+  Pass `--app-config` with `server run`, `server verify`, or `deployment verify`; omitting it uses
+  default app policy without discovering a file when `OBELISK_APP_NAME` is set. Use
+  `obelisk generate split-config --server-config server.toml` to split an existing configuration.
+  Registered secrets now read same-named environment variables. `OBELISK__...` overrides apply
+  only to `server.toml`.
+- *(config)* **Breaking:** server startup now requires `app_name` in `app.toml` or
+  `OBELISK_APP_NAME`. Omitting it fails before opening a database. The implicit `default` name and
+  its `${DATA_DIR}/obelisk-sqlite` directory are gone; the default SQLite directory is
+  `${DATA_DIR}/apps/${APP_NAME}/sqlite` for every app. A migration guide will cover renaming the
+  existing SQLite directory.
+- *(server)* **Breaking:** platform exec activity policy uses one `allowed_exec_activities` field:
+  omitted or `false` disables exec, `"*"` permits app-approved exec with a startup warning, and a
+  component/digest table limits the platform grant. App and server tables accept digest arrays for
+  migrations; `true` is invalid.
 - *(cli)* **Breaking:** renamed `obelisk deployment get` to `obelisk deployment pull`.
 
 - *(server)* **Breaking:** `[wasm].global_executor_instance_limiter` and

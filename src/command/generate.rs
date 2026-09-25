@@ -6,7 +6,7 @@ use crate::command::server::{
 };
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{
-    ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, server_config_template,
+    ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, app_config_template, server_config_template,
 };
 use crate::config::deployment::OCI_SCHEMA_PREFIX;
 use crate::config::deployment::{prepare_deployment_manifest, resolve_manifest};
@@ -20,7 +20,11 @@ use concepts::{ComponentType, ExecutionId, PackageIfcFns, PkgFqn, prefixed_ulid:
 use directories::{BaseDirs, ProjectDirs};
 use hashbrown::{HashMap, HashSet};
 use serde::Serialize;
-use std::{borrow::Cow, path::PathBuf, sync::Arc};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::watch;
@@ -96,6 +100,30 @@ impl Generate {
                 }
                 Ok(())
             }
+            Generate::AppConfig {
+                json,
+                trusted,
+                output,
+                force,
+            } => {
+                if let Some(output) = output {
+                    let path = ConfigHolder::generate_app_config(output, trusted, force).await?;
+                    print_generated_path_statuses(
+                        &[GeneratedPathStatus {
+                            path,
+                            status: "generated",
+                        }],
+                        json,
+                    )?;
+                } else {
+                    print!("{}", app_config_template(trusted));
+                }
+                Ok(())
+            }
+            Generate::SplitConfig {
+                server_config,
+                app_config,
+            } => split_config(&server_config, app_config.as_deref()).await,
             Generate::Deployment {
                 json,
                 output,
@@ -236,6 +264,80 @@ impl Generate {
     }
 }
 
+async fn split_config(server_path: &Path, app_path: Option<&Path>) -> anyhow::Result<()> {
+    let app_path = app_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| server_path.with_file_name("app.toml"));
+    anyhow::ensure!(
+        server_path != app_path,
+        "server and app config paths must differ"
+    );
+    anyhow::ensure!(
+        !app_path.exists(),
+        "app config already exists at {}; choose another --app-config path",
+        app_path.display()
+    );
+    let source = tokio::fs::read_to_string(server_path)
+        .await
+        .with_context(|| format!("cannot read {}", server_path.display()))?;
+    let mut server = source
+        .parse::<DocumentMut>()
+        .context("cannot parse server.toml")?;
+    let mut app = DocumentMut::new();
+    for key in ["app_name", "secrets", "public_env", "outbound_http"] {
+        if let Some(item) = server.as_table_mut().remove(key) {
+            app.as_table_mut().insert(key, item);
+        }
+    }
+    if let Some(item) = server
+        .get("allowed_exec_activities")
+        .filter(|item| item.as_table_like().is_some())
+    {
+        app.as_table_mut()
+            .insert("allowed_exec_activities", item.clone());
+    }
+    if let Some(secrets) = app.get_mut("secrets").and_then(Item::as_table_mut) {
+        for (name, secret) in secrets.iter_mut() {
+            if let Some(table) = secret.as_inline_table_mut() {
+                if let Some(env) = table.get("env").and_then(toml_edit::Value::as_str) {
+                    anyhow::ensure!(
+                        name == env,
+                        "secret `{name}` uses env alias `{env}`; rename the environment variable to `{name}` before splitting"
+                    );
+                }
+                table.remove("env");
+            } else if let Some(table) = secret.as_table_mut() {
+                if let Some(env) = table.get("env").and_then(Item::as_str) {
+                    anyhow::ensure!(
+                        name == env,
+                        "secret `{name}` uses env alias `{env}`; rename the environment variable to `{name}` before splitting"
+                    );
+                }
+                table.remove("env");
+            }
+        }
+    }
+    let app_text = app.to_string();
+    let server_text = server.to_string();
+    let _: crate::config::app::AppConfigToml =
+        toml::from_str(&app_text).context("split app.toml is invalid")?;
+    let _: ServerConfigToml =
+        toml::from_str(&server_text).context("split server.toml is invalid")?;
+    tokio::fs::write(&app_path, app_text)
+        .await
+        .with_context(|| format!("cannot write {}", app_path.display()))?;
+    tokio::fs::write(server_path, server_text)
+        .await
+        .with_context(|| format!("cannot write {}", server_path.display()))?;
+    println!(
+        "Split {} into {} and {}",
+        server_path.display(),
+        server_path.display(),
+        app_path.display()
+    );
+    Ok(())
+}
+
 fn add_token_hash(
     server_config_contents: &str,
     hash: &concepts::component_id::Digest,
@@ -307,6 +409,21 @@ fn write_schema<T: schemars::JsonSchema>(output: Option<PathBuf>) -> Result<(), 
 #[cfg(test)]
 fn generate_server_config_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     write_schema::<crate::config::server::ServerConfigToml>(output)
+}
+
+#[cfg(test)]
+fn generate_app_config_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+    write_schema::<crate::config::app::AppConfigToml>(output)
+}
+
+#[cfg(test)]
+fn generate_app_policy_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+    write_schema::<crate::config::app::AppPolicyV1>(output)
+}
+
+#[cfg(test)]
+fn generate_server_audit_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+    write_schema::<crate::command::server::ServerConfigurationAuditV2>(output)
 }
 
 #[cfg(test)]
@@ -1008,13 +1125,39 @@ fn has_obelisk_wit_header(content: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        OBELISK_WIT_HEADER, add_token_hash, generate_authored_schema, generate_cli_schema,
+        OBELISK_WIT_HEADER, add_token_hash, generate_app_config_schema, generate_app_policy_schema,
+        generate_authored_schema, generate_cli_schema,
         generate_component_metadata_annotation_schema, generate_db_schema, generate_openapi_schema,
-        generate_server_config_schema, write_wit_deps,
+        generate_server_audit_schema, generate_server_config_schema, split_config, write_wit_deps,
     };
     use concepts::PkgFqn;
     use hashbrown::HashMap;
     use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn split_config_moves_policy_and_rejects_secret_aliases() {
+        let dir = tempfile::tempdir().unwrap();
+        let server_path = dir.path().join("server.toml");
+        let app_path = dir.path().join("app.toml");
+        std::fs::write(
+            &server_path,
+            "api.enabled = false\n[secrets]\nTOKEN = { env = 'OTHER' }\n",
+        )
+        .unwrap();
+        let err = split_config(&server_path, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("env alias"));
+        assert!(!app_path.exists());
+        std::fs::write(&server_path, "api.enabled = false\n[secrets]\nTOKEN = { env = 'TOKEN' }\n[public_env]\nallowed = ['REGION']\n").unwrap();
+        split_config(&server_path, None).await.unwrap();
+        let server = std::fs::read_to_string(&server_path).unwrap();
+        let app = std::fs::read_to_string(&app_path).unwrap();
+        assert!(!server.contains("[secrets]"));
+        assert!(app.contains("TOKEN = {}"));
+        let _: crate::config::app::AppConfigToml = toml::from_str(&app).unwrap();
+    }
 
     #[tokio::test]
     async fn write_wit_deps_prunes_only_obsolete_generated_wits() {
@@ -1073,6 +1216,13 @@ mod tests {
     fn update_toml_schemas() {
         generate_server_config_schema(Some(PathBuf::from("assets/schemas/toml/server.json")))
             .unwrap();
+        generate_app_config_schema(Some(PathBuf::from("assets/schemas/toml/app.json"))).unwrap();
+        generate_app_policy_schema(Some(PathBuf::from("assets/schemas/app-config-v1.json")))
+            .unwrap();
+        generate_server_audit_schema(Some(PathBuf::from(
+            "assets/schemas/server-configuration-v2.json",
+        )))
+        .unwrap();
         generate_authored_schema(Some(PathBuf::from("assets/schemas/toml/authored.json"))).unwrap();
     }
 
