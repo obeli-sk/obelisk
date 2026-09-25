@@ -1188,6 +1188,16 @@
       "about": "Generate configuration files and WIT artifacts",
       "subcommands": [
         {
+          "name": "new",
+          "about": "Create a JS app in a new NAME directory, or in the current directory if unnamed",
+          "positionals": [
+            {
+              "name": "name",
+              "help": "New directory and app name; defaults to the current directory with a derived slug"
+            }
+          ]
+        },
+        {
           "name": "secret-config-digest",
           "about": "Calculate reviewed configuration digests for exec and secret-exposing VM activities",
           "options": [
@@ -1331,11 +1341,6 @@
           "about": "Generate a default server.toml",
           "options": [
             {
-              "name": "--json",
-              "short": "j",
-              "help": "Output as JSON instead of human-readable text"
-            },
-            {
               "name": "--trusted",
               "help": "Generate a single-party server config that enables exec activities"
             },
@@ -1359,11 +1364,6 @@
           "name": "app-config",
           "about": "Generate a default app.toml",
           "options": [
-            {
-              "name": "--json",
-              "short": "j",
-              "help": "Output as JSON instead of human-readable text"
-            },
             {
               "name": "--trusted",
               "help": "Allow outbound HTTP from any component with a matching deployment rule"
@@ -1410,11 +1410,6 @@
           "name": "deployment",
           "about": "Generate a default deployment.toml",
           "options": [
-            {
-              "name": "--json",
-              "short": "j",
-              "help": "Output as JSON instead of human-readable text"
-            },
             {
               "name": "--force",
               "short": "f",
