@@ -2928,7 +2928,7 @@ pub(crate) enum SubmitDeploymentError {
     #[display("deployment package validation failed")]
     Package(SubmitPackageError),
     #[display("deployment references missing server runtime configuration")]
-    MissingRuntimeConfig(config_prepass::MissingRuntimeConfigError),
+    MissingRuntimeConfig(Box<config_prepass::MissingRuntimeConfigError>),
     #[display("deployment processing failed")]
     Other(anyhow::Error),
 }
@@ -3400,7 +3400,7 @@ pub(crate) enum SwitchError {
     /// The requested deployment ID does not exist.
     NotFound,
     /// Public environment variables or secrets required by the deployment are undeclared.
-    MissingRuntimeConfig(MissingRuntimeConfigError),
+    MissingRuntimeConfig(Box<MissingRuntimeConfigError>),
     /// Any other failure (verification, compilation, DB write, etc.).
     Other(anyhow::Error),
 }

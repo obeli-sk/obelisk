@@ -1961,7 +1961,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 return Err(submit_package_status(&pkg));
             }
             Err(server::SubmitDeploymentError::MissingRuntimeConfig(missing)) => {
-                return Err(missing_runtime_config_status(missing));
+                return Err(missing_runtime_config_status(*missing));
             }
         };
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));

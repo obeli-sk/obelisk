@@ -195,7 +195,7 @@ pub(super) struct UncoveredOutboundHostsError(String);
 #[derive(Debug, thiserror::Error)]
 pub(super) enum PreflightError {
     #[error(transparent)]
-    MissingRuntimeConfig(#[from] MissingRuntimeConfigError),
+    MissingRuntimeConfig(#[from] Box<MissingRuntimeConfigError>),
     #[error(transparent)]
     MissingSecretReplacements(#[from] MissingSecretReplacementsError),
     #[error(transparent)]
@@ -575,7 +575,7 @@ pub(super) fn preflight_runtime_config(
     deployment: Option<&DeploymentResolved>,
     secret_registry: &SecretRegistry,
     availability: RuntimeConfigAvailability,
-) -> Result<(), MissingRuntimeConfigError> {
+) -> Result<(), Box<MissingRuntimeConfigError>> {
     let mut public_env = BTreeSet::new();
     let mut required_public_env = BTreeSet::new();
     let mut secrets = SecretFindings::default();
@@ -733,7 +733,7 @@ pub(super) fn report_missing_runtime_config(
     public_env: &BTreeSet<String>,
     secrets: &SecretFindings,
     availability: RuntimeConfigAvailability,
-) -> Result<(), MissingRuntimeConfigError> {
+) -> Result<(), Box<MissingRuntimeConfigError>> {
     report_missing_runtime_config_with_required(
         public_env,
         &BTreeSet::new(),
@@ -749,7 +749,7 @@ fn report_missing_runtime_config_with_required(
     required_public_env: &BTreeSet<String>,
     secrets: &SecretFindings,
     availability: RuntimeConfigAvailability,
-) -> Result<(), MissingRuntimeConfigError> {
+) -> Result<(), Box<MissingRuntimeConfigError>> {
     let error = MissingRuntimeConfigError::new(
         public_env,
         optional_public_env,
@@ -766,7 +766,7 @@ fn report_missing_runtime_config_with_required(
         );
         Ok(())
     } else {
-        Err(error)
+        Err(Box::new(error))
     }
 }
 
