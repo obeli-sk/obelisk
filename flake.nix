@@ -30,6 +30,22 @@
             inherit system overlays;
           };
 
+          rustyV8Archive =
+            let
+              version = "150.4.0";
+              archives = {
+                x86_64-linux = { target = "x86_64-unknown-linux-gnu"; hash = "sha256-9IdiyhDR8fxgWkQcWuQw7Izh6egPFNePvELLh4wwtHY="; };
+                aarch64-linux = { target = "aarch64-unknown-linux-gnu"; hash = "sha256-U54oOBWjlqV5bzKFi0LlF7hY66rqqtBdAykO6MhkpSc="; };
+                x86_64-darwin = { target = "x86_64-apple-darwin"; hash = "sha256-p1AnH+xrIRRX7Qpc99LqsZJLJlYhqC2oarlZ1v8II+Q="; };
+                aarch64-darwin = { target = "aarch64-apple-darwin"; hash = "sha256-Wu/9jVoMG3msHXCvg9WxkJllX9nGRaeU3EPxAfd5g4w="; };
+              };
+              archive = archives.${system};
+            in
+            pkgs.fetchurl {
+              url = "https://github.com/denoland/rusty_v8/releases/download/v${version}/librusty_v8_simdutf_release_${archive.target}.a.gz";
+              inherit (archive) hash;
+            };
+
           # Fixed-output derivation that pre-fetches the four pinned operator-owned WASM
           # assets (three JS runtimes + web UI) referenced from `crates/embedded-assets/*version*.txt`,
           # so the `embed-assets` build.rs can read them offline inside the Nix sandbox.
@@ -222,8 +238,11 @@
               embedAssetsEnv = pkgs.lib.optionalAttrs embedAssets {
                 OBELISK_EMBED_ASSETS_DIR = "${embeddedAssets}";
               };
+              nativeV8ArchiveEnv = pkgs.lib.optionalAttrs (customTarget == null) {
+                RUSTY_V8_ARCHIVE = "${rustyV8Archive}";
+              };
             in
-            pkgs.rustPlatform.buildRustPackage (commonArgs // zigbuildArgs // embedAssetsEnv);
+            pkgs.rustPlatform.buildRustPackage (commonArgs // zigbuildArgs // embedAssetsEnv // nativeV8ArchiveEnv);
 
         in
         {
