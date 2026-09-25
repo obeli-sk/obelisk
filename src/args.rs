@@ -546,6 +546,11 @@ pub(crate) enum Deployment {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Generate {
+    /// Create a JS app in a new NAME directory, or in the current directory if unnamed.
+    New {
+        /// New directory and app name; defaults to the current directory with a derived slug.
+        name: Option<String>,
+    },
     /// Calculate reviewed configuration digests for exec and secret-exposing VM activities.
     SecretConfigDigest {
         /// Path to the deployment TOML file.
@@ -608,9 +613,6 @@ pub(crate) enum Generate {
     },
     /// Generate a default server.toml.
     ServerConfig {
-        /// Output as JSON instead of human-readable text.
-        #[arg(short, long)]
-        json: bool,
         /// Generate a single-party server config that enables exec activities.
         #[arg(long)]
         trusted: bool,
@@ -622,9 +624,6 @@ pub(crate) enum Generate {
     },
     /// Generate a default app.toml.
     AppConfig {
-        /// Output as JSON instead of human-readable text.
-        #[arg(short, long)]
-        json: bool,
         /// Allow outbound HTTP from any component with a matching deployment rule.
         #[arg(long)]
         trusted: bool,
@@ -645,9 +644,6 @@ pub(crate) enum Generate {
     },
     /// Generate a default deployment.toml.
     Deployment {
-        /// Output as JSON instead of human-readable text.
-        #[arg(short, long)]
-        json: bool,
         /// Filename to write the TOML to, defaults to <stdout>.
         output: Option<PathBuf>,
         /// Overwrite existing file.

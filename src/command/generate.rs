@@ -5,6 +5,7 @@ use crate::command::server::{
     deployment_compile_link, deployment_verify_config, prepare_dirs, server_verify,
 };
 use crate::command::termination_notifier::termination_notifier;
+use crate::config::app::validate_app_name;
 use crate::config::config_holder::{
     ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, app_config_template, server_config_template,
 };
@@ -32,12 +33,42 @@ use toml_edit::{DocumentMut, Item};
 use utils::{wasm_tools::WasmComponent, wit};
 use wasm_workers::registry::WitOrigin;
 
+const JS_HTTP_STARTER_FILES: &[(&str, &str)] = &[
+    (
+        "app.toml",
+        include_str!("../../examples/templates/js-http/app.toml"),
+    ),
+    (
+        "deployment.toml",
+        include_str!("../../examples/templates/js-http/deployment.toml"),
+    ),
+    (
+        "activity/fetch-status.js",
+        include_str!("../../examples/templates/js-http/activity/fetch-status.js"),
+    ),
+    (
+        "workflow/run.js",
+        include_str!("../../examples/templates/js-http/workflow/run.js"),
+    ),
+    (
+        "webhook/handle.js",
+        include_str!("../../examples/templates/js-http/webhook/handle.js"),
+    ),
+    (
+        "README.md",
+        include_str!("../../examples/templates/js-http/README.md"),
+    ),
+];
+
 impl Generate {
     pub(crate) async fn run(
         self,
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<(), anyhow::Error> {
         match self {
+            Generate::New { name } => {
+                generate_new(&std::env::current_dir()?, name.as_deref()).await
+            }
             Generate::SecretConfigDigest {
                 deployment,
                 component_name,
@@ -82,7 +113,6 @@ impl Generate {
                 Ok(())
             }
             Generate::ServerConfig {
-                json,
                 trusted,
                 output,
                 force,
@@ -94,14 +124,13 @@ impl Generate {
                         path: config_file,
                         status: "generated",
                     };
-                    print_generated_path_statuses(&[result], json)?;
+                    print_generated_path_statuses(&[result], false)?;
                 } else {
                     print!("{}", server_config_template(trusted));
                 }
                 Ok(())
             }
             Generate::AppConfig {
-                json,
                 trusted,
                 output,
                 force,
@@ -113,7 +142,7 @@ impl Generate {
                             path,
                             status: "generated",
                         }],
-                        json,
+                        false,
                     )?;
                 } else {
                     print!("{}", app_config_template(trusted));
@@ -124,11 +153,7 @@ impl Generate {
                 server_config,
                 app_config,
             } => split_config(&server_config, app_config.as_deref()).await,
-            Generate::Deployment {
-                json,
-                output,
-                force,
-            } => {
+            Generate::Deployment { output, force } => {
                 if let Some(output) = output {
                     let config_file =
                         ConfigHolder::generate_default_deployment_config(output, force).await?;
@@ -136,7 +161,7 @@ impl Generate {
                         path: config_file,
                         status: "generated",
                     };
-                    print_generated_path_statuses(&[result], json)?;
+                    print_generated_path_statuses(&[result], false)?;
                 } else {
                     print!("{OBELISK_HELP_DEPLOYMENT_TOML}");
                 }
@@ -262,6 +287,82 @@ impl Generate {
             }
         }
     }
+}
+
+async fn generate_new(directory: &Path, name: Option<&str>) -> anyhow::Result<()> {
+    let app_name = if let Some(name) = name {
+        name.to_owned()
+    } else {
+        let directory_name = directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("cannot derive app name from the current directory")?;
+        slugify_app_name(directory_name)
+    };
+    validate_app_name(&app_name)?;
+
+    let output_directory = if name.is_some() {
+        let path = directory.join(&app_name);
+        tokio::fs::create_dir(&path)
+            .await
+            .with_context(|| format!("cannot create new app directory {path:?}"))?;
+        path
+    } else {
+        directory.to_path_buf()
+    };
+
+    for (relative_path, _) in JS_HTTP_STARTER_FILES {
+        let path = output_directory.join(relative_path);
+        ensure!(
+            !path.exists(),
+            "cannot generate app: {path:?} already exists"
+        );
+    }
+
+    let mut generated = Vec::with_capacity(JS_HTTP_STARTER_FILES.len());
+    for (relative_path, template) in JS_HTTP_STARTER_FILES {
+        let path = output_directory.join(relative_path);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("cannot create {parent:?}"))?;
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await
+            .with_context(|| format!("cannot create {path:?}"))?;
+        let contents = if *relative_path == "app.toml" {
+            template.replace("__APP_NAME__", &app_name)
+        } else {
+            (*template).to_owned()
+        };
+        file.write_all(contents.as_bytes())
+            .await
+            .with_context(|| format!("cannot write {path:?}"))?;
+        generated.push(GeneratedPathStatus {
+            path,
+            status: "generated",
+        });
+    }
+    print_generated_path_statuses(&generated, false)?;
+    Ok(())
+}
+
+fn slugify_app_name(name: &str) -> String {
+    let mut slug = String::new();
+    for character in name.chars() {
+        if slug.len() == 63 {
+            break;
+        }
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    slug.trim_end_matches('-').to_owned()
 }
 
 async fn split_config(server_path: &Path, app_path: Option<&Path>) -> anyhow::Result<()> {
@@ -1127,12 +1228,60 @@ mod tests {
     use super::{
         OBELISK_WIT_HEADER, add_token_hash, generate_app_config_schema, generate_app_policy_schema,
         generate_authored_schema, generate_cli_schema,
-        generate_component_metadata_annotation_schema, generate_db_schema, generate_openapi_schema,
-        generate_server_audit_schema, generate_server_config_schema, split_config, write_wit_deps,
+        generate_component_metadata_annotation_schema, generate_db_schema, generate_new,
+        generate_openapi_schema, generate_server_audit_schema, generate_server_config_schema,
+        split_config, write_wit_deps,
     };
     use concepts::PkgFqn;
     use hashbrown::HashMap;
     use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn generate_new_uses_directory_slug_and_preserves_existing_files() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("My Cool_App");
+        std::fs::create_dir(&directory).unwrap();
+        generate_new(&directory, None).await.unwrap();
+        let app = std::fs::read_to_string(directory.join("app.toml")).unwrap();
+        let parsed: crate::config::app::AppConfigToml = toml::from_str(&app).unwrap();
+        assert_eq!(parsed.app_name.as_deref(), Some("my-cool-app"));
+        let deployment = std::fs::read_to_string(directory.join("deployment.toml")).unwrap();
+        assert!(deployment.contains("starter:app/activity.fetch-status"));
+        assert!(directory.join("activity/fetch-status.js").exists());
+        assert!(directory.join("workflow/run.js").exists());
+        assert!(directory.join("webhook/handle.js").exists());
+        assert!(directory.join("README.md").exists());
+        assert!(generate_new(&directory, None).await.is_err());
+        assert_eq!(
+            std::fs::read_to_string(directory.join("app.toml")).unwrap(),
+            app
+        );
+
+        generate_new(root.path(), Some("chosen-app")).await.unwrap();
+        let new_directory = root.path().join("chosen-app");
+        let named_app = std::fs::read_to_string(new_directory.join("app.toml")).unwrap();
+        assert!(named_app.starts_with("app_name = \"chosen-app\""));
+        assert!(new_directory.join("webhook/handle.js").exists());
+        assert!(!root.path().join("app.toml").exists());
+        assert!(generate_new(root.path(), Some("chosen-app")).await.is_err());
+        assert_eq!(
+            std::fs::read_to_string(new_directory.join("app.toml")).unwrap(),
+            named_app
+        );
+
+        let invalid = root.path().join("invalid");
+        std::fs::create_dir(&invalid).unwrap();
+        assert!(generate_new(&invalid, Some("Invalid Name")).await.is_err());
+        assert!(!invalid.join("app.toml").exists());
+
+        std::fs::write(invalid.join("README.md"), "keep me").unwrap();
+        assert!(generate_new(&invalid, None).await.is_err());
+        assert!(!invalid.join("app.toml").exists());
+        assert_eq!(
+            std::fs::read_to_string(invalid.join("README.md")).unwrap(),
+            "keep me"
+        );
+    }
 
     #[tokio::test]
     async fn split_config_moves_policy_and_rejects_secret_aliases() {
