@@ -5,6 +5,7 @@ use crate::command::server::{
     deployment_compile_link, deployment_verify_config, prepare_dirs, server_verify,
 };
 use crate::command::termination_notifier::termination_notifier;
+use crate::config::app::validate_app_name;
 use crate::config::config_holder::{
     ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, app_config_template, server_config_template,
 };
@@ -38,6 +39,9 @@ impl Generate {
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<(), anyhow::Error> {
         match self {
+            Generate::New { name } => {
+                generate_new(&std::env::current_dir()?, name.as_deref()).await
+            }
             Generate::SecretConfigDigest {
                 deployment,
                 component_name,
@@ -256,6 +260,65 @@ impl Generate {
             }
         }
     }
+}
+
+async fn generate_new(directory: &Path, name: Option<&str>) -> anyhow::Result<()> {
+    let app_name = if let Some(name) = name {
+        name.to_owned()
+    } else {
+        let directory_name = directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("cannot derive app name from the current directory")?;
+        slugify_app_name(directory_name)
+    };
+    validate_app_name(&app_name)?;
+
+    let app_path = directory.join("app.toml");
+    let deployment_path = directory.join("deployment.toml");
+    ensure!(
+        !app_path.exists() && !deployment_path.exists(),
+        "app.toml or deployment.toml already exists in {directory:?}"
+    );
+
+    let app_contents = format!("app_name = \"{app_name}\"\n{}", app_config_template(false));
+    let mut app_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&app_path)
+        .await
+        .with_context(|| format!("cannot create {app_path:?}"))?;
+    app_file.write_all(app_contents.as_bytes()).await?;
+    ConfigHolder::generate_default_deployment_config(deployment_path.clone(), false).await?;
+    print_generated_path_statuses(
+        &[
+            GeneratedPathStatus {
+                path: app_path,
+                status: "generated",
+            },
+            GeneratedPathStatus {
+                path: deployment_path,
+                status: "generated",
+            },
+        ],
+        false,
+    )?;
+    Ok(())
+}
+
+fn slugify_app_name(name: &str) -> String {
+    let mut slug = String::new();
+    for character in name.chars() {
+        if slug.len() == 63 {
+            break;
+        }
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    slug.trim_end_matches('-').to_owned()
 }
 
 async fn split_config(server_path: &Path, app_path: Option<&Path>) -> anyhow::Result<()> {
@@ -1121,12 +1184,39 @@ mod tests {
     use super::{
         OBELISK_WIT_HEADER, add_token_hash, generate_app_config_schema, generate_app_policy_schema,
         generate_authored_schema, generate_cli_schema,
-        generate_component_metadata_annotation_schema, generate_db_schema, generate_openapi_schema,
-        generate_server_audit_schema, generate_server_config_schema, split_config, write_wit_deps,
+        generate_component_metadata_annotation_schema, generate_db_schema, generate_new,
+        generate_openapi_schema, generate_server_audit_schema, generate_server_config_schema,
+        split_config, write_wit_deps,
     };
     use concepts::PkgFqn;
     use hashbrown::HashMap;
     use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn generate_new_uses_directory_slug_and_preserves_existing_files() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("My Cool_App");
+        std::fs::create_dir(&directory).unwrap();
+        generate_new(&directory, None).await.unwrap();
+        let app = std::fs::read_to_string(directory.join("app.toml")).unwrap();
+        let parsed: crate::config::app::AppConfigToml = toml::from_str(&app).unwrap();
+        assert_eq!(parsed.app_name.as_deref(), Some("my-cool-app"));
+        assert!(directory.join("deployment.toml").exists());
+        assert!(
+            generate_new(&directory, Some("different-name"))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.join("app.toml")).unwrap(),
+            app
+        );
+
+        let invalid = root.path().join("invalid");
+        std::fs::create_dir(&invalid).unwrap();
+        assert!(generate_new(&invalid, Some("Invalid Name")).await.is_err());
+        assert!(!invalid.join("app.toml").exists());
+    }
 
     #[tokio::test]
     async fn split_config_moves_policy_and_rejects_secret_aliases() {

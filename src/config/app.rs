@@ -39,6 +39,20 @@ enum AppPolicyFormatV1 {
     V1,
 }
 
+pub(crate) fn validate_app_name(name: &str) -> anyhow::Result<()> {
+    ensure!(
+        name.len() <= 63
+            && !name.is_empty()
+            && !name.starts_with('-')
+            && !name.ends_with('-')
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+        "invalid app name `{name}`: expected a DNS label (1-63 lowercase ASCII letters, digits, or interior hyphens)"
+    );
+    Ok(())
+}
+
 #[derive(JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 struct AppPolicySecretV1 {
@@ -72,16 +86,7 @@ impl AppConfigToml {
             .ok()
             .or_else(|| self.app_name.clone())
             .context("app name is required: set `app_name` in app.toml or `OBELISK_APP_NAME`")?;
-        ensure!(
-            name.len() <= 63
-                && !name.is_empty()
-                && !name.starts_with('-')
-                && !name.ends_with('-')
-                && name
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-            "invalid app name `{name}`: expected a DNS label (1-63 lowercase ASCII letters, digits, or interior hyphens)"
-        );
+        validate_app_name(&name)?;
         Ok(name)
     }
 

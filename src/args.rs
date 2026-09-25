@@ -546,6 +546,11 @@ pub(crate) enum Deployment {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Generate {
+    /// Create app.toml and deployment.toml in the current directory.
+    New {
+        /// App name; defaults to a slug of the current directory name.
+        name: Option<String>,
+    },
     /// Calculate reviewed configuration digests for exec and secret-exposing VM activities.
     SecretConfigDigest {
         /// Path to the deployment TOML file.
