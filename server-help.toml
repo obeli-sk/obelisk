@@ -191,8 +191,8 @@ max_persisted_value_size_bytes = 1048576
 # process-wide total: the sum of the cells is the process bound.
 # The wasm defaults are half of the wasmtime pooling allocator's own per-engine limit of 1000
 # instances, because exceeding that fails an execution permanently instead of leaving it pending.
-# The `v8` cells apply only when native V8 is enabled with `OBELISK_UNSTABLE_V8=true`; a Boa
-# component is a WASM component and is charged to the `wasm` cell whatever its source language.
+# The `v8` cells apply when JavaScript uses V8 (the default). With
+# `OBELISK_JS_RUNTIME=boawasm`, Boa components use the `wasm` cells.
 # [limits.activities.wasm]       # Includes Boa JavaScript activities.
 # count = 500
 # memory.gib = 1

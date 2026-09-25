@@ -645,8 +645,8 @@ pub(crate) struct RunParams {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum JsRuntimeMode {
-    #[default]
     BoaWasm,
+    #[default]
     V8,
 }
 
