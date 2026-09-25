@@ -39,6 +39,7 @@
             },
             {
               "name": "--app-config",
+              "short": "a",
               "help": "Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`",
               "accepts": {
                 "path": true
@@ -96,6 +97,7 @@
             },
             {
               "name": "--app-config",
+              "short": "a",
               "help": "Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`",
               "accepts": {
                 "path": true
@@ -900,6 +902,7 @@
             },
             {
               "name": "--app-config",
+              "short": "a",
               "help": "Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`",
               "accepts": {
                 "path": true
@@ -1395,6 +1398,7 @@
             },
             {
               "name": "--app-config",
+              "short": "a",
               "help": "Output app.toml, defaulting to a sibling of server.toml",
               "accepts": {
                 "path": true
