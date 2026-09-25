@@ -608,9 +608,6 @@ pub(crate) enum Generate {
     },
     /// Generate a default server.toml.
     ServerConfig {
-        /// Output as JSON instead of human-readable text.
-        #[arg(short, long)]
-        json: bool,
         /// Generate a single-party server config that enables exec activities.
         #[arg(long)]
         trusted: bool,
@@ -622,9 +619,6 @@ pub(crate) enum Generate {
     },
     /// Generate a default app.toml.
     AppConfig {
-        /// Output as JSON instead of human-readable text.
-        #[arg(short, long)]
-        json: bool,
         /// Allow outbound HTTP from any component with a matching deployment rule.
         #[arg(long)]
         trusted: bool,
@@ -645,9 +639,6 @@ pub(crate) enum Generate {
     },
     /// Generate a default deployment.toml.
     Deployment {
-        /// Output as JSON instead of human-readable text.
-        #[arg(short, long)]
-        json: bool,
         /// Filename to write the TOML to, defaults to <stdout>.
         output: Option<PathBuf>,
         /// Overwrite existing file.

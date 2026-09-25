@@ -82,7 +82,6 @@ impl Generate {
                 Ok(())
             }
             Generate::ServerConfig {
-                json,
                 trusted,
                 output,
                 force,
@@ -94,14 +93,13 @@ impl Generate {
                         path: config_file,
                         status: "generated",
                     };
-                    print_generated_path_statuses(&[result], json)?;
+                    print_generated_path_statuses(&[result], false)?;
                 } else {
                     print!("{}", server_config_template(trusted));
                 }
                 Ok(())
             }
             Generate::AppConfig {
-                json,
                 trusted,
                 output,
                 force,
@@ -113,7 +111,7 @@ impl Generate {
                             path,
                             status: "generated",
                         }],
-                        json,
+                        false,
                     )?;
                 } else {
                     print!("{}", app_config_template(trusted));
@@ -124,11 +122,7 @@ impl Generate {
                 server_config,
                 app_config,
             } => split_config(&server_config, app_config.as_deref()).await,
-            Generate::Deployment {
-                json,
-                output,
-                force,
-            } => {
+            Generate::Deployment { output, force } => {
                 if let Some(output) = output {
                     let config_file =
                         ConfigHolder::generate_default_deployment_config(output, force).await?;
@@ -136,7 +130,7 @@ impl Generate {
                         path: config_file,
                         status: "generated",
                     };
-                    print_generated_path_statuses(&[result], json)?;
+                    print_generated_path_statuses(&[result], false)?;
                 } else {
                     print!("{OBELISK_HELP_DEPLOYMENT_TOML}");
                 }
