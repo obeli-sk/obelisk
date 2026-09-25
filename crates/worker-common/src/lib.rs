@@ -1,3 +1,5 @@
+pub mod js_imports;
+
 use secrecy::SecretString;
 use std::sync::Arc;
 

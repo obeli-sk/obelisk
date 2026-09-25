@@ -4056,7 +4056,6 @@ dependencies = [
  "arbitrary",
  "assert_matches",
  "async-trait",
- "boa-common",
  "bytes",
  "chrono",
  "const_format",
