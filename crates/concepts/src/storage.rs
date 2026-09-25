@@ -2165,6 +2165,7 @@ pub enum ExecutionStateFilter {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FunctionNameFilter {
+    Prefix(String),
     PackageName(String),
     InterfaceName(String),
     FunctionName(String),
@@ -2174,9 +2175,9 @@ impl FunctionNameFilter {
     #[must_use]
     pub fn like_pattern(&self) -> String {
         match self {
-            Self::FunctionName(function_name) | Self::InterfaceName(function_name) => {
-                format!("{function_name}%")
-            }
+            Self::Prefix(prefix) => format!("{prefix}%"),
+            Self::FunctionName(function_name) => function_name.clone(),
+            Self::InterfaceName(interface_name) => format!("{interface_name}.%"),
             Self::PackageName(package_name) => {
                 if let Some((pkg_fqn_without_version, version)) = package_name.rsplit_once('@')
                     && !version.is_empty()
@@ -2184,7 +2185,7 @@ impl FunctionNameFilter {
                 {
                     format!("{pkg_fqn_without_version}/%@{version}.%")
                 } else {
-                    format!("{package_name}%")
+                    format!("{package_name}/%")
                 }
             }
         }

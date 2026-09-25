@@ -101,6 +101,50 @@ use tokio::{sync::watch, task::JoinHandle};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, instrument};
 
+struct FollowResponse {
+    status: reqwest::StatusCode,
+    data: String,
+}
+
+impl FollowResponse {
+    async fn from_sse(mut response: reqwest::Response) -> Self {
+        let status = response.status();
+        assert_eq!(
+            response.headers()[reqwest::header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        let mut buffer = Vec::new();
+        loop {
+            let chunk = response
+                .chunk()
+                .await
+                .expect("follow stream read failed")
+                .expect("follow stream ended without a result");
+            buffer.extend_from_slice(&chunk);
+            if let Some(end) = buffer.windows(2).position(|pair| pair == b"\n\n") {
+                let frame = std::str::from_utf8(&buffer[..end]).expect("SSE frame must be UTF-8");
+                if let Some(data) = frame.lines().find_map(|line| line.strip_prefix("data: ")) {
+                    return Self {
+                        status,
+                        data: data.to_string(),
+                    };
+                }
+                buffer.drain(..end + 2);
+            }
+        }
+    }
+
+    fn status(&self) -> reqwest::StatusCode {
+        self.status
+    }
+
+    fn json<T: serde::de::DeserializeOwned>(
+        self,
+    ) -> impl std::future::Future<Output = Result<T, serde_json::Error>> {
+        std::future::ready(serde_json::from_str(&self.data))
+    }
+}
+
 #[cfg(test)]
 mod populate_js_codegen_cache {
     use super::test_addr;
@@ -958,14 +1002,16 @@ impl TestServer {
         format!("{}:{}", self.ip, API_PORT)
     }
 
-    async fn submit_follow(&self, ffqn: &str, params: Vec<Value>) -> reqwest::Response {
-        self.client
+    async fn submit_follow(&self, ffqn: &str, params: Vec<Value>) -> FollowResponse {
+        let response = self
+            .client
             .post(format!("{}/v1/executions?follow=true", self.base_url))
-            .header("Accept", "application/json")
+            .header("Accept", "text/event-stream")
             .json(&json!({ "ffqn": ffqn, "params": params }))
             .send()
             .await
-            .expect("submit request failed")
+            .expect("submit request failed");
+        FollowResponse::from_sse(response).await
     }
 
     async fn submit_follow_with_id(
@@ -973,17 +1019,19 @@ impl TestServer {
         execution_id: &str,
         ffqn: &str,
         params: Vec<Value>,
-    ) -> reqwest::Response {
-        self.client
+    ) -> FollowResponse {
+        let response = self
+            .client
             .put(format!(
                 "{}/v1/executions/{execution_id}?follow=true",
                 self.base_url
             ))
-            .header("Accept", "application/json")
+            .header("Accept", "text/event-stream")
             .json(&json!({ "ffqn": ffqn, "params": params }))
             .send()
             .await
-            .expect("submit request failed")
+            .expect("submit request failed");
+        FollowResponse::from_sse(response).await
     }
 
     async fn get_events(&self, execution_id: &str) -> Value {
@@ -3536,6 +3584,68 @@ async fn submit_activity_and_get_result(#[case] runtime: JsRuntime) {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn finished_status_follow_is_sse() {
+    let server = TestServer::start(test_addr!(40_155)).await;
+    let execution_id = server.generate_execution_id().await;
+    let result = server
+        .submit_follow_with_id(
+            &execution_id,
+            "testing:integration/activity.add",
+            vec![json!(1), json!(2)],
+        )
+        .await;
+    assert_eq!(result.status(), reqwest::StatusCode::CREATED);
+    let status = server
+        .client
+        .get(format!(
+            "{}/v1/executions/{execution_id}/status?follow=true&send_finished_status=true",
+            server.base_url
+        ))
+        .header("Accept", "text/event-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        status.headers()[reqwest::header::CONTENT_TYPE],
+        "text/event-stream"
+    );
+    let frame = status.text().await.unwrap();
+    assert!(frame.contains("event: status\n"));
+    assert!(frame.contains("event: finished_status\n"));
+    assert!(frame.contains("\"value\":{\"ok\":3}"));
+    assert!(frame.contains("id: "));
+    assert!(frame.contains("\"pending_state\""));
+    let last_id = frame
+        .lines()
+        .filter_map(|line| line.strip_prefix("id: "))
+        .next_back()
+        .unwrap();
+    let resumed = server
+        .client
+        .get(format!(
+            "{}/v1/executions/{execution_id}/status?follow=true&send_finished_status=true",
+            server.base_url,
+        ))
+        .header("Last-Event-ID", last_id)
+        .send()
+        .await
+        .unwrap();
+    assert!(resumed.text().await.unwrap().is_empty());
+    let result_resumed = server
+        .client
+        .get(format!(
+            "{}/v1/executions/{execution_id}?follow=true",
+            server.base_url,
+        ))
+        .header("Last-Event-ID", "1")
+        .send()
+        .await
+        .unwrap();
+    assert!(result_resumed.text().await.unwrap().is_empty());
+    server.shutdown().await;
+}
+
 // ---- Workflow: submit + events + replay ----
 
 #[tokio::test]
@@ -3553,6 +3663,14 @@ async fn submit_workflow_and_replay() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": "30" }));
+
+    let snapshot: Value = server.client.get(format!(
+        "{}/v1/executions/{exec_id}/events-and-responses?events_length=100&responses_length=100",
+        server.base_url,
+    )).send().await.unwrap().json().await.unwrap();
+    assert!(snapshot["events"].as_array().unwrap().len() > 1);
+    assert!(snapshot["current_status"]["pending_state"].is_object());
+    assert!(snapshot["max_version"].is_number());
 
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
@@ -4410,6 +4528,32 @@ async fn list_executions_after_submit() {
         json!("testing:integration/activity.add"),
         "unexpected {arr:?}"
     );
+    let filtered: Value = server
+        .client
+        .get(format!(
+            "{}/v1/executions?package=testing:integration&state=finished_error&state=finished_ok",
+            server.base_url,
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(filtered.as_array().unwrap().len(), 1);
+    let wrong_scope: Value = server
+        .client
+        .get(format!(
+            "{}/v1/executions?interface=testing:integration/activity2",
+            server.base_url,
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(wrong_scope.as_array().unwrap().is_empty());
     server.shutdown().await;
 }
 

@@ -141,6 +141,7 @@ impl args::Execution {
                     follow,
                     no_reconnect,
                     json,
+                    true,
                 )
                 .await
             }
@@ -300,8 +301,7 @@ pub(crate) async fn submit(
             no_reconnect,
         } => (follow, follow_logs, no_reconnect, true),
     };
-    let request_follow = follow && json && !follow_logs_enabled;
-    let url = format!("{api_url}/v1/executions/{execution_id}?follow={request_follow}");
+    let url = format!("{api_url}/v1/executions/{execution_id}");
     loop {
         let response = client
             .put(&url)
@@ -315,56 +315,46 @@ pub(crate) async fn submit(
             .await;
         match response {
             Ok(response) if response.status().is_success() => {
-                if request_follow {
-                    match response.json::<RetValWire>().await {
-                        Ok(result) => return print_retval(&result, json),
-                        Err(err) if !no_reconnect => {
-                            eprintln!("failed to read response body: {err:#}. retrying...");
-                        }
-                        Err(err) => return Err(err).context("failed to parse execution result"),
-                    }
+                let response: ApiOk = response.json().await?;
+                if json {
+                    print_json(&response)?;
                 } else {
-                    let response: ApiOk = response.json().await?;
-                    if json {
-                        print_json(&response)?;
-                    } else {
-                        println!("{}", response.ok);
-                    }
-                    return if follow_logs_enabled {
-                        let logs_opts =
-                            LogsOpts::from_args(args::LogLevelArg::Debug, None, false, false, 20)?;
-                        follow_logs(
-                            client_startup,
-                            api_url,
-                            &execution_id,
-                            &logs_opts,
-                            None,
-                            json,
-                        )
-                        .await?;
-                        get_execution_result_rest(
-                            client_startup,
-                            api_url,
-                            execution_id,
-                            false,
-                            no_reconnect,
-                            json,
-                        )
-                        .await
-                    } else if follow {
-                        get_execution_result_rest(
-                            client_startup,
-                            api_url,
-                            execution_id,
-                            true,
-                            no_reconnect,
-                            json,
-                        )
-                        .await
-                    } else {
-                        Ok(())
-                    };
+                    println!("{}", response.ok);
                 }
+                return if follow_logs_enabled {
+                    let logs_opts =
+                        LogsOpts::from_args(args::LogLevelArg::Debug, None, false, false, 20)?;
+                    follow_logs(
+                        client_startup,
+                        api_url,
+                        &execution_id,
+                        &logs_opts,
+                        None,
+                        json,
+                    )
+                    .await?;
+                    get_execution_result_rest(
+                        client_startup,
+                        api_url,
+                        execution_id,
+                        false,
+                        no_reconnect,
+                        json,
+                    )
+                    .await
+                } else if follow {
+                    get_execution_result_rest(
+                        client_startup,
+                        api_url,
+                        execution_id,
+                        true,
+                        no_reconnect,
+                        json,
+                    )
+                    .await
+                } else {
+                    Ok(())
+                };
             }
             Ok(response) => {
                 let status = response.status();
@@ -463,6 +453,7 @@ async fn fetch_execution_result_json(
     .await
 }
 
+#[expect(clippy::fn_params_excessive_bools)]
 async fn get_execution_status_rest(
     client_startup: &ClientStartup,
     api_url: &str,
@@ -470,8 +461,74 @@ async fn get_execution_status_rest(
     follow: bool,
     no_reconnect: bool,
     json: bool,
+    emit: bool,
 ) -> anyhow::Result<()> {
     let client = client_startup.web_api_client()?;
+    if follow {
+        let mut last_event_id: Option<String> = None;
+        loop {
+            let mut request = client
+                .get(format!("{api_url}/v1/executions/{execution_id}/status"))
+                .query(&[("follow", "true")])
+                .header(ACCEPT, "text/event-stream");
+            if let Some(id) = &last_event_id {
+                request = request.header("last-event-id", id);
+            }
+            let stream = request.send().await;
+            match stream {
+                Ok(mut response) if response.status().is_success() => {
+                    let mut buffer = Vec::new();
+                    loop {
+                        let chunk = match response.chunk().await {
+                            Ok(Some(chunk)) => chunk,
+                            Ok(None) => break,
+                            Err(err) if no_reconnect => return Err(err.into()),
+                            Err(err) => {
+                                eprintln!("status stream disconnected: {err}");
+                                break;
+                            }
+                        };
+                        buffer.extend_from_slice(&chunk);
+                        while let Some(end) = buffer.windows(2).position(|pair| pair == b"\n\n") {
+                            let frame = std::str::from_utf8(&buffer[..end])?.to_string();
+                            buffer.drain(..end + 2);
+                            let mut data = None;
+                            for line in frame.lines() {
+                                if let Some(id) = line.strip_prefix("id: ") {
+                                    last_event_id = Some(id.to_string());
+                                } else if let Some(value) = line.strip_prefix("data: ") {
+                                    data = Some(value);
+                                }
+                            }
+                            if let Some(data) = data {
+                                let status: ExecutionWithStateSer = serde_json::from_str(data)?;
+                                if emit {
+                                    if json {
+                                        print_json(&status)?;
+                                    } else {
+                                        println!(
+                                            "{}",
+                                            format_execution_status_text(&status.pending_state)
+                                        );
+                                    }
+                                }
+                                if execution_status_is_finished(&status) {
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(response) => anyhow::bail!("status stream failed: {}", response.status()),
+                Err(err) if no_reconnect => return Err(err.into()),
+                Err(err) => eprintln!("status stream disconnected: {err}"),
+            }
+            if no_reconnect {
+                anyhow::bail!("status stream ended before execution finished");
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
     let reconnect = !no_reconnect;
     let mut last_status = None;
 
@@ -517,7 +574,7 @@ async fn get_execution_result_rest(
     no_reconnect: bool,
     json: bool,
 ) -> anyhow::Result<()> {
-    if follow && !json {
+    if follow {
         get_execution_status_rest(
             client_startup,
             api_url,
@@ -525,15 +582,14 @@ async fn get_execution_result_rest(
             true,
             no_reconnect,
             false,
+            !json,
         )
         .await?;
     }
     let client = client_startup.web_api_client()?;
     let reconnect = follow && !no_reconnect;
-    let stream_result = follow && json;
-
     loop {
-        match fetch_execution_result_json(&client, api_url, &execution_id, stream_result).await {
+        match fetch_execution_result_json(&client, api_url, &execution_id, false).await {
             Ok(result) => {
                 return print_retval(&result, json);
             }

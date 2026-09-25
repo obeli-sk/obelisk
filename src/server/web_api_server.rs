@@ -11,7 +11,10 @@ use axum::{
     Json, Router,
     body::{Body, Bytes},
     extract::{DefaultBodyLimit, Path, State},
-    response::{IntoResponse, Response},
+    response::{
+        IntoResponse, Response,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing,
 };
 use axum_accept::AcceptExtractor;
@@ -25,16 +28,19 @@ use concepts::{
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
         DbErrorWrite, DbErrorWriteNonRetriable, DbPool, DelayCancelOutcome, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionWithState, FunctionNameFilter,
-        ListExecutionsFilter, Pagination, PendingState, PendingStateFinishedError,
-        PendingStateFinishedResultKind, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
-        Version, VersionType,
+        ExecutionListPagination, ExecutionRequest, ExecutionStateFilter, ExecutionWithState,
+        FunctionNameFilter, ListExecutionsFilter, Pagination, PendingState,
+        PendingStateFinishedError, PendingStateFinishedResultKind, ResponseCursor,
+        ResponseWithCursor, TimeoutOutcome, Version, VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
+use http::HeaderMap;
 use http::{StatusCode, header};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest as _, Sha256};
+use std::convert::Infallible;
 use std::num::NonZeroU16;
 use std::sync::Arc;
 use std::{fmt::Write as _, time::Duration};
@@ -104,6 +110,7 @@ async fn until_terminated<T>(
         execution_pause,
         execution_unpause,
         execution_events,
+        execution_events_and_responses,
         logs::execution_logs,
         execution_responses,
         execution_status_get,
@@ -117,6 +124,7 @@ async fn until_terminated<T>(
         execution_upgrade,
         backtrace::execution_backtrace,
         backtrace::execution_backtrace_source,
+        backtrace::component_source,
         components::component_wit,
         components::components_list,
         functions::functions_list,
@@ -143,6 +151,7 @@ async fn until_terminated<T>(
         PaginationDirectionSortedFromOldest,
         ExecutionWithStateSer,
         ExecutionEventsResponse,
+        ExecutionEventsAndResponsesResponse,
         ExecutionResponsesResponse,
         ExecutionStubPayload,
         RetVal,
@@ -231,6 +240,10 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
     Router::new()
         .route("/components", routing::get(components_list))
         .route("/components/{digest}/wit", routing::get(component_wit))
+        .route(
+            "/components/{digest}/source",
+            routing::get(backtrace::component_source),
+        )
         .route("/functions", routing::get(functions_list))
         .route("/functions/wit", routing::get(function_wit))
         .route("/delays/{delay-id}/cancel", routing::put(delay_cancel))
@@ -254,6 +267,10 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
         .route(
             "/executions/{execution-id}/events",
             routing::get(execution_events),
+        )
+        .route(
+            "/executions/{execution-id}/events-and-responses",
+            routing::get(execution_events_and_responses),
         )
         .route(
             "/executions/{execution-id}/logs",
@@ -1079,6 +1096,15 @@ async fn delay_unpause(
 struct ExecutionsListParams {
     /// Filter by function FQN prefix
     ffqn_prefix: Option<String>,
+    /// Exact package scope, for example `ns:pkg`
+    package: Option<String>,
+    /// Exact interface scope, for example `ns:pkg/ifc`
+    interface: Option<String>,
+    /// Exact function name
+    function: Option<String>,
+    /// Match any of these states
+    #[serde(default)]
+    state: Vec<ExecutionStateParam>,
     /// Show derived executions (child executions spawned by workflows)
     #[serde(default)]
     show_derived: bool,
@@ -1108,6 +1134,38 @@ struct ExecutionsListParams {
     /// Pagination direction
     #[serde(default)]
     direction: PaginationDirectionSortedFromLatest,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum ExecutionStateParam {
+    Locked,
+    Pending,
+    Scheduled,
+    Blocked,
+    Paused,
+    Cancelling,
+    Finished,
+    FinishedOk,
+    FinishedError,
+    FinishedExecutionFailure,
+}
+
+impl ExecutionStateParam {
+    fn into_filter(self, now: DateTime<Utc>) -> ExecutionStateFilter {
+        match self {
+            Self::Locked => ExecutionStateFilter::Locked,
+            Self::Pending => ExecutionStateFilter::Pending { now },
+            Self::Scheduled => ExecutionStateFilter::Scheduled { now },
+            Self::Blocked => ExecutionStateFilter::Blocked,
+            Self::Paused => ExecutionStateFilter::Paused,
+            Self::Cancelling => ExecutionStateFilter::Cancelling,
+            Self::Finished => ExecutionStateFilter::Finished,
+            Self::FinishedOk => ExecutionStateFilter::FinishedOk,
+            Self::FinishedError => ExecutionStateFilter::FinishedError,
+            Self::FinishedExecutionFailure => ExecutionStateFilter::FinishedExecutionFailure,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Default, ToSchema)]
@@ -1209,6 +1267,18 @@ async fn executions_list(
     Query(params): Query<ExecutionsListParams>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
+    let scopes = [
+        params.ffqn_prefix.is_some(),
+        params.package.is_some(),
+        params.interface.is_some(),
+        params.function.is_some(),
+    ];
+    if scopes.into_iter().filter(|set| *set).count() > 1 {
+        return Err(HttpResponse::bad_request(
+            accept,
+            "choose one function scope".to_string(),
+        ));
+    }
     let default_pagination = ExecutionListPagination::default();
     let pagination = {
         let ExecutionsListParams {
@@ -1273,19 +1343,24 @@ async fn executions_list(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
 
+    let now = Utc::now();
     let filter = ListExecutionsFilter {
-        function_name_filter: {
-            // Map `ffqn_prefix` to a FunctionName.
-            // If this is a package name with a version, the search will not find anything as the
-            // FFQN contains the version behind the interface.
-            params.ffqn_prefix.map(FunctionNameFilter::FunctionName)
-        },
+        function_name_filter: params
+            .package
+            .map(FunctionNameFilter::PackageName)
+            .or_else(|| params.interface.map(FunctionNameFilter::InterfaceName))
+            .or_else(|| params.function.map(FunctionNameFilter::FunctionName))
+            .or_else(|| params.ffqn_prefix.map(FunctionNameFilter::Prefix)),
         show_derived: params.show_derived,
         hide_finished: params.hide_finished,
         execution_id_prefix: params.execution_id_prefix,
         component_digest: params.component_digest,
         deployment_id: params.deployment_id,
-        state_filters: Vec::new(),
+        state_filters: params
+            .state
+            .into_iter()
+            .map(|state| state.into_filter(now))
+            .collect(),
     };
 
     let executions = conn
@@ -1486,6 +1561,80 @@ pub(crate) struct ExecutionEventsResponse {
     /// Maximum version in the response
     #[schema(value_type = u32)]
     pub(crate) max_version: Version,
+}
+
+#[derive(Serialize, ToSchema)]
+struct ExecutionEventsAndResponsesResponse {
+    #[schema(value_type = Vec<Object>)]
+    events: Vec<ExecutionEvent>,
+    #[schema(value_type = Vec<Object>)]
+    responses: Vec<ResponseWithCursor>,
+    current_status: ExecutionWithStateSer,
+    #[schema(value_type = u32)]
+    max_version: Version,
+    #[schema(value_type = u32)]
+    max_cursor: ResponseCursor,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct ExecutionEventsAndResponsesParams {
+    #[serde(default)]
+    version_from: VersionType,
+    events_length: Option<u16>,
+    #[serde(default)]
+    include_backtrace_id: bool,
+    #[serde(default)]
+    responses_cursor_from: VersionType,
+    responses_length: Option<u16>,
+    #[serde(default)]
+    responses_including_cursor: bool,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/executions/{execution_id}/events-and-responses",
+    tag = "executions",
+    params(("execution_id" = String, Path), ExecutionEventsAndResponsesParams),
+    responses((status = 200, body = ExecutionEventsAndResponsesResponse))
+)]
+async fn execution_events_and_responses(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+    Query(params): Query<ExecutionEventsAndResponsesParams>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    let events_length = nonzero_page_length(params.events_length.unwrap_or(20), accept)?;
+    let responses_length = nonzero_page_length(params.responses_length.unwrap_or(20), accept)?;
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let result = conn
+        .list_execution_events_responses(
+            &execution_id,
+            &Version::new(params.version_from),
+            events_length,
+            params.include_backtrace_id,
+            Pagination::NewerThan {
+                length: responses_length,
+                cursor: params.responses_cursor_from,
+                including_cursor: params.responses_including_cursor,
+            },
+        )
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    Ok(pretty_json_response(
+        StatusCode::OK,
+        &ExecutionEventsAndResponsesResponse {
+            events: result.events,
+            responses: result.responses,
+            current_status: result.execution_with_state.into(),
+            max_version: result.max_version,
+            max_cursor: result.max_cursor,
+        },
+    ))
 }
 /// Get execution events (history)
 #[utoipa::path(
@@ -2042,7 +2191,8 @@ async fn execution_responses(
     path = "/v1/executions/{execution_id}/status",
     tag = "executions",
     params(
-        ("execution_id" = String, Path, description = "Execution ID")
+        ("execution_id" = String, Path, description = "Execution ID"),
+        StatusFollowParams
     ),
     responses(
         (status = 200, description = "Execution status", body = ExecutionWithStateSer)
@@ -2052,8 +2202,10 @@ async fn execution_responses(
 async fn execution_status_get(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
-    accept: AcceptHeader,
+    Query(params): Query<StatusFollowParams>,
+    headers: HeaderMap,
 ) -> Result<Response, HttpResponse> {
+    let accept = streaming_accept(&headers);
     let execution_with_state = state
         .db_pool
         .external_api_conn()
@@ -2062,6 +2214,89 @@ async fn execution_status_get(
         .get_pending_state(&execution_id)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
+    if params.follow {
+        let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(1);
+        let db_pool = state.db_pool.clone();
+        let mut termination = state.termination_watcher.clone();
+        let last_event_id = headers
+            .get("last-event-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        utils::spawn::spawn_named("stream_execution_status", async move {
+            let mut last_sent_id = last_event_id;
+            let mut current = execution_with_state;
+            loop {
+                let data = serde_json::to_string(&ExecutionWithStateSer::from(current.clone()))
+                    .expect("status serializes");
+                let id = format!("{:x}", Sha256::digest(data.as_bytes()));
+                let finished_id = format!("{id}:finished");
+                if last_sent_id.as_deref() != Some(&id)
+                    && last_sent_id.as_deref() != Some(&finished_id)
+                {
+                    if tx
+                        .send(Ok(Event::default().event("status").id(&id).data(data)))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    last_sent_id = Some(id);
+                }
+                if let PendingState::Finished(finished) = &current.pending_state {
+                    if params.send_finished_status && last_sent_id.as_deref() != Some(&finished_id)
+                    {
+                        let Ok(conn) = db_pool.external_api_conn().await else {
+                            break;
+                        };
+                        let Ok(created) = conn.get_create_request(&execution_id).await else {
+                            break;
+                        };
+                        let Ok(last) = conn.get_last_execution_event(&execution_id).await else {
+                            break;
+                        };
+                        if let ExecutionRequest::Finished { retval, .. } = last.event {
+                            let data = json!({
+                                "created_at": current.created_at,
+                                "scheduled_at": created.scheduled_at,
+                                "finished_at": finished.finished_at,
+                                "value": RetVal::from(retval),
+                            });
+                            if tx
+                                .send(Ok(Event::default()
+                                    .event("finished_status")
+                                    .id(&finished_id)
+                                    .data(data.to_string())))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+                select! {
+                    () = tx.closed() => break,
+                    _ = termination.changed() => break,
+                    () = tokio::time::sleep(Duration::from_secs(1)) => {}
+                }
+                let Ok(conn) = db_pool.external_api_conn().await else {
+                    break;
+                };
+                let Ok(next) = conn.get_pending_state(&execution_id).await else {
+                    break;
+                };
+                current = next;
+            }
+        });
+        return Ok(Sse::new(ReceiverStream::new(rx))
+            .keep_alive(
+                KeepAlive::new()
+                    .interval(Duration::from_secs(15))
+                    .text("heartbeat"),
+            )
+            .into_response());
+    }
     Ok(match accept {
         AcceptHeader::Json => pretty_json_response(
             StatusCode::OK,
@@ -2850,6 +3085,7 @@ async fn execution_get_retval(
     Path(execution_id): Path<ExecutionId>,
     Query(params): Query<ExecutionFollowParam>,
     state: State<Arc<WebApiState>>,
+    headers: HeaderMap,
 ) -> Result<http::Response<Body>, HttpResponse> {
     let last_event = state
         .db_pool
@@ -2860,17 +3096,20 @@ async fn execution_get_retval(
         .await
         .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?;
 
-    if let ExecutionRequest::Finished { retval, .. } = last_event.event {
-        let retval = RetVal::from(retval);
-
-        Ok(pretty_json_response(StatusCode::OK, &retval))
-    } else if params.follow {
+    if params.follow {
         Ok(stream_execution_response(
             execution_id,
             &state,
             StatusCode::OK,
             state.subscription_interruption,
+            headers
+                .get("last-event-id")
+                .and_then(|value| value.to_str().ok()),
         ))
+    } else if let ExecutionRequest::Finished { retval, .. } = last_event.event {
+        let retval = RetVal::from(retval);
+
+        Ok(pretty_json_response(StatusCode::OK, &retval))
     } else {
         Ok(HttpResponse {
             status: StatusCode::TOO_EARLY,
@@ -2902,6 +3141,15 @@ struct ExecutionFollowParam {
     follow: bool,
 }
 
+#[derive(Deserialize, Debug, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct StatusFollowParams {
+    #[serde(default)]
+    follow: bool,
+    #[serde(default)]
+    send_finished_status: bool,
+}
+
 /// Submit an execution with a specific ID
 #[utoipa::path(
     put,
@@ -2921,10 +3169,23 @@ async fn execution_submit_put(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
     Query(params): Query<ExecutionFollowParam>,
-    accept: AcceptHeader,
+    headers: HeaderMap,
     Json(payload): Json<ExecutionSubmitPayload>,
 ) -> Result<http::Response<Body>, HttpResponse> {
-    execution_submit(execution_id, state, payload, params.follow, accept).await
+    let accept = streaming_accept(&headers);
+    let last_event_id = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    execution_submit(
+        execution_id,
+        state,
+        payload,
+        params.follow,
+        accept,
+        last_event_id.as_deref(),
+    )
+    .await
 }
 
 /// Submit a new execution (auto-generated ID)
@@ -2940,12 +3201,37 @@ async fn execution_submit_put(
 )]
 async fn execution_submit_post(
     state: State<Arc<WebApiState>>,
-    accept: AcceptHeader,
+    headers: HeaderMap,
     Query(params): Query<ExecutionFollowParam>,
     Json(payload): Json<ExecutionSubmitPayload>,
 ) -> Result<http::Response<Body>, HttpResponse> {
+    let accept = streaming_accept(&headers);
     let execution_id = ExecutionId::generate();
-    execution_submit(execution_id, state, payload, params.follow, accept).await
+    let last_event_id = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    execution_submit(
+        execution_id,
+        state,
+        payload,
+        params.follow,
+        accept,
+        last_event_id.as_deref(),
+    )
+    .await
+}
+
+fn streaming_accept(headers: &HeaderMap) -> AcceptHeader {
+    if headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        == Some("text/plain")
+    {
+        AcceptHeader::Text
+    } else {
+        AcceptHeader::Json
+    }
 }
 
 #[instrument(skip_all, fields(execution_id))]
@@ -2955,6 +3241,7 @@ async fn execution_submit(
     payload: ExecutionSubmitPayload,
     follow: bool,
     accept: AcceptHeader,
+    last_event_id: Option<&str>,
 ) -> Result<http::Response<Body>, HttpResponse> {
     let (deployment_id, component_registry_ro) = {
         let ctx = state.deployment_ctx.read().await;
@@ -2988,6 +3275,7 @@ async fn execution_submit(
             &state,
             status,
             state.subscription_interruption,
+            last_event_id,
         ))
     } else {
         Ok(HttpResponse {
@@ -3005,7 +3293,16 @@ fn stream_execution_response(
     state: &WebApiState,
     status: StatusCode,
     subscription_interruption: Option<Duration>,
+    last_event_id: Option<&str>,
 ) -> http::Response<Body> {
+    if last_event_id == Some("1") {
+        let mut response = (status, Body::empty()).into_response();
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("text/event-stream"),
+        );
+        return response;
+    }
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
     let trace_id = server::gen_trace_id();
     let span = info_span!("stream_execution_response", trace_id, %execution_id);
@@ -3025,7 +3322,7 @@ fn stream_execution_response(
     let mut response = (status, Body::from_stream(stream)).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        header::HeaderValue::from_static("application/json"),
+        header::HeaderValue::from_static("text/event-stream"),
     );
     response
 }
@@ -3049,7 +3346,9 @@ async fn stream_execution_response_task(
     let timeout_factory = {
         let tx = tx.clone();
         move || {
-            let subscription_interruption = subscription_interruption.unwrap_or(Duration::MAX);
+            let subscription_interruption = subscription_interruption
+                .unwrap_or(Duration::MAX)
+                .min(Duration::from_secs(15));
             let sleep = sleep.clone();
             let tx = tx.clone();
             let mut server_termination_watcher = server_termination_watcher.clone();
@@ -3075,14 +3374,25 @@ async fn stream_execution_response_task(
             Ok(result) => {
                 trace!("Finished ok");
                 let result = RetVal::from(result);
-                let result = serde_json::to_vec_pretty(&result)
+                let result = serde_json::to_string(&result)
                     .expect("serialization of already stored retval cannot fail");
-                let _ = tx.try_send(Ok(Bytes::from(result))); // Ignore if the remote side is closed.
+                let _ = tx
+                    .send(Ok(Bytes::from(format!(
+                        "event: result\nid: 1\ndata: {result}\n\n"
+                    ))))
+                    .await;
                 debug!("Sent execution result");
                 return;
             }
             Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout)) => {
                 trace!("Timeout triggers resubscribing");
+                if tx
+                    .send(Ok(Bytes::from_static(b": heartbeat\n\n")))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
             }
             Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
                 debug!("Connection closed, not waiting for result");
@@ -4041,8 +4351,9 @@ pub(crate) mod deployment {
         server::{
             deployment_summary,
             web_api_server::{
-                AcceptHeader, ErrorWrapper, HttpResponse, TextDefaultAcceptHeader, WebApiState,
-                deprecated_text_response, nonzero_page_length, pretty_json_response,
+                AcceptHeader, ErrorWrapper, HttpResponse, PaginationDirectionSortedFromLatest,
+                TextDefaultAcceptHeader, WebApiState, deprecated_text_response,
+                nonzero_page_length, pretty_json_response,
             },
         },
     };
@@ -4128,10 +4439,16 @@ pub(crate) mod deployment {
         pub finished_execution_failure: u32,
         /// Component counts by manifest section type. Absent when not requested or unavailable.
         pub component_summary: Option<deployment_summary::DeploymentComponentSummary>,
+        /// Processed deployment manifest, present when requested.
+        pub deployment_toml: Option<String>,
     }
 
     impl DeploymentStateSer {
-        fn from(deployment_state: &DeploymentState, include_component_summary: bool) -> Self {
+        fn from(
+            deployment_state: &DeploymentState,
+            include_component_summary: bool,
+            include_deployment_toml: bool,
+        ) -> Self {
             let component_summary = include_component_summary
                 .then(|| {
                     deployment_state
@@ -4157,16 +4474,22 @@ pub(crate) mod deployment {
                 finished_error: deployment_state.finished_error,
                 finished_execution_failure: deployment_state.finished_execution_failure,
                 component_summary,
+                deployment_toml: include_deployment_toml
+                    .then(|| deployment_state.deployment_toml.clone())
+                    .flatten(),
             }
         }
     }
     #[derive(Debug, Deserialize, IntoParams)]
     #[into_params(parameter_in = Query)]
+    #[expect(clippy::struct_excessive_bools)]
     pub(crate) struct ListDeploymentsParams {
         /// Cursor for pagination (deployment ID)
         #[serde(default)]
         #[param(value_type = Option<String>)]
         cursor_from: Option<DeploymentId>,
+        #[serde(default)]
+        direction: PaginationDirectionSortedFromLatest,
         /// Number of items to return
         #[param(minimum = 1)]
         length: Option<u16>,
@@ -4179,6 +4502,14 @@ pub(crate) mod deployment {
         /// Include component counts by manifest section type
         #[serde(default)]
         include_component_summary: bool,
+        #[serde(default)]
+        include_deployment_toml: bool,
+        #[serde(default = "default_include_execution_counts")]
+        include_execution_counts: bool,
+    }
+
+    fn default_include_execution_counts() -> bool {
+        true
     }
 
     /// List deployments
@@ -4208,18 +4539,29 @@ pub(crate) mod deployment {
             .external_api_conn()
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
-        let pagination = Pagination::OlderThan {
-            length,
-            cursor: params.cursor_from,
-            including_cursor: params.including_cursor,
+        let pagination = match params.direction {
+            PaginationDirectionSortedFromLatest::Older => Pagination::OlderThan {
+                length,
+                cursor: params.cursor_from,
+                including_cursor: params.including_cursor,
+            },
+            PaginationDirectionSortedFromLatest::Newer => Pagination::NewerThan {
+                length,
+                cursor: params.cursor_from,
+                including_cursor: params.including_cursor,
+            },
         };
         let states = conn
             .list_deployment_states(
                 Utc::now(),
                 pagination,
-                params.include_component_summary,
-                DeploymentExecutionCounts::Count {
-                    include_derived: params.include_derived,
+                params.include_component_summary || params.include_deployment_toml,
+                if params.include_execution_counts {
+                    DeploymentExecutionCounts::Count {
+                        include_derived: params.include_derived,
+                    }
+                } else {
+                    DeploymentExecutionCounts::Skip
                 },
             )
             .await
@@ -4227,7 +4569,13 @@ pub(crate) mod deployment {
 
         let states: Vec<DeploymentStateSer> = states
             .into_iter()
-            .map(|dep| DeploymentStateSer::from(&dep, params.include_component_summary))
+            .map(|dep| {
+                DeploymentStateSer::from(
+                    &dep,
+                    params.include_component_summary,
+                    params.include_deployment_toml,
+                )
+            })
             .collect();
 
         Ok(match accept {
@@ -5105,6 +5453,61 @@ mod backtrace {
         file: String,
         /// Which backtrace version to use for component lookup: "first", "last" (default), or a version number
         version: Option<String>,
+    }
+
+    #[derive(Deserialize, Debug, IntoParams)]
+    #[into_params(parameter_in = Query)]
+    pub(crate) struct ComponentSourceParams {
+        file: String,
+    }
+
+    #[utoipa::path(
+        get,
+        path = "/v1/components/{digest}/source",
+        tag = "components",
+        params(("digest" = String, Path), ComponentSourceParams),
+        responses((status = 200, body = String), (status = 404))
+    )]
+    pub(crate) async fn component_source(
+        Path(digest): Path<ComponentDigest>,
+        state: State<Arc<WebApiState>>,
+        Query(params): Query<ComponentSourceParams>,
+        accept: TextDefaultAcceptHeader,
+    ) -> Result<Response, HttpResponse> {
+        let accept = accept.into();
+        let conn = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+        let digest = conn
+            .resolve_source_digest(&digest, &params.file)
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?
+            .ok_or_else(|| HttpResponse::not_found(accept, "source file"))?;
+        let cas = state
+            .db_pool
+            .cas_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+        let content = cas
+            .read_blob(&digest)
+            .await
+            .map_err(|e| HttpResponse {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("cannot read source file: {e}"),
+                accept,
+            })?
+            .ok_or_else(|| HttpResponse::not_found(accept, "source file"))?;
+        let content = String::from_utf8(content).map_err(|_| HttpResponse {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "backtrace source is not valid UTF-8".to_string(),
+            accept,
+        })?;
+        Ok(match accept {
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &content),
+            AcceptHeader::Text => content.into_response(),
+        })
     }
 
     /// Get source file for a backtrace frame

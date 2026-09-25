@@ -438,6 +438,47 @@
         }
       }
     },
+    "/v1/components/{digest}/source": {
+      "get": {
+        "tags": [
+          "components"
+        ],
+        "operationId": "component_source",
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/components/{digest}/wit": {
       "get": {
         "tags": [
@@ -613,6 +654,14 @@
             }
           },
           {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PaginationDirectionSortedFromLatest"
+            }
+          },
+          {
             "name": "length",
             "in": "query",
             "description": "Number of items to return",
@@ -645,6 +694,22 @@
             "name": "include_component_summary",
             "in": "query",
             "description": "Include component counts by manifest section type",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "include_deployment_toml",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "include_execution_counts",
+            "in": "query",
             "required": false,
             "schema": {
               "type": "boolean"
@@ -899,6 +964,45 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "package",
+            "in": "query",
+            "description": "Exact package scope, for example `ns:pkg`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "interface",
+            "in": "query",
+            "description": "Exact interface scope, for example `ns:pkg/ifc`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "function",
+            "in": "query",
+            "description": "Exact function name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Match any of these states",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ExecutionStateParam"
+              }
             }
           },
           {
@@ -1441,6 +1545,88 @@
         }
       }
     },
+    "/v1/executions/{execution_id}/events-and-responses": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "operationId": "execution_events_and_responses",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/u32"
+            }
+          },
+          {
+            "name": "events_length",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "include_backtrace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "responses_cursor_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/u32"
+            }
+          },
+          {
+            "name": "responses_length",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "responses_including_cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionEventsAndResponsesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/executions/{execution_id}/logs": {
       "get": {
         "tags": [
@@ -1750,6 +1936,22 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "send_finished_status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -2781,6 +2983,13 @@
             "description": "Deployment identifier",
             "example": "Dep_01JKXYZ123456789ABCDEFGHIJ"
           },
+          "deployment_toml": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Processed deployment manifest, present when requested."
+          },
           "description": {
             "type": [
               "string",
@@ -2931,6 +3140,43 @@
           },
           "supplied_digest": {
             "type": "string"
+          }
+        }
+      },
+      "ExecutionEventsAndResponsesResponse": {
+        "type": "object",
+        "required": [
+          "events",
+          "responses",
+          "current_status",
+          "max_version",
+          "max_cursor"
+        ],
+        "properties": {
+          "current_status": {
+            "$ref": "#/components/schemas/ExecutionWithStateSer"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "max_cursor": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "max_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "responses": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
           }
         }
       },
