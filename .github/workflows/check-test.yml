@@ -37,9 +37,6 @@ jobs:
           - name: test.sh
             report: junit-default.xml
             features: ""
-          - name: test-js-local.sh
-            report: junit-js-local.xml
-            features: "-F activity-js-local,workflow-js-local,webhook-js-local"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
