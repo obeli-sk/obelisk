@@ -10,6 +10,7 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
 use async_trait::async_trait;
 use concepts::storage::LogInfoAppendRow;
+use concepts::time::{ClockFn, Sleep};
 use concepts::{
     ComponentType, FunctionFqn, FunctionMetadata, PackageIfcFns, ParameterType,
     ReturnTypeExtendable,
@@ -132,6 +133,8 @@ impl ActivityExecWorkerCompiled {
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         _logs_storage_config: Option<LogStrageConfig>,
+        clock_fn: Box<dyn ClockFn>,
+        sleep: Arc<dyn Sleep>,
     ) -> ActivityExecWorker {
         let stdout_config = StdOutputConfigWithSender::new(
             self.forward_stdout,
@@ -156,6 +159,8 @@ impl ActivityExecWorkerCompiled {
             params_via_stdin: self.params_via_stdin,
             cancel_registry,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
+            clock_fn,
+            sleep,
         }
     }
 }
@@ -174,6 +179,8 @@ pub struct ActivityExecWorker {
     params_via_stdin: bool,
     cancel_registry: CancelRegistry,
     user_exports_noext: Vec<FunctionMetadata>,
+    clock_fn: Box<dyn ClockFn>,
+    sleep: Arc<dyn Sleep>,
 }
 
 /// Read from `reader` in chunks, streaming each chunk to `forwarder`,
@@ -225,6 +232,16 @@ impl Worker for ActivityExecWorker {
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         let version = ctx.version.clone();
+        let started_at = self.clock_fn.now();
+        let lock_expires_at = ctx.locked_event.lock_expires_at;
+        let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
+            debug!(execution_deadline = %lock_expires_at, %started_at,
+                "Timed out - started_at later than execution_deadline");
+            return Err(WorkerError::TemporaryTimeout {
+                http_client_traces: None,
+                version,
+            });
+        };
 
         let mut param_args: Vec<String> = Vec::new();
 
@@ -346,6 +363,7 @@ impl Worker for ActivityExecWorker {
         let cancellation_token = self
             .cancel_registry
             .activity_obtain_cancellation_token(ctx.execution_id.clone());
+        let mut execution_interrupt_watcher = ctx.execution_interrupt_watcher.clone();
 
         // Skip stdout collection when return_type is `result` (unit ok and err variants).
         let max_stdout_bytes = if self.user_return_type.type_wrapper_tl.is_result_of_units() {
@@ -360,19 +378,27 @@ impl Worker for ActivityExecWorker {
                 // sole trigger). Kill and reap the child before finalizing; the executor appends
                 // the terminal only if still `cancelling`.
                 debug!("Activity run interrupted, killing child before finalizing cancellation");
-                kill_process_group(&child);
-                match child.kill().await {
-                    Ok(()) => {
-                        return Err(WorkerError::FatalError(FatalError::Cancelled, version));
-                    }
-                    Err(err) if err.kind() == ErrorKind::InvalidInput => {
-                        return Err(WorkerError::FatalError(FatalError::Cancelled, version));
-                    }
-                    Err(err) => {
-                        warn!(%err, "Could not confirm child process termination after cancellation");
-                        return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
-                    }
-                }
+                return kill_and_reap(
+                    &mut child,
+                    WorkerError::FatalError(FatalError::Cancelled, version),
+                ).await;
+            }
+            () = self.sleep.sleep(deadline_duration) => {
+                debug!("Run timed out, killing child");
+                return kill_and_reap(
+                    &mut child,
+                    WorkerError::TemporaryTimeout { http_client_traces: None, version },
+                ).await;
+            }
+            _ = execution_interrupt_watcher.changed() => {
+                debug!("Executor closing, killing child");
+                return kill_and_reap(
+                    &mut child,
+                    WorkerError::ExecutionYielded {
+                        version,
+                        reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
+                    },
+                ).await;
             }
             result = async {
                 // Read stdout/stderr concurrently, streaming to log forwarder as chunks arrive.
@@ -466,6 +492,20 @@ impl Worker for ActivityExecWorker {
             version,
             http_client_traces: None,
         }))
+    }
+}
+
+/// Returns `err` once the child is reaped. If termination cannot be confirmed, the outcome is
+/// left to the lock-expiry watcher.
+async fn kill_and_reap(child: &mut tokio::process::Child, err: WorkerError) -> WorkerResult {
+    kill_process_group(child);
+    match child.kill().await {
+        Ok(()) => Err(err),
+        Err(kill_err) if kill_err.kind() == ErrorKind::InvalidInput => Err(err),
+        Err(kill_err) => {
+            warn!(%kill_err, "Could not confirm child process termination");
+            Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+        }
     }
 }
 

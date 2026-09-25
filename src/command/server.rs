@@ -6832,10 +6832,17 @@ impl WorkerLinked {
                     cancel_registry,
                     log_forwarder_sender,
                     logs_storage_config,
+                    Now.clone_box(),
+                    Arc::new(TokioSleep),
                 ))
             }
             LinkedWorkerKind::ActivityVm(vm_activity_compiled) => {
-                Arc::from(vm_activity_compiled.into_worker(cancel_registry, log_forwarder_sender))
+                Arc::from(vm_activity_compiled.into_worker(
+                    cancel_registry,
+                    log_forwarder_sender,
+                    Now.clone_box(),
+                    Arc::new(TokioSleep),
+                ))
             }
             LinkedWorkerKind::WorkflowWasm(workflow_linked) => {
                 let factory = DeadlineTrackerFactoryTokio::new(

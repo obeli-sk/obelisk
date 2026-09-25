@@ -54,7 +54,13 @@ async fn main() -> anyhow::Result<()> {
     );
     let (policy, placeholders) =
         wasm_workers::policy_builder::build_process_http_policy(spec, &resolver)?;
-    let engine = Engine::default();
+    let mut config = wasmtime::Config::new();
+    config.epoch_interruption(true);
+    let engine = Engine::new(&config)?;
+    let _epoch_ticker = wasm_workers::epoch_ticker::EpochTicker::spawn_new(
+        vec![engine.weak()],
+        std::time::Duration::from_millis(10),
+    );
     let module = obelisk_activity_vm_runner::compile(&engine, &module_path)?;
     let output = obelisk_activity_vm_runner::execute(
         &engine,
@@ -64,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
         placeholders.into_iter().collect(),
         None,
         policy,
-        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        std::sync::Arc::default(),
         256 * 1024 * 1024,
         256 * 1024 * 1024,
         None,
