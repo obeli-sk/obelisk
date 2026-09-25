@@ -301,8 +301,18 @@ async fn generate_new(directory: &Path, name: Option<&str>) -> anyhow::Result<()
     };
     validate_app_name(&app_name)?;
 
+    let output_directory = if name.is_some() {
+        let path = directory.join(&app_name);
+        tokio::fs::create_dir(&path)
+            .await
+            .with_context(|| format!("cannot create new app directory {path:?}"))?;
+        path
+    } else {
+        directory.to_path_buf()
+    };
+
     for (relative_path, _) in JS_HTTP_STARTER_FILES {
-        let path = directory.join(relative_path);
+        let path = output_directory.join(relative_path);
         ensure!(
             !path.exists(),
             "cannot generate app: {path:?} already exists"
@@ -311,7 +321,7 @@ async fn generate_new(directory: &Path, name: Option<&str>) -> anyhow::Result<()
 
     let mut generated = Vec::with_capacity(JS_HTTP_STARTER_FILES.len());
     for (relative_path, template) in JS_HTTP_STARTER_FILES {
-        let path = directory.join(relative_path);
+        let path = output_directory.join(relative_path);
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -1241,14 +1251,22 @@ mod tests {
         assert!(directory.join("workflow/run.js").exists());
         assert!(directory.join("webhook/handle.js").exists());
         assert!(directory.join("README.md").exists());
-        assert!(
-            generate_new(&directory, Some("different-name"))
-                .await
-                .is_err()
-        );
+        assert!(generate_new(&directory, None).await.is_err());
         assert_eq!(
             std::fs::read_to_string(directory.join("app.toml")).unwrap(),
             app
+        );
+
+        generate_new(root.path(), Some("chosen-app")).await.unwrap();
+        let new_directory = root.path().join("chosen-app");
+        let named_app = std::fs::read_to_string(new_directory.join("app.toml")).unwrap();
+        assert!(named_app.starts_with("app_name = \"chosen-app\""));
+        assert!(new_directory.join("webhook/handle.js").exists());
+        assert!(!root.path().join("app.toml").exists());
+        assert!(generate_new(root.path(), Some("chosen-app")).await.is_err());
+        assert_eq!(
+            std::fs::read_to_string(new_directory.join("app.toml")).unwrap(),
+            named_app
         );
 
         let invalid = root.path().join("invalid");
@@ -1257,7 +1275,7 @@ mod tests {
         assert!(!invalid.join("app.toml").exists());
 
         std::fs::write(invalid.join("README.md"), "keep me").unwrap();
-        assert!(generate_new(&invalid, Some("valid-name")).await.is_err());
+        assert!(generate_new(&invalid, None).await.is_err());
         assert!(!invalid.join("app.toml").exists());
         assert_eq!(
             std::fs::read_to_string(invalid.join("README.md")).unwrap(),
