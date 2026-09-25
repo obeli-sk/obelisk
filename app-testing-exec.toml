@@ -1,7 +1,7 @@
 app_name = "testing-exec"
 
 [public_env]
-allowed = ["PATH"]
+PATH = {}
 
 [allowed_exec_activities]
 "exec-stream.stream-test" = "sha256:f2790bee4e20e256384255387d5150676a24014df96ef6803ff55d04acd8ca9b"

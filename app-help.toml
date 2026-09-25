@@ -1,4 +1,7 @@
-## App policy. Pass this file explicitly with --app-config.
+## App policy, reviewed by the app admin. Pass this file with --app-config.
+## It declares the app's required inputs and the maximum privileges any deployment may use:
+## secrets and their exposure, public environment variables, outbound HTTP, and exec activities.
+## Missing required inputs fail at startup so executions do not discover them at runtime.
 ## Set an app name before starting the server; it selects the default SQLite directory.
 # app_name = "my-app"
 
@@ -11,15 +14,19 @@
 # [secrets.OPENAI_API_KEY.exposed_to]
 # worker = "sha256:..."
 
-## Public environment variables available to deployments.
+## Public environment variables available to deployments. Entries are required at startup.
+## Optional entries may be absent, but a deployment must use an optional reference or fallback.
 # [public_env]
-# allowed = ["REGION"]
+# REGION = {}
+# TRACE_ID = { optional = true }
 
-## App-reviewed exec components. Use a digest array during migrations; the platform must cover each digest.
+## App-reviewed exec components. Both app and platform admins must approve each digest.
+## Use a digest array during migrations; the platform must cover each digest.
 # [allowed_exec_activities]
 # worker = "sha256:..."
 
-## Outbound HTTP requires matching entries here and in deployment.toml.
+## Outbound HTTP needs matching app and deployment permissions. Both policies are applied;
+## request_url_regex values need not be identical or subsets of each other.
 # [[outbound_http.allowed_host]]
 # pattern = "api.example.com"
 # methods = ["POST"]

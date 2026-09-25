@@ -42,6 +42,15 @@ policy. Existing single-file configurations must be split before starting the se
 
 ### Changed
 
+- *(config)* **Breaking:** App `[public_env]` now uses named entries like `VAR = {}`, matching
+  `[secrets]`, instead of the server's `[public_env].allowed` list. Move each allowed name to
+  `app.toml` (or run `generate split-config`). Entries are required at startup by default; use
+  `VAR = { optional = true }` for variables that were previously allowed to be absent.
+  A deployment can omit an absent forwarded variable with `{ key = "VAR", optional = true }` or
+  supply an interpolation fallback. Required deployment references need a required app declaration,
+  and activation rejects mismatches.
+- *(deployment)* Activation rejects outbound HTTP destinations or methods not covered by app
+  policy. App and deployment URL regexes remain independent and both apply to requests.
 - *(server)* `OBELISK_JS_RUNTIME` selects the JavaScript runtime (`v8` or `boawasm`, ignoring
   case). Unknown values fail startup.
 - *(API)* gRPC and gRPC-web are deprecated. In-repo clients are moving to the `/v1` Web API;

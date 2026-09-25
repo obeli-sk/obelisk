@@ -1,7 +1,7 @@
 use crate::config::env_var::{
     StartupEnvVars, collect_env_var_references, interpolate_startup_env_vars,
 };
-use crate::config::secret_registry::{PublicEnvToml, SecretsToml};
+use crate::config::secret_registry::{PublicEnvRef, PublicEnvToml, SecretsToml};
 use crate::config::server::{AllowExecActivities, OutboundHttpToml};
 use anyhow::{Context as _, ensure};
 use schemars::JsonSchema;
@@ -28,7 +28,7 @@ pub(crate) struct AppConfigToml {
 pub(crate) struct AppPolicyV1 {
     format: AppPolicyFormatV1,
     secrets: std::collections::BTreeMap<String, AppPolicySecretV1>,
-    public_env: Vec<String>,
+    public_env: Vec<PublicEnvRef>,
     allowed_exec_activities: std::collections::BTreeMap<String, Vec<String>>,
     outbound_http: Vec<crate::config::deployment::AllowedHostToml>,
 }
@@ -116,9 +116,21 @@ impl AppConfigToml {
                 })
                 .collect(),
             public_env: {
-                let mut allowed = self.public_env.allowed.clone();
-                allowed.sort();
-                allowed.dedup();
+                let mut allowed: Vec<_> = self
+                    .public_env
+                    .iter()
+                    .map(|(name, config)| {
+                        if config.optional {
+                            PublicEnvRef::Config {
+                                name: name.to_owned(),
+                                optional: true,
+                            }
+                        } else {
+                            PublicEnvRef::Required(name.to_owned())
+                        }
+                    })
+                    .collect();
+                allowed.sort_by(|a, b| a.name().cmp(b.name()));
                 allowed
             },
             allowed_exec_activities: self
@@ -157,7 +169,9 @@ mod tests {
             r#"
             app_name = "one"
             [public_env]
-            allowed = ["B", "A"]
+            B = {}
+            A = {}
+            TRACE_ID = { optional = true }
             [secrets]
             TOKEN = {}
         "#,
@@ -170,12 +184,27 @@ mod tests {
             [secrets]
             TOKEN = {}
             [public_env]
-            allowed = ["A", "B"]
+            TRACE_ID = { optional = true }
+            A = {}
+            B = {}
         "#,
         )
         .unwrap();
         assert_eq!(first.digest().unwrap(), second.digest().unwrap());
         assert!(first.digest().unwrap().starts_with("app-config:v1:sha256:"));
+        let policy: serde_json::Value =
+            serde_json::from_slice(&first.policy_json().unwrap()).unwrap();
+        assert_eq!(
+            policy["public_env"],
+            serde_json::json!(["A", "B", { "name": "TRACE_ID", "optional": true }])
+        );
+    }
+
+    #[test]
+    fn public_env_requires_named_entries() {
+        let err =
+            toml::from_str::<AppConfigToml>("[public_env]\nallowed = ['REGION']").unwrap_err();
+        assert!(err.to_string().contains("allowed"));
     }
 
     #[test]

@@ -812,6 +812,7 @@ pub(crate) async fn verify(
     {
         let mut unregistered_secrets = config_prepass::SecretFindings::default();
         let mut undeclared_public_env = BTreeSet::new();
+        let mut required_public_env = BTreeSet::new();
         config_prepass::collect_server_allowed_host_secrets(
             &config.outbound_http.allowed_hosts,
             &secret_registry,
@@ -821,6 +822,10 @@ pub(crate) async fn verify(
             &config.outbound_http.allowed_hosts,
             &secret_registry,
             &mut undeclared_public_env,
+        );
+        config_prepass::collect_required_public_env_from_allowed_hosts(
+            &config.outbound_http.allowed_hosts,
+            &mut required_public_env,
         );
         if let Some(deployment) = deployment_opt.as_ref() {
             config_prepass::collect_deployment_secrets(
@@ -833,11 +838,20 @@ pub(crate) async fn verify(
                 &secret_registry,
                 &mut undeclared_public_env,
             );
+            config_prepass::collect_deployment_required_public_env(
+                deployment,
+                &mut required_public_env,
+            );
         }
         if !unregistered_secrets.unregistered.is_empty() || !undeclared_public_env.is_empty() {
+            let optional_public_env = undeclared_public_env
+                .difference(&required_public_env)
+                .cloned()
+                .collect();
             config_prepass::fix_server_runtime_config_scaffolds(
                 app_config_path,
                 &undeclared_public_env,
+                &optional_public_env,
                 &unregistered_secrets,
             )
             .await?;
@@ -2931,9 +2945,8 @@ impl SubmitDeploymentError {
             config_prepass::PreflightError::MissingRuntimeConfig(err) => {
                 Self::MissingRuntimeConfig(err)
             }
-            err @ config_prepass::PreflightError::MissingSecretReplacements(_) => {
-                Self::Other(err.into())
-            }
+            err @ (config_prepass::PreflightError::MissingSecretReplacements(_)
+            | config_prepass::PreflightError::UncoveredOutboundHosts(_)) => Self::Other(err.into()),
         }
     }
 }
@@ -3662,7 +3675,8 @@ async fn prepare_switch_deployment(
         config_prepass::PreflightError::MissingRuntimeConfig(err) => {
             SwitchError::MissingRuntimeConfig(err)
         }
-        other @ config_prepass::PreflightError::MissingSecretReplacements(_) => {
+        other @ (config_prepass::PreflightError::MissingSecretReplacements(_)
+        | config_prepass::PreflightError::UncoveredOutboundHosts(_)) => {
             SwitchError::Other(other.into())
         }
     })?;
@@ -7032,7 +7046,7 @@ mod tests {
         );
         assert_eq!(err.public_env, public_env);
         assert!(
-            message.contains("allowed = [\"PUBLIC_A\", \"PUBLIC_B\"]"),
+            message.contains("PUBLIC_A = {}") && message.contains("PUBLIC_B = {}"),
             "{message}"
         );
         assert!(message.contains("`MISSING_A`, `MISSING_B`"), "{message}");
@@ -7083,14 +7097,15 @@ mod tests {
         secrets.record(&optional("SECRET_B"), &registry);
         secrets.record(&optional("SECRET_A"), &registry);
         secrets.record(&"SECRET_A".into(), &registry);
-        fix_server_runtime_config_scaffolds(path, &public_env, &secrets)
+        let optional_public_env = std::collections::BTreeSet::from(["PUBLIC_B".to_string()]);
+        fix_server_runtime_config_scaffolds(path, &public_env, &optional_public_env, &secrets)
             .await
             .unwrap();
 
         let after = std::fs::read_to_string(path).unwrap();
         assert!(after.contains("EXISTING = {}"), "{after}");
         assert!(
-            after.contains("allowed = [\"PUBLIC_A\", \"PUBLIC_B\"]"),
+            after.contains("PUBLIC_A = {}") && after.contains("PUBLIC_B = { optional = true }"),
             "{after}"
         );
         assert!(after.find("SECRET_A").unwrap() < after.find("SECRET_B").unwrap());
@@ -7197,14 +7212,42 @@ mod tests {
 
         assert_eq!(uncovered.len(), 1, "only the uncovered host is collected");
         assert_eq!(uncovered[0].entry.pattern, "example.com");
+        assert!(
+            crate::command::server::config_prepass::report_uncovered_outbound_http_hosts(
+                &uncovered
+            )
+            .is_err()
+        );
 
         let snippet = host_allowlist_snippet("outbound_http", &uncovered[0].entry);
         assert!(snippet.contains("[[outbound_http.allowed_host]]"));
         assert!(snippet.contains("pattern = \"example.com\""));
         assert!(snippet.contains("methods = [\"GET\"]"));
-        // Destination-only allowlist entry: no secret fields leak into the snippet.
         assert!(!snippet.contains("secrets"), "snippet: {snippet}");
         assert!(!snippet.contains("replace_in"), "snippet: {snippet}");
+        let mut app_host = host("obeli.sk");
+        app_host.request_url_regex = Some("^GET https://obeli\\.sk/app/".to_string());
+        let mut deployment_host = host("obeli.sk");
+        deployment_host.request_url_regex = Some("^GET https://obeli\\.sk/deployment/".to_string());
+        let app_with_regex = GlobalHttpConfig::from(
+            crate::config::deployment::resolve_allowed_hosts(vec![app_host], false, &registry)
+                .unwrap()
+                .0,
+        );
+        let mut uncovered = Vec::new();
+        collect_uncovered_outbound_http_hosts(
+            "activity_wasm",
+            &name,
+            &[deployment_host],
+            &app_with_regex,
+            &registry,
+            false,
+            &mut uncovered,
+        );
+        assert!(
+            uncovered.is_empty(),
+            "URL regexes are applied independently"
+        );
     }
 
     /// A self-authorizing webhook (the operator-owned web UI) is bounded by its own

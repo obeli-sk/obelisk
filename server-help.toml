@@ -1,4 +1,6 @@
-## Server configuration
+## Server configuration, owned by the Obelisk platform admin.
+## It controls listeners, storage, resource limits, and the platform exec gate.
+## Exec activities need approval in both server.toml and app.toml.
 ## The API, webui, and external HTTP server are all enabled by default on localhost.
 ## To disable any of them, set `enabled = false`. To change the address, override `listening_addr`.
 # api.enabled = true                             # Disable the API server (enabled by default).

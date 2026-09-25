@@ -4818,6 +4818,12 @@ pub(crate) mod deployment {
         pub error: String,
         #[serde(default)]
         pub public_env: Vec<String>,
+        // backcompat: 0.41 responses omit this field.
+        #[serde(default)]
+        pub optional_public_env: Vec<String>,
+        // backcompat: 0.41 responses omit this field.
+        #[serde(default)]
+        pub required_public_env: Vec<String>,
         pub secrets: Vec<String>,
         /// Subset of `secrets` whose every reference is optional.
         #[serde(default)]
@@ -5083,6 +5089,8 @@ pub(crate) mod deployment {
                         &MissingRuntimeConfigErrorBody {
                             error: "missing_runtime_config".to_string(),
                             public_env: missing.public_env.into_iter().collect(),
+                            optional_public_env: missing.optional_public_env.into_iter().collect(),
+                            required_public_env: missing.required_public_env.into_iter().collect(),
                             secrets: missing.secrets.into_iter().collect(),
                             optional_secrets: missing.optional_secrets.into_iter().collect(),
                             unset_secrets: missing.unset_secrets.into_iter().collect(),

@@ -304,6 +304,23 @@
           "type": "string"
         },
         {
+          "description": "Forward when present: `{key = \"KEY\", optional = true}`.",
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "optional": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "key",
+            "optional"
+          ]
+        },
+        {
           "description": "Set to value: `{key = \"KEY\", value = \"foo\"}` (supports `${VAR}` interpolation)",
           "type": "object",
           "properties": {
@@ -314,6 +331,7 @@
               "type": "string"
             }
           },
+          "additionalProperties": false,
           "required": [
             "key",
             "value"

@@ -15,7 +15,7 @@
     "public_env": {
       "type": "array",
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/PublicEnvRef"
       }
     },
     "allowed_exec_activities": {
@@ -69,6 +69,29 @@
       "required": [
         "optional",
         "exposed_to"
+      ]
+    },
+    "PublicEnvRef": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "optional": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "optional"
+          ]
+        }
       ]
     },
     "AllowedHostToml": {

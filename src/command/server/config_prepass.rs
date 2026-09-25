@@ -8,7 +8,7 @@ use crate::config::deployment::{
     AllowedHostToml, ConfigName, DeploymentResolved, MethodsInput, ReplaceIn, SecretRef,
     allowed_host_fingerprint, resolve_allowed_hosts,
 };
-use crate::config::env_var::collect_env_var_references;
+use crate::config::env_var::{collect_env_var_references, collect_required_env_var_references};
 use crate::config::secret_registry::SecretRegistry;
 use anyhow::Context;
 use concepts::env_var::EnvVarConfig;
@@ -23,6 +23,10 @@ use wasm_workers::http_request_policy::{GlobalHttpConfig, ReplacementLocation};
 #[derive(Debug, Default)]
 pub(crate) struct MissingRuntimeConfigError {
     pub(crate) public_env: BTreeSet<String>,
+    /// Unregistered public variables whose every reference permits absence.
+    pub(crate) optional_public_env: BTreeSet<String>,
+    /// Declared optional in app.toml but required by a deployment reference.
+    pub(crate) required_public_env: BTreeSet<String>,
     pub(crate) secrets: BTreeSet<String>,
     /// Subset of `secrets` whose every reference is optional, scaffolded as `optional = true`.
     pub(crate) optional_secrets: BTreeSet<String>,
@@ -35,7 +39,7 @@ impl fmt::Display for MissingRuntimeConfigError {
         let mut findings = Vec::new();
         if !self.public_env.is_empty() {
             findings.push(format!(
-                "environment variable(s) `{}` not declared in app.toml `[public_env].allowed`",
+                "environment variable(s) `{}` not declared in app.toml `[public_env]`",
                 self.public_env
                     .iter()
                     .cloned()
@@ -81,6 +85,20 @@ impl fmt::Display for MissingRuntimeConfigError {
                     .join("`, `")
             )?;
         }
+        if !self.required_public_env.is_empty() {
+            if !findings.is_empty() || !self.unset_secrets.is_empty() {
+                writeln!(formatter)?;
+            }
+            write!(
+                formatter,
+                "deployment requires public environment variable(s) `{}` declared optional in app.toml; mark them required in `[public_env]`",
+                self.required_public_env
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("`, `")
+            )?;
+        }
         Ok(())
     }
 }
@@ -88,9 +106,16 @@ impl fmt::Display for MissingRuntimeConfigError {
 impl std::error::Error for MissingRuntimeConfigError {}
 
 impl MissingRuntimeConfigError {
-    fn new(public_env: &BTreeSet<String>, secrets: &SecretFindings) -> Self {
+    fn new(
+        public_env: &BTreeSet<String>,
+        optional_public_env: &BTreeSet<String>,
+        required_public_env: &BTreeSet<String>,
+        secrets: &SecretFindings,
+    ) -> Self {
         Self {
             public_env: public_env.clone(),
+            optional_public_env: optional_public_env.clone(),
+            required_public_env: required_public_env.clone(),
             secrets: secrets.unregistered.keys().cloned().collect(),
             optional_secrets: secrets.unregistered_optional().cloned().collect(),
             unset_secrets: secrets.unset.clone(),
@@ -98,11 +123,19 @@ impl MissingRuntimeConfigError {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.public_env.is_empty() && self.secrets.is_empty() && self.unset_secrets.is_empty()
+        self.public_env.is_empty()
+            && self.required_public_env.is_empty()
+            && self.secrets.is_empty()
+            && self.unset_secrets.is_empty()
     }
 
     pub(crate) fn scaffold_snippet(&self) -> String {
-        runtime_config_scaffold_snippet(&self.public_env, &self.secrets, &self.optional_secrets)
+        runtime_config_scaffold_snippet(
+            &self.public_env,
+            &self.optional_public_env,
+            &self.secrets,
+            &self.optional_secrets,
+        )
     }
 }
 
@@ -156,11 +189,17 @@ impl SecretFindings {
 pub(super) struct MissingSecretReplacementsError(String);
 
 #[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(super) struct UncoveredOutboundHostsError(String);
+
+#[derive(Debug, thiserror::Error)]
 pub(super) enum PreflightError {
     #[error(transparent)]
     MissingRuntimeConfig(#[from] MissingRuntimeConfigError),
     #[error(transparent)]
     MissingSecretReplacements(#[from] MissingSecretReplacementsError),
+    #[error(transparent)]
+    UncoveredOutboundHosts(#[from] UncoveredOutboundHostsError),
 }
 
 /// Pairs each per-entry `allowed_host` advisory with the source `path:line` of its
@@ -332,6 +371,7 @@ pub(super) fn preflight(
     let mut uncovered_hosts = Vec::new();
     let mut secrets = SecretFindings::default();
     let mut undeclared_public_env = BTreeSet::new();
+    let mut required_public_env = BTreeSet::new();
     collect_unregistered_public_env_from_allowed_hosts(
         &server_verified.server_outbound_allowed_hosts,
         secret_registry,
@@ -343,6 +383,7 @@ pub(super) fn preflight(
             secret_registry,
             &mut undeclared_public_env,
         );
+        collect_deployment_required_public_env(deployment, &mut required_public_env);
         let mut check = |section: &'static str, name: &ConfigName, hosts: &[AllowedHostToml]| {
             warnings.lint(hosts, ignore_missing_env_vars, secret_registry, false);
             collect_outbound_http_secret_replacements(
@@ -391,10 +432,22 @@ pub(super) fn preflight(
 
     // Emit informational warnings before any fatal report, so every finding is seen.
     warnings.emit();
-    report_uncovered_outbound_http_hosts(&uncovered_hosts);
-
     secrets.extend(server_secrets);
-    report_missing_runtime_config(&undeclared_public_env, &secrets, availability)?;
+    let optional_public_env = undeclared_public_env
+        .difference(&required_public_env)
+        .cloned()
+        .collect();
+    required_public_env.retain(|name| {
+        secret_registry.public_env_is_allowed(name) && !secret_registry.public_env_is_required(name)
+    });
+    report_missing_runtime_config_with_required(
+        &undeclared_public_env,
+        &optional_public_env,
+        &required_public_env,
+        &secrets,
+        availability,
+    )?;
+    report_uncovered_outbound_http_hosts(&uncovered_hosts)?;
     report_missing_outbound_http_secret_replacements(&missing_replacements, availability)?;
     Ok(())
 }
@@ -407,7 +460,7 @@ fn collect_env_vars(
     let mut referenced = BTreeSet::new();
     for env_var in env_vars {
         match env_var {
-            EnvVarConfig::Key(key) => {
+            EnvVarConfig::Key(key) | EnvVarConfig::OptionalKey { key, .. } => {
                 referenced.insert(key.clone());
             }
             EnvVarConfig::KeyValue { value, .. } => {
@@ -419,6 +472,59 @@ fn collect_env_vars(
         !secret_registry.public_env_is_allowed(name)
             && !secret_registry.public_env_is_sensitive(name)
     }));
+}
+
+fn collect_required_env_vars(env_vars: &[EnvVarConfig], required: &mut BTreeSet<String>) {
+    let mut referenced = BTreeSet::new();
+    for env_var in env_vars {
+        match env_var {
+            EnvVarConfig::Key(key) => {
+                referenced.insert(key.clone());
+            }
+            EnvVarConfig::OptionalKey { key, optional } if !optional => {
+                referenced.insert(key.clone());
+            }
+            EnvVarConfig::OptionalKey { .. } => {}
+            EnvVarConfig::KeyValue { value, .. } => {
+                collect_required_env_var_references(value, &mut referenced);
+            }
+        }
+    }
+    required.extend(referenced);
+}
+
+pub(super) fn collect_required_public_env_from_allowed_hosts(
+    entries: &[AllowedHostToml],
+    required: &mut BTreeSet<String>,
+) {
+    let mut referenced = BTreeSet::new();
+    for entry in entries {
+        collect_required_env_var_references(&entry.pattern, &mut referenced);
+        if let Some(regex) = &entry.request_url_regex {
+            collect_required_env_var_references(regex, &mut referenced);
+        }
+    }
+    required.extend(referenced);
+}
+
+pub(super) fn collect_deployment_required_public_env(
+    deployment: &DeploymentResolved,
+    required: &mut BTreeSet<String>,
+) {
+    for env_vars in deployment
+        .activities_wasm
+        .iter()
+        .map(|c| &*c.env_vars)
+        .chain(deployment.activities_js.iter().map(|c| &*c.env_vars))
+        .chain(deployment.activities_exec.iter().map(|c| &*c.env_vars))
+        .chain(deployment.webhooks_wasm.iter().map(|c| &*c.env_vars))
+        .chain(deployment.webhooks_js.iter().map(|c| &*c.env_vars))
+    {
+        collect_required_env_vars(env_vars, required);
+    }
+    for hosts in deployment_allowed_host_lists(deployment) {
+        collect_required_public_env_from_allowed_hosts(hosts, required);
+    }
 }
 
 pub(super) fn collect_unregistered_public_env_from_allowed_hosts(
@@ -471,6 +577,7 @@ pub(super) fn preflight_runtime_config(
     availability: RuntimeConfigAvailability,
 ) -> Result<(), MissingRuntimeConfigError> {
     let mut public_env = BTreeSet::new();
+    let mut required_public_env = BTreeSet::new();
     let mut secrets = SecretFindings::default();
     collect_unregistered_public_env_from_allowed_hosts(
         server_allowed_hosts,
@@ -480,9 +587,23 @@ pub(super) fn preflight_runtime_config(
     collect_server_allowed_host_secrets(server_allowed_hosts, secret_registry, &mut secrets);
     if let Some(deployment) = deployment {
         collect_deployment_unregistered_public_env(deployment, secret_registry, &mut public_env);
+        collect_deployment_required_public_env(deployment, &mut required_public_env);
         collect_deployment_secrets(deployment, secret_registry, &mut secrets);
     }
-    report_missing_runtime_config(&public_env, &secrets, availability)
+    let optional_public_env = public_env
+        .difference(&required_public_env)
+        .cloned()
+        .collect();
+    required_public_env.retain(|name| {
+        secret_registry.public_env_is_allowed(name) && !secret_registry.public_env_is_required(name)
+    });
+    report_missing_runtime_config_with_required(
+        &public_env,
+        &optional_public_env,
+        &required_public_env,
+        &secrets,
+        availability,
+    )
 }
 
 /// Every component's outbound HTTP `allowed_hosts`; used by `collect_deployment_secrets`.
@@ -561,16 +682,20 @@ pub(super) fn collect_server_allowed_host_secrets(
 
 fn runtime_config_scaffold_snippet(
     public_env: &BTreeSet<String>,
+    optional_public_env: &BTreeSet<String>,
     secrets: &BTreeSet<String>,
     optional_secrets: &BTreeSet<String>,
 ) -> String {
     let mut doc = DocumentMut::new();
     if !public_env.is_empty() {
-        let mut values = toml_edit::Array::new();
+        let mut table = Table::new();
         for name in public_env {
-            values.push(name.as_str());
+            table.insert(
+                name,
+                value(public_env_scaffold(optional_public_env.contains(name))),
+            );
         }
-        doc["public_env"]["allowed"] = value(values);
+        doc["public_env"] = Item::Table(table);
     }
     if !secrets.is_empty() {
         let mut table = Table::new();
@@ -585,6 +710,14 @@ fn runtime_config_scaffold_snippet(
     doc.to_string()
 }
 
+fn public_env_scaffold(optional: bool) -> toml_edit::InlineTable {
+    let mut inline = toml_edit::InlineTable::new();
+    if optional {
+        inline.insert("optional", true.into());
+    }
+    inline
+}
+
 fn secret_scaffold(name: &str, optional: bool) -> toml_edit::InlineTable {
     let mut inline = toml_edit::InlineTable::new();
     let _ = name;
@@ -595,12 +728,34 @@ fn secret_scaffold(name: &str, optional: bool) -> toml_edit::InlineTable {
 }
 
 /// Emit one finding containing every undeclared public env var and unsatisfied secret.
+#[cfg(test)]
 pub(super) fn report_missing_runtime_config(
     public_env: &BTreeSet<String>,
     secrets: &SecretFindings,
     availability: RuntimeConfigAvailability,
 ) -> Result<(), MissingRuntimeConfigError> {
-    let error = MissingRuntimeConfigError::new(public_env, secrets);
+    report_missing_runtime_config_with_required(
+        public_env,
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+        secrets,
+        availability,
+    )
+}
+
+fn report_missing_runtime_config_with_required(
+    public_env: &BTreeSet<String>,
+    optional_public_env: &BTreeSet<String>,
+    required_public_env: &BTreeSet<String>,
+    secrets: &SecretFindings,
+    availability: RuntimeConfigAvailability,
+) -> Result<(), MissingRuntimeConfigError> {
+    let error = MissingRuntimeConfigError::new(
+        public_env,
+        optional_public_env,
+        required_public_env,
+        secrets,
+    );
     if error.is_empty() {
         return Ok(());
     }
@@ -829,7 +984,7 @@ pub(super) fn collect_uncovered_outbound_http_hosts(
         if !global_http_config
             .entries()
             .iter()
-            .any(|allowed| allowed.covers(resolved))
+            .any(|allowed| allowed.covers_destination(resolved))
         {
             uncovered.push(UncoveredOutboundHost {
                 component_section,
@@ -840,10 +995,12 @@ pub(super) fn collect_uncovered_outbound_http_hosts(
     }
 }
 
-/// Warn once, listing the allowlist entries to add: coverage is conservative, so this is not fatal.
-pub(super) fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
+/// Reject destinations outside the app policy before any component can run.
+pub(super) fn report_uncovered_outbound_http_hosts(
+    uncovered: &[UncoveredOutboundHost],
+) -> Result<(), UncoveredOutboundHostsError> {
     if uncovered.is_empty() {
-        return;
+        return Ok(());
     }
     use std::fmt::Write as _;
     let mut details = String::new();
@@ -861,16 +1018,15 @@ pub(super) fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboun
             snippets.push(snippet);
         }
     }
-    warn!(
+    Err(UncoveredOutboundHostsError(format!(
         "{count} outbound HTTP destination(s) the deployment allows are not covered by any \
-         app.toml `[[outbound_http.allowed_host]]` allowlist entry; requests to them will be \
-         denied at runtime:\n\
+         app.toml `[[outbound_http.allowed_host]]` allowlist entry:\n\
          {details}\n\
          After review, add these allowlist entries to app.toml:\n\n\
          {snippets}",
         count = uncovered.len(),
         snippets = snippets.join("\n"),
-    );
+    )))
 }
 
 /// Append a `[secrets]` scaffold entry for each unregistered secret, `optional` when every
@@ -878,6 +1034,7 @@ pub(super) fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboun
 pub(super) async fn fix_server_runtime_config_scaffolds(
     server_config_path: &Path,
     public_env: &BTreeSet<String>,
+    optional_public_env: &BTreeSet<String>,
     secrets: &SecretFindings,
 ) -> Result<(), anyhow::Error> {
     if public_env.is_empty() && secrets.unregistered.is_empty() {
@@ -891,19 +1048,18 @@ pub(super) async fn fix_server_runtime_config_scaffolds(
         .context("cannot parse app config as TOML")?;
 
     if !public_env.is_empty() {
-        let allowed = doc
+        let table = doc
             .as_table_mut()
             .entry("public_env")
             .or_insert_with(|| Item::Table(Table::new()))
             .as_table_mut()
-            .context("`public_env` in app config is not a table")?
-            .entry("allowed")
-            .or_insert_with(|| value(toml_edit::Array::new()))
-            .as_array_mut()
-            .context("`public_env.allowed` in app config is not an array")?;
+            .context("`public_env` in app config is not a table")?;
         for name in public_env {
-            if !allowed.iter().any(|item| item.as_str() == Some(name)) {
-                allowed.push(name.as_str());
+            if !table.contains_key(name) {
+                table.insert(
+                    name,
+                    value(public_env_scaffold(optional_public_env.contains(name))),
+                );
             }
         }
     }
@@ -948,6 +1104,53 @@ mod tests {
             undeclared.into_iter().collect::<Vec<_>>(),
             ["VAR_A", "VAR_B", "VAR_C", "VAR_D"]
         );
+    }
+
+    #[test]
+    fn required_deployment_env_needs_required_app_declaration() {
+        use crate::config::env_var::StartupEnvVars;
+        use crate::config::secret_registry::{
+            EnvVarSecretsCleanup, PublicEnvConfigToml, PublicEnvToml, SecretsToml,
+        };
+        const VAR: &str = "OBELISK_TEST_OPTIONAL_APP_ENV_36A7";
+        let registry = SecretRegistry::resolve(
+            SecretsToml::new(),
+            PublicEnvToml::from([(VAR.to_string(), PublicEnvConfigToml { optional: true })]),
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+            None,
+            &StartupEnvVars::capture(),
+        )
+        .unwrap();
+        let mut required = BTreeSet::new();
+        collect_required_env_vars(&[EnvVarConfig::Key(VAR.to_string())], &mut required);
+        assert!(!registry.public_env_is_required(VAR));
+        assert_eq!(required, BTreeSet::from([VAR.to_string()]));
+        let err = report_missing_runtime_config_with_required(
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &required,
+            &SecretFindings::default(),
+            RuntimeConfigAvailability::Strict,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("declared optional"));
+
+        required.clear();
+        collect_required_env_vars(
+            &[
+                EnvVarConfig::OptionalKey {
+                    key: VAR.to_string(),
+                    optional: true,
+                },
+                EnvVarConfig::KeyValue {
+                    key: "FALLBACK".to_string(),
+                    value: format!("${{{VAR}:-default}}"),
+                },
+            ],
+            &mut required,
+        );
+        assert!(required.is_empty());
     }
 
     /// A secret the server marks optional and leaves unset satisfies only optional references.

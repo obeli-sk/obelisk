@@ -47,6 +47,23 @@ pub(crate) fn collect_env_var_references(
     }
 }
 
+pub(crate) fn collect_required_env_var_references(
+    input: &str,
+    names: &mut std::collections::BTreeSet<String>,
+) {
+    let mut remaining = input;
+    while let Some(start) = remaining.find("${") {
+        remaining = &remaining[start + 2..];
+        if let Some(close) = remaining.find('}') {
+            let expression = &remaining[..=close];
+            let key_end = expression.find([':', '-', '}']).unwrap_or(expression.len());
+            if key_end > 0 && expression.as_bytes().get(key_end) == Some(&b'}') {
+                names.insert(expression[..key_end].to_string());
+            }
+        }
+    }
+}
+
 pub(crate) fn interpolate_env_vars_plaintext(
     input: &str,
     secret_registry: &SecretRegistry,

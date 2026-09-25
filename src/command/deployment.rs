@@ -438,6 +438,8 @@ async fn submit_attempt(
     {
         let missing = crate::command::server::MissingRuntimeConfigError {
             public_env: detail.public_env.into_iter().collect(),
+            optional_public_env: detail.optional_public_env.into_iter().collect(),
+            required_public_env: detail.required_public_env.into_iter().collect(),
             secrets: detail.secrets.into_iter().collect(),
             optional_secrets: detail.optional_secrets.into_iter().collect(),
             unset_secrets: detail.unset_secrets.into_iter().collect(),

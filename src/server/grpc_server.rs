@@ -2665,7 +2665,7 @@ fn missing_runtime_config_status(
     missing: crate::command::server::MissingRuntimeConfigError,
 ) -> tonic::Status {
     use prost::Message as _;
-    let message = if missing.unset_secrets.is_empty() {
+    let message = if missing.unset_secrets.is_empty() && missing.required_public_env.is_empty() {
         "deployment references runtime configuration that is not declared by the server".to_owned()
     } else {
         missing.to_string()

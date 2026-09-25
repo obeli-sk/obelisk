@@ -301,7 +301,7 @@ fn synthesized_interface(
 fn env_var_key(ev: &EnvVarConfig) -> String {
     match ev {
         EnvVarConfig::Key(k) => k.clone(),
-        EnvVarConfig::KeyValue { key, .. } => key.clone(),
+        EnvVarConfig::OptionalKey { key, .. } | EnvVarConfig::KeyValue { key, .. } => key.clone(),
     }
 }
 
