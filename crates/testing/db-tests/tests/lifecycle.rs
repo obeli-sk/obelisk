@@ -5261,6 +5261,7 @@ async fn deployment_insert_and_get(database: Database) {
         digest: expected_digest.clone(),
         created_at: now,
         last_active_at: None,
+        last_active_app_config_digest: None,
         status: DeploymentStatus::Inactive,
         deployment_toml: r#"{"activities":[]}"#.to_string(),
         obelisk_version: "0.0.0-test".to_string(),
@@ -5317,6 +5318,7 @@ async fn deployment_files_roundtrip_and_missing_digests(database: Database) {
                 digest: DeploymentRecord::compute_digest("{}"),
                 created_at: now,
                 last_active_at: None,
+                last_active_app_config_digest: None,
                 status: DeploymentStatus::Inactive,
                 deployment_toml: "{}".to_string(),
                 obelisk_version: "0.0.0-test".to_string(),
@@ -5405,6 +5407,7 @@ async fn deployment_activate(database: Database) {
                 digest: DeploymentRecord::compute_digest("{}"),
                 created_at: now,
                 last_active_at: None,
+                last_active_app_config_digest: None,
                 status: DeploymentStatus::Inactive,
                 deployment_toml: "{}".to_string(),
                 obelisk_version: "0.0.0-test".to_string(),
@@ -5419,7 +5422,7 @@ async fn deployment_activate(database: Database) {
         .unwrap();
 
     api_conn
-        .activate_deployment(deployment_id, now)
+        .activate_deployment(deployment_id, now, Some("test-app-config"))
         .await
         .unwrap();
 
@@ -5428,6 +5431,20 @@ async fn deployment_activate(database: Database) {
     assert_eq!(DeploymentStatus::Active, active.status);
     assert!(active.last_active_at.is_some());
     assert!(active.last_active_at.unwrap() >= now);
+    assert_eq!(
+        active.last_active_app_config_digest.as_deref(),
+        Some("test-app-config")
+    );
+
+    api_conn
+        .activate_deployment(deployment_id, now, Some("next-app-config"))
+        .await
+        .unwrap();
+    let active = api_conn.get_active_deployment().await.unwrap().unwrap();
+    assert_eq!(
+        active.last_active_app_config_digest.as_deref(),
+        Some("next-app-config")
+    );
 
     drop(api_conn);
     db_close.close().await;
@@ -5452,6 +5469,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
                 digest: DeploymentRecord::compute_digest("{}"),
                 created_at: now,
                 last_active_at: None,
+                last_active_app_config_digest: None,
                 status: DeploymentStatus::Inactive,
                 deployment_toml: "{}".to_string(),
                 obelisk_version: "0.0.0-test".to_string(),
@@ -5464,7 +5482,10 @@ async fn deployment_only_one_active_allowed(database: Database) {
         )
         .await
         .unwrap();
-    api_conn.activate_deployment(id1, now).await.unwrap();
+    api_conn
+        .activate_deployment(id1, now, Some("test-app-config"))
+        .await
+        .unwrap();
 
     // Activating a second deployment must deactivate the first.
     let id2 = concepts::prefixed_ulid::DeploymentId::generate();
@@ -5476,6 +5497,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
                 digest: DeploymentRecord::compute_digest("{}"),
                 created_at: now,
                 last_active_at: None,
+                last_active_app_config_digest: None,
                 status: DeploymentStatus::Inactive,
                 deployment_toml: "{}".to_string(),
                 obelisk_version: "0.0.0-test".to_string(),
@@ -5488,7 +5510,10 @@ async fn deployment_only_one_active_allowed(database: Database) {
         )
         .await
         .unwrap();
-    api_conn.activate_deployment(id2, now).await.unwrap();
+    api_conn
+        .activate_deployment(id2, now, Some("test-app-config"))
+        .await
+        .unwrap();
 
     // Only id2 is active now.
     let active = api_conn.get_active_deployment().await.unwrap().unwrap();
@@ -5523,6 +5548,7 @@ async fn deployment_enqueue_active_clears_pending(database: Database) {
                     digest: DeploymentRecord::compute_digest("{}"),
                     created_at: now,
                     last_active_at: None,
+                    last_active_app_config_digest: None,
                     status: DeploymentStatus::Inactive,
                     deployment_toml: "{}".to_string(),
                     obelisk_version: "0.0.0-test".to_string(),
@@ -5537,7 +5563,10 @@ async fn deployment_enqueue_active_clears_pending(database: Database) {
             .unwrap();
     }
 
-    api_conn.activate_deployment(active_id, now).await.unwrap();
+    api_conn
+        .activate_deployment(active_id, now, Some("test-app-config"))
+        .await
+        .unwrap();
     assert_eq!(
         EnqueueOutcome::Enqueued,
         api_conn.enqueue_deployment(pending_id).await.unwrap()
@@ -5596,6 +5625,7 @@ async fn deployment_list(database: Database) {
                     digest: DeploymentRecord::compute_digest("{}"),
                     created_at: now,
                     last_active_at: None,
+                    last_active_app_config_digest: None,
                     status: DeploymentStatus::Inactive,
                     deployment_toml: "{}".to_string(),
                     obelisk_version: "0.0.0-test".to_string(),

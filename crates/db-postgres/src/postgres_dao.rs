@@ -366,6 +366,7 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
         digest: get(row, "digest")?,
         created_at: get(row, "created_at")?,
         last_active_at: get(row, "last_active_at")?,
+        last_active_app_config_digest: get(row, "last_active_app_config_digest")?,
         status,
         deployment_toml: get(row, "deployment_toml")?,
         obelisk_version: get(row, "obelisk_version")?,
@@ -2091,6 +2092,7 @@ async fn list_deployment_states(
             {deployment_toml_col},
             d.created_at,
             d.last_active_at,
+            d.last_active_app_config_digest,
             d.status
         FROM t_deployment d{count_join}"
     );
@@ -2119,7 +2121,7 @@ async fn list_deployment_states(
     if include_execution_counts {
         write!(
             sql,
-            " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.status"
+            " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.last_active_app_config_digest, d.status"
         )
         .expect("writing to string");
     }
@@ -2179,6 +2181,7 @@ async fn list_deployment_states(
             deployment_toml: get::<Option<String>, _>(&row, "deployment_toml")?,
             created_at: get::<DateTime<Utc>, _>(&row, "created_at")?,
             last_active_at: get::<Option<DateTime<Utc>>, _>(&row, "last_active_at")?,
+            last_active_app_config_digest: get(&row, "last_active_app_config_digest")?,
             status,
         });
     }
@@ -5451,6 +5454,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         deployment_id: DeploymentId,
         now: DateTime<Utc>,
+        app_config_digest: Option<&str>,
     ) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
@@ -5463,8 +5467,8 @@ impl DbExternalApi for PostgresConnection {
         // Set target deployment to active, recording activation time.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', last_active_at = $1, inactive_at = NULL WHERE deployment_id = $2",
-                &[&now, &deployment_id.to_string()],
+                "UPDATE t_deployment SET status = 'active', last_active_at = $1, last_active_app_config_digest = $3, inactive_at = NULL WHERE deployment_id = $2",
+                &[&now, &deployment_id.to_string(), &app_config_digest],
             )
             .await?;
         tx.commit().await?;
@@ -5524,7 +5528,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE deployment_id = $1",
                 &[&deployment_id.to_string()],
             )
@@ -5546,7 +5550,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE status = 'active' LIMIT 1",
                 &[],
             )
@@ -5566,7 +5570,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE status IN ('enqueued', 'active') \
                  ORDER BY CASE status WHEN 'enqueued' THEN 0 ELSE 1 END LIMIT 1",
                 &[],
@@ -5596,7 +5600,7 @@ impl DbExternalApi for PostgresConnection {
         };
 
         let mut sql = String::from(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment",
         );
 
@@ -5975,9 +5979,9 @@ async fn delete_deployment_tx(
 impl DbAdmin for PostgresConnection {
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
         self.client.lock().await.execute(
-            "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+            "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest, app_config_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
             &[&event.event_id.to_string(), &event.node_run_id.to_string(), &event.created_at, &event.level.as_str(), &event.code,
-              &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key, &event.cas_digest.map(|digest| digest.to_string())],
+              &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key, &event.cas_digest.map(|digest| digest.to_string()), &event.app_config_digest],
         ).await?;
         Ok(())
     }
@@ -6004,9 +6008,9 @@ impl DbAdmin for PostgresConnection {
         )
         .await?;
         tx.execute(
-            "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+            "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest, app_config_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
             &[&event.event_id.to_string(), &event.node_run_id.to_string(), &event.created_at, &event.level.as_str(), &event.code,
-              &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key, &digest.to_string()],
+              &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key, &digest.to_string(), &event.app_config_digest],
         ).await?;
         tx.commit().await?;
         Ok(())
@@ -6017,7 +6021,7 @@ impl DbAdmin for PostgresConnection {
         filter: SystemEventFilter,
     ) -> Result<Vec<SystemEvent>, DbErrorRead> {
         let rows = self.client.lock().await.query(
-            "SELECT event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, cas_digest FROM t_system_event
+            "SELECT event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, cas_digest, app_config_digest FROM t_system_event
              WHERE ($1::text IS NULL OR event_id = $1) AND ($2::text IS NULL OR node_run_id = $2)
                AND ($3::text IS NULL OR level = $3) AND ($4::text IS NULL OR code = $4)
                AND ($5::text IS NULL OR deployment_id = $5) AND ($6::text IS NULL OR event_id < $6)
@@ -6040,6 +6044,7 @@ impl DbAdmin for PostgresConnection {
                     node_run_id: get::<String, _>(&row, 1)?
                         .parse()
                         .map_err(|err| consistency_db_err(format!("invalid node run ID: {err}")))?,
+                    app_config_digest: get(&row, 9)?,
                     created_at: get(&row, 2)?,
                     level: match level.as_str() {
                         "debug" => SystemEventLevel::Debug,
