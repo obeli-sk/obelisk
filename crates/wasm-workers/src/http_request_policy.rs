@@ -787,6 +787,12 @@ pub struct AllowedHostConfig {
 }
 
 impl AllowedHostConfig {
+    /// Preflight coverage of destination and methods; both URL regexes still apply at runtime.
+    #[must_use]
+    pub fn covers_destination(&self, inner: &AllowedHostConfig) -> bool {
+        self.pattern.covers(&inner.pattern)
+    }
+
     /// Whether `self` (operator allowlist) authorizes every request `inner`
     /// permits, across scheme, host, port, methods, and URL regex. Regex coverage
     /// is conservative: an allowlist entry with no regex covers any inner; otherwise it covers

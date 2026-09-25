@@ -18,10 +18,11 @@
       "default": {}
     },
     "public_env": {
-      "$ref": "#/$defs/PublicEnvToml",
-      "default": {
-        "allowed": []
-      }
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/PublicEnvConfigToml"
+      },
+      "default": {}
     },
     "allowed_exec_activities": {
       "type": "object",
@@ -70,16 +71,13 @@
         }
       ]
     },
-    "PublicEnvToml": {
-      "description": "Public environment variables that deployments may read.",
+    "PublicEnvConfigToml": {
+      "description": "Configuration for one public environment variable.",
       "type": "object",
       "properties": {
-        "allowed": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": []
+        "optional": {
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false

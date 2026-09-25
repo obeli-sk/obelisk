@@ -2627,17 +2627,26 @@ pub(crate) fn resolve_env_vars_plaintext(
         .map(|env_var| match env_var {
             EnvVarConfig::KeyValue { key, value } => {
                 match interpolate_deployment_env_vars_plaintext(&value, secret_registry) {
-                    Ok(val) => Ok(EnvVar { key, val }),
-                    Err(err) => empty_if_missing(key, err),
+                    Ok(val) => Ok(Some(EnvVar { key, val })),
+                    Err(err) => empty_if_missing(key, err).map(Some),
                 }
             }
             EnvVarConfig::Key(key) => match secret_registry.deployment_env_lookup(&key) {
-                Ok(Some(val)) => Ok(EnvVar { key, val }),
-                Ok(None) => empty_if_missing(key.clone(), EnvVarError::Missing(key)),
+                Ok(Some(val)) => Ok(Some(EnvVar { key, val })),
+                Ok(None) => empty_if_missing(key.clone(), EnvVarError::Missing(key)).map(Some),
                 Err(violation) => Err(EnvVarError::PublicEnv(violation)),
             },
+            EnvVarConfig::OptionalKey { key, optional } => {
+                match secret_registry.deployment_env_lookup(&key) {
+                    Ok(Some(val)) => Ok(Some(EnvVar { key, val })),
+                    Ok(None) if optional => Ok(None),
+                    Ok(None) => empty_if_missing(key.clone(), EnvVarError::Missing(key)).map(Some),
+                    Err(violation) => Err(EnvVarError::PublicEnv(violation)),
+                }
+            }
         })
-        .collect::<Result<_, _>>()
+        .collect::<Result<Vec<_>, _>>()
+        .map(|values| values.into_iter().flatten().collect())
 }
 
 #[derive(Debug, thiserror::Error)]

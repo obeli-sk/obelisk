@@ -415,6 +415,21 @@ mod env_vars {
         assert_eq!(resolved[0].key, "RENAMED_ENV_VAR");
         assert_eq!(resolved[0].val, "");
     }
+
+    #[test]
+    fn absent_optional_forward_is_omitted() {
+        const VAR: &str = "OBELISK_TEST_OPTIONAL_FORWARD_UNSET_8A6C";
+        let env_vars = vec![EnvVarConfig::OptionalKey {
+            key: VAR.to_string(),
+            optional: true,
+        }];
+        let registry = SecretRegistry::empty_with_public_env([VAR.to_string()]);
+        assert!(
+            resolve_env_vars_plaintext(env_vars, false, &registry)
+                .unwrap()
+                .is_empty()
+        );
+    }
 }
 
 mod component_location {

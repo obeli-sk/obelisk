@@ -3604,6 +3604,12 @@
           "error": {
             "type": "string"
           },
+          "optional_public_env": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "optional_secrets": {
             "type": "array",
             "items": {
@@ -3612,6 +3618,12 @@
             "description": "Subset of `secrets` whose every reference is optional."
           },
           "public_env": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required_public_env": {
             "type": "array",
             "items": {
               "type": "string"

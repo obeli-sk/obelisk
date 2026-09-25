@@ -418,6 +418,7 @@ async fn split_config(server_path: &Path, app_path: Option<&Path>) -> anyhow::Re
             }
         }
     }
+    convert_legacy_public_env(&mut app)?;
     let app_text = app.to_string();
     let server_text = server.to_string();
     let _: crate::config::app::AppConfigToml =
@@ -436,6 +437,49 @@ async fn split_config(server_path: &Path, app_path: Option<&Path>) -> anyhow::Re
         server_path.display(),
         app_path.display()
     );
+    Ok(())
+}
+
+fn convert_legacy_public_env(app: &mut DocumentMut) -> anyhow::Result<()> {
+    // backcompat: 0.41 server config used a `[public_env].allowed` array.
+    if let Some(table) = app.get_mut("public_env").and_then(Item::as_table_mut)
+        && let Some(allowed) = table.remove("allowed")
+    {
+        let allowed = allowed
+            .as_array()
+            .context("`public_env.allowed` must be an array")?;
+        for entry in allowed {
+            let (name, optional) = if let Some(name) = entry.as_str() {
+                (name, false)
+            } else if let Some(config) = entry.as_inline_table() {
+                let name = config
+                    .get("name")
+                    .and_then(toml_edit::Value::as_str)
+                    .context("`public_env.allowed` entry needs a name")?;
+                let optional = config
+                    .get("optional")
+                    .map(|value| {
+                        value
+                            .as_bool()
+                            .context("`public_env.allowed` optional must be a boolean")
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+                (name, optional)
+            } else {
+                anyhow::bail!("`public_env.allowed` entries must be strings or inline tables");
+            };
+            ensure!(
+                !table.contains_key(name),
+                "duplicate public environment variable `{name}`"
+            );
+            let mut config = toml_edit::InlineTable::new();
+            if optional {
+                config.insert("optional", true.into());
+            }
+            table.insert(name, toml_edit::value(config));
+        }
+    }
     Ok(())
 }
 
@@ -1299,12 +1343,14 @@ mod tests {
             .to_string();
         assert!(err.contains("env alias"));
         assert!(!app_path.exists());
-        std::fs::write(&server_path, "api.enabled = false\n[secrets]\nTOKEN = { env = 'TOKEN' }\n[public_env]\nallowed = ['REGION']\n").unwrap();
+        std::fs::write(&server_path, "api.enabled = false\n[secrets]\nTOKEN = { env = 'TOKEN' }\n[public_env]\nallowed = ['REGION', { name = 'TRACE_ID', optional = true }]\n").unwrap();
         split_config(&server_path, None).await.unwrap();
         let server = std::fs::read_to_string(&server_path).unwrap();
         let app = std::fs::read_to_string(&app_path).unwrap();
         assert!(!server.contains("[secrets]"));
         assert!(app.contains("TOKEN = {}"));
+        assert!(app.contains("REGION = {}"));
+        assert!(app.contains("TRACE_ID = { optional = true }"));
         let _: crate::config::app::AppConfigToml = toml::from_str(&app).unwrap();
     }
 

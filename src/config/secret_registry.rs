@@ -116,18 +116,37 @@ pub(crate) struct SecretConfigToml {
 /// The `[secrets]` table: logical name -> source and exposure authorization.
 pub(crate) type SecretsToml = IndexMap<String, SecretConfigToml>;
 
-/// Public environment variables that deployments may read.
+/// Configuration for one public environment variable.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PublicEnvToml {
+pub(crate) struct PublicEnvConfigToml {
     #[serde(default)]
-    pub(crate) allowed: Vec<String>,
+    pub(crate) optional: bool,
+}
+
+/// Public environment variables that deployments may read.
+pub(crate) type PublicEnvToml = IndexMap<String, PublicEnvConfigToml>;
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(untagged, deny_unknown_fields)]
+pub(crate) enum PublicEnvRef {
+    // backcompat: 0.42 policy v1 keeps required entries as strings across the TOML shape change.
+    Required(String),
+    Config { name: String, optional: bool },
+}
+
+impl PublicEnvRef {
+    pub(crate) fn name(&self) -> &str {
+        match self {
+            Self::Required(name) | Self::Config { name, .. } => name,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PublicEnvViolation {
     #[error(
-        "environment variable `{0}` is not declared in app.toml `[public_env].allowed`; add it, or remove the deployment reference:\n\n[public_env]\nallowed = [\"{0}\"]"
+        "environment variable `{0}` is not declared in app.toml `[public_env]`; add it, or remove the deployment reference:\n\n[public_env]\n{0} = {{}}"
     )]
     Undeclared(String),
     #[error(
@@ -146,6 +165,7 @@ pub(crate) struct SecretRegistry {
     sensitive: HashSet<String>,
     /// Process environment variable names that deployments may read.
     public_allowed: HashSet<String>,
+    public_required: HashSet<String>,
     /// Values captured for the public allowlist during startup.
     public_values: HashMap<String, String>,
     exposure_grants: HashMap<String, BTreeMap<String, SecretExposureDigests>>,
@@ -166,6 +186,7 @@ impl SecretRegistry {
             absent: HashSet::default(),
             sensitive: HashSet::default(),
             public_allowed: HashSet::default(),
+            public_required: HashSet::default(),
             public_values: HashMap::default(),
             exposure_grants: HashMap::default(),
             environment_audit: serde_json::json!({
@@ -177,8 +198,10 @@ impl SecretRegistry {
 
     #[cfg(test)]
     pub(crate) fn empty_with_public_env(allowed: impl IntoIterator<Item = String>) -> Self {
+        let allowed: HashSet<String> = allowed.into_iter().collect();
         Self {
-            public_allowed: allowed.into_iter().collect(),
+            public_required: allowed.clone(),
+            public_allowed: allowed,
             ..Self::empty()
         }
     }
@@ -206,6 +229,10 @@ impl SecretRegistry {
 
     pub(crate) fn public_env_is_allowed(&self, name: &str) -> bool {
         self.public_allowed.contains(name) && !self.sensitive.contains(name)
+    }
+
+    pub(crate) fn public_env_is_required(&self, name: &str) -> bool {
+        self.public_required.contains(name)
     }
 
     pub(crate) fn public_env_is_sensitive(&self, name: &str) -> bool {
@@ -251,6 +278,7 @@ impl SecretRegistry {
             absent: HashSet::default(),
             sensitive,
             public_allowed: HashSet::default(),
+            public_required: HashSet::default(),
             public_values: HashMap::default(),
             exposure_grants: HashMap::default(),
             environment_audit: serde_json::json!({
@@ -263,11 +291,24 @@ impl SecretRegistry {
     #[cfg(test)]
     pub(crate) fn with_public_env(mut self, allowed: impl IntoIterator<Item = String>) -> Self {
         self.public_allowed = allowed.into_iter().collect();
+        self.public_required = self.public_allowed.clone();
         self.public_values = self
             .public_allowed
             .iter()
             .filter_map(|name| std::env::var(name).ok().map(|value| (name.clone(), value)))
             .collect();
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_optional_public_env(
+        mut self,
+        names: impl IntoIterator<Item = String>,
+    ) -> Self {
+        for name in names {
+            self.public_allowed.insert(name.clone());
+            self.public_required.remove(&name);
+        }
         self
     }
 
@@ -368,11 +409,26 @@ impl SecretRegistry {
             }
         }
 
-        let public_allowed: HashSet<_> = public_env.allowed.into_iter().collect();
+        let public_required: HashSet<_> = public_env
+            .iter()
+            .filter(|(_, config)| !config.optional)
+            .map(|(name, _)| name.to_owned())
+            .collect();
+        let public_allowed: HashSet<_> = public_env.into_keys().collect();
         let public_values: HashMap<String, String> = public_allowed
             .iter()
             .filter_map(|name| env_vars.lookup(name).map(|value| (name.clone(), value)))
             .collect();
+        let missing_public: std::collections::BTreeSet<_> = public_required
+            .iter()
+            .filter(|name| !public_values.contains_key(*name))
+            .cloned()
+            .collect();
+        if runtime_config_availability == RuntimeConfigAvailability::Strict
+            && !missing_public.is_empty()
+        {
+            bail!("required app.toml public environment variables are not set: {missing_public:?}");
+        }
         let public_env_audit: std::collections::BTreeMap<_, _> = public_allowed
             .iter()
             .map(|name| (name.clone(), public_values.contains_key(name)))
@@ -382,6 +438,7 @@ impl SecretRegistry {
             absent,
             sensitive,
             public_allowed,
+            public_required,
             public_values,
             exposure_grants,
             environment_audit: serde_json::json!({
@@ -597,15 +654,13 @@ mod tests {
     }
 
     #[test]
-    fn public_allowlist_does_not_require_values_and_rejects_other_variables() {
+    fn optional_public_allowlist_does_not_require_values_and_rejects_other_variables() {
         const ALLOWED: &str = "OBELISK_TEST_OPTIONAL_PUBLIC_3C8D";
         const DENIED: &str = "OBELISK_TEST_DENIED_PUBLIC_3C8D";
         let env_vars = StartupEnvVars::capture();
         let registry = SecretRegistry::resolve(
             SecretsToml::new(),
-            PublicEnvToml {
-                allowed: vec![ALLOWED.to_string()],
-            },
+            PublicEnvToml::from([(ALLOWED.to_string(), PublicEnvConfigToml { optional: true })]),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
             None,
@@ -619,6 +674,21 @@ mod tests {
     }
 
     #[test]
+    fn required_public_env_fails_startup_when_unset() {
+        const REQUIRED: &str = "OBELISK_TEST_REQUIRED_PUBLIC_UNSET_62A8";
+        let err = SecretRegistry::resolve(
+            SecretsToml::new(),
+            PublicEnvToml::from([(REQUIRED.to_string(), PublicEnvConfigToml::default())]),
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+            None,
+            &StartupEnvVars::capture(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains(REQUIRED), "{err}");
+    }
+
+    #[test]
     fn public_values_are_captured_when_registry_is_resolved() {
         const ALLOWED: &str = "OBELISK_TEST_CAPTURED_PUBLIC_4D9E";
         // SAFETY: test-only, unique var name, no concurrent access.
@@ -626,9 +696,7 @@ mod tests {
         let env_vars = StartupEnvVars::capture();
         let registry = SecretRegistry::resolve(
             SecretsToml::new(),
-            PublicEnvToml {
-                allowed: vec![ALLOWED.to_string()],
-            },
+            PublicEnvToml::from([(ALLOWED.to_string(), PublicEnvConfigToml::default())]),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
             None,

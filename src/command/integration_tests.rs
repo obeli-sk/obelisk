@@ -844,6 +844,7 @@ impl TestServer {
                 "PATH".to_string(),
                 "OBELISK_PHASE5_DEFINITELY_MISSING_VAR".to_string(),
             ])
+            .with_optional_public_env(["OBELISK_PHASE5_DEFINITELY_MISSING_VAR".to_string()])
             .with_exposure_config(&config.secrets),
         );
 
