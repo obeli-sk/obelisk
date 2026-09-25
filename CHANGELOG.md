@@ -100,6 +100,9 @@ policy. Existing single-file configurations must be split before starting the se
   the key (`memory.mib = 512`, `memory.gib = 1`, `memory.bytes = 1048576`), following
   `DurationConfig`. A bare integer is not accepted. `[v8].thread_stack_size` becomes
   `thread_stack_size.mib = 4`, and `[v8].max_heap_size` moves into each `v8` cell's `memory`.
+- *(activity-vm)* A VM activity is stopped when its lock expires, reporting a temporary timeout
+  that is retried like other activities, and when the executor shuts down. Previously the VM kept
+  running until the guest exited.
 
 ### Removed
 

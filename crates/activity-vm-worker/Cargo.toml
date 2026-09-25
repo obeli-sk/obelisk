@@ -25,7 +25,9 @@ wasmtime.workspace = true
 worker-common.workspace = true
 
 [dev-dependencies]
+concepts = { workspace = true, features = ["test"] }
 val-json.workspace = true
+wat = "1"
 
 [lints]
 workspace = true
