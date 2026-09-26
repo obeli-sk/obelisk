@@ -2613,8 +2613,7 @@ pub(crate) fn resolve_env_vars_plaintext(
     ignore_missing: bool,
     secret_registry: &SecretRegistry,
 ) -> Result<Arc<[EnvVar]>, EnvVarError> {
-    // A registered secret can never be forwarded to a guest as a plaintext env var, even
-    // with `ignore_missing`: undeclared public env is always fatal, only `Missing` is skipped.
+    // Sensitive values stay forbidden even when missing deployment inputs are tolerated.
     let empty_if_missing = |key: String, err: EnvVarError| match err {
         EnvVarError::Missing(_) if ignore_missing => Ok(EnvVar {
             key,

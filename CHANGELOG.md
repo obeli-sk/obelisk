@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- *(deployment)* `--allow-unavailable-runtime-config` now permits storing and enqueuing deployments
+  while app approval of public environment names or outbound HTTP destinations is pending. It already
+  tolerated missing values, secrets, and exec approvals. Activation still verifies strictly.
+  `server verify --fix` and `deployment verify --fix` can now scaffold uncovered outbound
+  destinations in `app.toml` for review, alongside existing public environment and secret
+  scaffolds.
+
+## [0.42.0-rc.6](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.5...v0.42.0-rc.6)
+
+### Changed
+
+- *(build)* Release binaries now embed the Web UI in all builds, including native builds.
+  [#1029](https://github.com/obeli-sk/obelisk/pull/1029)
+- *(release)* Release verification checks every tarball directly and smoke-tests `download.sh`.
+  Prerelease jobs select prerelease artifacts by default and avoid unversioned Docker tags.
+
 ## [0.42.0-rc.5](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.4...v0.42.0-rc.5)
 
 ### Removed

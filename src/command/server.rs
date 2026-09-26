@@ -891,6 +891,35 @@ pub(crate) async fn verify(
     };
 
     let (config_holder, config, secret_registry) = if fix
+        && let (Some(app_config_path), Some(deployment)) =
+            (config_holder.app_source.as_deref(), deployment_opt.as_ref())
+    {
+        config_prepass::fix_app_outbound_hosts(
+            app_config_path,
+            &config.outbound_http.allowed_hosts,
+            deployment,
+            &secret_registry,
+            verify_params.runtime_config_availability,
+        )
+        .await?;
+        let ServerStartup {
+            config_holder,
+            config,
+            legacy_api_token: _,
+            secret_registry,
+            js_runtime: _,
+        } = prepare_server_startup(
+            config_holder.config_source,
+            config_holder.app_source,
+            EnvVarSecretsCleanup::Noop,
+            verify_params.runtime_config_availability,
+        )?;
+        (config_holder, config, secret_registry)
+    } else {
+        (config_holder, config, secret_registry)
+    };
+
+    let (config_holder, config, secret_registry) = if fix
         && let (Some(app_config_path), Some(deployment_path)) = (
             config_holder.app_source.as_deref(),
             deployment_path_for_fix.as_deref(),
@@ -1229,6 +1258,24 @@ pub(crate) async fn deployment_verify_config(
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<DeploymentVerified, anyhow::Error> {
+    let secret_registry =
+        if params.runtime_config_availability == RuntimeConfigAvailability::AllowUnavailable {
+            let mut undeclared_public_env = BTreeSet::new();
+            config_prepass::collect_deployment_unregistered_public_env(
+                &deployment,
+                &server_verified.secret_registry,
+                &mut undeclared_public_env,
+            );
+            Arc::new(
+                server_verified
+                    .secret_registry
+                    .as_ref()
+                    .clone()
+                    .allow_unavailable_public_env(undeclared_public_env),
+            )
+        } else {
+            server_verified.secret_registry.clone()
+        };
     // Materialize deployment-owned WASM blobs from the CAS onto disk before compiling.
     let deployment =
         DeploymentRunnable::resolve(deployment, cas.as_ref(), &prepared_dirs.wasm_cache_dir)
@@ -1246,7 +1293,7 @@ pub(crate) async fn deployment_verify_config(
         server_verified.workflows_max_events_per_run,
         server_verified.workflows_response_refresh_interval,
         server_verified.api_addr_if_webui_enabled.clone(),
-        server_verified.secret_registry.clone(),
+        secret_registry,
         server_verified.global_http_config.clone(),
     ))
     .await?;
@@ -6933,6 +6980,7 @@ mod tests {
             DeploymentRunnable, DeploymentVerified, JsRuntimeMode, PrepareDirsParams,
             RuntimeConfigAvailability, SecretConfigDigestOutput, ServerCompiledLinked,
             ServerVerified, VerifyParams, compile_activity_inline, compute_content_digest,
+            config_prepass,
             config_prepass::{
                 collect_outbound_http_secret_replacements, collect_uncovered_outbound_http_hosts,
                 global_secret_replacements, host_allowlist_snippet,
@@ -6946,6 +6994,7 @@ mod tests {
             deployment::{
                 AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn, ScriptLocationResolved,
             },
+            env_var::EnvVarConfig,
             secret_registry::SecretRegistry,
         },
     };
@@ -7134,6 +7183,42 @@ mod tests {
         assert!(after.contains("SECRET_B = { optional = true }"), "{after}");
     }
 
+    #[tokio::test]
+    async fn fix_app_outbound_hosts_adds_only_uncovered_destinations() {
+        let workspace = get_workspace_dir();
+        let (deployment, _) =
+            resolve_deployment_offline(&workspace.join("deployment-testing-js-local.toml"))
+                .await
+                .unwrap();
+        let host = deployment.activities_js[1].allowed_hosts[0].clone();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "app_name = \"test\"\n").unwrap();
+
+        config_prepass::fix_app_outbound_hosts(
+            file.path(),
+            &[],
+            &deployment,
+            &SecretRegistry::empty(),
+            RuntimeConfigAvailability::AllowUnavailable,
+        )
+        .await
+        .unwrap();
+        let fixed = std::fs::read_to_string(file.path()).unwrap();
+        assert_eq!(fixed.matches("[[outbound_http.allowed_host]]").count(), 1);
+        assert!(fixed.contains("pattern = \"api.ipify.org\""));
+
+        config_prepass::fix_app_outbound_hosts(
+            file.path(),
+            &[host],
+            &deployment,
+            &SecretRegistry::empty(),
+            RuntimeConfigAvailability::AllowUnavailable,
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(file.path()).unwrap(), fixed);
+    }
+
     /// Missing replacements from several components are gathered into one report,
     /// so the operator can add every allowlist entry to app.toml in a single edit.
     #[test]
@@ -7235,9 +7320,17 @@ mod tests {
         assert_eq!(uncovered[0].entry.pattern, "example.com");
         assert!(
             crate::command::server::config_prepass::report_uncovered_outbound_http_hosts(
-                &uncovered
+                &uncovered,
+                RuntimeConfigAvailability::Strict,
             )
             .is_err()
+        );
+        assert!(
+            crate::command::server::config_prepass::report_uncovered_outbound_http_hosts(
+                &uncovered,
+                RuntimeConfigAvailability::AllowUnavailable,
+            )
+            .is_ok()
         );
 
         let snippet = host_allowlist_snippet("outbound_http", &uncovered[0].entry);
@@ -7462,7 +7555,7 @@ mod tests {
         )?;
         let config = config_holder.load_config()?;
         assert!(config.allowed_exec_activities.is_empty());
-        let (deployment, cas) =
+        let (mut deployment, cas) =
             resolve_deployment_offline(&workspace.join("deployment-testing-exec.toml")).await?;
         let prepared_dirs = prepare_dirs(
             &config,
@@ -7509,6 +7602,11 @@ mod tests {
         assert!(err.to_string().contains("[allowed_exec_activities]\n"));
         assert!(err.to_string().contains("\"sha256:"));
 
+        deployment.activities_exec[0]
+            .env_vars
+            .push(EnvVarConfig::Key(
+                "OBELISK_TEST_PENDING_PUBLIC_ENV".to_string(),
+            ));
         let verified = deployment_verify_config(
             &server_verified,
             &prepared_dirs,

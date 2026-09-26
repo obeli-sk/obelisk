@@ -3160,7 +3160,7 @@
         "properties": {
           "allow_unavailable_runtime_config": {
             "type": "boolean",
-            "description": "Tolerate runtime requirements unavailable on this server while verifying\nthe deployment before persisting it."
+            "description": "Store the deployment while app or platform approval is pending. Tolerates\nunavailable values and approvals; activation still checks strictly."
           },
           "deployment_toml": {
             "type": "string",
@@ -3192,7 +3192,7 @@
         "properties": {
           "allow_unavailable_runtime_config": {
             "type": "boolean",
-            "description": "Tolerate runtime requirements unavailable on this server while verifying.\nRejected when applying the deployment without restart."
+            "description": "Enqueue while app or platform approval is pending. Activation on restart\nchecks strictly; rejected when applying without restart."
           },
           "apply": {
             "type": "boolean",

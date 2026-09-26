@@ -4843,8 +4843,8 @@ pub(crate) mod deployment {
         pub deployment_toml: String,
         /// Optional human-readable deployment description
         pub description: Option<String>,
-        /// Tolerate runtime requirements unavailable on this server while verifying
-        /// the deployment before persisting it.
+        /// Store the deployment while app or platform approval is pending. Tolerates
+        /// unavailable values and approvals; activation still checks strictly.
         #[serde(default)]
         pub allow_unavailable_runtime_config: bool,
     }
@@ -5264,8 +5264,8 @@ pub(crate) mod deployment {
     /// Request payload for switching deployment
     #[derive(Serialize, Deserialize, ToSchema)]
     pub struct DeploymentSwitchPayload {
-        /// Tolerate runtime requirements unavailable on this server while verifying.
-        /// Rejected when applying the deployment without restart.
+        /// Enqueue while app or platform approval is pending. Activation on restart
+        /// checks strictly; rejected when applying without restart.
         #[serde(default)]
         pub allow_unavailable_runtime_config: bool,
         /// Apply deployment without restart

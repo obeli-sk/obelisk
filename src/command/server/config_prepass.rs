@@ -447,7 +447,7 @@ pub(super) fn preflight(
         &secrets,
         availability,
     )?;
-    report_uncovered_outbound_http_hosts(&uncovered_hosts)?;
+    report_uncovered_outbound_http_hosts(&uncovered_hosts, availability)?;
     report_missing_outbound_http_secret_replacements(&missing_replacements, availability)?;
     Ok(())
 }
@@ -998,6 +998,7 @@ pub(super) fn collect_uncovered_outbound_http_hosts(
 /// Reject destinations outside the app policy before any component can run.
 pub(super) fn report_uncovered_outbound_http_hosts(
     uncovered: &[UncoveredOutboundHost],
+    availability: RuntimeConfigAvailability,
 ) -> Result<(), UncoveredOutboundHostsError> {
     if uncovered.is_empty() {
         return Ok(());
@@ -1018,7 +1019,7 @@ pub(super) fn report_uncovered_outbound_http_hosts(
             snippets.push(snippet);
         }
     }
-    Err(UncoveredOutboundHostsError(format!(
+    let message = format!(
         "{count} outbound HTTP destination(s) the deployment allows are not covered by any \
          app.toml `[[outbound_http.allowed_host]]` allowlist entry:\n\
          {details}\n\
@@ -1026,7 +1027,60 @@ pub(super) fn report_uncovered_outbound_http_hosts(
          {snippets}",
         count = uncovered.len(),
         snippets = snippets.join("\n"),
-    )))
+    );
+    if availability == RuntimeConfigAvailability::AllowUnavailable {
+        warn!(
+            "{message}\nSkipping these load-time outbound HTTP approval checks because unavailable runtime configuration is allowed; activation will enforce them strictly."
+        );
+        Ok(())
+    } else {
+        Err(UncoveredOutboundHostsError(message))
+    }
+}
+
+pub(super) async fn fix_app_outbound_hosts(
+    app_config_path: &Path,
+    app_hosts: &[AllowedHostToml],
+    deployment: &DeploymentResolved,
+    secret_registry: &SecretRegistry,
+    availability: RuntimeConfigAvailability,
+) -> anyhow::Result<()> {
+    let mut undeclared_public_env = BTreeSet::new();
+    collect_deployment_unregistered_public_env(
+        deployment,
+        secret_registry,
+        &mut undeclared_public_env,
+    );
+    let registry = secret_registry
+        .clone()
+        .allow_unavailable_public_env(undeclared_public_env);
+    let ignore_missing_env_vars = availability == RuntimeConfigAvailability::AllowUnavailable;
+    let (resolved_app_hosts, _) =
+        resolve_allowed_hosts(app_hosts.to_vec(), ignore_missing_env_vars, &registry)?;
+    let global_http_config = GlobalHttpConfig::from(resolved_app_hosts);
+    let mut snippets = BTreeSet::new();
+    for entry in deployment_allowed_host_lists(deployment)
+        .into_iter()
+        .flatten()
+    {
+        let (resolved, _) =
+            resolve_allowed_hosts(vec![entry.clone()], ignore_missing_env_vars, &registry)?;
+        if resolved.iter().any(|host| {
+            !global_http_config
+                .entries()
+                .iter()
+                .any(|allowed| allowed.covers_destination(host))
+        }) {
+            snippets.insert(host_allowlist_snippet("outbound_http", entry));
+        }
+    }
+    if !snippets.is_empty() {
+        let mut source = tokio::fs::read_to_string(app_config_path).await?;
+        source.push('\n');
+        source.push_str(&snippets.into_iter().collect::<Vec<_>>().join("\n"));
+        tokio::fs::write(app_config_path, source).await?;
+    }
+    Ok(())
 }
 
 /// Append a `[secrets]` scaffold entry for each unregistered secret, `optional` when every
