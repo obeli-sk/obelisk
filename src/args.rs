@@ -633,6 +633,7 @@ pub(crate) enum Generate {
         #[arg(long, short)]
         force: bool,
     },
+    // backcompat for 0.41 -> 0.42
     /// Split policy fields from an existing server.toml into app.toml.
     SplitConfig {
         /// Existing server.toml to update.
