@@ -223,7 +223,8 @@
 
                 # Also spliced into the cross (zigbuild) build command below.
 
-                cargoBuildFlags = pkgs.lib.optionals embedJsRuntimes [ "--features" "embed-js-runtimes" ];
+                cargoBuildFlags = pkgs.lib.optionals (customTarget == null) [ "--locked" ]
+                  ++ pkgs.lib.optionals embedJsRuntimes [ "--features" "embed-js-runtimes" ];
 
                 installPhase = ''
                   runHook preInstall
