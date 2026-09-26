@@ -712,8 +712,8 @@ impl ModuleLoader for InMemoryModuleLoader {
 }
 
 fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String {
-    use boa_common::imports::{SCHEDULE_SUFFIX, strip_specifier_suffix};
     use std::fmt::Write as _;
+    use worker_common::js_imports::{SCHEDULE_SUFFIX, strip_specifier_suffix};
 
     let schedule_base = strip_specifier_suffix(specifier, SCHEDULE_SUFFIX);
     let exports = functions.iter().enumerate().fold(String::new(), |mut exports, (index, function)| {

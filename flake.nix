@@ -30,6 +30,22 @@
             inherit system overlays;
           };
 
+          rustyV8Version = "150.4.0";
+          rustyV8NativeTarget = {
+            x86_64-linux = "x86_64-unknown-linux-gnu";
+            aarch64-linux = "aarch64-unknown-linux-gnu";
+            x86_64-darwin = "x86_64-apple-darwin";
+            aarch64-darwin = "aarch64-apple-darwin";
+          }.${system};
+          rustyV8Hashes = {
+            x86_64-unknown-linux-gnu = { archive = "sha256-9IdiyhDR8fxgWkQcWuQw7Izh6egPFNePvELLh4wwtHY="; binding = "sha256-dyeCauR5vbZF6Acjn7EtH44uI956bPFvXuWSaQ0dhQY="; };
+            aarch64-unknown-linux-gnu = { archive = "sha256-U54oOBWjlqV5bzKFi0LlF7hY66rqqtBdAykO6MhkpSc="; binding = "sha256-dyeCauR5vbZF6Acjn7EtH44uI956bPFvXuWSaQ0dhQY="; };
+            x86_64-unknown-linux-musl = { archive = "sha256-QGuqbhoa/Wi8ehOqp59yuAZ0a4i0ug1VR56mgwMryv0="; binding = "sha256-dyeCauR5vbZF6Acjn7EtH44uI956bPFvXuWSaQ0dhQY="; };
+            aarch64-unknown-linux-musl = { archive = "sha256-VNtqagjqHWWPybQGyOf4dqYlQ6WqkRHzqYtYm11ja/Y="; binding = "sha256-dyeCauR5vbZF6Acjn7EtH44uI956bPFvXuWSaQ0dhQY="; };
+            x86_64-apple-darwin = { archive = "sha256-p1AnH+xrIRRX7Qpc99LqsZJLJlYhqC2oarlZ1v8II+Q="; binding = "sha256-ylrfDPicmnCtRgrnNkiy/om3SqETs8t/dXtqArdYOU8="; };
+            aarch64-apple-darwin = { archive = "sha256-Wu/9jVoMG3msHXCvg9WxkJllX9nGRaeU3EPxAfd5g4w="; binding = "sha256-ylrfDPicmnCtRgrnNkiy/om3SqETs8t/dXtqArdYOU8="; };
+          };
+
           # Fixed-output derivation that pre-fetches the four pinned operator-owned WASM
           # assets (three JS runtimes + web UI) referenced from `crates/embedded-assets/*version*.txt`,
           # so the `embed-assets` build.rs can read them offline inside the Nix sandbox.
@@ -74,6 +90,28 @@
             let
               cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
               version = cargoToml.workspace.package.version;
+              rustyV8Target = if customTarget == null then rustyV8NativeTarget else builtins.replaceStrings [ ".2.35" ] [ "" ] customTarget;
+              rustyV8Mirror =
+                let
+                  targets = pkgs.lib.unique [ rustyV8NativeTarget rustyV8Target ];
+                  links = target:
+                    let
+                      hashes = rustyV8Hashes.${target};
+                      baseUrl = "https://github.com/denoland/rusty_v8/releases/download/v${rustyV8Version}";
+                      archiveName = "librusty_v8_simdutf_release_${target}.a.gz";
+                      bindingName = "src_binding_simdutf_release_${target}.rs";
+                      archive = pkgs.fetchurl { url = "${baseUrl}/${archiveName}"; hash = hashes.archive; };
+                      binding = pkgs.fetchurl { url = "${baseUrl}/${bindingName}"; hash = hashes.binding; };
+                    in
+                    ''
+                      ln -s ${archive} "$out/v${rustyV8Version}/${archiveName}"
+                      ln -s ${binding} "$out/v${rustyV8Version}/${bindingName}"
+                    '';
+                in
+                pkgs.runCommand "rusty-v8-mirror" { } ''
+                  mkdir -p "$out/v${rustyV8Version}"
+                  ${pkgs.lib.concatMapStringsSep "\n" links targets}
+                '';
 
               isMacOSTarget = (customTarget == "x86_64-apple-darwin" || customTarget == "aarch64-apple-darwin"); # FIXME: ends with
               macOSsdkTarball =
@@ -222,8 +260,9 @@
               embedAssetsEnv = pkgs.lib.optionalAttrs embedAssets {
                 OBELISK_EMBED_ASSETS_DIR = "${embeddedAssets}";
               };
+              rustyV8MirrorEnv = { RUSTY_V8_MIRROR = "${rustyV8Mirror}"; };
             in
-            pkgs.rustPlatform.buildRustPackage (commonArgs // zigbuildArgs // embedAssetsEnv);
+            pkgs.rustPlatform.buildRustPackage (commonArgs // zigbuildArgs // embedAssetsEnv // rustyV8MirrorEnv);
 
         in
         {
