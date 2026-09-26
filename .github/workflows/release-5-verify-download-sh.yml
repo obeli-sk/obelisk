@@ -48,7 +48,9 @@ jobs:
           cd temp
           curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
           ./obelisk --version | grep $VERSION
-          OBELISK_APP_NAME=release-verify ./obelisk server verify --deployment ../deployment-testing-wasm-oci.toml
+          ./obelisk generate new release-verify
+          cd release-verify
+          ../obelisk server verify --app-config app.toml --deployment deployment.toml
         env:
           VERSION: ${{ steps.git-info.outputs.version }}
 
@@ -78,11 +80,11 @@ jobs:
             FROM alpine:latest
             ARG VERSION
             WORKDIR /root
-            COPY deployment-testing-wasm-oci.toml .
             RUN apk add curl
             RUN curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | sh
             RUN ./obelisk --version | grep $VERSION
-            RUN OBELISK_APP_NAME=release-verify ./obelisk server verify --deployment deployment-testing-wasm-oci.toml
+            RUN ./obelisk generate new release-verify
+            RUN cd release-verify && ../obelisk server verify --app-config app.toml --deployment deployment.toml
           EOF
         env:
           VERSION: ${{ steps.git-info.outputs.version }}

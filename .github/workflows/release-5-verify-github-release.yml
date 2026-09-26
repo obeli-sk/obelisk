@@ -65,7 +65,9 @@ jobs:
             https://github.com/obeli-sk/obelisk/releases/download/$TAG/$FILE
           tar xzfv "$FILE"
           ./obelisk --version | grep $VERSION
-          OBELISK_APP_NAME=release-verify ./obelisk server verify --deployment ../deployment-testing-wasm-oci.toml
+          ./obelisk generate new release-verify
+          cd release-verify
+          ../obelisk server verify --app-config app.toml --deployment deployment.toml
         env:
           TAG: ${{ steps.git-info.outputs.tag }}
           VERSION: ${{ steps.git-info.outputs.version }}
