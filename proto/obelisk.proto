@@ -1218,23 +1218,22 @@ message GetCurrentDeploymentIdResponse {
     DeploymentId deployment_id = 1;
 }
 
-// Policy for runtime requirements that may be unavailable on the current server,
-// including environment variables, secrets, and server capabilities.
-// Structural, file, compile, and link validation are always performed regardless
-// of this value.
+// Policy for missing runtime values and app or platform approvals.
+// Structural, file, compile, and link validation always run.
 enum RuntimeConfigCheck {
     // Unset; treated as RUNTIME_CONFIG_CHECK_STRICT.
     RUNTIME_CONFIG_CHECK_UNSPECIFIED = 0;
-    // Missing environment variables or secrets fail the operation.
+    // Missing values or approvals fail verification.
     RUNTIME_CONFIG_CHECK_STRICT = 1;
-    // Unavailable environment variables, secrets, or server capabilities are tolerated.
+    // Permit verification and storage before an admin supplies values or approves
+    // public env, secrets, outbound HTTP, or exec capabilities. Activation checks strictly.
     RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE = 2;
 }
 
 message SwitchDeploymentRequest {
     DeploymentId deployment_id = 1;
-    // Runtime config availability policy applied while verifying the deployment.
-    // Setting `apply = true` rejects RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE.
+    // Allow pending approval when enqueuing. Activation on restart checks strictly;
+    // setting `apply = true` rejects RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE.
     RuntimeConfigCheck runtime_config_check = 2;
     // Apply the deployment immediately without restart.
     bool apply = 3;
@@ -1255,8 +1254,8 @@ message SubmitDeploymentRequest {
     // Every deployment-owned relative `location =` must carry a `content_digest`.
     string deployment_toml = 1;
     optional string created_by = 2;
-    // Runtime config availability policy applied while verifying the deployment
-    // before it is persisted. Defaults to RUNTIME_CONFIG_CHECK_STRICT.
+    // Allow storage before runtime values or app/platform approvals are available.
+    // Structural, file, compile, and link checks still run. Defaults to strict.
     RuntimeConfigCheck runtime_config_check = 3;
     optional string description = 4;
     // Client-supplied deployment ID for idempotent submission.

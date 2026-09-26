@@ -113,7 +113,7 @@
             },
             {
               "name": "--allow-unavailable-runtime-config",
-              "help": "Tolerate runtime requirements unavailable on this server while verifying"
+              "help": "Tolerate missing values and pending app or platform approvals while verifying"
             },
             {
               "name": "--suppress-type-checking-errors",
@@ -125,7 +125,7 @@
             },
             {
               "name": "--fix",
-              "help": "Clean generated deployment metadata and, when `--app-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds"
+              "help": "Clean deployment metadata and scaffold app env, secrets, outbound hosts, and exec grants"
             }
           ]
         }
@@ -705,7 +705,7 @@
             },
             {
               "name": "--allow-unavailable-runtime-config",
-              "help": "Tolerate runtime requirements unavailable on this server while verifying the deployment before persisting it"
+              "help": "Store a verified deployment while app or platform approval is pending. Allows unavailable values and approvals; activation still checks strictly"
             },
             {
               "name": "--description",
@@ -741,7 +741,7 @@
             },
             {
               "name": "--allow-unavailable-runtime-config",
-              "help": "Tolerate runtime requirements unavailable on this server while verifying the deployment before enqueuing it"
+              "help": "Submit and enqueue while app or platform approval is pending. Activation on restart still checks strictly"
             },
             {
               "name": "--description",
@@ -919,7 +919,7 @@
             },
             {
               "name": "--allow-unavailable-runtime-config",
-              "help": "Tolerate runtime requirements unavailable on this server while verifying"
+              "help": "Tolerate missing values and pending app or platform approvals while verifying"
             },
             {
               "name": "--suppress-type-checking-errors",
@@ -927,7 +927,7 @@
             },
             {
               "name": "--fix",
-              "help": "Clean generated deployment metadata and, when `--app-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds"
+              "help": "Clean deployment metadata and scaffold app env, secrets, outbound hosts, and exec grants"
             }
           ]
         }

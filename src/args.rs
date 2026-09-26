@@ -377,8 +377,8 @@ pub(crate) enum Deployment {
         /// Submit an empty deployment with no components.
         #[arg(long)]
         empty: bool,
-        /// Tolerate runtime requirements unavailable on this server while verifying
-        /// the deployment before persisting it.
+        /// Store a verified deployment while app or platform approval is pending.
+        /// Allows unavailable values and approvals; activation still checks strictly.
         #[arg(long)]
         allow_unavailable_runtime_config: bool,
         /// Optional human-readable description.
@@ -412,8 +412,8 @@ pub(crate) enum Deployment {
         /// Enqueue an empty deployment with no components.
         #[arg(long)]
         empty: bool,
-        /// Tolerate runtime requirements unavailable on this server while verifying
-        /// the deployment before enqueuing it.
+        /// Submit and enqueue while app or platform approval is pending.
+        /// Activation on restart still checks strictly.
         #[arg(long)]
         allow_unavailable_runtime_config: bool,
         /// Optional human-readable description for a newly submitted deployment.
@@ -770,7 +770,7 @@ pub(crate) struct VerifyArgs {
     /// falling back to the Active deployment. Errors if neither is found.
     #[arg(short, long)]
     pub(crate) deployment: Option<PathBuf>,
-    /// Tolerate runtime requirements unavailable on this server while verifying.
+    /// Tolerate missing values and pending app or platform approvals while verifying.
     #[arg(long)]
     pub(crate) allow_unavailable_runtime_config: bool,
     /// Do not fail when a component's imports/exports fail type checking against the deployment.
@@ -780,7 +780,7 @@ pub(crate) struct VerifyArgs {
     /// since with no database there is no active deployment to fall back to.
     #[arg(long, requires = "deployment")]
     pub(crate) skip_db: bool,
-    /// Clean generated deployment metadata and, when `--app-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds.
+    /// Clean deployment metadata and scaffold app env, secrets, outbound hosts, and exec grants.
     #[arg(long, requires = "deployment")]
     pub(crate) fix: bool,
 }
@@ -803,13 +803,13 @@ pub(crate) struct DeploymentVerifyArgs {
     /// Path to the local deployment TOML file.
     #[arg(short, long)]
     pub(crate) deployment: PathBuf,
-    /// Tolerate runtime requirements unavailable on this server while verifying.
+    /// Tolerate missing values and pending app or platform approvals while verifying.
     #[arg(long)]
     pub(crate) allow_unavailable_runtime_config: bool,
     /// Do not fail when a component's imports/exports fail type checking against the deployment.
     #[arg(long)]
     pub(crate) suppress_type_checking_errors: bool,
-    /// Clean generated deployment metadata and, when `--app-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds.
+    /// Clean deployment metadata and scaffold app env, secrets, outbound hosts, and exec grants.
     #[arg(long)]
     pub(crate) fix: bool,
 }
