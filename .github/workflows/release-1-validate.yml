@@ -18,16 +18,6 @@ on:
         required: true
         type: boolean
         default: true
-      dry_run:
-        description: "Run cargo publish with --dry-run (requires stop_after_step_2)"
-        required: true
-        type: boolean
-        default: false
-      stop_after_step_2:
-        description: "Stop after cargo publish"
-        required: true
-        type: boolean
-        default: false
       push_unversioned_tags:
         description: "Push unversioned Docker tags (requires publishing the release)"
         required: true
@@ -43,16 +33,6 @@ on:
         required: true
         type: boolean
         default: true
-      packages:
-        description: "Space-separated cargo package names to publish (cargo publish -p); empty publishes the whole workspace"
-        required: false
-        type: string
-        default: ""
-      no_verify:
-        description: "Run cargo publish with --no-verify (skip building the crate before upload)"
-        required: true
-        type: boolean
-        default: false
 
 defaults:
   run:
@@ -64,10 +44,6 @@ jobs:
     steps:
       - name: Validate inputs
         run: |
-          if [ "${{ inputs.dry_run }}" = "true" ] && [ "${{ inputs.stop_after_step_2 }}" != "true" ]; then
-            echo "::error::dry_run requires stop_after_step_2"
-            exit 1
-          fi
           if [ "${{ inputs.push_unversioned_tags }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
             echo "::error::push_unversioned_tags requires publish_release"
             exit 1
@@ -121,14 +97,10 @@ jobs:
 
   call_child:
     needs: validate
-    uses: ./.github/workflows/release-2-cargo-publish.yml
+    uses: ./.github/workflows/release-2-cachix-push.yml
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}
-      dry_run: ${{ inputs.dry_run }}
-      stop_after_step_2: ${{ inputs.stop_after_step_2 }}
       push_unversioned_tags: ${{ inputs.push_unversioned_tags }}
       prerelease: ${{ inputs.prerelease }}
       publish_release: ${{ inputs.publish_release }}
-      packages: ${{ inputs.packages }}
-      no_verify: ${{ inputs.no_verify }}
