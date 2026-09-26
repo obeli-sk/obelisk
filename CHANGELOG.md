@@ -6,12 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0-rc.5](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.4...v0.42.0-rc.5)
+
 ### Removed
 
 - *(release)* Obelisk is no longer published to crates.io, so `cargo install obelisk` and
   `cargo binstall obelisk` stop receiving new versions. Use the GitHub release binaries
   (`download.sh`), Docker images, Nix (prebuilt via the obeli-sk Cachix cache), or build from
   source with `cargo install --locked --git https://github.com/obeli-sk/obelisk --branch latest obelisk`.
+  [#1026](https://github.com/obeli-sk/obelisk/pull/1026)
 
 ## [0.42.0-rc.4](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.3...v0.42.0-rc.4)
 
