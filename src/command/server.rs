@@ -28,7 +28,7 @@ use crate::config::deployment::ActivityWasmComponentConfigTomlExt as _;
 use crate::config::deployment::ActivityWasmConfigVerified;
 use crate::config::deployment::ComponentCommon;
 #[cfg(all(
-    not(feature = "embed-assets"),
+    not(feature = "embed-js-runtimes"),
     any(
         not(feature = "activity-js-local"),
         not(feature = "workflow-js-local"),
@@ -449,13 +449,13 @@ const EPOCH_MILLIS: u64 = 10;
 const CANCELLATION_DRIVER_BATCH_SIZE: u32 = 100;
 /// Default number of concurrent deployment submits the switch manager accepts.
 const DEFAULT_SUBMIT_CONCURRENCY: u32 = 1;
-#[cfg(not(feature = "embed-assets"))]
+#[cfg(not(feature = "embed-webui"))]
 const WEBUI_LOCATION: &str = embedded_assets::WEBUI_LOCATION;
-#[cfg(all(not(feature = "activity-js-local"), not(feature = "embed-assets")))]
+#[cfg(all(not(feature = "activity-js-local"), not(feature = "embed-js-runtimes")))]
 pub(crate) const ACTIVITY_JS_LOCATION: &str = embedded_assets::ACTIVITY_JS_RUNTIME_LOCATION;
-#[cfg(all(not(feature = "workflow-js-local"), not(feature = "embed-assets")))]
+#[cfg(all(not(feature = "workflow-js-local"), not(feature = "embed-js-runtimes")))]
 pub(crate) const WORKFLOW_JS_LOCATION: &str = embedded_assets::WORKFLOW_JS_RUNTIME_LOCATION;
-#[cfg(all(not(feature = "webhook-js-local"), not(feature = "embed-assets")))]
+#[cfg(all(not(feature = "webhook-js-local"), not(feature = "embed-js-runtimes")))]
 pub(crate) const WEBHOOK_JS_LOCATION: &str = embedded_assets::WEBHOOK_JS_RUNTIME_LOCATION;
 
 const HTTP_SERVER_NAME_WEBUI: &str = "webui";
@@ -6189,7 +6189,7 @@ async fn fetch_activity_js_runtime(
 }
 
 /// Resolve the activity-js runtime WASM from the bytes embedded at build time.
-#[cfg(all(not(feature = "activity-js-local"), feature = "embed-assets"))]
+#[cfg(all(not(feature = "activity-js-local"), feature = "embed-js-runtimes"))]
 async fn fetch_activity_js_runtime(
     wasm_cache_dir: Arc<Path>,
     _metadata_dir: Arc<Path>,
@@ -6200,7 +6200,7 @@ async fn fetch_activity_js_runtime(
 }
 
 /// Fetch the activity-js runtime WASM from OCI.
-#[cfg(all(not(feature = "activity-js-local"), not(feature = "embed-assets")))]
+#[cfg(all(not(feature = "activity-js-local"), not(feature = "embed-js-runtimes")))]
 async fn fetch_activity_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
@@ -6228,7 +6228,7 @@ async fn fetch_workflow_js_runtime(
 }
 
 /// Resolve the workflow-js runtime WASM from the bytes embedded at build time.
-#[cfg(all(not(feature = "workflow-js-local"), feature = "embed-assets"))]
+#[cfg(all(not(feature = "workflow-js-local"), feature = "embed-js-runtimes"))]
 async fn fetch_workflow_js_runtime(
     wasm_cache_dir: Arc<Path>,
     _metadata_dir: Arc<Path>,
@@ -6239,7 +6239,7 @@ async fn fetch_workflow_js_runtime(
 }
 
 /// Fetch the workflow-js runtime WASM from OCI.
-#[cfg(all(not(feature = "workflow-js-local"), not(feature = "embed-assets")))]
+#[cfg(all(not(feature = "workflow-js-local"), not(feature = "embed-js-runtimes")))]
 async fn fetch_workflow_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
@@ -6267,7 +6267,7 @@ async fn fetch_webhook_js_runtime(
 }
 
 /// Resolve the webhook-js runtime WASM from the bytes embedded at build time.
-#[cfg(all(not(feature = "webhook-js-local"), feature = "embed-assets"))]
+#[cfg(all(not(feature = "webhook-js-local"), feature = "embed-js-runtimes"))]
 async fn fetch_webhook_js_runtime(
     wasm_cache_dir: Arc<Path>,
     _metadata_dir: Arc<Path>,
@@ -6278,7 +6278,7 @@ async fn fetch_webhook_js_runtime(
 }
 
 /// Fetch the webhook-js runtime WASM from OCI.
-#[cfg(all(not(feature = "webhook-js-local"), not(feature = "embed-assets")))]
+#[cfg(all(not(feature = "webhook-js-local"), not(feature = "embed-js-runtimes")))]
 #[instrument(skip_all)]
 async fn fetch_webhook_js_runtime(
     wasm_cache_dir: Arc<Path>,
@@ -6295,8 +6295,8 @@ async fn fetch_webhook_js_runtime(
 }
 
 /// Write an embedded WASM asset to the wasm cache under its content-digest filename
-/// (idempotent) and return its path. Shared by the `embed-assets` fetch/webui paths.
-#[cfg(feature = "embed-assets")]
+/// (idempotent) and return its path. Shared by the embedded JS runtime and web UI paths.
+#[cfg(any(feature = "embed-webui", feature = "embed-js-runtimes"))]
 async fn write_embedded_runtime(
     bytes: &[u8],
     wasm_cache_dir: &Path,
@@ -6321,7 +6321,7 @@ async fn write_embedded_runtime(
     Ok(path)
 }
 
-#[cfg(not(feature = "embed-assets"))]
+#[cfg(not(feature = "embed-webui"))]
 #[expect(clippy::unused_async)]
 async fn webui_location(_wasm_cache_dir: &Path) -> Result<ComponentLocationToml, anyhow::Error> {
     WEBUI_LOCATION
@@ -6329,7 +6329,7 @@ async fn webui_location(_wasm_cache_dir: &Path) -> Result<ComponentLocationToml,
         .context("hard-coded webui reference must be parsed")
 }
 
-#[cfg(feature = "embed-assets")]
+#[cfg(feature = "embed-webui")]
 async fn webui_location(wasm_cache_dir: &Path) -> Result<ComponentLocationToml, anyhow::Error> {
     let path = write_embedded_runtime(embedded_assets::WEBUI_WASM, wasm_cache_dir)
         .await

@@ -46,22 +46,17 @@
             aarch64-apple-darwin = { archive = "sha256-Wu/9jVoMG3msHXCvg9WxkJllX9nGRaeU3EPxAfd5g4w="; binding = "sha256-ylrfDPicmnCtRgrnNkiy/om3SqETs8t/dXtqArdYOU8="; };
           };
 
-          # Fixed-output derivation that pre-fetches the four pinned operator-owned WASM
-          # assets (three JS runtimes + web UI) referenced from `crates/embedded-assets/*version*.txt`,
-          # so the `embed-assets` build.rs can read them offline inside the Nix sandbox.
-          # Update `outputHash` whenever any version file changes with
-          # `scripts/update-embedded-assets-hash.sh`.
-          embeddedAssets =
-            let
-              assetsDir = ./crates/embedded-assets;
-            in
+          # Fixed-output derivations that pre-fetch the pinned operator-owned WASM assets
+          # referenced from `crates/embedded-assets/*version*.txt`, so the embedding build.rs
+          # can read them offline inside the Nix sandbox. Update the hashes whenever a version
+          # file changes with `scripts/update-embedded-assets-hash.sh`.
+          fetchOciAssets = { pname, outputHash, assets }:
             pkgs.stdenv.mkDerivation {
-              pname = "obelisk-embedded-assets";
+              inherit pname outputHash;
               version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
               nativeBuildInputs = with pkgs; [ skopeo jq cacert ];
               outputHashMode = "recursive";
               outputHashAlgo = "sha256";
-              outputHash = "sha256-9rByxXxGxbFeVMEHPerr8nNooQWq79t0rYA9IFjWgXI=";
               SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
               buildCommand = ''
                 mkdir -p "$out"
@@ -79,14 +74,28 @@
                   layer=$(jq -r '.layers[0].digest' "$TMPDIR/$name/manifest.json" | sed 's|^sha256:||')
                   cp "$TMPDIR/$name/$layer" "$out/$name.wasm"
                 }
-                fetch activity ${assetsDir}/activity-js-runtime-version.txt
-                fetch workflow ${assetsDir}/workflow-js-runtime-version.txt
-                fetch webhook  ${assetsDir}/webhook-js-runtime-version.txt
-                fetch webui    ${assetsDir}/webui-version.txt
+                ${pkgs.lib.concatMapStringsSep "\n" (a: "fetch ${a.name} ${./crates/embedded-assets + "/${a.versionFile}"}") assets}
               '';
             };
+          embeddedWebui = fetchOciAssets {
+            pname = "obelisk-embedded-webui";
+            outputHash = "sha256-C1vWXAU9UC0znl3b/WFA0XpW05ClKvSva6VHAkfc8/Y=";
+            assets = [
+              { name = "webui"; versionFile = "webui-version.txt"; }
+            ];
+          };
+          embeddedJsRuntimes = fetchOciAssets {
+            pname = "obelisk-embedded-js-runtimes";
+            outputHash = "sha256-UQJsW2eJjX6lm50jI5T8ZHnHO2c9PqL7Zv7qiMu2PeQ=";
+            assets = [
+              { name = "activity"; versionFile = "activity-js-runtime-version.txt"; }
+              { name = "workflow"; versionFile = "workflow-js-runtime-version.txt"; }
+              { name = "webhook"; versionFile = "webhook-js-runtime-version.txt"; }
+            ];
+          };
 
-          makeObelisk = buildType: customTarget: rustToolchainToml: embedAssets:
+          # `embedJsRuntimes = false` still embeds the web UI; JS runtimes are then fetched at runtime.
+          makeObelisk = buildType: customTarget: rustToolchainToml: embedJsRuntimes:
             let
               cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
               version = cargoToml.workspace.package.version;
@@ -213,7 +222,8 @@
                 ];
 
                 # Also spliced into the cross (zigbuild) build command below.
-                cargoBuildFlags = pkgs.lib.optionals embedAssets [ "--features" "embed-assets" ];
+
+                cargoBuildFlags = pkgs.lib.optionals embedJsRuntimes [ "--features" "embed-js-runtimes" ];
 
                 installPhase = ''
                   runHook preInstall
@@ -256,9 +266,12 @@
                 # Native-architecture Zig probes need Nix's loader inside the build sandbox.
                 CFLAGS_x86_64_unknown_linux_gnu = "-Wl,--dynamic-linker=${pkgs.stdenv.cc.bintools.dynamicLinker}";
               };
-              # Feed the pre-fetched assets to the `embed-assets` build.rs offline.
-              embedAssetsEnv = pkgs.lib.optionalAttrs embedAssets {
-                OBELISK_EMBED_ASSETS_DIR = "${embeddedAssets}";
+              # Feed the pre-fetched assets to the embedding build.rs offline.
+              embedAssetsEnv = {
+                OBELISK_EMBED_ASSETS_DIR = pkgs.symlinkJoin {
+                  name = "obelisk-embedded-assets";
+                  paths = [ embeddedWebui ] ++ pkgs.lib.optionals embedJsRuntimes [ embeddedJsRuntimes ];
+                };
               };
               rustyV8MirrorEnv = { RUSTY_V8_MIRROR = "${rustyV8Mirror}"; };
             in
@@ -311,7 +324,7 @@
               ];
           };
           packages = rec {
-            inherit embeddedAssets;
+            inherit embeddedWebui embeddedJsRuntimes;
             obeliskLibcNixDev = makeObelisk "dev" null ./rust-toolchain.toml false;
             obeliskLibcNix = makeObelisk "release" null ./rust-toolchain.toml false;
             obeliskLibcNixDev-embedded = makeObelisk "dev" null ./rust-toolchain.toml true;

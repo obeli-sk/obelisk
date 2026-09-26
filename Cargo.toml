@@ -143,8 +143,10 @@ otlp = [
 "activity-js-local" = ["dep:activity-js-runtime-builder"]
 "webhook-js-local" = ["dep:webhook-js-runtime-builder"]
 "workflow-js-local" = ["dep:workflow-js-runtime-builder"]
-"embed-assets" = ["embedded-assets/embed-assets"]
-default = ["otlp"]
+"embed-webui" = ["embedded-assets/embed-webui"]
+"embed-js-runtimes" = ["embedded-assets/embed-js-runtimes"]
+"embed-assets" = ["embed-webui", "embed-js-runtimes"]
+default = ["embed-webui", "otlp"]
 
 [lints]
 workspace = true

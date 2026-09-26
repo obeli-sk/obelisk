@@ -71,7 +71,7 @@ jobs:
           TAG: ${{ github.event.inputs.tag }}
 
       - name: Update embedded asset hash
-        run: ./scripts/update-embedded-assets-hash.sh
+        run: ./scripts/update-embedded-assets-hash.sh js-runtimes
 
       - name: Configure git before push
         run: |
