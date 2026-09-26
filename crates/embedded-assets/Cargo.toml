@@ -10,7 +10,8 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-embed-assets = []
+embed-webui = []
+embed-js-runtimes = []
 
 [build-dependencies]
 anyhow.workspace = true

@@ -1,8 +1,9 @@
 //! Generate byte constants for Obelisk's four pinned OCI WASM assets.
 //!
-//! With `embed-assets`, each asset comes from `OBELISK_EMBED_ASSETS_DIR` for offline Nix builds or
-//! is pulled and digest-verified from its packaged `*version*.txt` OCI reference. Without the
-//! feature, `src/lib.rs` exposes only the references and this script only validates them.
+//! With `embed-webui` / `embed-js-runtimes`, each selected asset comes from `OBELISK_EMBED_ASSETS_DIR`
+//! for offline Nix builds or is pulled and digest-verified from its packaged `*version*.txt` OCI
+//! reference. Without the features, `src/lib.rs` exposes only the references and this script only
+//! validates them.
 
 use anyhow::{Context, bail};
 use oci_client::secrets::RegistryAuth;
@@ -10,24 +11,30 @@ use oci_wasm::WasmClient;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-/// (generated const name, `<name>.wasm` file stem, `<version file>`).
-const ASSETS: &[(&str, &str, &str)] = &[
+const FEATURE_WEBUI: &str = "CARGO_FEATURE_EMBED_WEBUI";
+const FEATURE_JS_RUNTIMES: &str = "CARGO_FEATURE_EMBED_JS_RUNTIMES";
+
+/// (generated const name, `<name>.wasm` file stem, `<version file>`, enabling feature env var).
+const ASSETS: &[(&str, &str, &str, &str)] = &[
     (
         "ACTIVITY_JS_RUNTIME_WASM",
         "activity",
         "activity-js-runtime-version.txt",
+        FEATURE_JS_RUNTIMES,
     ),
     (
         "WORKFLOW_JS_RUNTIME_WASM",
         "workflow",
         "workflow-js-runtime-version.txt",
+        FEATURE_JS_RUNTIMES,
     ),
     (
         "WEBHOOK_JS_RUNTIME_WASM",
         "webhook",
         "webhook-js-runtime-version.txt",
+        FEATURE_JS_RUNTIMES,
     ),
-    ("WEBUI_WASM", "webui", "webui-version.txt"),
+    ("WEBUI_WASM", "webui", "webui-version.txt", FEATURE_WEBUI),
 ];
 
 const OCI_SCHEMA_PREFIX: &str = "oci://";
@@ -35,13 +42,14 @@ const OCI_SCHEMA_PREFIX: &str = "oci://";
 fn main() -> anyhow::Result<()> {
     let assets_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut references = Vec::with_capacity(ASSETS.len());
-    for (_, _, version_file) in ASSETS {
+    for (_, _, version_file, _) in ASSETS {
         let version_path = assets_dir.join(version_file);
         println!("cargo:rerun-if-changed={}", version_path.display());
         references.push(read_reference(&version_path)?);
     }
 
-    if std::env::var_os("CARGO_FEATURE_EMBED_ASSETS").is_none() {
+    if std::env::var_os(FEATURE_WEBUI).is_none() && std::env::var_os(FEATURE_JS_RUNTIMES).is_none()
+    {
         return Ok(());
     }
 
@@ -54,7 +62,11 @@ fn main() -> anyhow::Result<()> {
         .build()?;
 
     let mut generated = String::new();
-    for ((const_name, stem, _), reference) in ASSETS.iter().zip(&references) {
+    let selected = ASSETS
+        .iter()
+        .zip(&references)
+        .filter(|((_, _, _, feature), _)| std::env::var_os(feature).is_some());
+    for ((const_name, stem, _, _), reference) in selected {
         let dst = out_dir.join(format!("{stem}.wasm"));
         let bytes = if let Some(prefetched) = &prefetched {
             let src = prefetched.join(format!("{stem}.wasm"));
