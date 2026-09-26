@@ -36,6 +36,14 @@ jobs:
             file: obelisk-x86_64-unknown-linux-musl.tar.gz
           - runner: ubuntu-22.04
             file: obelisk-x86_64-unknown-linux-musl-embedded.tar.gz
+          - runner: ubuntu-22.04-arm
+            file: obelisk-aarch64-unknown-linux-gnu.tar.gz
+          - runner: ubuntu-22.04-arm
+            file: obelisk-aarch64-unknown-linux-gnu-embedded.tar.gz
+          - runner: ubuntu-22.04-arm
+            file: obelisk-aarch64-unknown-linux-musl.tar.gz
+          - runner: ubuntu-22.04-arm
+            file: obelisk-aarch64-unknown-linux-musl-embedded.tar.gz
           - runner: macos-14
             file: obelisk-x86_64-apple-darwin.tar.gz
           - runner: macos-14
