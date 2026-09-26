@@ -37,7 +37,7 @@
 # worker = "sha256:..."
 
 ## SQLite configuration (enabled by default)
-# database.sqlite.directory = "${DATA_DIR}/apps/${APP_NAME}/sqlite" # Named app default; `default` retains the legacy path.
+# database.sqlite.directory = "${DATA_DIR}/apps/${APP_NAME}/sqlite"
 ## Customize PRAGMA statements.
 ## Defaults are in `crates/db-sqlite/src/sqlite_dao.rs`.
 # database.sqlite.pragma = { "cache_size" = "3000" }

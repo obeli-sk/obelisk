@@ -39,7 +39,7 @@ impl PathPrefixes {
         env_vars: &StartupEnvVars,
     ) -> Result<String, anyhow::Error> {
         let dir = self.expand_home(dir)?;
-        let resolved = interpolate_startup_path_template(&dir, &self.synthetic_dirs(), env_vars)?;
+        let resolved = interpolate_startup_path_template(&dir, &self.synthetic_vars(), env_vars)?;
         Ok(self.resolve_relative(&resolved))
     }
 
@@ -64,7 +64,7 @@ impl PathPrefixes {
         secret_registry: &SecretRegistry,
     ) -> Result<String, anyhow::Error> {
         let dir = self.expand_home(dir)?;
-        let resolved = interpolate_path_template(&dir, &self.synthetic_dirs(), secret_registry)?;
+        let resolved = interpolate_path_template(&dir, &self.synthetic_vars(), secret_registry)?;
         Ok(self.resolve_relative(&resolved))
     }
 
@@ -92,7 +92,7 @@ impl PathPrefixes {
     }
 
     /// Synthetic path variables and their values, or `None` when unavailable in this context.
-    fn synthetic_dirs(&self) -> Vec<(&'static str, Option<String>)> {
+    fn synthetic_vars(&self) -> Vec<(&'static str, Option<String>)> {
         let to_string = |p: &Path| p.to_string_lossy().into_owned();
         let project_dirs = self.project_dirs.as_ref();
         vec![
