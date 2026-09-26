@@ -196,22 +196,6 @@ jobs:
     with:
       ref: ${{ inputs.ref }}
 
-  verify-cargo-install:
-    needs: publish-release
-    if: ${{ inputs.publish_release }}
-    uses: ./.github/workflows/release-5-verify-cargo-install.yml
-    secrets: inherit
-    with:
-      ref: ${{ inputs.ref }}
-
-  verify-cargo-binstall:
-    needs: publish-release
-    if: ${{ inputs.publish_release }}
-    uses: ./.github/workflows/release-5-verify-cargo-binstall.yml
-    secrets: inherit
-    with:
-      ref: ${{ inputs.ref }}
-
   verify-docker:
     needs: publish-release
     if: ${{ inputs.publish_release }}

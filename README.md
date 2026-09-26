@@ -71,10 +71,6 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 ```sh
 curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
 ```
-Or use [cargo-binstall](https://github.com/cargo-bins/cargo-binstall):
-```sh
-cargo binstall obelisk
-```
 
 ### Docker
 ```sh
@@ -111,9 +107,9 @@ docker run --net=host \
 ### From Source
 Requires [`protoc`](https://protobuf.dev/downloads/).
 ```sh
-cargo install --locked obelisk
+cargo install --locked --git https://github.com/obeli-sk/obelisk --branch latest obelisk
 ```
-Using Nix:
+Using Nix, with prebuilt Linux binaries from the [obeli-sk Cachix cache](https://obeli-sk.cachix.org):
 ```sh
 nix run github:obeli-sk/obelisk/latest
 ```
