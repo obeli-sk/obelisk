@@ -22,12 +22,12 @@ on:
         description: "Push unversioned Docker tags (requires publishing the release)"
         required: true
         type: boolean
-        default: true
+        default: false
       prerelease:
         description: "Mark the GitHub release as a prerelease"
         required: true
         type: boolean
-        default: false
+        default: true
       publish_release:
         description: "Publish the GitHub release after artifacts and Docker images are uploaded"
         required: true
