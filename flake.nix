@@ -122,7 +122,7 @@
                   ${pkgs.lib.concatMapStringsSep "\n" links targets}
                 '';
 
-              isMacOSTarget = (customTarget == "x86_64-apple-darwin" || customTarget == "aarch64-apple-darwin"); # FIXME: ends with
+              isMacOSTarget = customTarget != null && pkgs.lib.hasSuffix "-apple-darwin" customTarget;
               macOSsdkTarball =
                 if isMacOSTarget then
                   pkgs.fetchurl
