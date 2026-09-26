@@ -48,7 +48,8 @@ fn main() -> anyhow::Result<()> {
         references.push(read_reference(&version_path)?);
     }
 
-    if std::env::var_os(FEATURE_WEBUI).is_none() && std::env::var_os(FEATURE_JS_RUNTIMES).is_none() {
+    if std::env::var_os(FEATURE_WEBUI).is_none() && std::env::var_os(FEATURE_JS_RUNTIMES).is_none()
+    {
         return Ok(());
     }
 
