@@ -33,6 +33,132 @@ pub const JS_LAYER_MEDIA_TYPE: &str = "application/vnd.obelisk.js.v0+javascript"
 /// Media type for the single OCI layer of an exec activity image.
 /// The layer contains the UTF-8 script source (the `inline` content, including the shebang line).
 pub const EXEC_LAYER_MEDIA_TYPE: &str = "application/vnd.obelisk.exec.v0";
+const QEMU_BUNDLE_MEDIA_TYPE: &str = "application/vnd.obelisk.activity-vm-qemu-tcg.v1+zstd";
+
+pub(crate) async fn pull_native_qemu_bundle_to_cache(
+    image: &Reference,
+    cache_root: &Path,
+) -> anyhow::Result<PathBuf> {
+    let pinned_digest = image
+        .digest()
+        .context("native QEMU OCI reference needs a digest")?;
+    let parent = cache_root.join("activity-vm/native-qemu");
+    let destination = parent.join(pinned_digest.replace(':', "-"));
+    if destination.join("vm.state").is_file() {
+        return Ok(destination);
+    }
+    tokio::fs::create_dir_all(&parent).await?;
+
+    let client = oci_client::Client::default();
+    let auth = get_oci_auth(image)?;
+    let (manifest, manifest_digest, _) = retry(
+        || client.pull_manifest_and_config(image, &auth),
+        OCI_CLIENT_RETRIES,
+        "pulling native QEMU manifest",
+    )
+    .await?;
+    ensure!(
+        manifest_digest == pinned_digest,
+        "native QEMU manifest digest mismatch"
+    );
+    ensure!(
+        manifest
+            .annotations
+            .as_ref()
+            .and_then(|a| a.get("dev.obelisk.artifact.kind"))
+            .is_some_and(|kind| kind == "activity-vm-qemu-tcg.v1"),
+        "unexpected native QEMU artifact kind"
+    );
+    let layer = |title: &str, media_type: &str| -> anyhow::Result<&OciDescriptor> {
+        let mut matching = manifest.layers.iter().filter(|layer| {
+            layer.media_type == media_type
+                && layer
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.get("org.opencontainers.image.title"))
+                    .is_some_and(|name| name == title)
+        });
+        let first = matching
+            .next()
+            .context("native QEMU OCI layer is missing")?;
+        ensure!(matching.next().is_none(), "duplicate native QEMU OCI layer");
+        Ok(first)
+    };
+    let bundle_layer = layer("activity-vm-qemu-tcg.tar.zst", QEMU_BUNDLE_MEDIA_TYPE)?;
+    let source_layer = layer("qemu-source.txt", "text/plain")?;
+    let work = tempfile::tempdir_in(&parent)?;
+    let archive_path = work.path().join("bundle.tar.zst");
+    let source_path = work.path().join("qemu-source.txt");
+    for (descriptor, path) in [(bundle_layer, &archive_path), (source_layer, &source_path)] {
+        pull_blob_to_file(
+            &client,
+            image,
+            path,
+            descriptor,
+            &ContentDigest::from_str(&descriptor.digest)?,
+            "native QEMU artifact",
+        )
+        .await?;
+    }
+
+    let source = tokio::fs::read_to_string(&source_path).await?;
+    let source = source.trim();
+    let revision = source
+        .strip_prefix("github:fzakaria/trynix/")
+        .and_then(|value| value.strip_suffix("#native-qemu"))
+        .context("unexpected native QEMU source")?;
+    ensure!(
+        revision.len() == 40 && revision.bytes().all(|b| b.is_ascii_hexdigit()),
+        "native QEMU source must pin a commit"
+    );
+    let output = tokio::process::Command::new("nix")
+        .args(["build", "--accept-flake-config", "--out-link"])
+        .arg(parent.join(format!("qemu-{}", pinned_digest.replace(':', "-"))))
+        .args(["--print-out-paths", source])
+        .output()
+        .await
+        .context("Nix is required to install the native QEMU runtime")?;
+    ensure!(
+        output.status.success(),
+        "building native QEMU from {source} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let qemu = PathBuf::from(String::from_utf8(output.stdout)?.trim());
+    let extracted = work.path().join("bundle");
+    tokio::fs::create_dir(&extracted).await?;
+    let archive = archive_path.clone();
+    let unpack_dir = extracted.clone();
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let compressed = std::fs::File::open(archive)?;
+        let decoder = ruzstd::decoding::StreamingDecoder::new(compressed)?;
+        tar::Archive::new(decoder).unpack(unpack_dir)?;
+        Ok(())
+    })
+    .await??;
+    let expected_qemu = qemu.join("bin/qemu-system-x86_64");
+    ensure!(
+        tokio::fs::read_to_string(extracted.join("qemu-path"))
+            .await?
+            .trim()
+            == expected_qemu.to_string_lossy(),
+        "native QEMU bundle was built with a different QEMU"
+    );
+    ensure!(
+        extracted.join("vm.state").is_file(),
+        "native QEMU snapshot is missing"
+    );
+    ensure!(
+        extracted.join("guest/machine.json").is_file(),
+        "native QEMU machine is missing"
+    );
+    if let Err(error) = tokio::fs::rename(&extracted, &destination).await {
+        ensure!(
+            destination.join("vm.state").is_file(),
+            "caching native QEMU bundle failed: {error}"
+        );
+    }
+    Ok(destination)
+}
 
 struct LayerWithAnnotations {
     layer_content_digest: ContentDigest,

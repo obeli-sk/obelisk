@@ -604,10 +604,19 @@ async fn authorize_test_deployment(
             "OBELISK_PHASE5_DEFINITELY_MISSING_VAR".to_owned(),
         ]),
     );
-    let outputs =
-        crate::command::server::generate_secret_config_digests(deployment_path, None, registry)
-            .await
-            .unwrap();
+    let outputs = crate::command::server::generate_secret_config_digests(
+        deployment_path,
+        None,
+        registry,
+        crate::parse_activity_vm_runtime(
+            std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM")
+                .ok()
+                .as_deref(),
+        )
+        .unwrap(),
+    )
+    .await
+    .unwrap();
     crate::command::server::fix_server_secret_config_digests(
         &server_path.with_file_name("app.toml"),
         &outputs,
@@ -865,6 +874,12 @@ impl TestServer {
                 ServerAuth::Auth { api_token }
             },
             js_runtime,
+            activity_vm_runtime: crate::parse_activity_vm_runtime(
+                std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM")
+                    .ok()
+                    .as_deref(),
+            )
+            .unwrap(),
         };
 
         let prepared_dirs = prepare_dirs(
@@ -4164,12 +4179,20 @@ async fn replaying_paused_workflow_should_return_preview_events(
 
 #[tokio::test]
 async fn replay_nondeterminism_reason_survives_webapi() {
-    replay_nondeterminism_reason_survives(TestExecutionClient::WebApi, test_addr!(131)).await;
+    Box::pin(replay_nondeterminism_reason_survives(
+        TestExecutionClient::WebApi,
+        test_addr!(131),
+    ))
+    .await;
 }
 
 #[tokio::test]
 async fn replay_nondeterminism_reason_survives_grpc() {
-    replay_nondeterminism_reason_survives(TestExecutionClient::Grpc, test_addr!(132)).await;
+    Box::pin(replay_nondeterminism_reason_survives(
+        TestExecutionClient::Grpc,
+        test_addr!(132),
+    ))
+    .await;
 }
 
 async fn replay_nondeterminism_reason_survives(client: TestExecutionClient, addr: String) {

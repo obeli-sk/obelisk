@@ -78,6 +78,11 @@ impl Generate {
                     &deployment,
                     component_name.as_deref(),
                     secret_registry,
+                    crate::parse_activity_vm_runtime(
+                        std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM")
+                            .ok()
+                            .as_deref(),
+                    )?,
                 )
                 .await?;
                 if json {
@@ -950,6 +955,11 @@ async fn generate_wit_deps(
     options: GenerateWitDepsOptions,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
+    let activity_vm_runtime = crate::parse_activity_vm_runtime(
+        std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM")
+            .ok()
+            .as_deref(),
+    )?;
     let raw = tokio::fs::read_to_string(&deployment_toml)
         .await
         .with_context(|| format!("cannot read deployment manifest {deployment_toml:?}"))?;
@@ -997,6 +1007,7 @@ async fn generate_wit_deps(
         suppress_type_checking_errors: true, // Just extracting WITs, not running components
         suppress_linking_errors: true,       // Just extracting WITs, not running components
         js_runtime: crate::command::server::JsRuntimeMode::BoaWasm,
+        activity_vm_runtime,
     };
 
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
@@ -1015,6 +1026,7 @@ async fn generate_wit_deps(
         engines,
         secret_registry,
         crate::command::server::JsRuntimeMode::BoaWasm,
+        activity_vm_runtime,
     ))
     .await?;
     let deployment_verified = deployment_verify_config(

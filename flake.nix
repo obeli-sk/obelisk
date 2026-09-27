@@ -293,13 +293,16 @@
                 cargo-nextest
                 gh # scripts/sync-branch-protection.sh
                 git-cliff
+                gzip
                 jq
+                libarchive # bsdtar for the native QEMU guest initramfs
                 litecli
                 nixd
                 nixpkgs-fmt
                 pkg-config
                 postgresql
                 protobuf
+                python3 # native QEMU migration snapshot builder
                 sqlite
                 wasm-tools
                 yq-go # scripts/sync-branch-protection.sh

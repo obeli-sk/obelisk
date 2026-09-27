@@ -1,4 +1,4 @@
-use activity_vm_runner::MapDir;
+use activity_vm_runner::{MapDir, RuntimeBackend};
 use async_trait::async_trait;
 use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::time::{ClockFn, Sleep};
@@ -16,12 +16,12 @@ use std::time::Instant;
 use utils::wasm_tools::WasmComponent;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
+#[cfg(test)]
 use wasmtime::{Engine, Module};
 use worker_common::{ExecSecrets, ProcessHttpPolicySpec, SecretResolver};
 
 pub struct ActivityVmWorkerCompiled {
-    module: Module,
-    engine: Arc<Engine>,
+    backend: RuntimeBackend,
     mapdirs: Vec<MapDir>,
     guest_args: Vec<String>,
     policy_spec: ProcessHttpPolicySpec,
@@ -41,8 +41,7 @@ pub struct ActivityVmWorkerCompiled {
 impl ActivityVmWorkerCompiled {
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        module: Module,
-        engine: Arc<Engine>,
+        backend: RuntimeBackend,
         mapdirs: Vec<MapDir>,
         guest_args: Vec<String>,
         policy_spec: ProcessHttpPolicySpec,
@@ -70,8 +69,7 @@ impl ActivityVmWorkerCompiled {
             )?,
         };
         Ok(Self {
-            module,
-            engine,
+            backend,
             mapdirs,
             guest_args,
             policy_spec,
@@ -113,8 +111,7 @@ impl ActivityVmWorkerCompiled {
         sleep: Arc<dyn Sleep>,
     ) -> ActivityVmWorker {
         ActivityVmWorker {
-            module: self.module,
-            engine: self.engine,
+            backend: self.backend,
             mapdirs: self.mapdirs,
             guest_args: self.guest_args,
             policy_spec: self.policy_spec,
@@ -145,8 +142,7 @@ impl ActivityVmWorkerCompiled {
 }
 
 pub struct ActivityVmWorker {
-    module: Module,
-    engine: Arc<Engine>,
+    backend: RuntimeBackend,
     mapdirs: Vec<MapDir>,
     guest_args: Vec<String>,
     policy_spec: ProcessHttpPolicySpec,
@@ -235,8 +231,7 @@ impl Worker for ActivityVmWorker {
         let mut execution_interrupt_watcher = ctx.execution_interrupt_watcher.clone();
         let http_client_traces = Arc::new(Mutex::new(Vec::new()));
         let execution = activity_vm_runner::execute(
-            &self.engine,
-            self.module.clone(),
+            &self.backend,
             self.mapdirs.clone(),
             guest_args,
             env,
@@ -429,8 +424,7 @@ mod tests {
         .unwrap();
         let ffqn = FunctionFqn::new_static("testing:vm/hang", "run");
         let worker = ActivityVmWorkerCompiled::new(
-            module,
-            engine,
+            RuntimeBackend::BochsWasm { engine, module },
             Vec::new(),
             Vec::new(),
             ProcessHttpPolicySpec {

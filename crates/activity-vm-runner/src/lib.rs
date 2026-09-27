@@ -1,4 +1,5 @@
 use anyhow::{Context as _, bail};
+use concepts::ContentDigest;
 use concepts::storage::http_client_trace::HttpClientTrace;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,11 +13,36 @@ use wasmtime_wasi::p1::WasiP1Ctx;
 use wasmtime_wasi::{FsPerms, WasiCtxBuilder, p1, p2::pipe};
 
 mod http_bridge;
+mod native_qemu;
 
 pub struct VmOutput {
     pub exit_code: i32,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RuntimeSource {
+    BochsWasm(PathBuf),
+    QemuNative {
+        bundle: PathBuf,
+        digest: ContentDigest,
+    },
+}
+
+impl RuntimeSource {
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::BochsWasm(path) => path,
+            Self::QemuNative { bundle, .. } => bundle,
+        }
+    }
+}
+
+pub enum RuntimeBackend {
+    BochsWasm { engine: Arc<Engine>, module: Module },
+    QemuNative { bundle: PathBuf },
 }
 
 #[derive(Clone)]
@@ -49,8 +75,7 @@ impl MapDir {
 /// Dropping the returned future stops the VM, the same way a regular activity is cancelled.
 #[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
 pub async fn execute(
-    engine: &Engine,
-    module: Module,
+    backend: &RuntimeBackend,
     mut mapdirs: Vec<MapDir>,
     guest_args: Vec<String>,
     mut env: HashMap<String, String>,
@@ -61,6 +86,23 @@ pub async fn execute(
     max_stderr_bytes: usize,
     memory: Option<u64>,
 ) -> anyhow::Result<VmOutput> {
+    let (engine, module) = match backend {
+        RuntimeBackend::QemuNative { bundle } => {
+            return native_qemu::execute(
+                bundle,
+                mapdirs,
+                guest_args,
+                env,
+                stdin,
+                policy,
+                http_client_traces,
+                max_stdout_bytes,
+                max_stderr_bytes,
+            )
+            .await;
+        }
+        RuntimeBackend::BochsWasm { engine, module } => (engine, module),
+    };
     let started = Instant::now();
     tracing::debug!("Preparing activity VM execution");
     let queue = tempfile::tempdir()?;
@@ -89,7 +131,7 @@ pub async fn execute(
     let stderr = pipe::MemoryOutputPipe::new(max_stderr_bytes);
     let exit_code = run_until_activity_completes(
         engine,
-        &module,
+        module,
         &mapdirs,
         &guest_args,
         &env,
