@@ -190,6 +190,48 @@ deno_core::extension!(
     ]
 );
 
+/// A runtime with the activity ops and bootstrap in place, waiting for its component's files.
+struct WarmRuntime {
+    runtime: JsRuntime,
+    loader: Rc<InMemoryModuleLoader>,
+    max_heap_size: Option<usize>,
+}
+
+impl WarmRuntime {
+    fn new(max_heap_size: Option<usize>) -> Result<Self, String> {
+        let loader = Rc::new(InMemoryModuleLoader::default());
+        let mut runtime = JsRuntime::new(RuntimeOptions {
+            module_loader: Some(loader.clone()),
+            extensions: vec![obelisk_activity_v8::init()],
+            create_params: Some(
+                max_heap_size.map_or_else(deno_core::v8::CreateParams::default, |max| {
+                    deno_core::v8::CreateParams::default().heap_limits(0, max)
+                }),
+            ),
+            startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
+            ..Default::default()
+        });
+        runtime
+            .execute_script("obelisk:activity-bootstrap", ACTIVITY_BOOTSTRAP)
+            .map_err(|err| err.to_string())?;
+        Ok(Self {
+            runtime,
+            loader,
+            max_heap_size,
+        })
+    }
+}
+
+/// Prepares the runtime for the next activity on this isolate thread. It is used once, so every
+/// activity still runs in a fresh isolate.
+pub(crate) fn prewarm(max_heap_size: Option<usize>) {
+    if !crate::v8_executor::has_warm()
+        && let Ok(warm) = WarmRuntime::new(max_heap_size)
+    {
+        crate::v8_executor::put_warm(warm);
+    }
+}
+
 pub(crate) async fn execute(
     entry_path: &str,
     files: &BTreeMap<String, String>,
@@ -202,20 +244,20 @@ pub(crate) async fn execute(
     Result<SupportedFunctionReturnValue, NativeActivityFailure>,
     NativeActivityState,
 ) {
-    let loader = Rc::new(InMemoryModuleLoader::new(files));
+    let warm = crate::v8_executor::take_warm::<WarmRuntime>()
+        .filter(|warm| warm.max_heap_size == max_heap_size)
+        .map_or_else(|| WarmRuntime::new(max_heap_size), Ok);
+    let WarmRuntime {
+        mut runtime,
+        loader,
+        ..
+    } = match warm {
+        Ok(warm) => warm,
+        Err(reason) => return (Err(NativeActivityFailure::CannotInstantiate(reason)), state),
+    };
+    loader.set_files(files);
     let shared = Arc::new(Mutex::new(state));
     let env = shared.lock().await.env.clone();
-    let mut runtime = JsRuntime::new(RuntimeOptions {
-        module_loader: Some(loader.clone()),
-        extensions: vec![obelisk_activity_v8::init()],
-        create_params: Some(
-            max_heap_size.map_or_else(deno_core::v8::CreateParams::default, |max| {
-                deno_core::v8::CreateParams::default().heap_limits(0, max)
-            }),
-        ),
-        startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
-        ..Default::default()
-    });
     let isolate = runtime.v8_isolate().thread_safe_handle();
     let _ = isolate_tx.send(isolate.clone());
     let panic = crate::v8_panic::V8PanicState::new(isolate);
@@ -242,9 +284,6 @@ async fn execute_inner(
     params: &Params,
     return_type: &ReturnTypeExtendable,
 ) -> Result<SupportedFunctionReturnValue, NativeActivityFailure> {
-    runtime
-        .execute_script("obelisk:activity-bootstrap", ACTIVITY_BOOTSTRAP)
-        .map_err(|err| NativeActivityFailure::CannotInstantiate(err.to_string()))?;
     let params = params.as_json_values().ok_or_else(|| {
         NativeActivityFailure::ResultParsing("parameters are not JSON values".into())
     })?;
@@ -325,26 +364,27 @@ async fn execute_inner(
     })
 }
 
+/// Empty until [`Self::set_files`], so a runtime can be created before its component is known.
+#[derive(Default)]
 struct InMemoryModuleLoader {
-    sources: HashMap<String, String>,
-    paths: HashMap<String, ModuleSpecifier>,
+    sources: RefCell<HashMap<String, String>>,
+    paths: RefCell<HashMap<String, ModuleSpecifier>>,
 }
 
 impl InMemoryModuleLoader {
-    fn new(files: &BTreeMap<String, String>) -> Self {
-        let mut sources = HashMap::new();
-        let mut paths = HashMap::new();
+    fn set_files(&self, files: &BTreeMap<String, String>) {
+        let mut sources = self.sources.borrow_mut();
+        let mut paths = self.paths.borrow_mut();
         for (path, source) in files {
             let specifier = ModuleSpecifier::parse(&format!("file:///obelisk/{path}"))
                 .expect("generated module URL must parse");
             sources.insert(specifier.to_string(), source.clone());
             paths.insert(path.clone(), specifier);
         }
-        Self { sources, paths }
     }
 
-    fn specifier_for_path(&self, path: &str) -> Option<&ModuleSpecifier> {
-        self.paths.get(path)
+    fn specifier_for_path(&self, path: &str) -> Option<ModuleSpecifier> {
+        self.paths.borrow().get(path).cloned()
     }
 }
 
@@ -366,6 +406,7 @@ impl ModuleLoader for InMemoryModuleLoader {
     ) -> ModuleLoadResponse {
         let result = self
             .sources
+            .borrow()
             .get(specifier.as_str())
             .cloned()
             .ok_or_else(|| JsErrorBox::generic(format!("Module not found: {specifier}")))

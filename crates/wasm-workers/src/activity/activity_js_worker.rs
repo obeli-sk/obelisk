@@ -938,6 +938,30 @@ mod tests {
         assert_eq!(extract_string(&output.unwrap().value), "from-config");
     }
 
+    /// Sequential runs reuse the isolate thread and its prewarmed runtime, which must still be a
+    /// fresh isolate each time.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn prewarmed_runtime_must_not_leak_globals() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "touch");
+        let worker = JsWorkerBuilder::new(
+            "export default function touch() { const seen = globalThis.touched === true; globalThis.touched = true; return seen ? 'leaked' : 'fresh'; }",
+            ffqn.clone(),
+        )
+        .with_runtime(ActivityJsRuntime::V8)
+        .build()
+        .await;
+        for _ in 0..3 {
+            let (ctx, _close_tx) = make_worker_context(ffqn.clone(), &[]);
+            let result = worker.run(ctx).await.expect("worker should succeed");
+            let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+            let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+            assert_eq!(extract_string(&output.unwrap().value), "fresh");
+            // Let the idle thread prewarm the next runtime.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
     #[tokio::test]
     async fn cpu_loop_is_interrupted_at_deadline() {
         test_utils::set_up();

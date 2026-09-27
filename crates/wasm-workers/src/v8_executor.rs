@@ -1,3 +1,5 @@
+use std::any::Any;
+use std::cell::RefCell;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak, mpsc};
@@ -95,7 +97,32 @@ struct ExecutorInner {
     threads: Arc<IdleThreads>,
 }
 
-type Job = Box<dyn FnOnce() + Send>;
+type Prewarm = Box<dyn FnOnce() + Send>;
+
+struct Job {
+    run: Box<dyn FnOnce() + Send>,
+    /// Runs after `run` once the thread is idle, preparing state for the next isolate.
+    prewarm: Option<Prewarm>,
+}
+
+thread_local! {
+    /// State a prewarm hook prepared for the next isolate on this thread, off the critical path.
+    static WARM: RefCell<Option<Box<dyn Any>>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn has_warm() -> bool {
+    WARM.with(|warm| warm.borrow().is_some())
+}
+
+pub(crate) fn put_warm<T: 'static>(value: T) {
+    WARM.with(|warm| *warm.borrow_mut() = Some(Box::new(value)));
+}
+
+/// Takes the prepared state if it is a `T`; state of another type is dropped.
+pub(crate) fn take_warm<T: 'static>() -> Option<T> {
+    let warm = WARM.with(|warm| warm.borrow_mut().take())?;
+    warm.downcast().ok().map(|warm| *warm)
+}
 
 /// Threads waiting for their next isolate. Only threads that finished cleanly get here, so a
 /// wedged isolate keeps its thread out of the list and shutdown still does not join it.
@@ -120,15 +147,16 @@ impl IdleThreads {
 
 fn isolate_thread(mut job: Job, threads: &Weak<IdleThreads>) {
     loop {
-        job();
-        let Some(next) = wait_for_job(threads) else {
+        (job.run)();
+        let Some(next) = wait_for_job(threads, job.prewarm) else {
             break;
         };
         job = next;
     }
+    WARM.with(|warm| warm.borrow_mut().take());
 }
 
-fn wait_for_job(threads: &Weak<IdleThreads>) -> Option<Job> {
+fn wait_for_job(threads: &Weak<IdleThreads>, prewarm: Option<Prewarm>) -> Option<Job> {
     let (sender, receiver) = mpsc::channel();
     let id = {
         let threads = threads.upgrade()?;
@@ -136,6 +164,11 @@ fn wait_for_job(threads: &Weak<IdleThreads>) -> Option<Job> {
         threads.idle.lock().unwrap().push((id, sender));
         id
     };
+    // Already listed: a job arriving meanwhile queues here instead of starting a cold thread.
+    match prewarm {
+        Some(prewarm) => prewarm(),
+        None => drop(WARM.with(|warm| warm.borrow_mut().take())),
+    }
     match receiver.recv_timeout(IDLE_THREAD_TIMEOUT) {
         Ok(job) => Some(job),
         Err(mpsc::RecvTimeoutError::Disconnected) => None,
@@ -234,6 +267,7 @@ impl V8Executor {
             reservation,
             thread_stack_size: self.inner.config.thread_stack_size,
             threads: self.inner.threads.clone(),
+            prewarm: None,
         }
     }
 
@@ -291,9 +325,18 @@ pub struct V8Admission {
     reservation: Arc<OwnedSemaphorePermit>,
     thread_stack_size: usize,
     threads: Arc<IdleThreads>,
+    prewarm: Option<Prewarm>,
 }
 
 impl V8Admission {
+    /// Runs `prewarm` on the isolate thread after `run` finishes, while it waits for the next
+    /// isolate. Whatever it stores with [`put_warm`] is only ever taken on that thread.
+    #[must_use]
+    pub fn with_prewarm(mut self, prewarm: impl FnOnce() + Send + 'static) -> Self {
+        self.prewarm = Some(Box::new(prewarm));
+        self
+    }
+
     /// Runs `execute` to completion on an OS thread that runs nothing else meanwhile, with a fresh
     /// current-thread Tokio runtime and a fresh V8 isolate.
     pub async fn run<F, Fut, T>(self, execute: F) -> Result<T, V8ExecutorError>
@@ -306,9 +349,13 @@ impl V8Admission {
             reservation,
             thread_stack_size,
             threads,
+            prewarm,
         } = self;
         let (result_tx, result_rx) = oneshot::channel();
-        let job: Job = Box::new(move || run_isolate(execute, result_tx, reservation));
+        let job = Job {
+            run: Box::new(move || run_isolate(execute, result_tx, reservation)),
+            prewarm,
+        };
         if let Err(job) = threads.dispatch(job) {
             let threads = Arc::downgrade(&threads);
             // The thread is deliberately detached, and shutdown reports a wedged isolate rather
