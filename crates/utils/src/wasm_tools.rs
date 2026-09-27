@@ -80,9 +80,9 @@ impl WasmComponent {
         }
 
         let wasm = tokio::fs::read(wasm_path).await?;
-        let mut encoder = ComponentEncoder::default().validate(true);
-        encoder = encoder.module(&wasm)?;
-        let component_contents = encoder
+        let component_contents = ComponentEncoder::default()
+            .validate(true)
+            .module(&wasm)?
             .encode()
             .with_context(|| {
                 format!(
