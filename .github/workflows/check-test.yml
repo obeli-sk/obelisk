@@ -37,9 +37,19 @@ jobs:
           - name: test.sh
             report: junit-default.xml
             features: ""
+            activity_vm_runtime: ""
           - name: test-js-local.sh
             report: junit-js-local.xml
             features: "-F activity-js-local,workflow-js-local,webhook-js-local"
+            activity_vm_runtime: ""
+          - name: activity-vm-bochs
+            report: junit-activity-vm-bochs.xml
+            features: ""
+            activity_vm_runtime: bochs
+          - name: activity-vm-qemu
+            report: junit-activity-vm-qemu.xml
+            features: ""
+            activity_vm_runtime: qemu_native
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -82,6 +92,7 @@ jobs:
           ADDITIONAL_FEATURES: ${{ matrix.features }}
 
       - name: Run tests
+        if: ${{ !matrix.activity_vm_runtime }}
         run: nix develop --command scripts/test-phase2.sh
         env:
           CI: true
@@ -91,6 +102,13 @@ jobs:
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
           CARGO_INSTA_TEST: true # reject unreferenced snapshots
           ADDITIONAL_FEATURES: ${{ matrix.features }}
+
+      - name: Run activity VM tests
+        if: ${{ matrix.activity_vm_runtime }}
+        run: 'nix develop --command scripts/test-phase2.sh command::integration_tests::activity_vm::'
+        env:
+          CI: true
+          OBELISK_UNSTABLE_ACTIVITY_VM: ${{ matrix.activity_vm_runtime }}
 
       # Reduce cache size — hashed WASMs are cached separately (target/wasm-cache/).
       - name: Clean build artifacts before caching
