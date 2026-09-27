@@ -224,7 +224,7 @@ impl ActivityWorker {
         return_type: ReturnTypeExtendable,
     ) -> WorkerResult {
         use super::native_v8_activity_runtime::{
-            NativeActivityFailure, NativeActivityState, execute,
+            NativeActivityFailure, NativeActivityState, execute, prewarm,
         };
         use crate::policy_builder::build_http_policy_native;
         use secrecy::ExposeSecret as _;
@@ -306,6 +306,7 @@ impl ActivityWorker {
         let max_heap_size = self
             .v8_executor
             .max_heap_size(crate::v8_executor::V8Workload::Activity);
+        let admission = admission.with_prewarm(move || prewarm(max_heap_size));
         let mut task = tokio::spawn(async move {
             admission
                 .run(move || async move {

@@ -1,5 +1,8 @@
+use std::any::Any;
+use std::cell::RefCell;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::time::Duration;
 use tokio::runtime::Builder;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
@@ -9,6 +12,8 @@ const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// How long shutdown gives [`V8Executor::drain`]. Not an operator knob: no workload behaves
 /// differently for a different value, see [`V8Executor::drain`].
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// How long a finished isolate thread waits for the next isolate before exiting.
+const IDLE_THREAD_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// One `(workload, native V8)` cell: the slots it grants and how large one isolate's heap may get.
 /// The semaphore is the one the cell's executor admits from, so an isolate and the worker slot
@@ -80,7 +85,8 @@ pub enum V8Workload {
 }
 
 /// Runs each native V8 isolate on its own OS thread with its own current-thread Tokio runtime.
-/// Owns no threads and no mutable collections: concurrency is bounded by the semaphores below.
+/// Concurrency is bounded by the semaphores below. A thread whose isolate finished is reused for
+/// the next one: the first isolate on a fresh thread costs about twice as much to create.
 #[derive(Clone)]
 pub struct V8Executor {
     inner: Arc<ExecutorInner>,
@@ -88,6 +94,98 @@ pub struct V8Executor {
 
 struct ExecutorInner {
     config: V8ExecutorConfig,
+    threads: Arc<IdleThreads>,
+}
+
+type Prewarm = Box<dyn FnOnce() + Send>;
+
+struct Job {
+    run: Box<dyn FnOnce() + Send>,
+    /// Runs after `run` once the thread is idle, preparing state for the next isolate.
+    prewarm: Option<Prewarm>,
+}
+
+thread_local! {
+    /// State a prewarm hook prepared for the next isolate on this thread, off the critical path.
+    static WARM: RefCell<Option<Box<dyn Any>>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn has_warm() -> bool {
+    WARM.with(|warm| warm.borrow().is_some())
+}
+
+pub(crate) fn put_warm<T: 'static>(value: T) {
+    WARM.with(|warm| *warm.borrow_mut() = Some(Box::new(value)));
+}
+
+/// Takes the prepared state if it is a `T`; state of another type is dropped.
+pub(crate) fn take_warm<T: 'static>() -> Option<T> {
+    let warm = WARM.with(|warm| warm.borrow_mut().take())?;
+    warm.downcast().ok().map(|warm| *warm)
+}
+
+/// Threads waiting for their next isolate. Only threads that finished cleanly get here, so a
+/// wedged isolate keeps its thread out of the list and shutdown still does not join it.
+#[derive(Default)]
+struct IdleThreads {
+    next_id: AtomicU64,
+    idle: Mutex<Vec<(u64, mpsc::Sender<Job>)>>,
+}
+
+impl IdleThreads {
+    /// Hands `job` to the most recently idled thread, or returns it if none is waiting.
+    fn dispatch(&self, mut job: Job) -> Result<(), Job> {
+        while let Some((_, sender)) = self.idle.lock().unwrap().pop() {
+            match sender.send(job) {
+                Ok(()) => return Ok(()),
+                Err(mpsc::SendError(returned)) => job = returned,
+            }
+        }
+        Err(job)
+    }
+}
+
+fn isolate_thread(mut job: Job, threads: &Weak<IdleThreads>) {
+    loop {
+        (job.run)();
+        let Some(next) = wait_for_job(threads, job.prewarm) else {
+            break;
+        };
+        job = next;
+    }
+    WARM.with(|warm| warm.borrow_mut().take());
+}
+
+fn wait_for_job(threads: &Weak<IdleThreads>, prewarm: Option<Prewarm>) -> Option<Job> {
+    let (sender, receiver) = mpsc::channel();
+    let id = {
+        let threads = threads.upgrade()?;
+        let id = threads.next_id.fetch_add(1, Ordering::Relaxed);
+        threads.idle.lock().unwrap().push((id, sender));
+        id
+    };
+    // Already listed: a job arriving meanwhile queues here instead of starting a cold thread.
+    match prewarm {
+        Some(prewarm) => prewarm(),
+        None => drop(WARM.with(|warm| warm.borrow_mut().take())),
+    }
+    match receiver.recv_timeout(IDLE_THREAD_TIMEOUT) {
+        Ok(job) => Some(job),
+        Err(mpsc::RecvTimeoutError::Disconnected) => None,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            // A dispatcher that popped this thread before the timeout is about to send.
+            let still_listed = threads.upgrade().is_some_and(|threads| {
+                let mut idle = threads.idle.lock().unwrap();
+                let position = idle.iter().position(|(idle_id, _)| *idle_id == id);
+                position.map(|position| idle.remove(position)).is_some()
+            });
+            if still_listed {
+                None
+            } else {
+                receiver.recv().ok()
+            }
+        }
+    }
 }
 
 impl Default for V8Executor {
@@ -104,7 +202,10 @@ impl V8Executor {
             "V8 thread stack must be non-zero"
         );
         Self {
-            inner: Arc::new(ExecutorInner { config }),
+            inner: Arc::new(ExecutorInner {
+                config,
+                threads: Arc::default(),
+            }),
         }
     }
 
@@ -165,6 +266,8 @@ impl V8Executor {
         V8Admission {
             reservation,
             thread_stack_size: self.inner.config.thread_stack_size,
+            threads: self.inner.threads.clone(),
+            prewarm: None,
         }
     }
 
@@ -173,6 +276,8 @@ impl V8Executor {
         for cell in self.cells() {
             cell.semaphore.close();
         }
+        // Dropping the senders wakes the idle threads, which then exit.
+        self.inner.threads.idle.lock().unwrap().clear();
     }
 
     /// Waits up to `grace` for every running isolate to be dropped, then reports whatever is
@@ -219,11 +324,21 @@ impl V8Executor {
 pub struct V8Admission {
     reservation: Arc<OwnedSemaphorePermit>,
     thread_stack_size: usize,
+    threads: Arc<IdleThreads>,
+    prewarm: Option<Prewarm>,
 }
 
 impl V8Admission {
-    /// Runs `execute` to completion on a dedicated OS thread owning one current-thread Tokio
-    /// runtime and one V8 isolate.
+    /// Runs `prewarm` on the isolate thread after `run` finishes, while it waits for the next
+    /// isolate. Whatever it stores with [`put_warm`] is only ever taken on that thread.
+    #[must_use]
+    pub fn with_prewarm(mut self, prewarm: impl FnOnce() + Send + 'static) -> Self {
+        self.prewarm = Some(Box::new(prewarm));
+        self
+    }
+
+    /// Runs `execute` to completion on an OS thread that runs nothing else meanwhile, with a fresh
+    /// current-thread Tokio runtime and a fresh V8 isolate.
     pub async fn run<F, Fut, T>(self, execute: F) -> Result<T, V8ExecutorError>
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -233,15 +348,24 @@ impl V8Admission {
         let Self {
             reservation,
             thread_stack_size,
+            threads,
+            prewarm,
         } = self;
         let (result_tx, result_rx) = oneshot::channel();
-        // The thread is deliberately detached: it ends with its isolate, and shutdown reports a
-        // wedged isolate rather than joining it, so a stuck host call cannot block process exit.
-        std::thread::Builder::new()
-            .name("obelisk-v8".to_owned())
-            .stack_size(thread_stack_size)
-            .spawn(move || run_isolate(execute, result_tx, reservation))
-            .map_err(V8ExecutorError::Spawn)?;
+        let job = Job {
+            run: Box::new(move || run_isolate(execute, result_tx, reservation)),
+            prewarm,
+        };
+        if let Err(job) = threads.dispatch(job) {
+            let threads = Arc::downgrade(&threads);
+            // The thread is deliberately detached, and shutdown reports a wedged isolate rather
+            // than joining it, so a stuck host call cannot block process exit.
+            std::thread::Builder::new()
+                .name("obelisk-v8".to_owned())
+                .stack_size(thread_stack_size)
+                .spawn(move || isolate_thread(job, &threads))
+                .map_err(V8ExecutorError::Spawn)?;
+        }
         // A panic on the isolate thread drops the sender.
         result_rx.await.map_err(|_| V8ExecutorError::IsolateStopped)
     }
@@ -451,6 +575,27 @@ mod tests {
             .admit(V8Workload::Activity)
             .await
             .expect("the slot returns once the worker and the isolate are both gone");
+    }
+
+    /// Creating the first isolate on a fresh thread costs about twice as much as on a used one.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sequential_isolates_must_reuse_the_thread() {
+        let executor = V8Executor::new(config());
+        let mut threads = Vec::new();
+        for _ in 0..3 {
+            let thread = executor
+                .admit(V8Workload::Activity)
+                .await
+                .unwrap()
+                .run(|| async { std::thread::current().id() })
+                .await
+                .unwrap();
+            threads.push(thread);
+            // The thread idles itself only after dropping its isolate and runtime.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(threads[0], threads[1]);
+        assert_eq!(threads[1], threads[2]);
     }
 
     #[tokio::test(flavor = "multi_thread")]

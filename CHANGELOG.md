@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(activity-vm)* `[[activity_vm]]` deployments now require
   `OBELISK_UNSTABLE_ACTIVITY_VM=bochs` on the deployment CLI and server. Without it, deployment
   validation rejects VM activities; existing VM deployments also need it to activate.
+- *(V8)* Isolate threads are reused: a thread whose isolate finished runs the next one instead of
+  exiting, and idle threads exit after 60 seconds. Every isolate is still fresh. Creating an isolate
+  on a fresh thread costs about twice as much, so a sequential JS workflow calling 1000 V8 activities
+  finishes about 25% faster.
+- *(V8)* An idle isolate thread prepares the runtime for the next JS activity while it waits:
+  the isolate is created and the activity bootstrap has run before the activity arrives. The runtime
+  is used once, so every activity still runs in a fresh isolate. 1000 sequential V8 activity calls
+  now take about 1.7 seconds, down from 2.8.
 
 ### Fixed
 
