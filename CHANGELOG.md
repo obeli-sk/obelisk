@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(activity-vm)* `[[activity_vm]]` deployments now require
+  `OBELISK_UNSTABLE_ACTIVITY_VM=bochs` on the deployment CLI and server. Without it, deployment
+  validation rejects VM activities; existing VM deployments also need it to activate.
+
 ### Fixed
 
 - *(deployment)* `--allow-unavailable-runtime-config` now permits storing and enqueuing deployments

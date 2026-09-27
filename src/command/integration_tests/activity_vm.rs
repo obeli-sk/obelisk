@@ -8,6 +8,9 @@ async fn activity_vm_case(
     params: Vec<Value>,
     expected: Value,
 ) {
+    if std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref() != Ok("bochs") {
+        return;
+    }
     let server = TestServer::start_inline_deployment(ip, server_toml, deployment_toml, &[]).await;
     let response = server.submit_follow(ffqn, params).await;
     assert_eq!(response.status().as_u16(), 201, "submitting {ffqn}");
@@ -150,6 +153,9 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
 }
 
 async fn activity_vm_http_case(ip: String, use_host_alias: bool) {
+    if std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref() != Ok("bochs") {
+        return;
+    }
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{header, method, path},
@@ -243,6 +249,9 @@ async fn http_obelisk_host() {
 /// rather than breaking the request. This is the activity-VM counterpart to the parity
 /// the `http_bridge` unit tests and the JS `fetch_sets_host_header` tests assert.
 async fn activity_vm_http_headers_case(ip: String) {
+    if std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref() != Ok("bochs") {
+        return;
+    }
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{header, method, path},
