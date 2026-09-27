@@ -316,6 +316,13 @@ pub struct ListExecutionEventsResponse {
 }
 
 #[derive(Debug)]
+pub struct ExecutionEventBounds {
+    pub execution_id: ExecutionId,
+    pub created: ExecutionEvent,
+    pub finished: Option<ExecutionEvent>,
+}
+
+#[derive(Debug)]
 pub struct ListResponsesResponse {
     pub responses: Vec<ResponseWithCursor>,
     pub max_cursor: ResponseCursor,
@@ -2277,6 +2284,12 @@ pub trait DbExternalApi: DbConnection {
         pagination: Pagination<VersionType>,
         include_backtrace_id: bool,
     ) -> Result<ListExecutionEventsResponse, DbErrorRead>;
+
+    /// Reads the created and optional finished event of each execution in one transaction.
+    async fn get_execution_event_bounds_batch(
+        &self,
+        execution_ids: &[ExecutionId],
+    ) -> Result<Vec<ExecutionEventBounds>, DbErrorRead>;
 
     /// Returns responses of an execution ordered as they arrived,
     /// enabling matching each `JoinNext` to its corresponding response.

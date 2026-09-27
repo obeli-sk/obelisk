@@ -5263,6 +5263,57 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip(self))]
+    async fn get_execution_event_bounds_batch(
+        &self,
+        execution_ids: &[ExecutionId],
+    ) -> Result<Vec<concepts::storage::ExecutionEventBounds>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let mut bounds = Vec::with_capacity(execution_ids.len());
+        for execution_id in execution_ids {
+            require_live_root(&tx, execution_id).await?;
+            let length = std::num::NonZeroU16::new(1).expect("one is nonzero");
+            let created = list_execution_events(
+                &tx,
+                execution_id,
+                Pagination::NewerThan {
+                    length,
+                    cursor: 0,
+                    including_cursor: true,
+                },
+                false,
+            )
+            .await?
+            .into_iter()
+            .next()
+            .ok_or(DbErrorRead::NotFound)?;
+            let latest = list_execution_events(
+                &tx,
+                execution_id,
+                Pagination::OlderThan {
+                    length,
+                    cursor: VersionType::MAX,
+                    including_cursor: true,
+                },
+                false,
+            )
+            .await?
+            .into_iter()
+            .next()
+            .ok_or(DbErrorRead::NotFound)?;
+            let finished =
+                matches!(&latest.event, ExecutionRequest::Finished { .. }).then_some(latest);
+            bounds.push(concepts::storage::ExecutionEventBounds {
+                execution_id: execution_id.clone(),
+                created,
+                finished,
+            });
+        }
+        tx.commit().await?;
+        Ok(bounds)
+    }
+
+    #[instrument(skip(self))]
     async fn list_responses_filtered(
         &self,
         execution_id: &ExecutionId,

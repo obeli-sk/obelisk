@@ -111,6 +111,7 @@ async fn until_terminated<T>(
         execution_pause,
         execution_unpause,
         execution_events,
+        execution_event_bounds_batch,
         execution_events_and_responses,
         logs::execution_logs,
         execution_responses,
@@ -154,6 +155,8 @@ async fn until_terminated<T>(
         PaginationDirectionSortedFromOldest,
         ExecutionWithStateSer,
         ExecutionEventsResponse,
+        ExecutionEventBoundsBatchRequest,
+        ExecutionEventBoundsBatchItem,
         ExecutionEventsAndResponsesResponse,
         ExecutionResponsesResponse,
         ExecutionStubPayload,
@@ -271,6 +274,10 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
         .route(
             "/executions/{execution-id}/events",
             routing::get(execution_events),
+        )
+        .route(
+            "/executions/events/batch",
+            routing::post(execution_event_bounds_batch),
         )
         .route(
             "/executions/{execution-id}/events-and-responses",
@@ -1624,6 +1631,61 @@ pub(crate) struct ExecutionEventsResponse {
     /// Maximum version in the response
     #[schema(value_type = u32)]
     pub(crate) max_version: Version,
+}
+
+#[derive(Deserialize, ToSchema)]
+struct ExecutionEventBoundsBatchRequest {
+    #[schema(value_type = Vec<String>)]
+    execution_ids: Vec<ExecutionId>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct ExecutionEventBoundsBatchItem {
+    #[schema(value_type = String)]
+    execution_id: ExecutionId,
+    #[schema(value_type = Object)]
+    created: ExecutionEvent,
+    #[schema(value_type = Option<Object>)]
+    finished: Option<ExecutionEvent>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/executions/events/batch",
+    tag = "executions",
+    request_body = ExecutionEventBoundsBatchRequest,
+    responses((status = 200, body = Vec<ExecutionEventBoundsBatchItem>))
+)]
+async fn execution_event_bounds_batch(
+    state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
+    Json(request): Json<ExecutionEventBoundsBatchRequest>,
+) -> Result<Response, HttpResponse> {
+    if request.execution_ids.is_empty() {
+        return Err(HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            message: "execution_ids must contain at least one ID".to_string(),
+            accept,
+        });
+    }
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let bounds = conn
+        .get_execution_event_bounds_batch(&request.execution_ids)
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let response: Vec<_> = bounds
+        .into_iter()
+        .map(|row| ExecutionEventBoundsBatchItem {
+            execution_id: row.execution_id,
+            created: row.created,
+            finished: row.finished,
+        })
+        .collect();
+    Ok(pretty_json_response(StatusCode::OK, &response))
 }
 
 #[derive(Serialize, ToSchema)]

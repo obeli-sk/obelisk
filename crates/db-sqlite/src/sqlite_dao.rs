@@ -5142,6 +5142,60 @@ impl DbExternalApi for SqlitePool {
     }
 
     #[instrument(skip(self))]
+    async fn get_execution_event_bounds_batch(
+        &self,
+        execution_ids: &[ExecutionId],
+    ) -> Result<Vec<concepts::storage::ExecutionEventBounds>, DbErrorRead> {
+        let execution_ids = execution_ids.to_vec();
+        self.transaction(
+            move |tx| {
+                let mut bounds = Vec::with_capacity(execution_ids.len());
+                for execution_id in &execution_ids {
+                    Self::require_live_root(tx, execution_id)?;
+                    let length = std::num::NonZeroU16::new(1).expect("one is nonzero");
+                    let created = Self::list_execution_events(
+                        tx,
+                        execution_id,
+                        Pagination::NewerThan {
+                            length,
+                            cursor: 0,
+                            including_cursor: true,
+                        },
+                        false,
+                    )?
+                    .into_iter()
+                    .next()
+                    .ok_or(DbErrorRead::NotFound)?;
+                    let latest = Self::list_execution_events(
+                        tx,
+                        execution_id,
+                        Pagination::OlderThan {
+                            length,
+                            cursor: VersionType::MAX,
+                            including_cursor: true,
+                        },
+                        false,
+                    )?
+                    .into_iter()
+                    .next()
+                    .ok_or(DbErrorRead::NotFound)?;
+                    let finished = matches!(&latest.event, ExecutionRequest::Finished { .. })
+                        .then_some(latest);
+                    bounds.push(concepts::storage::ExecutionEventBounds {
+                        execution_id: execution_id.clone(),
+                        created,
+                        finished,
+                    });
+                }
+                Ok(bounds)
+            },
+            TxType::Other,
+            "get_execution_event_bounds_batch",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
     async fn list_responses_filtered(
         &self,
         execution_id: &ExecutionId,
