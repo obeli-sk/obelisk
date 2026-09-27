@@ -16,6 +16,19 @@ fn digest_of(bytes: &[u8]) -> ContentDigest {
 }
 
 #[test]
+fn activity_vm_requires_explicit_enablement() {
+    let deployment: DeploymentToml =
+        toml::from_str("[[activity_vm]]\nffqn = \"testing:vm/echo.run\"\ncontent = \"echo null\"\nstore_paths = []")
+            .unwrap();
+    let error = deployment
+        .validate_with_activity_vm(std::path::Path::new("."), false)
+        .err()
+        .expect("activity_vm must be disabled")
+        .to_string();
+    assert!(error.contains("OBELISK_UNSTABLE_ACTIVITY_VM=bochs"));
+}
+
+#[test]
 fn activity_vm_authored_config_uses_http_policy_and_exact_store_roots() {
     let deployment: DeploymentToml = toml::from_str(
         r##"
@@ -34,7 +47,9 @@ replace_in = ["headers"]
     )
     .unwrap();
 
-    let validated = deployment.validate(std::path::Path::new(".")).unwrap();
+    let validated = deployment
+        .validate_with_activity_vm(std::path::Path::new("."), true)
+        .unwrap();
     let (activity, name) = &validated.activities_vm[0];
     assert_eq!(name.as_str(), "fetch");
     assert_eq!(activity.store_paths.len(), 1);
@@ -55,7 +70,9 @@ store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
     )
     .unwrap();
 
-    let validated = deployment.validate(std::path::Path::new(".")).unwrap();
+    let validated = deployment
+        .validate_with_activity_vm(std::path::Path::new("."), true)
+        .unwrap();
     assert_eq!(
         validated.activities_vm[0].0.entrypoint.as_deref(),
         Some(
@@ -85,7 +102,9 @@ public_key = "example-1:test"
     )
     .unwrap();
 
-    let validated = deployment.validate(std::path::Path::new(".")).unwrap();
+    let validated = deployment
+        .validate_with_activity_vm(std::path::Path::new("."), true)
+        .unwrap();
     assert!(!validated.activities_vm[0].0.nixos_cache.enabled);
 }
 
@@ -102,7 +121,7 @@ store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
     )
     .unwrap();
 
-    let result = deployment.validate(std::path::Path::new("."));
+    let result = deployment.validate_with_activity_vm(std::path::Path::new("."), true);
     assert!(matches!(result, Err(error) if error.to_string().contains("exactly one")));
 }
 
@@ -133,7 +152,9 @@ replace_in = ["headers"]
         ),
         "{serialized}"
     );
-    let validated = deployment.validate(std::path::Path::new(".")).unwrap();
+    let validated = deployment
+        .validate_with_activity_vm(std::path::Path::new("."), true)
+        .unwrap();
     let (activity, _) = &validated.activities_vm[0];
     assert_eq!(
         activity.exposed_secrets,

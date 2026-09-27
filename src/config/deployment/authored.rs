@@ -122,9 +122,23 @@ impl DeploymentToml {
     /// Resolve WASM component paths, verify that every component name is unique, and return a `DeploymentTomlValidated`
     /// that also carries the name→type index and the deployment directory.
     pub(crate) fn validate(
-        mut self,
+        self,
         deployment_dir: &std::path::Path,
     ) -> Result<DeploymentTomlValidated, anyhow::Error> {
+        let activity_vm_enabled =
+            std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").is_ok_and(|value| value == "bochs");
+        self.validate_with_activity_vm(deployment_dir, activity_vm_enabled)
+    }
+
+    pub(super) fn validate_with_activity_vm(
+        mut self,
+        deployment_dir: &std::path::Path,
+        activity_vm_enabled: bool,
+    ) -> Result<DeploymentTomlValidated, anyhow::Error> {
+        ensure!(
+            self.activities_vm.is_empty() || activity_vm_enabled,
+            "activity_vm requires OBELISK_UNSTABLE_ACTIVITY_VM=bochs"
+        );
         self.expand_deployment_dir_prefix(deployment_dir)?;
         self.normalize_oci_locations()?;
         self.validate_wit_sources()?;
