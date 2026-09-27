@@ -8,7 +8,10 @@ async fn activity_vm_case(
     params: Vec<Value>,
     expected: Value,
 ) {
-    if std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref() != Ok("bochs") {
+    if !matches!(
+        std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref(),
+        Ok("bochs" | "qemu_native")
+    ) {
         return;
     }
     let server = TestServer::start_inline_deployment(ip, server_toml, deployment_toml, &[]).await;
@@ -44,6 +47,30 @@ store_paths = [
         "testing:vm/echo.run",
         vec![],
         json!({ "ok": "Hello, world!" }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn emubench_all() {
+    let deployment_toml = r#"[[activity_vm]]
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/emubench.run"
+entrypoint = ["emubench", "all"]
+params = []
+return_type = "result"
+store_paths = ["/nix/store/vk1ih0la8pfs92v8cy5vkv48kgmi14db-trynix-emubench-static-x86_64-unknown-linux-musl-1"]
+[[activity_vm.nix_cache]]
+url = "https://trynix.cachix.org"
+public_key = "trynix.cachix.org-1:xmOWOHz2g/BlpCVQrTEZjSKWPk3S3Dukn1xiSWLidkY="
+"#;
+    activity_vm_case(
+        test_addr!(178),
+        "",
+        deployment_toml,
+        "testing:vm/emubench.run",
+        vec![],
+        json!({ "ok": null }),
     )
     .await;
 }
@@ -153,7 +180,10 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
 }
 
 async fn activity_vm_http_case(ip: String, use_host_alias: bool) {
-    if std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref() != Ok("bochs") {
+    if !matches!(
+        std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref(),
+        Ok("bochs" | "qemu_native")
+    ) {
         return;
     }
     use wiremock::{
@@ -249,7 +279,10 @@ async fn http_obelisk_host() {
 /// rather than breaking the request. This is the activity-VM counterpart to the parity
 /// the `http_bridge` unit tests and the JS `fetch_sets_host_header` tests assert.
 async fn activity_vm_http_headers_case(ip: String) {
-    if std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref() != Ok("bochs") {
+    if !matches!(
+        std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref(),
+        Ok("bochs" | "qemu_native")
+    ) {
         return;
     }
     use wiremock::{
@@ -315,4 +348,118 @@ methods = ["GET"]
 #[tokio::test]
 async fn http_headers_host_and_forbidden() {
     activity_vm_http_headers_case(test_addr!(174)).await;
+}
+
+fn native_qemu_children() -> Vec<u32> {
+    let parent_pid = std::process::id();
+    std::fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
+            let status = std::fs::read_to_string(entry.path().join("status")).ok()?;
+            let parent = status
+                .lines()
+                .find_map(|line| line.strip_prefix("PPid:"))?
+                .trim()
+                .parse::<u32>()
+                .ok()?;
+            let command = std::fs::read(entry.path().join("cmdline")).ok()?;
+            (parent == parent_pid
+                && command
+                    .windows(18)
+                    .any(|part| part == b"qemu-system-x86_64"))
+            .then_some(pid)
+        })
+        .collect()
+}
+
+async fn native_qemu_interruption_case(ip: String, cancel: bool) {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    if std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref() != Ok("qemu_native") {
+        return;
+    }
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let authority = format!("localhost:{port}");
+    let server_toml = format!(
+        "[[outbound_http.allowed_host]]\npattern = \"http://{authority}\"\nmethods = [\"GET\"]\n"
+    );
+    let lock_expiry = if cancel { 120 } else { 6 };
+    let deployment_toml = format!(
+        r#"[[activity_vm]]
+ffqn = "testing:vm/hang.run"
+exec.lock_expiry.seconds = {lock_expiry}
+max_retries = 0
+content = '''#!/usr/bin/env bash
+set -eu
+curl -fsS --connect-to {authority}:127.0.0.1:80 http://{authority}/ready
+exec sleep 600
+'''
+params = []
+return_type = "result<string, string>"
+store_paths = [
+  "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
+  "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",
+]
+[[activity_vm.allowed_host]]
+pattern = "http://{authority}"
+methods = ["GET"]
+"#
+    );
+    let server = TestServer::start_inline_deployment(ip, &server_toml, &deployment_toml, &[]).await;
+    let execution_id = server.generate_execution_id().await;
+    let follow = server.submit_follow_with_id(&execution_id, "testing:vm/hang.run", vec![]);
+    let observe_and_interrupt = async {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 2048];
+        let count = stream.read(&mut request).await.unwrap();
+        assert!(request[..count].starts_with(b"GET /ready HTTP/1.1"));
+        stream
+            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let children = native_qemu_children();
+        assert_eq!(
+            children.len(),
+            1,
+            "expected one running native QEMU: {children:?}"
+        );
+        if cancel {
+            server.cancel_execution_with_retries(&execution_id).await;
+        }
+        children[0]
+    };
+    let (response, pid) = tokio::time::timeout(Duration::from_secs(30), async {
+        tokio::join!(follow, observe_and_interrupt)
+    })
+    .await
+    .expect("native QEMU activity did not finish after interruption");
+    assert_eq!(response.status().as_u16(), 201);
+    let expected_kind = if cancel { "cancelled" } else { "timed_out" };
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({ "execution_failed": { "kind": expected_kind } })
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("native QEMU process {pid} survived {expected_kind}"));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn native_qemu_cancellation_kills_vm() {
+    native_qemu_interruption_case(test_addr!(181), true).await;
+}
+
+#[tokio::test]
+async fn native_qemu_lock_expiry_kills_vm() {
+    native_qemu_interruption_case(test_addr!(182), false).await;
 }

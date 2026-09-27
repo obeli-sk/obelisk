@@ -125,9 +125,7 @@ impl DeploymentToml {
         self,
         deployment_dir: &std::path::Path,
     ) -> Result<DeploymentTomlValidated, anyhow::Error> {
-        let activity_vm_enabled =
-            std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").is_ok_and(|value| value == "bochs");
-        self.validate_with_activity_vm(deployment_dir, activity_vm_enabled)
+        self.validate_with_activity_vm(deployment_dir, true)
     }
 
     pub(super) fn validate_with_activity_vm(
@@ -137,7 +135,7 @@ impl DeploymentToml {
     ) -> Result<DeploymentTomlValidated, anyhow::Error> {
         ensure!(
             self.activities_vm.is_empty() || activity_vm_enabled,
-            "activity_vm requires OBELISK_UNSTABLE_ACTIVITY_VM=bochs"
+            "activity_vm requires OBELISK_UNSTABLE_ACTIVITY_VM=bochs or qemu_native"
         );
         self.expand_deployment_dir_prefix(deployment_dir)?;
         self.normalize_oci_locations()?;

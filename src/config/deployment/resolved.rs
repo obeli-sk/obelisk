@@ -864,7 +864,7 @@ impl ActivityExecConfigVerified {
 pub(crate) trait ActivityVmComponentConfigResolvedExt {
     async fn fetch_and_verify(
         self,
-        runtime: &Path,
+        runtime: &activity_vm_runner::RuntimeSource,
         wasm_cache_dir: &Path,
         global_http_config: &GlobalHttpConfig,
         ignore_missing_env_vars: bool,
@@ -876,7 +876,7 @@ pub(crate) trait ActivityVmComponentConfigResolvedExt {
 impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved {
     async fn fetch_and_verify(
         self,
-        runtime: &Path,
+        runtime: &activity_vm_runner::RuntimeSource,
         wasm_cache_dir: &Path,
         global_http_config: &GlobalHttpConfig,
         ignore_missing_env_vars: bool,
@@ -1000,7 +1000,12 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
         let closure =
             crate::command::server::activity_vm_nix::resolve(&store_paths, &nix_caches, &store)
                 .await?;
-        let runtime_digest = utils::sha256sum::calculate_sha256_file(runtime).await?;
+        let runtime_digest = match runtime {
+            activity_vm_runner::RuntimeSource::BochsWasm(wasm) => {
+                utils::sha256sum::calculate_sha256_file(wasm).await?
+            }
+            activity_vm_runner::RuntimeSource::QemuNative { digest, .. } => digest.clone(),
+        };
         let closure_identities = closure
             .iter()
             .map(|basename| format!("/nix/store/{basename}"))
@@ -1037,7 +1042,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
         let mut hasher = Sha256::new();
         hasher.update(b"activity_vm:v7:");
         hasher.update(source.content_digest.0.0);
-        hasher.update(runtime.to_string_lossy().as_bytes());
+        hasher.update(runtime.path().to_string_lossy().as_bytes());
         hasher.update(policy_digest);
         for path in &store_paths {
             hasher.update(path.as_bytes());
@@ -1062,7 +1067,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
         )?;
         verified.secret_exposure_digest = secret_exposure_digest;
         Ok(ActivityVmConfigVerified {
-            runtime: runtime.to_owned(),
+            runtime: runtime.clone(),
             source_location,
             entrypoint,
             path,
@@ -1078,7 +1083,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
 
 #[derive(Debug)]
 pub(crate) struct ActivityVmConfigVerified {
-    pub(crate) runtime: PathBuf,
+    pub(crate) runtime: activity_vm_runner::RuntimeSource,
     pub(crate) source_location: Option<(PathBuf, String)>,
     pub(crate) entrypoint: Option<Vec<String>>,
     pub(crate) path: String,

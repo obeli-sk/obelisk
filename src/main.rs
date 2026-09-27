@@ -63,6 +63,7 @@ fn main() -> Result<(), anyhow::Error> {
                 legacy_api_token,
                 secret_registry,
                 js_runtime,
+                activity_vm_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
                 app_config,
@@ -97,6 +98,7 @@ fn main() -> Result<(), anyhow::Error> {
                     suppress_type_checking_errors,
                     auth,
                     js_runtime,
+                    activity_vm_runtime,
                 },
                 secret_registry,
             ))
@@ -124,6 +126,7 @@ fn main() -> Result<(), anyhow::Error> {
                 legacy_api_token: _,
                 secret_registry,
                 js_runtime,
+                activity_vm_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
                 app_config,
@@ -143,6 +146,7 @@ fn main() -> Result<(), anyhow::Error> {
                     suppress_type_checking_errors,
                     suppress_linking_errors: false,
                     js_runtime,
+                    activity_vm_runtime,
                 },
                 skip_db,
                 fix,
@@ -176,6 +180,7 @@ fn main() -> Result<(), anyhow::Error> {
                 legacy_api_token: _,
                 secret_registry,
                 js_runtime,
+                activity_vm_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
                 app_config,
@@ -195,6 +200,7 @@ fn main() -> Result<(), anyhow::Error> {
                     suppress_type_checking_errors,
                     suppress_linking_errors: false,
                     js_runtime,
+                    activity_vm_runtime,
                 },
                 true, // `deployment verify` does not verify db.
                 fix,
@@ -256,6 +262,7 @@ struct ServerStartup {
     legacy_api_token: Option<secrecy::SecretString>,
     secret_registry: Arc<SecretRegistry>,
     js_runtime: crate::command::server::JsRuntimeMode,
+    activity_vm_runtime: crate::command::server::ActivityVmRuntimeMode,
 }
 
 /// Parse the complete server config once, then resolve and wipe its secret sources
@@ -289,6 +296,8 @@ fn prepare_server_startup(
     tracing::info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");
     let env_vars = StartupEnvVars::capture();
     let js_runtime = parse_js_runtime(env_vars.lookup("OBELISK_JS_RUNTIME").as_deref())?;
+    let activity_vm_runtime =
+        parse_activity_vm_runtime(env_vars.lookup("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref())?;
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
     app.resolve_env_vars(&env_vars)?;
     match &config.platform_exec_activities {
@@ -345,6 +354,7 @@ fn prepare_server_startup(
         legacy_api_token,
         secret_registry,
         js_runtime,
+        activity_vm_runtime,
     })
 }
 
@@ -357,6 +367,20 @@ fn parse_js_runtime(value: Option<&str>) -> anyhow::Result<crate::command::serve
         Some(value) => {
             anyhow::bail!("invalid OBELISK_JS_RUNTIME value {value:?}; expected `v8` or `boawasm`")
         }
+    }
+}
+
+pub(crate) fn parse_activity_vm_runtime(
+    value: Option<&str>,
+) -> anyhow::Result<crate::command::server::ActivityVmRuntimeMode> {
+    use crate::command::server::ActivityVmRuntimeMode;
+    match value {
+        None => Ok(ActivityVmRuntimeMode::Disabled),
+        Some("bochs") => Ok(ActivityVmRuntimeMode::BochsWasm),
+        Some("qemu_native") => Ok(ActivityVmRuntimeMode::QemuNative),
+        Some(value) => anyhow::bail!(
+            "invalid OBELISK_UNSTABLE_ACTIVITY_VM value {value:?}; expected `bochs` or `qemu_native`"
+        ),
     }
 }
 
@@ -380,6 +404,25 @@ mod app_policy_tests {
         );
         assert!(parse_js_runtime(Some("true")).is_err());
         assert!(parse_js_runtime(Some("")).is_err());
+    }
+
+    #[test]
+    fn activity_vm_runtime_selection() {
+        use crate::command::server::ActivityVmRuntimeMode;
+        assert_eq!(
+            parse_activity_vm_runtime(None).unwrap(),
+            ActivityVmRuntimeMode::Disabled
+        );
+        assert_eq!(
+            parse_activity_vm_runtime(Some("bochs")).unwrap(),
+            ActivityVmRuntimeMode::BochsWasm
+        );
+        assert_eq!(
+            parse_activity_vm_runtime(Some("qemu_native")).unwrap(),
+            ActivityVmRuntimeMode::QemuNative
+        );
+        assert!(parse_activity_vm_runtime(Some("")).is_err());
+        assert!(parse_activity_vm_runtime(Some("other")).is_err());
     }
 
     #[test]

@@ -71,6 +71,7 @@ serde_json.workspace = true
 serde_with.workspace = true
 serde.workspace = true
 sha2.workspace = true
+tar.workspace = true
 subtle.workspace = true
 strum.workspace = true
 tempfile.workspace = true
@@ -359,6 +360,7 @@ serde_with = "3.23.0"
 hmac = "0.12.1" # keep on the 0.10 digest suite; postgres-protocol pulls sha2/hmac 0.11
 sha2 = "0.10.9" # 0.11 switched output to hybrid-array::Array which breaks {:x} hashing
 subtle = "2.6.1"
+tar = "0.4"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "3", features = ["full"] }
 tempfile = "3.27"

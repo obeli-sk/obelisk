@@ -8,4 +8,4 @@ replace_in = ["headers"]
 
 [secrets]
 # Supply this fixture secret through the VM_SECRET environment variable.
-VM_SECRET = { exposed_to = { "stdin.run" = "sha256:9997cc3a3424f2e42697574c6368451c2e994c4f03834fb521f1f188e73b64cb" } }
+VM_SECRET = { exposed_to = { "stdin.run" = ["sha256:9997cc3a3424f2e42697574c6368451c2e994c4f03834fb521f1f188e73b64cb", "sha256:16a8b9ad5a5703edaa2415d90b57e3feb3cc19da1d5116b83e6a39f85fb8ae08"] } }
