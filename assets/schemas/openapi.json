@@ -1197,6 +1197,39 @@
         }
       }
     },
+    "/v1/executions/events/batch": {
+      "post": {
+        "tags": [
+          "executions"
+        ],
+        "operationId": "execution_event_bounds_batch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionEventBoundsBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExecutionEventBoundsBatchItem"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/executions/{execution_id}": {
       "get": {
         "tags": [
@@ -3216,6 +3249,41 @@
           },
           "supplied_digest": {
             "type": "string"
+          }
+        }
+      },
+      "ExecutionEventBoundsBatchItem": {
+        "type": "object",
+        "required": [
+          "execution_id",
+          "created"
+        ],
+        "properties": {
+          "created": {
+            "type": "object"
+          },
+          "execution_id": {
+            "type": "string"
+          },
+          "finished": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        }
+      },
+      "ExecutionEventBoundsBatchRequest": {
+        "type": "object",
+        "required": [
+          "execution_ids"
+        ],
+        "properties": {
+          "execution_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

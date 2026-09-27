@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(web API)* `POST /v1/executions/events/batch` reads each requested execution's `Created` and
+  optional `Finished` event in request order using one database transaction.
+
 ### Changed
 
 - *(activity-vm)* `[[activity_vm]]` deployments now require

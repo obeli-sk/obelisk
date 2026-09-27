@@ -5052,6 +5052,69 @@ async fn test_list_responses_pagination_direction(database: Database) {
     db_close.close().await;
 }
 
+#[tokio::test]
+async fn execution_event_bounds_batch_returns_created_and_optional_finished() {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+    let unfinished_id = ExecutionId::generate();
+    let finished_id = ExecutionId::generate();
+
+    for execution_id in [&unfinished_id, &finished_id] {
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: SOME_FFQN,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
+            })
+            .await
+            .unwrap();
+    }
+    db_connection
+        .append(
+            finished_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Finished {
+                    retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    http_client_traces: None,
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    let bounds = api_conn
+        .get_execution_event_bounds_batch(&[finished_id.clone(), unfinished_id.clone()])
+        .await
+        .unwrap();
+    assert_eq!(bounds[0].execution_id, finished_id);
+    assert_matches!(&bounds[0].created.event, ExecutionRequest::Created(_));
+    assert_matches!(
+        &bounds[0].finished.as_ref().unwrap().event,
+        ExecutionRequest::Finished { .. }
+    );
+    assert_eq!(bounds[1].execution_id, unfinished_id);
+    assert_matches!(&bounds[1].created.event, ExecutionRequest::Created(_));
+    assert!(bounds[1].finished.is_none());
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
