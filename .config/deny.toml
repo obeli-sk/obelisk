@@ -39,10 +39,7 @@ skip = [
     { name = "thiserror", version = "1" },
     { name = "thiserror-impl", version = "1" },
     { name = "wast", version = "35" },
-    # wasmtime-internal-cache uses toml 0.9 and its transitive deps
-    { name = "toml", version = "0.9" },
-    { name = "toml_datetime", version = "0.7" },
-    { name = "winnow", version = "0.7" },
+    # ring uses getrandom 0.2
     { name = "getrandom", version = "0.2" },
     # rand 0.9 uses getrandom 0.3; we directly depend on getrandom 0.4
     { name = "getrandom", version = "0.3" },
@@ -80,8 +77,8 @@ skip = [
     { name = "wasm-metadata", version = "0.253" },
     { name = "wit-component", version = "0.253" },
     { name = "wit-parser", version = "0.253" },
-    # wasm-compose 0.254 (wasmtime dep) uses wasm-tools 0.254, but its `wat` dep
-    # pulls in wasm-tools 0.259 (canonical is 0.254, 0.259 is skipped)
+    # wasm-compose 0.258 (wasmtime dep) uses wasm-tools 0.258, but its `wat` dep
+    # pulls in wasm-tools 0.259 (canonical is 0.258, 0.259 is skipped)
     { name = "wasm-encoder", version = "0.259" },
     { name = "wast", version = "259" },
     # oci-spec (via oci-client) requires strum 0.27 and darling 0.20
