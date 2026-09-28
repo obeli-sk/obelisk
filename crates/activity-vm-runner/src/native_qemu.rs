@@ -35,7 +35,6 @@ pub(super) async fn execute(
     let guest = bundle.join("guest");
     let machine: Machine =
         serde_json::from_slice(&tokio::fs::read(guest.join("machine.json")).await?)?;
-    let qemu = tokio::fs::read_to_string(bundle.join("qemu-path")).await?;
     let snapshot = bundle.join("vm.state");
     ensure!(snapshot.is_file(), "native QEMU snapshot is missing");
 
@@ -87,7 +86,7 @@ pub(super) async fn execute(
                 .replace("{ram}", &machine.ram)
         })
         .collect::<Vec<_>>();
-    let mut child = tokio::process::Command::new(qemu.trim())
+    let mut child = tokio::process::Command::new("qemu-system-x86_64")
         .args(args)
         .arg("-incoming")
         .arg(format!("file:{}", snapshot.display()))

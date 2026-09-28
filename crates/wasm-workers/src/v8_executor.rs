@@ -400,10 +400,9 @@ fn run_isolate<F, Fut, T>(
         .expect("native V8 root task must not be cancelled")
         .into_inner();
     let _ = result_tx.send(result);
-    // The isolate and its host state are gone by now, so admitted capacity always reflects
-    // memory actually held. The Tokio runtime outlives the permit and is dropped last.
-    drop(reservation);
+    // Tasks the isolate left on the runtime still hold host state, so the permit goes last.
     drop(tokio_runtime);
+    drop(reservation);
 }
 
 #[cfg(test)]

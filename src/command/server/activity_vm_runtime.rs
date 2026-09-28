@@ -28,8 +28,9 @@ pub(crate) async fn fetch(
             {
                 tracing::warn!("Overriding native QEMU bundle with {bundle:?}");
                 ensure!(bundle.is_dir(), "local native QEMU bundle is missing");
+                check_native_qemu_on_path(&bundle).await?;
                 let mut hasher = Sha256::new();
-                for file in ["vm.state", "guest/machine.json", "qemu-path"] {
+                for file in ["vm.state", "guest/machine.json"] {
                     let digest = utils::sha256sum::calculate_sha256_file(bundle.join(file)).await?;
                     hasher.update(digest.0.0);
                 }
@@ -49,6 +50,7 @@ pub(crate) async fn fetch(
             let digest = ContentDigest::from_str(reference.digest().unwrap())?;
             let bundle =
                 crate::oci::pull_native_qemu_bundle_to_cache(&reference, cache_root).await?;
+            check_native_qemu_on_path(&bundle).await?;
             Ok(Some(RuntimeSource::QemuNative { bundle, digest }))
         }
         ActivityVmRuntimeMode::BochsWasm => {
@@ -80,6 +82,40 @@ pub(crate) async fn fetch(
             Ok(Some(RuntimeSource::BochsWasm(cached_path)))
         }
     }
+}
+
+async fn check_native_qemu_on_path(bundle: &Path) -> anyhow::Result<()> {
+    let output = tokio::process::Command::new("qemu-system-x86_64")
+        .arg("--version")
+        .output()
+        .await
+        .context("qemu-system-x86_64 must be available on PATH")?;
+    ensure!(
+        output.status.success(),
+        "QEMU --version exited with {}",
+        output.status
+    );
+    let expected = match tokio::fs::read_to_string(bundle.join("qemu-version.txt")).await {
+        Ok(version) => version,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            tracing::warn!("Native QEMU bundle has no qemu-version.txt");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let stdout = String::from_utf8(output.stdout)?;
+    let actual = stdout
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("QEMU emulator version "))
+        .context("unexpected QEMU --version output")?;
+    if actual != expected.trim() {
+        tracing::warn!(
+            "Native QEMU version mismatch: snapshot expects {}, executable on PATH reports {actual}",
+            expected.trim()
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]

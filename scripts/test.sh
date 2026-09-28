@@ -5,6 +5,9 @@
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
+# Activity VM backends have their own `scripts/test-activity-vm-*.sh`.
+unset OBELISK_UNSTABLE_ACTIVITY_VM
+
 # First compile WASM files. Skipping this makes testing much slower as each test will try to compile WASM separately.
 scripts/test-phase1.sh
 scripts/test-phase2.sh "$@"

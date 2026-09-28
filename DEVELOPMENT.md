@@ -65,11 +65,15 @@ export TEST_POSTGRES_DATABASE_PREFIX="obelisk_test"
 > Without `direnv` or these env vars exported, Postgres tests will fail with `connection refused` or `TEST_POSTGRES_HOST` not set.
 
 ```sh
-# All tests
+# All tests except the activity VM backends
 scripts/test.sh
 
 # Tests with locally built activity, workflow and webhook JavaScript runtimes
 scripts/test-js-local.sh
+
+# Activity VM integration tests on the Bochs (WASM) or native QEMU backend
+scripts/test-activity-vm-bochs.sh
+scripts/test-activity-vm-qemu.sh
 
 # Specific test crate
 cargo test --package obeli-db-tests --test deployment_pagination
@@ -95,5 +99,5 @@ cargo test --package obelisk grpc_server::tests
 
 ## Build System Notes
 
-- `cargo metadata --format-version 1 --no-deps | python3 -c "import sys,json; print(json.load(sys.stdin)['target_directory'])"` gets the current Cargo target directory.
+- `cargo metadata --format-version 1 --no-deps | jq -r .target_directory` gets the current Cargo target directory.
 - **gRPC and REST are multiplexed on the same port** (`api.listening_addr`, default `9080`). gRPC clients connect to the same address as REST clients.
