@@ -19,21 +19,36 @@ cd "$(dirname "$0")/.."
 BRANCH="${1:-main}"
 
 # Expands a workflow's `.jobs` into one required-check name per job, per
-# matrix combination, substituting `${{ matrix.<key> }}` in job names.
+# matrix combination (following GitHub's include/exclude rules), substituting
+# `${{ matrix.<key> }}` in job names.
 JOB_NAMES_JQ='
 def cartesian(m):
-  (m | to_entries) as $entries
-  | if ($entries | length) == 0 then [{}]
-    else
-      reduce $entries[] as $e ([{}];
-        [ .[] as $acc | $e.value[] | ($acc + {($e.key): .}) ]
-      )
-    end;
+  reduce (m | to_entries[]) as $e ([{}];
+    [ .[] as $acc | $e.value[] | ($acc + {($e.key): .}) ]
+  );
+
+def matches($combo): to_entries | all(.key as $k | $combo[$k] == .value);
+
+# An include entry extends every base combination whose original values it does
+# not overwrite; if it extends none, it becomes a new combination.
+def combinations(matrix):
+  (matrix | with_entries(select(.key != "include" and .key != "exclude"))) as $base
+  | (matrix.exclude // []) as $excl
+  | (if ($base | length) == 0 then []
+     else [ cartesian($base)[] | . as $c | select($excl | all(matches($c) | not)) ]
+     end) as $combos
+  | reduce (matrix.include // [])[] as $inc ({combos: $combos, extra: []};
+      ($inc | with_entries(select(.key as $k | $base | has($k)))) as $orig
+      | if any(.combos[]; . as $c | $orig | matches($c))
+        then .combos |= map(. as $c | if ($orig | matches($c)) then . + $inc else . end)
+        else .extra += [$inc]
+        end)
+  | (.combos + .extra)
+  | if length == 0 then [{}] else . end;
 
 to_entries[] | . as $job
 | ($job.value.name // $job.key) as $tmpl
-| ($job.value.strategy.matrix // {} | with_entries(select(.key != "include" and .key != "exclude"))) as $matrix
-| cartesian($matrix)[] as $combo
+| combinations($job.value.strategy.matrix // {})[] as $combo
 | reduce ($combo | to_entries[]) as $e ($tmpl;
     gsub("\\$\\{\\{\\s*matrix\\." + $e.key + "\\s*\\}\\}"; ($e.value | tostring))
   )
