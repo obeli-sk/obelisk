@@ -356,6 +356,9 @@ fn output_variant_is_unit(exit_code: i32, return_type: &ReturnTypeExtendable) ->
 
 fn forward(config: Option<&StdOutputConfigWithSender>, bytes: &[u8], ctx: &WorkerContext) {
     use std::io::Write as _;
+    if bytes.is_empty() {
+        return;
+    }
     match config {
         Some(StdOutputConfigWithSender::Stdout) => {
             let _ = std::io::stdout().write_all(bytes);
