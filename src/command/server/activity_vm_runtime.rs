@@ -119,6 +119,25 @@ async fn check_native_qemu_on_path(bundle: &Path, accelerator: &str) -> anyhow::
             .open("/dev/kvm")
             .context("KVM requires read/write access to /dev/kvm")?;
     }
+    let actual = qemu_version_on_path().await?;
+    let expected = match tokio::fs::read_to_string(bundle.join("qemu-version.txt")).await {
+        Ok(version) => version,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            tracing::warn!("Native QEMU bundle has no qemu-version.txt");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if actual != expected.trim() {
+        tracing::warn!(
+            "Native QEMU version mismatch: snapshot expects {}, executable on PATH reports {actual}",
+            expected.trim()
+        );
+    }
+    Ok(())
+}
+
+async fn qemu_version_on_path() -> anyhow::Result<String> {
     let output = tokio::process::Command::new("qemu-system-x86_64")
         .arg("--version")
         .output()
@@ -129,27 +148,12 @@ async fn check_native_qemu_on_path(bundle: &Path, accelerator: &str) -> anyhow::
         "QEMU --version exited with {}",
         output.status
     );
-    let expected = match tokio::fs::read_to_string(bundle.join("qemu-version.txt")).await {
-        Ok(version) => version,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            tracing::warn!("Native QEMU bundle has no qemu-version.txt");
-            return Ok(());
-        }
-        Err(error) => return Err(error.into()),
-    };
-    let stdout = String::from_utf8(output.stdout)?;
-    let actual = stdout
+    String::from_utf8(output.stdout)?
         .lines()
         .next()
         .and_then(|line| line.strip_prefix("QEMU emulator version "))
-        .context("unexpected QEMU --version output")?;
-    if actual != expected.trim() {
-        tracing::warn!(
-            "Native QEMU version mismatch: snapshot expects {}, executable on PATH reports {actual}",
-            expected.trim()
-        );
-    }
-    Ok(())
+        .map(str::to_owned)
+        .context("unexpected QEMU --version output")
 }
 
 #[cfg(test)]
@@ -186,8 +190,20 @@ mod tests {
         } else {
             ActivityVmRuntimeMode::QemuTcg
         };
-        fetch(&workspace.join("test-wasm-cache"), mode)
+        let Some(RuntimeSource::QemuNative { bundle, .. }) =
+            fetch(&workspace.join("test-wasm-cache"), mode)
+                .await
+                .unwrap()
+        else {
+            unreachable!()
+        };
+        let expected = tokio::fs::read_to_string(bundle.join("qemu-version.txt"))
             .await
             .unwrap();
+        assert_eq!(
+            expected.trim(),
+            qemu_version_on_path().await.unwrap(),
+            "QEMU on PATH must match the version the pinned snapshot was built with"
+        );
     }
 }
