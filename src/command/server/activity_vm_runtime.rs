@@ -106,4 +106,16 @@ mod tests {
         };
         activity_vm_runner::compile(&engine, &wasm).unwrap();
     }
+
+    #[tokio::test]
+    async fn populate_activity_vm_qemu_cache() {
+        test_utils::set_up();
+        let workspace = PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap());
+        fetch(
+            &workspace.join("test-wasm-cache"),
+            ActivityVmRuntimeMode::QemuTcg,
+        )
+        .await
+        .unwrap();
+    }
 }

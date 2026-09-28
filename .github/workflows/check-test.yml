@@ -64,13 +64,14 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      # Test WASMs are content-hashed by filename and don't change often, so they share one global cache.
+      # Test WASMs and the native QEMU bundle are content-addressed and don't change often.
       - id: wasm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             target/wasm-cache
             test-codegen-cache
+            test-wasm-cache
           key: wasm-cache-${{ matrix.report }}-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             wasm-cache-${{ matrix.report }}-${{ runner.os }}-
@@ -86,10 +87,11 @@ jobs:
         id: build-tests
         run: nix develop --command cargo nextest run --workspace --no-run
 
-      - name: Populate codegen cache
+      - name: Populate test caches
         run: nix develop --command scripts/test-phase1.sh
         env:
           ADDITIONAL_FEATURES: ${{ matrix.features }}
+          OBELISK_UNSTABLE_ACTIVITY_VM: ${{ matrix.activity_vm_runtime }}
 
       - name: Run tests
         if: ${{ !matrix.activity_vm_runtime }}
@@ -123,6 +125,7 @@ jobs:
           path: |
             target/wasm-cache
             test-codegen-cache
+            test-wasm-cache
           key: ${{ steps.wasm-cache.outputs.cache-primary-key }}
 
       # Report results

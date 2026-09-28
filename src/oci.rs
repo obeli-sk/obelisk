@@ -45,7 +45,20 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
     let parent = cache_root.join("activity-vm/native-qemu");
     let destination = parent.join(pinned_digest.replace(':', "-"));
     if destination.join("vm.state").is_file() {
-        return Ok(destination);
+        let qemu_path = tokio::fs::read_to_string(destination.join("qemu-path")).await?;
+        if Path::new(qemu_path.trim()).is_file() {
+            return Ok(destination);
+        }
+        if let Ok(source) = tokio::fs::read_to_string(destination.join("qemu-source.txt")).await {
+            let installed_qemu = install_native_qemu(&source, &parent, pinned_digest).await?;
+            ensure!(
+                qemu_path.trim() == installed_qemu.to_string_lossy(),
+                "cached native QEMU bundle was built with a different QEMU"
+            );
+            return Ok(destination);
+        }
+        // Older caches did not retain the source needed to restore the Nix store path.
+        tokio::fs::remove_dir_all(&destination).await?;
     }
     tokio::fs::create_dir_all(&parent).await?;
 
@@ -102,6 +115,48 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
     }
 
     let source = tokio::fs::read_to_string(&source_path).await?;
+    let expected_qemu = install_native_qemu(&source, &parent, pinned_digest).await?;
+    let extracted = work.path().join("bundle");
+    tokio::fs::create_dir(&extracted).await?;
+    let archive = archive_path.clone();
+    let unpack_dir = extracted.clone();
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let compressed = std::fs::File::open(archive)?;
+        let decoder = ruzstd::decoding::StreamingDecoder::new(compressed)?;
+        tar::Archive::new(decoder).unpack(unpack_dir)?;
+        Ok(())
+    })
+    .await??;
+    ensure!(
+        tokio::fs::read_to_string(extracted.join("qemu-path"))
+            .await?
+            .trim()
+            == expected_qemu.to_string_lossy(),
+        "native QEMU bundle was built with a different QEMU"
+    );
+    ensure!(
+        extracted.join("vm.state").is_file(),
+        "native QEMU snapshot is missing"
+    );
+    ensure!(
+        extracted.join("guest/machine.json").is_file(),
+        "native QEMU machine is missing"
+    );
+    tokio::fs::copy(&source_path, extracted.join("qemu-source.txt")).await?;
+    if let Err(error) = tokio::fs::rename(&extracted, &destination).await {
+        ensure!(
+            destination.join("vm.state").is_file(),
+            "caching native QEMU bundle failed: {error}"
+        );
+    }
+    Ok(destination)
+}
+
+async fn install_native_qemu(
+    source: &str,
+    parent: &Path,
+    pinned_digest: &str,
+) -> anyhow::Result<PathBuf> {
     let source = source.trim();
     let revision = source
         .strip_prefix("github:fzakaria/trynix/")
@@ -123,41 +178,7 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
         "building native QEMU from {source} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let qemu = PathBuf::from(String::from_utf8(output.stdout)?.trim());
-    let extracted = work.path().join("bundle");
-    tokio::fs::create_dir(&extracted).await?;
-    let archive = archive_path.clone();
-    let unpack_dir = extracted.clone();
-    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-        let compressed = std::fs::File::open(archive)?;
-        let decoder = ruzstd::decoding::StreamingDecoder::new(compressed)?;
-        tar::Archive::new(decoder).unpack(unpack_dir)?;
-        Ok(())
-    })
-    .await??;
-    let expected_qemu = qemu.join("bin/qemu-system-x86_64");
-    ensure!(
-        tokio::fs::read_to_string(extracted.join("qemu-path"))
-            .await?
-            .trim()
-            == expected_qemu.to_string_lossy(),
-        "native QEMU bundle was built with a different QEMU"
-    );
-    ensure!(
-        extracted.join("vm.state").is_file(),
-        "native QEMU snapshot is missing"
-    );
-    ensure!(
-        extracted.join("guest/machine.json").is_file(),
-        "native QEMU machine is missing"
-    );
-    if let Err(error) = tokio::fs::rename(&extracted, &destination).await {
-        ensure!(
-            destination.join("vm.state").is_file(),
-            "caching native QEMU bundle failed: {error}"
-        );
-    }
-    Ok(destination)
+    Ok(PathBuf::from(String::from_utf8(output.stdout)?.trim()).join("bin/qemu-system-x86_64"))
 }
 
 struct LayerWithAnnotations {
