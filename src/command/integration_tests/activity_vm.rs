@@ -1,3 +1,5 @@
+use crate::{command::server::ActivityVmRuntimeMode, parse_activity_vm_runtime_from_env};
+
 use super::*;
 
 async fn activity_vm_case(
@@ -8,10 +10,9 @@ async fn activity_vm_case(
     params: Vec<Value>,
     expected: Value,
 ) {
-    if !matches!(
-        std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref(),
-        Ok("bochs" | "qemu_native")
-    ) {
+    if parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap()
+        == ActivityVmRuntimeMode::Disabled
+    {
         return;
     }
     let server = TestServer::start_inline_deployment(ip, server_toml, deployment_toml, &[]).await;
@@ -180,10 +181,9 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
 }
 
 async fn activity_vm_http_case(ip: String, use_host_alias: bool) {
-    if !matches!(
-        std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref(),
-        Ok("bochs" | "qemu_native")
-    ) {
+    if parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap()
+        == ActivityVmRuntimeMode::Disabled
+    {
         return;
     }
     use wiremock::{
@@ -279,10 +279,9 @@ async fn http_obelisk_host() {
 /// rather than breaking the request. This is the activity-VM counterpart to the parity
 /// the `http_bridge` unit tests and the JS `fetch_sets_host_header` tests assert.
 async fn activity_vm_http_headers_case(ip: String) {
-    if !matches!(
-        std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref(),
-        Ok("bochs" | "qemu_native")
-    ) {
+    if parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap()
+        == ActivityVmRuntimeMode::Disabled
+    {
         return;
     }
     use wiremock::{
@@ -377,7 +376,9 @@ fn native_qemu_children() -> Vec<u32> {
 async fn native_qemu_interruption_case(ip: String, cancel: bool) {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-    if std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref() != Ok("qemu_native") {
+    if parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap()
+        != ActivityVmRuntimeMode::QemuTcg
+    {
         return;
     }
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))

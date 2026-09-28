@@ -22,7 +22,7 @@ pub(crate) async fn fetch(
 ) -> anyhow::Result<Option<RuntimeSource>> {
     match mode {
         ActivityVmRuntimeMode::Disabled => Ok(None),
-        ActivityVmRuntimeMode::QemuNative => {
+        ActivityVmRuntimeMode::QemuTcg => {
             #[cfg(debug_assertions)]
             if let Some(bundle) = std::env::var_os("OBELISK_NATIVE_QEMU_BUNDLE").map(PathBuf::from)
             {

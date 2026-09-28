@@ -661,7 +661,7 @@ pub(crate) enum ActivityVmRuntimeMode {
     #[default]
     Disabled,
     BochsWasm,
-    QemuNative,
+    QemuTcg,
 }
 
 pub(crate) enum ServerAuth {
@@ -4959,7 +4959,7 @@ impl DeploymentVerified {
         } else {
             ensure!(
                 activity_vm_runtime_mode != ActivityVmRuntimeMode::Disabled,
-                "activity_vm requires OBELISK_UNSTABLE_ACTIVITY_VM=bochs or qemu_native"
+                "activity_vm requires OBELISK_UNSTABLE_ACTIVITY_VM to be set"
             );
             activity_vm_runtime::fetch(&wasm_cache_dir, activity_vm_runtime_mode).await?
         };

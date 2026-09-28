@@ -25,7 +25,7 @@ fn activity_vm_requires_explicit_enablement() {
         .err()
         .expect("activity_vm must be disabled")
         .to_string();
-    assert!(error.contains("OBELISK_UNSTABLE_ACTIVITY_VM=bochs"));
+    assert!(error.contains("OBELISK_UNSTABLE_ACTIVITY_VM"));
 }
 
 #[test]

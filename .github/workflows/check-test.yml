@@ -42,14 +42,14 @@ jobs:
             report: junit-js-local.xml
             features: "-F activity-js-local,workflow-js-local,webhook-js-local"
             activity_vm_runtime: ""
-          - name: activity-vm-bochs
+          - name: activity-vm-bochs-wasm
             report: junit-activity-vm-bochs.xml
             features: ""
-            activity_vm_runtime: bochs
-          - name: activity-vm-qemu
+            activity_vm_runtime: bochs-wasm
+          - name: activity-vm-qemu-tcg
             report: junit-activity-vm-qemu.xml
             features: ""
-            activity_vm_runtime: qemu_native
+            activity_vm_runtime: qemu-tcg
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

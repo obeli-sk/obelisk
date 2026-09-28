@@ -11,6 +11,7 @@ use crate::config::config_holder::{
 };
 use crate::config::deployment::OCI_SCHEMA_PREFIX;
 use crate::config::deployment::{prepare_deployment_manifest, resolve_manifest};
+use crate::config::env_var::StartupEnvVars;
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::server::ServerConfigToml;
 use crate::init::{self};
@@ -78,11 +79,7 @@ impl Generate {
                     &deployment,
                     component_name.as_deref(),
                     secret_registry,
-                    crate::parse_activity_vm_runtime(
-                        std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM")
-                            .ok()
-                            .as_deref(),
-                    )?,
+                    crate::parse_activity_vm_runtime_from_env(&StartupEnvVars::capture())?,
                 )
                 .await?;
                 if json {
@@ -955,11 +952,8 @@ async fn generate_wit_deps(
     options: GenerateWitDepsOptions,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
-    let activity_vm_runtime = crate::parse_activity_vm_runtime(
-        std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM")
-            .ok()
-            .as_deref(),
-    )?;
+    let activity_vm_runtime =
+        crate::parse_activity_vm_runtime_from_env(&StartupEnvVars::capture())?;
     let raw = tokio::fs::read_to_string(&deployment_toml)
         .await
         .with_context(|| format!("cannot read deployment manifest {deployment_toml:?}"))?;

@@ -135,7 +135,7 @@ impl DeploymentToml {
     ) -> Result<DeploymentTomlValidated, anyhow::Error> {
         ensure!(
             self.activities_vm.is_empty() || activity_vm_enabled,
-            "activity_vm requires OBELISK_UNSTABLE_ACTIVITY_VM=bochs or qemu_native"
+            "experimental `activity_vm` requires OBELISK_UNSTABLE_ACTIVITY_VM to be set"
         );
         self.expand_deployment_dir_prefix(deployment_dir)?;
         self.normalize_oci_locations()?;
