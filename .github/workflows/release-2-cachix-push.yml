@@ -74,6 +74,13 @@ jobs:
         package:
           - default
           - obeliskLibcNix-embedded
+          - musl
+          - musl-embedded
+        include:
+          - os: ubuntu-24.04
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -92,7 +99,12 @@ jobs:
           pushFilter: "(-rustc-|-cargo-|-rust-std-|-rust-src-|-clippy-|-rustfmt-|-rust-analyzer-|-llvm-tools-|-rust-docs-|-miri-)"
 
       - name: Build Nix package
-        run: nix build '.#${{ matrix.package }}'
+        run: |
+          package='${{ matrix.package }}'
+          case "$package" in
+            musl*) package="obeliskCross-${{ matrix.arch }}-unknown-linux-${package}" ;;
+          esac
+          nix build ".#$package"
 
   call_child:
     needs: cachix-push
