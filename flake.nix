@@ -99,6 +99,9 @@
             let
               cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
               version = cargoToml.workspace.package.version;
+              toolchainToml = (builtins.fromTOML (builtins.readFile rustToolchainToml)).toolchain;
+              # No rust-src: with it rustc embeds sysroot paths in std panic locations, making the whole toolchain a runtime dependency.
+              rustToolchain = pkgs.rust-bin.stable.${toolchainToml.channel}.minimal.override { inherit (toolchainToml) targets; };
               rustyV8Target = if customTarget == null then rustyV8NativeTarget else builtins.replaceStrings [ ".2.35" ] [ "" ] customTarget;
               rustyV8Mirror =
                 let
@@ -206,7 +209,7 @@
                 };
 
                 nativeBuildInputs = with pkgs; [
-                  (rust-bin.fromRustupToolchainFile rustToolchainToml)
+                  rustToolchain
                   pkg-config
                   protobuf
                   findutils # for installPhase
@@ -235,6 +238,7 @@
                 '';
 
                 doCheck = false;
+                disallowedReferences = [ rustToolchain ];
 
                 # Only used when not cross compiling.
                 inherit buildType;
