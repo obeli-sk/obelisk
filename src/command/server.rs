@@ -6249,7 +6249,10 @@ fn prespawn_activity_vm(
             }
         }
         activity_vm_runner::RuntimeSource::QemuNative { bundle, .. } => {
-            activity_vm_runner::RuntimeBackend::QemuNative { bundle }
+            activity_vm_runner::RuntimeBackend::QemuNative {
+                bundle,
+                guest_memory: activity_vm.guest_memory,
+            }
         }
     };
     let worker = activity_vm_worker::ActivityVmWorkerCompiled::new(

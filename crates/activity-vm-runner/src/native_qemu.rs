@@ -16,12 +16,70 @@ use wasmtime_wasi::FsPerms;
 #[derive(Deserialize)]
 struct Machine {
     ram: String,
+    #[serde(default)]
+    hotplug: Option<Hotplug>,
     args: Vec<String>,
+}
+
+/// A virtio-mem device in the snapshot, empty until the host plugs memory after restore.
+#[derive(Deserialize)]
+struct Hotplug {
+    device: String,
+    max_bytes: u64,
+    block_bytes: u64,
+}
+
+impl Machine {
+    fn load(guest: &Path) -> anyhow::Result<Self> {
+        let path = guest.join("machine.json");
+        let bytes =
+            std::fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    fn base_bytes(&self) -> anyhow::Result<u64> {
+        let (number, shift) = match self.ram.as_bytes().last() {
+            Some(b'M') => (&self.ram[..self.ram.len() - 1], 20),
+            Some(b'G') => (&self.ram[..self.ram.len() - 1], 30),
+            _ => bail!("unsupported native QEMU `ram`: {}", self.ram),
+        };
+        Ok(number.parse::<u64>()? << shift)
+    }
+
+    /// Bytes to plug so the guest has at least `memory`, rounded up to the device block size.
+    fn plug_bytes(&self, memory: u64) -> anyhow::Result<u64> {
+        let base = self.base_bytes()?;
+        ensure!(
+            memory >= base,
+            "activity_vm `memory` must be at least the runtime's base RAM of {} MiB",
+            base >> 20
+        );
+        if memory == base {
+            return Ok(0);
+        }
+        let hotplug = self.hotplug.as_ref().context(
+            "this native QEMU runtime cannot change guest RAM; update the runtime bundle",
+        )?;
+        let plug = (memory - base).div_ceil(hotplug.block_bytes) * hotplug.block_bytes;
+        ensure!(
+            plug <= hotplug.max_bytes,
+            "activity_vm `memory` exceeds the runtime's limit of {} MiB",
+            (base + hotplug.max_bytes) >> 20
+        );
+        Ok(plug)
+    }
+}
+
+/// Checks at deployment time that the bundle can give the guest `memory` bytes of RAM.
+pub fn validate_guest_memory(bundle: &Path, memory: u64) -> anyhow::Result<()> {
+    Machine::load(&bundle.join("guest"))?.plug_bytes(memory)?;
+    Ok(())
 }
 
 #[expect(clippy::too_many_arguments)]
 pub(super) async fn execute(
     bundle: &Path,
+    guest_memory: u64,
     mapdirs: Vec<MapDir>,
     guest_args: Vec<String>,
     mut env: HashMap<String, String>,
@@ -33,8 +91,8 @@ pub(super) async fn execute(
 ) -> anyhow::Result<VmOutput> {
     let started = Instant::now();
     let guest = bundle.join("guest");
-    let machine: Machine =
-        serde_json::from_slice(&tokio::fs::read(guest.join("machine.json")).await?)?;
+    let machine = Machine::load(&guest)?;
+    let plug = machine.plug_bytes(guest_memory)?;
     let snapshot = bundle.join("vm.state");
     ensure!(snapshot.is_file(), "native QEMU snapshot is missing");
 
@@ -124,13 +182,27 @@ pub(super) async fn execute(
         let mut stderr = Vec::new();
         stderr_pipe.read_to_end(&mut stderr).await.map(|_| stderr)
     });
-    tokio::time::timeout(Duration::from_secs(15), wait_until_running(&qmp_socket))
+    let mut qmp = tokio::time::timeout(Duration::from_secs(15), wait_until_running(&qmp_socket))
         .await
         .context("native QEMU did not restore its snapshot within 15 seconds")??;
     tracing::debug!(
         elapsed_ms = started.elapsed().as_millis(),
         "Native QEMU snapshot restored"
     );
+    if plug > 0 {
+        let hotplug = machine.hotplug.as_ref().expect("checked by plug_bytes");
+        tokio::time::timeout(
+            Duration::from_secs(60),
+            qmp.plug(&format!("/machine/peripheral/{}", hotplug.device), plug),
+        )
+        .await
+        .context("native QEMU guest did not plug its memory within 60 seconds")??;
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis(),
+            plug_mib = plug >> 20,
+            "Native QEMU guest memory plugged"
+        );
+    }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
     child
         .stdin
@@ -176,7 +248,60 @@ pub(super) async fn execute(
     Ok(output)
 }
 
-async fn wait_until_running(socket: &Path) -> anyhow::Result<()> {
+struct Qmp {
+    lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    write: tokio::net::unix::OwnedWriteHalf,
+}
+
+impl Qmp {
+    async fn execute(
+        &mut self,
+        command: &str,
+        arguments: Option<serde_json::Value>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let mut request = serde_json::json!({ "execute": command });
+        if let Some(arguments) = arguments {
+            request["arguments"] = arguments;
+        }
+        let mut line = serde_json::to_vec(&request)?;
+        line.push(b'\n');
+        self.write.write_all(&line).await?;
+        Ok(self.read().await?["return"].take())
+    }
+
+    async fn read(&mut self) -> anyhow::Result<serde_json::Value> {
+        loop {
+            let line = self
+                .lines
+                .next_line()
+                .await?
+                .context("native QEMU QMP socket closed")?;
+            let reply: serde_json::Value = serde_json::from_str(&line)?;
+            if let Some(error) = reply.get("error") {
+                bail!("native QEMU QMP error: {error}");
+            }
+            if reply.get("return").is_some() || reply.get("QMP").is_some() {
+                return Ok(reply);
+            }
+        }
+    }
+
+    /// The guest driver onlines memory as it plugs it, so a matching `size` means usable RAM.
+    async fn plug(&mut self, path: &str, bytes: u64) -> anyhow::Result<()> {
+        self.execute(
+            "qom-set",
+            Some(serde_json::json!({ "path": path, "property": "requested-size", "value": bytes })),
+        )
+        .await?;
+        let get = serde_json::json!({ "path": path, "property": "size" });
+        while self.execute("qom-get", Some(get.clone())).await? != bytes {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        Ok(())
+    }
+}
+
+async fn wait_until_running(socket: &Path) -> anyhow::Result<Qmp> {
     let stream = loop {
         match tokio::net::UnixStream::connect(socket).await {
             Ok(stream) => break stream,
@@ -186,39 +311,17 @@ async fn wait_until_running(socket: &Path) -> anyhow::Result<()> {
             Err(error) => return Err(error.into()),
         }
     };
-    let (read, mut write) = stream.into_split();
-    let mut lines = BufReader::new(read).lines();
-    read_qmp(&mut lines).await?;
-    write
-        .write_all(b"{\"execute\":\"qmp_capabilities\"}\n")
-        .await?;
-    read_qmp(&mut lines).await?;
-    loop {
-        write.write_all(b"{\"execute\":\"query-status\"}\n").await?;
-        let reply = read_qmp(&mut lines).await?;
-        if reply["return"]["status"] == "running" {
-            return Ok(());
-        }
+    let (read, write) = stream.into_split();
+    let mut qmp = Qmp {
+        lines: BufReader::new(read).lines(),
+        write,
+    };
+    qmp.read().await?;
+    qmp.execute("qmp_capabilities", None).await?;
+    while qmp.execute("query-status", None).await?["status"] != "running" {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-}
-
-async fn read_qmp(
-    lines: &mut tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
-) -> anyhow::Result<serde_json::Value> {
-    loop {
-        let line = lines
-            .next_line()
-            .await?
-            .context("native QEMU QMP socket closed")?;
-        let reply: serde_json::Value = serde_json::from_str(&line)?;
-        if let Some(error) = reply.get("error") {
-            bail!("native QEMU QMP error: {error}");
-        }
-        if reply.get("return").is_some() || reply.get("QMP").is_some() {
-            return Ok(reply);
-        }
-    }
+    Ok(qmp)
 }
 
 async fn install_mapping(share: &Path, mapping: &MapDir) -> anyhow::Result<()> {
@@ -282,4 +385,48 @@ fn invocation_script(args: &[String], env: &HashMap<String, String>) -> anyhow::
 
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn machine(hotplug: bool) -> Machine {
+        Machine {
+            ram: "256M".to_owned(),
+            hotplug: hotplug.then(|| Hotplug {
+                device: "vmem".to_owned(),
+                max_bytes: 16 << 30,
+                block_bytes: 2 << 20,
+            }),
+            args: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn plug_bytes_is_the_difference_rounded_up_to_blocks() {
+        let machine = machine(true);
+        assert_eq!(0, machine.plug_bytes(256 << 20).unwrap());
+        assert_eq!(2 << 20, machine.plug_bytes((256 << 20) + 1).unwrap());
+        assert_eq!(256 << 20, machine.plug_bytes(512 << 20).unwrap());
+        assert_eq!(
+            16 << 30,
+            machine.plug_bytes((16 << 30) + (256 << 20)).unwrap()
+        );
+    }
+
+    #[test]
+    fn plug_bytes_rejects_sizes_outside_the_bundle() {
+        let machine = machine(true);
+        assert!(machine.plug_bytes(128 << 20).is_err());
+        assert!(machine.plug_bytes((16 << 30) + (258 << 20)).is_err());
+    }
+
+    #[test]
+    fn bundle_without_hotplug_only_accepts_its_base_ram() {
+        let machine = machine(false);
+        assert_eq!(0, machine.plug_bytes(256 << 20).unwrap());
+        let error = machine.plug_bytes(1 << 30).unwrap_err().to_string();
+        assert!(error.contains("update the runtime bundle"), "{error}");
+    }
 }

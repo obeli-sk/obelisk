@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   optional `Finished` event in request order using one database transaction.
 - *(activity-vm)* Experimental QEMU KVM mode added alongside TCG, with separate pinned runtime
   bundles for each accelerator.
+- *(activity-vm)* Required `memory` on `[[activity_vm]]` sets the guest RAM, for example
+  `memory.gib = 4`. Native QEMU restores a 256 MiB snapshot and plugs the rest through
+  `virtio-mem`, from 256 MiB up to 16.25 GiB; plugging 8 GiB adds about 45 ms on KVM. The Bochs
+  guest has a fixed 512 MiB and accepts only that value.
 
 ### Changed
 

@@ -15,6 +15,11 @@ use wasmtime_wasi::{FsPerms, WasiCtxBuilder, p1, p2::pipe};
 mod http_bridge;
 mod native_qemu;
 
+pub use native_qemu::validate_guest_memory;
+
+/// Guest RAM set by the Bochs runtime's `bochsrc`; Bochs cannot change it per activity.
+pub const BOCHS_GUEST_MEMORY: u64 = 512 << 20;
+
 pub struct VmOutput {
     pub exit_code: i32,
     pub stdout: Vec<u8>,
@@ -41,8 +46,15 @@ impl RuntimeSource {
 }
 
 pub enum RuntimeBackend {
-    BochsWasm { engine: Arc<Engine>, module: Module },
-    QemuNative { bundle: PathBuf },
+    BochsWasm {
+        engine: Arc<Engine>,
+        module: Module,
+    },
+    QemuNative {
+        bundle: PathBuf,
+        /// Total guest RAM.
+        guest_memory: u64,
+    },
 }
 
 #[derive(Clone)]
@@ -87,9 +99,13 @@ pub async fn execute(
     memory: Option<u64>,
 ) -> anyhow::Result<VmOutput> {
     let (engine, module) = match backend {
-        RuntimeBackend::QemuNative { bundle } => {
+        RuntimeBackend::QemuNative {
+            bundle,
+            guest_memory,
+        } => {
             return native_qemu::execute(
                 bundle,
+                *guest_memory,
                 mapdirs,
                 guest_args,
                 env,
