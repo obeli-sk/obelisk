@@ -1,1 +1,1 @@
-oci://docker.io/getobelisk/activity-vm-qemu-kvm-runtime:2026-09-28-5@sha256:0a4d81e09e7dc5cdbc61a598693645eab07758b1722fc22e7c17f000cbe46265
+oci://docker.io/getobelisk/activity-vm-qemu-kvm-runtime:2026-09-28-6@sha256:81d342e99917876b290cd6f916fa0f8fca03b52ce430cdf52fad88870e0994f2
