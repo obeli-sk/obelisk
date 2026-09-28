@@ -28,7 +28,7 @@ cargo nextest --version | head -n 1 >> dev-deps.txt
 echo "litecli $(litecli --version)" >> dev-deps.txt
 echo $(nixpkgs-fmt --version) >> dev-deps.txt
 echo "pkg-config $(pkg-config --version)" >> dev-deps.txt
-qemu-system-x86_64 --version | head -n 1 >> dev-deps.txt
+qemu-system-x86_64 --version | awk 'NR == 1 { print "qemu", $4 }' >> dev-deps.txt
 # protobuf
 protoc --version >> dev-deps.txt
 rustc --version >> dev-deps.txt
