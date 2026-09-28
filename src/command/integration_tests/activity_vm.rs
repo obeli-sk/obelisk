@@ -133,7 +133,12 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
 }
 
 #[tokio::test]
-async fn stderr_does_not_corrupt_json_result() {
+async fn stdout_and_stderr_forwarded_to_logs() {
+    if parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap()
+        == ActivityVmRuntimeMode::Disabled
+    {
+        return;
+    }
     let deployment_toml = r#"[[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/stderr.run"
@@ -145,15 +150,51 @@ params = []
 return_type = "result<string, string>"
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
 "#;
-    activity_vm_case(
-        test_addr!(140),
-        "",
-        deployment_toml,
-        "testing:vm/stderr.run",
-        vec![],
-        json!({ "ok": "stdout-result" }),
-    )
-    .await;
+    let server =
+        TestServer::start_inline_deployment(test_addr!(140), "", deployment_toml, &[]).await;
+    let exec_id = server.generate_execution_id().await;
+    let response = server
+        .submit_follow_with_id(&exec_id, "testing:vm/stderr.run", vec![])
+        .await;
+    assert_eq!(response.status().as_u16(), 201);
+    // stderr must not corrupt the JSON result parsed from stdout.
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({ "ok": "stdout-result" })
+    );
+
+    let streams = loop {
+        let logs = server.get_logs(&exec_id, 10).await;
+        let streams: Vec<(String, String)> = logs
+            .as_array()
+            .expect("logs must be an array")
+            .iter()
+            .filter(|entry| entry["type"] == "stream")
+            .map(|entry| {
+                use base64::prelude::*;
+                let payload = BASE64_STANDARD
+                    .decode(entry["payload"].as_str().expect("payload must be a string"))
+                    .expect("payload must be base64");
+                (
+                    entry["stream_type"].as_str().unwrap().to_string(),
+                    String::from_utf8(payload).unwrap(),
+                )
+            })
+            .collect();
+        if streams.len() >= 2 {
+            break streams;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    let [(stdout_type, stdout), (stderr_type, stderr)] = streams.as_slice() else {
+        panic!("expected one stdout and one stderr entry, got {streams:?}");
+    };
+    assert_eq!(stdout_type, "stdout");
+    assert_eq!(stdout, "\"stdout-result\"\n");
+    assert_eq!(stderr_type, "stderr");
+    // Emulator and init diagnostics are appended after the guest's stderr.
+    assert!(stderr.starts_with("guest diagnostic\n"), "{stderr:?}");
+    server.shutdown().await;
 }
 
 #[tokio::test]
