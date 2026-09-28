@@ -211,7 +211,7 @@
 # exposed_secrets = ["MY_SECRET"]
 
 ### EXPERIMENTAL VM Activity components — run Nix-packaged Linux executables in a Wasmtime sandbox
-### Requires OBELISK_UNSTABLE_ACTIVITY_VM=bochs-wasm or qemu-tcg on the server and deployment CLI.
+### Requires OBELISK_UNSTABLE_ACTIVITY_VM=bochs-wasm, qemu-tcg, or qemu-kvm on the server and deployment CLI.
 ### WARNING: activity_vm configuration, guest ABI, cache layout, and runtime behavior may
 ### change incompatibly or be removed in a future release.
 ### The pinned container2wasm appliance and verified Nix closure are downloaded once into

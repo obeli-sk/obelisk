@@ -10,12 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(web API)* `POST /v1/executions/events/batch` reads each requested execution's `Created` and
   optional `Finished` event in request order using one database transaction.
-- *(activity-vm)* New experimental backend Qemu with TCG added.
+- *(activity-vm)* Experimental QEMU KVM mode added alongside TCG, with separate pinned runtime
+  bundles for each accelerator.
 
 ### Changed
 
 - *(activity-vm)* `[[activity_vm]]` deployments now require
-  `OBELISK_UNSTABLE_ACTIVITY_VM=bochs-wasm` or `OBELISK_UNSTABLE_ACTIVITY_VM=qemu-tcg`
+  `OBELISK_UNSTABLE_ACTIVITY_VM=bochs-wasm`, `qemu-tcg`, or `qemu-kvm`
   on the deployment CLI and server. Without it, deployment validation rejects VM activities;
   existing VM deployments also need it to activate.
 - *(V8)* Isolate threads are reused: a thread whose isolate finished runs the next one instead of

@@ -71,9 +71,10 @@ scripts/test.sh
 # Tests with locally built activity, workflow and webhook JavaScript runtimes
 scripts/test-js-local.sh
 
-# Activity VM integration tests on the Bochs (WASM) or native QEMU backend
+# Activity VM integration tests on Bochs, QEMU TCG, or QEMU KVM
 scripts/test-activity-vm-bochs.sh
-scripts/test-activity-vm-qemu.sh
+scripts/test-activity-vm-qemu-tcg.sh
+scripts/test-activity-vm-qemu-kvm.sh
 
 # Specific test crate
 cargo test --package obeli-db-tests --test deployment_pagination

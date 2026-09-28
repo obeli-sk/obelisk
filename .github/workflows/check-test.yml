@@ -47,9 +47,13 @@ jobs:
             features: ""
             activity_vm_runtime: bochs-wasm
           - name: activity-vm-qemu-tcg
-            report: junit-activity-vm-qemu.xml
+            report: junit-activity-vm-qemu-tcg.xml
             features: ""
             activity_vm_runtime: qemu-tcg
+          - name: activity-vm-qemu-kvm
+            report: junit-activity-vm-qemu-kvm.xml
+            features: ""
+            activity_vm_runtime: qemu-kvm
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -86,6 +90,13 @@ jobs:
       - name: Build tests
         id: build-tests
         run: nix develop --command cargo nextest run --workspace --no-run
+
+      - name: Enable KVM access
+        if: ${{ matrix.activity_vm_runtime == 'qemu-kvm' }}
+        run: |
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          test -w /dev/kvm
 
       - name: Populate test caches
         run: nix develop --command scripts/test-phase1.sh
