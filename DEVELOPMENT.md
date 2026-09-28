@@ -65,11 +65,15 @@ export TEST_POSTGRES_DATABASE_PREFIX="obelisk_test"
 > Without `direnv` or these env vars exported, Postgres tests will fail with `connection refused` or `TEST_POSTGRES_HOST` not set.
 
 ```sh
-# All tests
+# All tests except the activity VM backends
 scripts/test.sh
 
 # Tests with locally built activity, workflow and webhook JavaScript runtimes
 scripts/test-js-local.sh
+
+# Activity VM integration tests on the Bochs (WASM) or native QEMU backend
+scripts/test-activity-vm-bochs.sh
+scripts/test-activity-vm-qemu.sh
 
 # Specific test crate
 cargo test --package obeli-db-tests --test deployment_pagination
