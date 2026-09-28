@@ -286,6 +286,8 @@ fn build_internal(
     generate_code(wasm_path.as_std_path(), pkg_name, component_type);
 
     // Register rerun-if-changed dependencies
+    // A warm `target/` with an empty `wasm-cache` must rerun the build script instead of pointing at a missing file.
+    add_dependency(&wasm_path);
     add_dependency(&package.manifest_path); // Cargo.toml
     for src_path in package
         .targets
