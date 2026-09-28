@@ -44,20 +44,10 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
         .context("native QEMU OCI reference needs a digest")?;
     let parent = cache_root.join("activity-vm/native-qemu");
     let destination = parent.join(pinned_digest.replace(':', "-"));
-    if destination.join("vm.state").is_file() {
-        let qemu_path = tokio::fs::read_to_string(destination.join("qemu-path")).await?;
-        if Path::new(qemu_path.trim()).is_file() {
-            return Ok(destination);
-        }
-        if let Ok(source) = tokio::fs::read_to_string(destination.join("qemu-source.txt")).await {
-            let installed_qemu = install_native_qemu(&source, &parent, pinned_digest).await?;
-            ensure!(
-                qemu_path.trim() == installed_qemu.to_string_lossy(),
-                "cached native QEMU bundle was built with a different QEMU"
-            );
-            return Ok(destination);
-        }
-        // Older caches did not retain the source needed to restore the Nix store path.
+    if destination.join("vm.state").is_file() && destination.join("qemu-version.txt").is_file() {
+        return Ok(destination);
+    }
+    if destination.exists() {
         tokio::fs::remove_dir_all(&destination).await?;
     }
     tokio::fs::create_dir_all(&parent).await?;
@@ -98,11 +88,14 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
         Ok(first)
     };
     let bundle_layer = layer("activity-vm-qemu-tcg.tar.zst", QEMU_BUNDLE_MEDIA_TYPE)?;
-    let source_layer = layer("qemu-source.txt", "text/plain")?;
+    let version_layer = layer("qemu-version.txt", "text/plain")?;
     let work = tempfile::tempdir_in(&parent)?;
     let archive_path = work.path().join("bundle.tar.zst");
-    let source_path = work.path().join("qemu-source.txt");
-    for (descriptor, path) in [(bundle_layer, &archive_path), (source_layer, &source_path)] {
+    let version_path = work.path().join("qemu-version.txt");
+    for (descriptor, path) in [
+        (bundle_layer, &archive_path),
+        (version_layer, &version_path),
+    ] {
         pull_blob_to_file(
             &client,
             image,
@@ -114,8 +107,6 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
         .await?;
     }
 
-    let source = tokio::fs::read_to_string(&source_path).await?;
-    let expected_qemu = install_native_qemu(&source, &parent, pinned_digest).await?;
     let extracted = work.path().join("bundle");
     tokio::fs::create_dir(&extracted).await?;
     let archive = archive_path.clone();
@@ -127,12 +118,11 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
         Ok(())
     })
     .await??;
+    let bundle_version = tokio::fs::read_to_string(extracted.join("qemu-version.txt")).await?;
+    let manifest_version = tokio::fs::read_to_string(&version_path).await?;
     ensure!(
-        tokio::fs::read_to_string(extracted.join("qemu-path"))
-            .await?
-            .trim()
-            == expected_qemu.to_string_lossy(),
-        "native QEMU bundle was built with a different QEMU"
+        !bundle_version.trim().is_empty() && bundle_version.trim() == manifest_version.trim(),
+        "native QEMU version in bundle does not match OCI metadata"
     );
     ensure!(
         extracted.join("vm.state").is_file(),
@@ -142,43 +132,14 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
         extracted.join("guest/machine.json").is_file(),
         "native QEMU machine is missing"
     );
-    tokio::fs::copy(&source_path, extracted.join("qemu-source.txt")).await?;
     if let Err(error) = tokio::fs::rename(&extracted, &destination).await {
         ensure!(
-            destination.join("vm.state").is_file(),
+            destination.join("vm.state").is_file()
+                && destination.join("qemu-version.txt").is_file(),
             "caching native QEMU bundle failed: {error}"
         );
     }
     Ok(destination)
-}
-
-async fn install_native_qemu(
-    source: &str,
-    parent: &Path,
-    pinned_digest: &str,
-) -> anyhow::Result<PathBuf> {
-    let source = source.trim();
-    let revision = source
-        .strip_prefix("github:fzakaria/trynix/")
-        .and_then(|value| value.strip_suffix("#native-qemu"))
-        .context("unexpected native QEMU source")?;
-    ensure!(
-        revision.len() == 40 && revision.bytes().all(|b| b.is_ascii_hexdigit()),
-        "native QEMU source must pin a commit"
-    );
-    let output = tokio::process::Command::new("nix")
-        .args(["build", "--accept-flake-config", "--out-link"])
-        .arg(parent.join(format!("qemu-{}", pinned_digest.replace(':', "-"))))
-        .args(["--print-out-paths", source])
-        .output()
-        .await
-        .context("Nix is required to install the native QEMU runtime")?;
-    ensure!(
-        output.status.success(),
-        "building native QEMU from {source} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(PathBuf::from(String::from_utf8(output.stdout)?.trim()).join("bin/qemu-system-x86_64"))
 }
 
 struct LayerWithAnnotations {

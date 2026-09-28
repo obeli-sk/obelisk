@@ -95,5 +95,5 @@ cargo test --package obelisk grpc_server::tests
 
 ## Build System Notes
 
-- `cargo metadata --format-version 1 --no-deps | python3 -c "import sys,json; print(json.load(sys.stdin)['target_directory'])"` gets the current Cargo target directory.
+- `cargo metadata --format-version 1 --no-deps | jq -r .target_directory` gets the current Cargo target directory.
 - **gRPC and REST are multiplexed on the same port** (`api.listening_addr`, default `9080`). gRPC clients connect to the same address as REST clients.
