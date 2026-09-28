@@ -53,6 +53,46 @@ store_paths = [
 }
 
 #[tokio::test]
+async fn clock_and_entropy_fresh_after_resume() {
+    if parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap()
+        == ActivityVmRuntimeMode::Disabled
+    {
+        return;
+    }
+    let deployment_toml = r#"[[activity_vm]]
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/clock.run"
+content = '''#!/usr/bin/env bash
+printf '"%(%s)T %s"\n' -1 "$SRANDOM"
+'''
+params = []
+return_type = "result<string, string>"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+"#;
+    let server =
+        TestServer::start_inline_deployment(test_addr!(183), "", deployment_toml, &[]).await;
+    let mut randoms = Vec::new();
+    for _ in 0..2 {
+        let response = server.submit_follow("testing:vm/clock.run", vec![]).await;
+        assert_eq!(response.status().as_u16(), 201);
+        let output = response.json::<Value>().await.unwrap()["ok"]
+            .as_str()
+            .expect("ok string")
+            .to_owned();
+        let (guest_seconds, random) = output.split_once(' ').unwrap();
+        let host_seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let skew = host_seconds.abs_diff(guest_seconds.parse().unwrap());
+        assert!(skew < 60, "guest clock is off by {skew} s");
+        randoms.push(random.to_owned());
+    }
+    assert_ne!(randoms[0], randoms[1], "guest CRNG replayed the snapshot");
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn emubench_all() {
     let deployment_toml = r#"[[activity_vm]]
 exec.lock_expiry.seconds = 120

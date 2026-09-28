@@ -131,11 +131,12 @@ pub(super) async fn execute(
         elapsed_ms = started.elapsed().as_millis(),
         "Native QEMU snapshot restored"
     );
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
     child
         .stdin
         .take()
         .context("native QEMU serial input is missing")?
-        .write_all(b"\n")
+        .write_all(format!("{}.{:09}\n", now.as_secs(), now.subsec_nanos()).as_bytes())
         .await?;
 
     let mut phases = AbortOnDrop(tokio::spawn(log_guest_phases(
