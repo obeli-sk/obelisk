@@ -26,6 +26,7 @@ async fn activity_vm_case(
 async fn echo() {
     let server_toml = "";
     let deployment_toml = r#"[[activity_vm]]
+memory.mib = 512
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/echo.run"
 content = '''#!/usr/bin/env bash
@@ -60,6 +61,7 @@ async fn clock_and_entropy_fresh_after_resume() {
         return;
     }
     let deployment_toml = r#"[[activity_vm]]
+memory.mib = 512
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/clock.run"
 content = '''#!/usr/bin/env bash
@@ -95,6 +97,7 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
 #[tokio::test]
 async fn emubench_all() {
     let deployment_toml = r#"[[activity_vm]]
+memory.mib = 512
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/emubench.run"
 entrypoint = ["emubench", "all"]
@@ -120,6 +123,7 @@ public_key = "trynix.cachix.org-1:xmOWOHz2g/BlpCVQrTEZjSKWPk3S3Dukn1xiSWLidkY="
 async fn entrypoint() {
     let server_toml = "";
     let deployment_toml = r#"[[activity_vm]]
+memory.mib = 512
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/entrypoint.run"
 entrypoint = ["bash", "-c", "printf '%s\\n' '\"entrypoint\"'"]
@@ -143,6 +147,7 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
 async fn stdin() {
     let server_toml = "";
     let deployment_toml = r#"[[activity_vm]]
+memory.mib = 512
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/stdin.run"
 content = '''#!/usr/bin/env bash
@@ -180,6 +185,7 @@ async fn stdout_and_stderr_forwarded_to_logs() {
         return;
     }
     let deployment_toml = r#"[[activity_vm]]
+memory.mib = 512
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/stderr.run"
 content = '''#!/usr/bin/env bash
@@ -240,6 +246,7 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
 #[tokio::test]
 async fn nonzero_exit_maps_error_result() {
     let deployment_toml = r#"[[activity_vm]]
+memory.mib = 512
 ffqn = "testing:vm/failure.run"
 max_retries = 0
 content = '''#!/usr/bin/env bash
@@ -306,6 +313,7 @@ replace_in = ["headers"]
     );
     let deployment_toml = format!(
         r#"[[activity_vm]]
+memory.mib = 512
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/http.run"
 content = '''#!/usr/bin/env bash
@@ -391,6 +399,7 @@ methods = ["GET"]
     );
     let deployment_toml = format!(
         r#"[[activity_vm]]
+memory.mib = 512
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/http.run"
 content = '''#!/usr/bin/env bash
@@ -474,6 +483,7 @@ async fn native_qemu_interruption_case(ip: String, cancel: bool) {
     let lock_expiry = if cancel { 120 } else { 6 };
     let deployment_toml = format!(
         r#"[[activity_vm]]
+memory.mib = 512
 ffqn = "testing:vm/hang.run"
 exec.lock_expiry.seconds = {lock_expiry}
 max_retries = 0
@@ -545,4 +555,39 @@ async fn native_qemu_cancellation_kills_vm() {
 #[tokio::test]
 async fn native_qemu_lock_expiry_kills_vm() {
     native_qemu_interruption_case(test_addr!(182), false).await;
+}
+
+#[tokio::test]
+async fn native_qemu_guest_memory() {
+    if !matches!(
+        parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
+        ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm
+    ) {
+        return;
+    }
+    // The fill exceeds what the 256 MiB snapshot could hold in /tmp, so the rootfs must grow with the RAM.
+    let deployment_toml = r#"[[activity_vm]]
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/memory.run"
+content = '''#!/usr/bin/env bash
+set -eu
+while read -r key value _; do
+  [[ $key == MemTotal: ]] && total=$value
+done < /proc/meminfo
+head -c 600000000 /dev/zero > /tmp/fill
+printf '%s\n' "$total"
+'''
+params = []
+return_type = "result<u64, string>"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+memory.gib = 2
+"#;
+    let server =
+        TestServer::start_inline_deployment(test_addr!(184), "", deployment_toml, &[]).await;
+    let response = server.submit_follow("testing:vm/memory.run", vec![]).await;
+    assert_eq!(response.status().as_u16(), 201);
+    let body = response.json::<Value>().await.unwrap();
+    let total_kib = body["ok"].as_u64().unwrap_or_else(|| panic!("{body}"));
+    assert!(total_kib > 1900 * 1024, "guest MemTotal is {total_kib} KiB");
+    server.shutdown().await;
 }

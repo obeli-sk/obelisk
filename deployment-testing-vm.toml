@@ -2,6 +2,7 @@
 # Find Nix store paths using `nix eval --raw nixpkgs#jq.outPath`
 
 [[activity_vm]]
+memory.mib = 512
 ffqn = "testing:vm/echo.greet"
 params = [{ name = "name", type = "string" }]
 content = '''#!/usr/bin/env bash
@@ -15,6 +16,7 @@ store_paths = [
 ]
 
 [[activity_vm]]
+memory.mib = 512
 ffqn = "testing:vm/emubench.run"
 entrypoint = [
   "emubench",
@@ -33,6 +35,7 @@ public_key = "trynix-examples-1:dZOV2uGWvjHo6IC5ZqCCu0dmIRzLm9pyOQJBDnBsXRY="
 #   | jq -R '[.]' \
 #   | obelisk execution submit --follow-logs testing:vm/bash.run -
 [[activity_vm]]
+memory.mib = 512
 ffqn = "testing:vm/bash.run"
 max_retries = 0
 params = [{ name = "command", type = "string" }]
@@ -53,6 +56,7 @@ secrets = ["VM_SECRET"]
 replace_in = ["headers"]
 
 [[activity_vm]]
+memory.mib = 512
 ffqn = "testing:vm/stdin.run"
 content = '''#!/usr/bin/env bash
 set -eu

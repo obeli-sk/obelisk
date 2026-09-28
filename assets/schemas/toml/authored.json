@@ -994,11 +994,16 @@
             "$ref": "#/$defs/AllowedHostToml"
           },
           "default": []
+        },
+        "memory": {
+          "description": "Total guest RAM, for example `memory.gib = 4`. Native QEMU accepts 256 MiB up to its\nbundle's limit; Bochs has a fixed 512 MiB guest and accepts only that.",
+          "$ref": "#/$defs/ByteSizeConfig"
         }
       },
       "required": [
         "ffqn",
-        "store_paths"
+        "store_paths",
+        "memory"
       ],
       "anyOf": [
         {
@@ -1036,6 +1041,67 @@
         }
       },
       "additionalProperties": false
+    },
+    "ByteSizeConfig": {
+      "description": "A byte size whose unit is part of the key, like [`DurationConfig`]. Units are binary and a\nbare integer is not accepted, so a configuration cannot silently mean something 1024x off.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "bytes"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kib"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "mib"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "gib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "gib"
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "WorkflowWasmComponentConfigToml": {
       "type": "object",

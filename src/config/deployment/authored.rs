@@ -4,9 +4,9 @@
 //! and verifies them.
 
 use super::{
-    AllowedHostToml, BlockingStrategyConfigToml, ComponentCommon, ComponentLocationToml,
-    ComponentStdOutputToml, ConfigName, DeploymentResolved, DurationConfig, ExecConfigToml,
-    JsParamToml, LogLevelToml, OCI_SCHEMA_PREFIX, SecretRef, WebhookRoute,
+    AllowedHostToml, BlockingStrategyConfigToml, ByteSizeConfig, ComponentCommon,
+    ComponentLocationToml, ComponentStdOutputToml, ConfigName, DeploymentResolved, DurationConfig,
+    ExecConfigToml, JsParamToml, LogLevelToml, OCI_SCHEMA_PREFIX, SecretRef, WebhookRoute,
     default_external_server_name, default_lock_extension, default_lock_extension_leeway,
     default_max_output_bytes, default_max_retries, default_retry_exp_backoff, resolve_local_refs,
     sanitize_deployment_relative_path, validate_secret_optionality,
@@ -748,6 +748,9 @@ pub(crate) struct ActivityVmComponentConfigToml {
     /// Policy-filtered HTTP destinations. Secrets are exposed as placeholders only.
     #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
+    /// Total guest RAM, for example `memory.gib = 4`. Native QEMU accepts 256 MiB up to its
+    /// bundle's limit; Bochs has a fixed 512 MiB guest and accepts only that.
+    pub(crate) memory: ByteSizeConfig,
 }
 
 // --- activity_exec config ---

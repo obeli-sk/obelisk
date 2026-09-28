@@ -18,7 +18,7 @@ fn digest_of(bytes: &[u8]) -> ContentDigest {
 #[test]
 fn activity_vm_requires_explicit_enablement() {
     let deployment: DeploymentToml =
-        toml::from_str("[[activity_vm]]\nffqn = \"testing:vm/echo.run\"\ncontent = \"echo null\"\nstore_paths = []")
+        toml::from_str("[[activity_vm]]\nffqn = \"testing:vm/echo.run\"\ncontent = \"echo null\"\nstore_paths = []\nmemory.mib = 512")
             .unwrap();
     let error = deployment
         .validate_with_activity_vm(std::path::Path::new("."), false)
@@ -33,6 +33,7 @@ fn activity_vm_authored_config_uses_http_policy_and_exact_store_roots() {
     let deployment: DeploymentToml = toml::from_str(
         r##"
 [[activity_vm]]
+memory.mib = 512
 name = "fetch"
 ffqn = "testing:vm/fetch.run"
 content = "#!/bin/sh\necho null"
@@ -62,6 +63,7 @@ fn activity_vm_accepts_one_entrypoint_source() {
     let deployment: DeploymentToml = toml::from_str(
         r#"
 [[activity_vm]]
+memory.mib = 512
 ffqn = "testing:vm/entrypoint.run"
 entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool", "--json"]
 store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
@@ -90,6 +92,7 @@ fn activity_vm_can_disable_nixos_cache() {
     let deployment: DeploymentToml = toml::from_str(
         r#"
 [[activity_vm]]
+memory.mib = 512
 ffqn = "testing:vm/entrypoint.run"
 entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool"]
 store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
@@ -109,10 +112,46 @@ public_key = "example-1:test"
 }
 
 #[test]
+fn activity_vm_parses_guest_memory() {
+    let deployment: DeploymentToml = toml::from_str(
+        r#"
+[[activity_vm]]
+ffqn = "testing:vm/entrypoint.run"
+entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool"]
+store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
+memory.gib = 4
+"#,
+    )
+    .unwrap();
+
+    let validated = deployment
+        .validate_with_activity_vm(std::path::Path::new("."), true)
+        .unwrap();
+    assert_eq!(u64::from(validated.activities_vm[0].0.memory), 4 << 30);
+}
+
+#[test]
+fn activity_vm_requires_memory() {
+    let Err(error) = toml::from_str::<DeploymentToml>(
+        r#"
+[[activity_vm]]
+ffqn = "testing:vm/entrypoint.run"
+entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool"]
+store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
+"#,
+    ) else {
+        panic!("activity_vm without memory must be rejected");
+    };
+    let error = error.to_string();
+    assert!(error.contains("missing field `memory`"), "{error}");
+}
+
+#[test]
 fn activity_vm_rejects_multiple_program_sources() {
     let deployment: DeploymentToml = toml::from_str(
         r#"
 [[activity_vm]]
+memory.mib = 512
 ffqn = "testing:vm/invalid.run"
 entrypoint = ["/bin/true"]
 content = "exit 0"
@@ -130,6 +169,7 @@ fn optional_secret_references_parse_and_serialize_back() {
     let deployment: DeploymentToml = toml::from_str(
         r##"
 [[activity_vm]]
+memory.mib = 512
 name = "aws"
 ffqn = "testing:vm/aws.run"
 content = "#!/bin/sh\necho null"

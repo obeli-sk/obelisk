@@ -903,7 +903,22 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             store_paths,
             nix_caches,
             allowed_hosts,
+            memory: guest_memory,
         } = self;
+        match runtime {
+            activity_vm_runner::RuntimeSource::QemuNative { bundle, .. } => {
+                activity_vm_runner::validate_guest_memory(bundle, guest_memory)
+                    .with_context(|| format!("invalid `memory` of activity_vm `{name}`"))?;
+            }
+            activity_vm_runner::RuntimeSource::BochsWasm(_) => {
+                ensure!(
+                    guest_memory == activity_vm_runner::BOCHS_GUEST_MEMORY,
+                    "activity_vm `{name}` sets `memory` to {} MiB, but the Bochs backend's guest has a fixed {} MiB",
+                    guest_memory >> 20,
+                    activity_vm_runner::BOCHS_GUEST_MEMORY >> 20
+                );
+            }
+        }
         let (allowed_host_configs, _) = resolve_allowed_hosts(
             allowed_hosts.clone(),
             ignore_missing_env_vars,
@@ -1076,6 +1091,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             allowed_hosts: allowed_host_configs,
             exposed_secrets,
             memory: cell_memory,
+            guest_memory,
             activity: verified,
         })
     }
@@ -1093,6 +1109,8 @@ pub(crate) struct ActivityVmConfigVerified {
     pub(crate) exposed_secrets: Vec<String>,
     /// `limits.activities.vm_bochs.memory`, applied to the emulator's store.
     pub(crate) memory: Option<u64>,
+    /// The activity's `memory`: total guest RAM.
+    pub(crate) guest_memory: u64,
     pub(crate) activity: ActivityExecConfigVerified,
 }
 
@@ -1813,6 +1831,7 @@ pub(crate) async fn resolve_local_refs(
             store_paths: a.store_paths,
             nix_caches,
             allowed_hosts: a.allowed_hosts,
+            memory: u64::from(a.memory),
         });
     }
 
@@ -3058,6 +3077,7 @@ pub struct ActivityVmComponentConfigResolved {
     pub store_paths: Vec<String>,
     pub nix_caches: Vec<NixCacheToml>,
     pub allowed_hosts: Vec<AllowedHostToml>,
+    pub memory: u64,
 }
 
 /// Resolved form of `WorkflowWasmComponentConfigToml`.
