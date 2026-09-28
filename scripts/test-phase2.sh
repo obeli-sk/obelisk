@@ -42,6 +42,9 @@ if ! $has_double_dash; then
   cmd+=(--)
 fi
 
-cmd+=(--skip populate_codegen_cache --skip populate_js_codegen_cache)
+cmd+=(
+  --skip populate_codegen_cache --skip populate_js_codegen_cache
+  --skip populate_activity_vm_codegen_cache --skip populate_activity_vm_qemu_cache
+)
 
 "${cmd[@]}"
