@@ -662,6 +662,7 @@ pub(crate) enum ActivityVmRuntimeMode {
     Disabled,
     BochsWasm,
     QemuTcg,
+    QemuKvm,
 }
 
 pub(crate) enum ServerAuth {

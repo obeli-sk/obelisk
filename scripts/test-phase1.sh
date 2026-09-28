@@ -10,7 +10,7 @@ if [[ -z "${OBELISK_UNSTABLE_ACTIVITY_VM:-}" ]]; then
   unset OBELISK_UNSTABLE_ACTIVITY_VM
 fi
 
-if [[ "${OBELISK_UNSTABLE_ACTIVITY_VM:-}" == qemu-tcg ]]; then
+if [[ "${OBELISK_UNSTABLE_ACTIVITY_VM:-}" == qemu-tcg || "${OBELISK_UNSTABLE_ACTIVITY_VM:-}" == qemu-kvm ]]; then
   cargo nextest run --no-output-indent --workspace --profile ci-test-populate-codegen-cache \
     populate_activity_vm_qemu_cache ${ADDITIONAL_FEATURES:-}
 elif [[ "${OBELISK_UNSTABLE_ACTIVITY_VM:-}" == bochs-wasm ]]; then

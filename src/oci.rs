@@ -33,12 +33,15 @@ pub const JS_LAYER_MEDIA_TYPE: &str = "application/vnd.obelisk.js.v0+javascript"
 /// Media type for the single OCI layer of an exec activity image.
 /// The layer contains the UTF-8 script source (the `inline` content, including the shebang line).
 pub const EXEC_LAYER_MEDIA_TYPE: &str = "application/vnd.obelisk.exec.v0";
-const QEMU_BUNDLE_MEDIA_TYPE: &str = "application/vnd.obelisk.activity-vm-qemu-tcg.v1+zstd";
-
 pub(crate) async fn pull_native_qemu_bundle_to_cache(
     image: &Reference,
     cache_root: &Path,
+    accelerator: &str,
 ) -> anyhow::Result<PathBuf> {
+    ensure!(
+        matches!(accelerator, "tcg" | "kvm"),
+        "invalid QEMU accelerator"
+    );
     let pinned_digest = image
         .digest()
         .context("native QEMU OCI reference needs a digest")?;
@@ -64,12 +67,13 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
         manifest_digest == pinned_digest,
         "native QEMU manifest digest mismatch"
     );
+    let artifact_kind = format!("activity-vm-qemu-{accelerator}.v1");
     ensure!(
         manifest
             .annotations
             .as_ref()
             .and_then(|a| a.get("dev.obelisk.artifact.kind"))
-            .is_some_and(|kind| kind == "activity-vm-qemu-tcg.v1"),
+            .is_some_and(|kind| kind == &artifact_kind),
         "unexpected native QEMU artifact kind"
     );
     let layer = |title: &str, media_type: &str| -> anyhow::Result<&OciDescriptor> {
@@ -87,7 +91,10 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
         ensure!(matching.next().is_none(), "duplicate native QEMU OCI layer");
         Ok(first)
     };
-    let bundle_layer = layer("activity-vm-qemu-tcg.tar.zst", QEMU_BUNDLE_MEDIA_TYPE)?;
+    let bundle_layer = layer(
+        &format!("activity-vm-qemu-{accelerator}.tar.zst"),
+        &format!("application/vnd.obelisk.activity-vm-qemu-{accelerator}.v1+zstd"),
+    )?;
     let version_layer = layer("qemu-version.txt", "text/plain")?;
     let work = tempfile::tempdir_in(&parent)?;
     let archive_path = work.path().join("bundle.tar.zst");

@@ -376,9 +376,10 @@ fn native_qemu_children() -> Vec<u32> {
 async fn native_qemu_interruption_case(ip: String, cancel: bool) {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-    if parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap()
-        != ActivityVmRuntimeMode::QemuTcg
-    {
+    if !matches!(
+        parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
+        ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm
+    ) {
         return;
     }
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
