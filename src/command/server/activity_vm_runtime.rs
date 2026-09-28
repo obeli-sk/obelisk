@@ -22,7 +22,7 @@ pub(crate) async fn fetch(
 ) -> anyhow::Result<Option<RuntimeSource>> {
     match mode {
         ActivityVmRuntimeMode::Disabled => Ok(None),
-        ActivityVmRuntimeMode::QemuNative => {
+        ActivityVmRuntimeMode::QemuTcg => {
             #[cfg(debug_assertions)]
             if let Some(bundle) = std::env::var_os("OBELISK_NATIVE_QEMU_BUNDLE").map(PathBuf::from)
             {
@@ -105,5 +105,17 @@ mod tests {
             unreachable!()
         };
         activity_vm_runner::compile(&engine, &wasm).unwrap();
+    }
+
+    #[tokio::test]
+    async fn populate_activity_vm_qemu_cache() {
+        test_utils::set_up();
+        let workspace = PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap());
+        fetch(
+            &workspace.join("test-wasm-cache"),
+            ActivityVmRuntimeMode::QemuTcg,
+        )
+        .await
+        .unwrap();
     }
 }

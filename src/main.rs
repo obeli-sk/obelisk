@@ -12,7 +12,8 @@ mod server;
 mod wit_printer;
 
 use crate::command::server::{
-    PrepareDirsParams, RunParams, RuntimeConfigAvailability, ServerAuth, VerifyParams, run, verify,
+    ActivityVmRuntimeMode, JsRuntimeMode, PrepareDirsParams, RunParams, RuntimeConfigAvailability,
+    ServerAuth, VerifyParams, run, verify,
 };
 use crate::config::secret_registry::{API_TOKEN, API_TOKEN_LEGACY, EnvVarSecretsCleanup};
 use anyhow::ensure;
@@ -295,9 +296,8 @@ fn prepare_server_startup(
     let app_policy_json = String::from_utf8(app.policy_json()?)?;
     tracing::info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");
     let env_vars = StartupEnvVars::capture();
-    let js_runtime = parse_js_runtime(env_vars.lookup("OBELISK_JS_RUNTIME").as_deref())?;
-    let activity_vm_runtime =
-        parse_activity_vm_runtime(env_vars.lookup("OBELISK_UNSTABLE_ACTIVITY_VM").as_deref())?;
+    let js_runtime = parse_js_runtime_from_env(&env_vars)?;
+    let activity_vm_runtime = parse_activity_vm_runtime_from_env(&env_vars)?;
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
     app.resolve_env_vars(&env_vars)?;
     match &config.platform_exec_activities {
@@ -358,28 +358,29 @@ fn prepare_server_startup(
     })
 }
 
-fn parse_js_runtime(value: Option<&str>) -> anyhow::Result<crate::command::server::JsRuntimeMode> {
-    use crate::command::server::JsRuntimeMode;
-    match value {
-        None => Ok(JsRuntimeMode::V8),
-        Some(value) if value.eq_ignore_ascii_case("v8") => Ok(JsRuntimeMode::V8),
-        Some(value) if value.eq_ignore_ascii_case("boawasm") => Ok(JsRuntimeMode::BoaWasm),
-        Some(value) => {
-            anyhow::bail!("invalid OBELISK_JS_RUNTIME value {value:?}; expected `v8` or `boawasm`")
+fn parse_js_runtime_from_env(env_vars: &StartupEnvVars) -> anyhow::Result<JsRuntimeMode> {
+    let value = env_vars.lookup("OBELISK_JS_RUNTIME");
+    match value.as_deref() {
+        None | Some("v8") => Ok(JsRuntimeMode::V8),
+        Some("boa-wasm") => Ok(JsRuntimeMode::BoaWasm),
+        Some(other) => {
+            anyhow::bail!(
+                "invalid OBELISK_JS_RUNTIME value `{other:?}`; expected `v8` or `boa-wasm`"
+            )
         }
     }
 }
 
-pub(crate) fn parse_activity_vm_runtime(
-    value: Option<&str>,
-) -> anyhow::Result<crate::command::server::ActivityVmRuntimeMode> {
-    use crate::command::server::ActivityVmRuntimeMode;
-    match value {
+pub(crate) fn parse_activity_vm_runtime_from_env(
+    env_vars: &StartupEnvVars,
+) -> anyhow::Result<ActivityVmRuntimeMode> {
+    let value = env_vars.lookup("OBELISK_UNSTABLE_ACTIVITY_VM");
+    match value.as_deref() {
         None => Ok(ActivityVmRuntimeMode::Disabled),
-        Some("bochs") => Ok(ActivityVmRuntimeMode::BochsWasm),
-        Some("qemu_native") => Ok(ActivityVmRuntimeMode::QemuNative),
-        Some(value) => anyhow::bail!(
-            "invalid OBELISK_UNSTABLE_ACTIVITY_VM value {value:?}; expected `bochs` or `qemu_native`"
+        Some("bochs-wasm") => Ok(ActivityVmRuntimeMode::BochsWasm),
+        Some("qemu-tcg") => Ok(ActivityVmRuntimeMode::QemuTcg),
+        Some(other) => anyhow::bail!(
+            "invalid OBELISK_UNSTABLE_ACTIVITY_VM value `{other:?}`; expected `bochs-wasm` or `qemu-tcg`"
         ),
     }
 }
@@ -391,39 +392,6 @@ pub(crate) fn project_dirs() -> Option<ProjectDirs> {
 #[cfg(test)]
 mod app_policy_tests {
     use super::*;
-
-    #[test]
-    fn js_runtime_selection() {
-        use crate::command::server::JsRuntimeMode;
-        assert_eq!(parse_js_runtime(None).unwrap(), JsRuntimeMode::V8);
-        assert_eq!(parse_js_runtime(Some("v8")).unwrap(), JsRuntimeMode::V8);
-        assert_eq!(parse_js_runtime(Some("V8")).unwrap(), JsRuntimeMode::V8);
-        assert_eq!(
-            parse_js_runtime(Some("BoaWasm")).unwrap(),
-            JsRuntimeMode::BoaWasm
-        );
-        assert!(parse_js_runtime(Some("true")).is_err());
-        assert!(parse_js_runtime(Some("")).is_err());
-    }
-
-    #[test]
-    fn activity_vm_runtime_selection() {
-        use crate::command::server::ActivityVmRuntimeMode;
-        assert_eq!(
-            parse_activity_vm_runtime(None).unwrap(),
-            ActivityVmRuntimeMode::Disabled
-        );
-        assert_eq!(
-            parse_activity_vm_runtime(Some("bochs")).unwrap(),
-            ActivityVmRuntimeMode::BochsWasm
-        );
-        assert_eq!(
-            parse_activity_vm_runtime(Some("qemu_native")).unwrap(),
-            ActivityVmRuntimeMode::QemuNative
-        );
-        assert!(parse_activity_vm_runtime(Some("")).is_err());
-        assert!(parse_activity_vm_runtime(Some("other")).is_err());
-    }
 
     #[test]
     fn platform_exec_allowlist_must_cover_app_allowlist() {

@@ -8,6 +8,7 @@
 //! The `test_addr!` macro ensures unique addresses at link time.
 
 use crate::command::server::{JsRuntimeMode, ServerAuth};
+use crate::config::env_var::StartupEnvVars;
 use crate::server::web_api_server::ReplayResponseSer;
 use crate::{
     command::server::{LocalDeployment, PrepareDirsParams, RunParams, prepare_dirs, run_internal},
@@ -608,12 +609,7 @@ async fn authorize_test_deployment(
         deployment_path,
         None,
         registry,
-        crate::parse_activity_vm_runtime(
-            std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM")
-                .ok()
-                .as_deref(),
-        )
-        .unwrap(),
+        crate::parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
     )
     .await
     .unwrap();
@@ -874,10 +870,8 @@ impl TestServer {
                 ServerAuth::Auth { api_token }
             },
             js_runtime,
-            activity_vm_runtime: crate::parse_activity_vm_runtime(
-                std::env::var("OBELISK_UNSTABLE_ACTIVITY_VM")
-                    .ok()
-                    .as_deref(),
+            activity_vm_runtime: crate::parse_activity_vm_runtime_from_env(
+                &StartupEnvVars::capture(),
             )
             .unwrap(),
         };
