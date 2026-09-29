@@ -21,6 +21,15 @@ pub(crate) async fn fetch(
     cache_root: &Path,
     mode: ActivityVmRuntimeMode,
 ) -> anyhow::Result<Option<RuntimeSource>> {
+    #[cfg(not(target_os = "linux"))]
+    match mode {
+        ActivityVmRuntimeMode::Firecracker => {
+            anyhow::bail!("Firecracker is only supported on Linux")
+        }
+        ActivityVmRuntimeMode::QemuKvm => anyhow::bail!("QEMU KVM is only supported on Linux"),
+        _ => {}
+    }
+
     match mode {
         ActivityVmRuntimeMode::Disabled => Ok(None),
         ActivityVmRuntimeMode::Firecracker => {
