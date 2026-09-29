@@ -41,7 +41,7 @@ while [ ! -f /tmp/obelisk-activity-vm-network-ready ] || \
     mark_phase network-failed "proxy exited with status ${status:-0}: $(cat "$proxy_log")"
     exit 125
   fi
-  sleep 1
+  usleep 10000
 done
 mark_phase network-ready
 
