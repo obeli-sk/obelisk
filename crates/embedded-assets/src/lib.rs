@@ -8,7 +8,6 @@ pub const ACTIVITY_VM_QEMU_TCG_RUNTIME_LOCATION: &str =
     include_str!("../activity-vm-qemu-tcg-runtime-version.txt");
 pub const ACTIVITY_VM_QEMU_KVM_RUNTIME_LOCATION: &str =
     include_str!("../activity-vm-qemu-kvm-runtime-version.txt");
-// Empty until the first release of obeli-sk/activity-vm-firecracker-runtime.
 pub const ACTIVITY_VM_FIRECRACKER_RUNTIME_LOCATION: &str =
     include_str!("../activity-vm-firecracker-runtime-version.txt");
 pub const WORKFLOW_JS_RUNTIME_LOCATION: &str = include_str!("../workflow-js-runtime-version.txt");
