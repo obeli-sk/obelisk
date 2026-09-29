@@ -18,7 +18,15 @@ struct Machine {
     ram: String,
     #[serde(default)]
     hotplug: Option<Hotplug>,
+    #[serde(default)]
+    cpu_hotplug: Option<CpuHotplug>,
     args: Vec<String>,
+}
+
+/// The snapshot has one vCPU; the host hot-adds the rest after restore.
+#[derive(Deserialize)]
+struct CpuHotplug {
+    max: u32,
 }
 
 /// A virtio-mem device in the snapshot, empty until the host plugs memory after restore.
@@ -68,6 +76,23 @@ impl Machine {
         );
         Ok(plug)
     }
+
+    fn check_cpus(&self, cpus: u32) -> anyhow::Result<()> {
+        ensure!(cpus >= 1, "activity_vm `cpus` must be at least 1");
+        if cpus == 1 {
+            return Ok(());
+        }
+        let max = self
+            .cpu_hotplug
+            .as_ref()
+            .context("this native QEMU runtime cannot add vCPUs; update the runtime bundle")?
+            .max;
+        ensure!(
+            cpus <= max,
+            "activity_vm `cpus` exceeds the runtime's limit of {max}"
+        );
+        Ok(())
+    }
 }
 
 /// Checks at deployment time that the bundle can give the guest `memory` bytes of RAM.
@@ -76,10 +101,16 @@ pub fn validate_guest_memory(bundle: &Path, memory: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Checks at deployment time that the bundle can give the guest `cpus` vCPUs.
+pub fn validate_guest_cpus(bundle: &Path, cpus: u32) -> anyhow::Result<()> {
+    Machine::load(&bundle.join("guest"))?.check_cpus(cpus)
+}
+
 #[expect(clippy::too_many_arguments)]
 pub(super) async fn execute(
     bundle: &Path,
     guest_memory: u64,
+    guest_cpus: u32,
     mapdirs: Vec<MapDir>,
     guest_args: Vec<String>,
     mut env: HashMap<String, String>,
@@ -93,6 +124,7 @@ pub(super) async fn execute(
     let guest = bundle.join("guest");
     let machine = Machine::load(&guest)?;
     let plug = machine.plug_bytes(guest_memory)?;
+    machine.check_cpus(guest_cpus)?;
     let snapshot = bundle.join("vm.state");
     ensure!(snapshot.is_file(), "native QEMU snapshot is missing");
 
@@ -203,12 +235,27 @@ pub(super) async fn execute(
             "Native QEMU guest memory plugged"
         );
     }
+    if guest_cpus > 1 {
+        qmp.add_cpus(guest_cpus - 1).await?;
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis(),
+            guest_cpus,
+            "Native QEMU guest vCPUs added"
+        );
+    }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+    // Above one vCPU, `init` waits for ACPI to register them all and onlines them.
+    let cpus = if guest_cpus > 1 {
+        format!(" {guest_cpus}")
+    } else {
+        String::new()
+    };
+    let clock = format!("{}.{:09}{cpus}\n", now.as_secs(), now.subsec_nanos());
     child
         .stdin
         .take()
         .context("native QEMU serial input is missing")?
-        .write_all(format!("{}.{:09}\n", now.as_secs(), now.subsec_nanos()).as_bytes())
+        .write_all(clock.as_bytes())
         .await?;
 
     let mut phases = AbortOnDrop(tokio::spawn(log_guest_phases(
@@ -296,6 +343,29 @@ impl Qmp {
         let get = serde_json::json!({ "path": path, "property": "size" });
         while self.execute("qom-get", Some(get.clone())).await? != bytes {
             tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        Ok(())
+    }
+
+    async fn add_cpus(&mut self, count: u32) -> anyhow::Result<()> {
+        let slots = self.execute("query-hotpluggable-cpus", None).await?;
+        let mut free = slots
+            .as_array()
+            .context("unexpected `query-hotpluggable-cpus` reply")?
+            .iter()
+            .filter(|slot| slot.get("qom-path").is_none())
+            .collect::<Vec<_>>();
+        free.sort_by_key(|slot| slot["props"]["socket-id"].as_u64());
+        ensure!(
+            free.len() >= count as usize,
+            "native QEMU has only {} free vCPU slots",
+            free.len()
+        );
+        for (index, slot) in free.into_iter().take(count as usize).enumerate() {
+            let mut arguments = slot["props"].clone();
+            arguments["driver"] = slot["type"].clone();
+            arguments["id"] = format!("cpu{}", index + 1).into();
+            self.execute("device_add", Some(arguments)).await?;
         }
         Ok(())
     }
@@ -394,6 +464,7 @@ mod tests {
     fn machine(hotplug: bool) -> Machine {
         Machine {
             ram: "256M".to_owned(),
+            cpu_hotplug: hotplug.then_some(CpuHotplug { max: 16 }),
             hotplug: hotplug.then(|| Hotplug {
                 device: "vmem".to_owned(),
                 max_bytes: 16 << 30,
@@ -427,6 +498,19 @@ mod tests {
         let machine = machine(false);
         assert_eq!(0, machine.plug_bytes(256 << 20).unwrap());
         let error = machine.plug_bytes(1 << 30).unwrap_err().to_string();
+        assert!(error.contains("update the runtime bundle"), "{error}");
+    }
+
+    #[test]
+    fn check_cpus_accepts_one_up_to_the_bundle_limit() {
+        let machine = machine(true);
+        assert!(machine.check_cpus(0).is_err());
+        machine.check_cpus(1).unwrap();
+        machine.check_cpus(16).unwrap();
+        assert!(machine.check_cpus(17).is_err());
+        let machine = self::machine(false);
+        machine.check_cpus(1).unwrap();
+        let error = machine.check_cpus(2).unwrap_err().to_string();
         assert!(error.contains("update the runtime bundle"), "{error}");
     }
 }

@@ -591,3 +591,37 @@ memory.gib = 2
     assert!(total_kib > 1900 * 1024, "guest MemTotal is {total_kib} KiB");
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn native_qemu_guest_cpus() {
+    if !matches!(
+        parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
+        ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm
+    ) {
+        return;
+    }
+    let deployment_toml = r#"[[activity_vm]]
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/cpus.run"
+content = '''#!/usr/bin/env bash
+set -eu
+count=0
+while read -r key _; do
+  [[ $key == processor ]] && count=$((count + 1))
+done < /proc/cpuinfo
+printf '%s\n' "$count"
+'''
+params = []
+return_type = "result<u64, string>"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+memory.mib = 256
+cpus = 4
+"#;
+    let server =
+        TestServer::start_inline_deployment(test_addr!(185), "", deployment_toml, &[]).await;
+    let response = server.submit_follow("testing:vm/cpus.run", vec![]).await;
+    assert_eq!(response.status().as_u16(), 201);
+    let body = response.json::<Value>().await.unwrap();
+    assert_eq!(body["ok"].as_u64(), Some(4), "{body}");
+    server.shutdown().await;
+}

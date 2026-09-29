@@ -128,6 +128,27 @@ memory.gib = 4
         .validate_with_activity_vm(std::path::Path::new("."), true)
         .unwrap();
     assert_eq!(u64::from(validated.activities_vm[0].0.memory), 4 << 30);
+    assert_eq!(validated.activities_vm[0].0.cpus, 1);
+}
+
+#[test]
+fn activity_vm_parses_guest_cpus() {
+    let deployment: DeploymentToml = toml::from_str(
+        r#"
+[[activity_vm]]
+ffqn = "testing:vm/entrypoint.run"
+entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool"]
+store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
+memory.gib = 4
+cpus = 4
+"#,
+    )
+    .unwrap();
+
+    let validated = deployment
+        .validate_with_activity_vm(std::path::Path::new("."), true)
+        .unwrap();
+    assert_eq!(validated.activities_vm[0].0.cpus, 4);
 }
 
 #[test]

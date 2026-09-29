@@ -6252,6 +6252,7 @@ fn prespawn_activity_vm(
             activity_vm_runner::RuntimeBackend::QemuNative {
                 bundle,
                 guest_memory: activity_vm.guest_memory,
+                guest_cpus: activity_vm.guest_cpus,
             }
         }
     };

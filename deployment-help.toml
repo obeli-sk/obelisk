@@ -237,6 +237,9 @@
 ## Required. Total guest RAM. Native QEMU accepts 256 MiB up to 16.25 GiB and plugs memory
 ## above 256 MiB after restoring its snapshot. Bochs has a fixed guest and accepts only 512 MiB.
 # memory.mib = 512
+## Default: 1. Guest vCPUs. Native QEMU accepts 1 up to 16 and hot-adds vCPUs above 1 after
+## restoring its snapshot. Bochs accepts only 1.
+# cpus = 1
 # env_vars = ["LANG", { key = "MODE", value = "batch" }]
 ## Default: false. Each parameter is JSON-serialized into a separate argv element.
 ## When true, no parameters are appended to argv; stdin receives {"params":[...]}.
