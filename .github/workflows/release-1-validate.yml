@@ -33,6 +33,11 @@ on:
         required: true
         type: boolean
         default: true
+      validate_webui:
+        description: "Validate that the latest tagged webui is bumped"
+        required: true
+        type: boolean
+        default: true
 
 defaults:
   run:
@@ -52,23 +57,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
 
       - name: Validate latest webui bump commit
-        env:
-          EXPECTED_PREFIX: "chore: Bump obelisk submodule to webui"
-          WEBUI_REPO_URL: "https://github.com/obeli-sk/webui.git"
-          WEBUI_BRANCH: "main"
-        run: |
-          git init webui-tmp
-          cd webui-tmp
-          git remote add origin "$WEBUI_REPO_URL"
-          git fetch --depth=1 origin "$WEBUI_BRANCH"
-          COMMIT_SUBJECT="$(git log -1 --pretty=%s FETCH_HEAD)"
-          echo "Latest webui commit subject: $COMMIT_SUBJECT"
-          if [[ "$COMMIT_SUBJECT" != "$EXPECTED_PREFIX"* ]]; then
-            echo "::error::Latest commit in obeli-sk/webui does not start with '$EXPECTED_PREFIX'."
-            exit 1
-          fi
+        run: ./scripts/prerelease-check-webui-version.sh
+        if: ${{ inputs.validate_webui }}
 
       - name: Validate activity JS runtime version reference
         run: |
