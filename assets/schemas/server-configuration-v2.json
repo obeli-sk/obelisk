@@ -10,10 +10,7 @@
       "type": "string"
     },
     "app_config_digest": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": "string"
     },
     "environment": {
       "$ref": "#/$defs/EnvironmentAuditV2"
@@ -26,6 +23,7 @@
   "required": [
     "format",
     "obelisk_version",
+    "app_config_digest",
     "environment",
     "deployment_security"
   ],

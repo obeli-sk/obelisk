@@ -4,6 +4,7 @@ use crate::config::env_var::{
 use crate::config::secret_registry::{PublicEnvRef, PublicEnvToml, SecretsToml};
 use crate::config::server::{AllowExecActivities, OutboundHttpToml};
 use anyhow::{Context as _, ensure};
+use concepts::component_id::Digest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -23,7 +24,7 @@ pub(crate) struct AppConfigToml {
     pub(crate) outbound_http: OutboundHttpToml,
 }
 
-#[derive(JsonSchema, Serialize)]
+#[derive(Debug, Default, Clone, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AppPolicyV1 {
     format: AppPolicyFormatV1,
@@ -33,8 +34,9 @@ pub(crate) struct AppPolicyV1 {
     outbound_http: Vec<crate::config::deployment::AllowedHostToml>,
 }
 
-#[derive(JsonSchema, Serialize)]
+#[derive(Debug, Default, Clone, JsonSchema, Serialize)]
 enum AppPolicyFormatV1 {
+    #[default]
     #[serde(rename = "obelisk-app-config-v1")]
     V1,
 }
@@ -53,7 +55,7 @@ pub(crate) fn validate_app_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(JsonSchema, Serialize)]
+#[derive(Debug, Clone, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 struct AppPolicySecretV1 {
     optional: bool,
@@ -90,8 +92,8 @@ impl AppConfigToml {
         Ok(name)
     }
 
-    pub(crate) fn policy_json(&self) -> anyhow::Result<Vec<u8>> {
-        let policy = AppPolicyV1 {
+    pub(crate) fn policy(&self) -> AppPolicyV1 {
+        AppPolicyV1 {
             format: AppPolicyFormatV1::V1,
             secrets: self
                 .secrets
@@ -143,21 +145,23 @@ impl AppConfigToml {
                 })
                 .collect(),
             outbound_http: self.outbound_http.allowed_hosts.clone(),
-        };
-        serde_json::to_vec(&policy).context("cannot serialize app policy")
-    }
-
-    pub(crate) fn digest(&self) -> anyhow::Result<String> {
-        let bytes = self.policy_json()?;
-        let hash: [u8; 32] = Sha256::digest(bytes).into();
-        Ok(format!(
-            "app-config:v1:sha256:{}",
-            concepts::component_id::Digest(hash)
-                .to_string()
-                .trim_start_matches("sha256:")
-        ))
+        }
     }
 }
+
+impl AppPolicyV1 {
+    pub(crate) fn digest(&self) -> AppConfigDigest {
+        let bytes = serde_json::to_vec(self).expect("app policy must serialize");
+        AppConfigDigest(Digest(Sha256::digest(bytes).into()))
+    }
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, derive_more::Display, serde_with::SerializeDisplay, JsonSchema,
+)]
+#[display("app-config:v1:{_0}")]
+#[schemars(with = "String")]
+pub(crate) struct AppConfigDigest(Digest);
 
 #[cfg(test)]
 mod tests {
@@ -190,10 +194,15 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert_eq!(first.digest().unwrap(), second.digest().unwrap());
-        assert!(first.digest().unwrap().starts_with("app-config:v1:sha256:"));
-        let policy: serde_json::Value =
-            serde_json::from_slice(&first.policy_json().unwrap()).unwrap();
+        assert_eq!(first.policy().digest(), second.policy().digest());
+        assert!(
+            first
+                .policy()
+                .digest()
+                .to_string()
+                .starts_with("app-config:v1:sha256:")
+        );
+        let policy = serde_json::to_value(first.policy()).unwrap();
         assert_eq!(
             policy["public_env"],
             serde_json::json!(["A", "B", { "name": "TRACE_ID", "optional": true }])

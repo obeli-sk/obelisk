@@ -390,46 +390,25 @@ pub(crate) mod app_config {
         pub(crate) policy: serde_json::Value,
     }
 
-    #[utoipa::path(get, path = "/v1/app-config", tag = "app config", responses((status = 200, body = AppConfigResponse), (status = 404)))]
-    pub(crate) async fn get(
-        State(state): State<Arc<WebApiState>>,
-    ) -> Result<Response, HttpResponse> {
-        let digest = state
-            .server_verified
-            .app_config_digest
-            .as_deref()
-            .ok_or_else(|| HttpResponse::not_found(AcceptHeader::Json, "app config"))?;
-        let policy = state
-            .server_verified
-            .app_policy_json
-            .as_deref()
-            .ok_or_else(|| HttpResponse::not_found(AcceptHeader::Json, "app config"))?;
-        let body = format!(
-            "{{\"app_config_digest\":{},\"policy\":{policy}}}",
-            serde_json::to_string(digest).expect("digest is valid JSON string")
-        );
-        Ok((
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/json")],
-            body,
-        )
-            .into_response())
+    #[utoipa::path(get, path = "/v1/app-config", tag = "app config", responses((status = 200, body = AppConfigResponse)))]
+    pub(crate) async fn get(State(state): State<Arc<WebApiState>>) -> Response {
+        let body = serde_json::json!({
+            "app_config_digest": state.server_verified.app_config_digest,
+            "policy": state.server_verified.app_policy,
+        });
+        (StatusCode::OK, Json(body)).into_response()
     }
 
-    #[utoipa::path(get, path = "/v1/app-config-digest", tag = "app config", responses((status = 200, content((String = "text/plain"), (String = "application/json"))), (status = 404)))]
+    #[utoipa::path(get, path = "/v1/app-config-digest", tag = "app config", responses((status = 200, content((String = "text/plain"), (String = "application/json")))))]
     pub(crate) async fn digest(
         State(state): State<Arc<WebApiState>>,
         accept: TextDefaultAcceptHeader,
-    ) -> Result<Response, HttpResponse> {
-        let digest = state
-            .server_verified
-            .app_config_digest
-            .as_deref()
-            .ok_or_else(|| HttpResponse::not_found(accept.into(), "app config digest"))?;
-        Ok(match accept.into() {
-            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &digest),
-            AcceptHeader::Text => digest.to_owned().into_response(),
-        })
+    ) -> Response {
+        let digest = &state.server_verified.app_config_digest;
+        match accept.into() {
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, digest),
+            AcceptHeader::Text => digest.to_string().into_response(),
+        }
     }
 }
 

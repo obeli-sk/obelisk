@@ -7,6 +7,7 @@ use crate::ServerStartup;
 use crate::args::shadow;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
+use crate::config::app::{AppConfigDigest, AppPolicyV1};
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::content_digest_to_wasm_file;
@@ -368,7 +369,7 @@ impl DeploymentSwitchManagerHandle {
         let webhook_registry = self.inner.webhook_registry.clone();
         let cancel_registry = self.inner.cancel_registry.clone();
         let log_forwarder_sender = self.inner.log_forwarder_sender.clone();
-        let app_config_digest = self.inner.server_verified.app_config_digest.clone();
+        let app_config_digest = self.inner.server_verified.app_config_digest.to_string();
         let server_configuration_event_id = self
             .inner
             .server_verified
@@ -397,7 +398,7 @@ impl DeploymentSwitchManagerHandle {
                     .activate_deployment(
                         deployment_id,
                         chrono::Utc::now(),
-                        app_config_digest.as_deref(),
+                        Some(app_config_digest.as_str()),
                     )
                     .await
                     .map_err(|e| SwitchError::Other(e.into()))?;
@@ -681,9 +682,7 @@ pub(crate) async fn run(
     secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
     let node_run_id = concepts::storage::initialize_node_run_id();
-    if let Some(digest) = config.app_config_digest.clone() {
-        concepts::storage::initialize_app_config_digest(digest);
-    }
+    concepts::storage::initialize_app_config_digest(config.app_policy.digest().to_string());
     let _guard: Guard = init::init(&config)?;
     info!(%node_run_id, "Starting Obelisk {PKG_VERSION}");
     let deployment = if let Some(deployment_path) = deployment {
@@ -1911,8 +1910,9 @@ async fn persist_startup_deployment(
     deployment_id: DeploymentId,
     persist: DeploymentPersist,
     component_registry_ro: &ComponentConfigRegistryRO,
-    app_config_digest: Option<&str>,
+    app_config_digest: &AppConfigDigest,
 ) -> Result<(), anyhow::Error> {
+    let app_config_digest = app_config_digest.to_string();
     match persist {
         DeploymentPersist::AlreadyActive => {}
         DeploymentPersist::ActivateEnqueued => {
@@ -1921,7 +1921,7 @@ async fn persist_startup_deployment(
                 .await
                 .context("cannot get db connection for deployment activation")?;
             api_conn
-                .activate_deployment(deployment_id, chrono::Utc::now(), app_config_digest)
+                .activate_deployment(deployment_id, chrono::Utc::now(), Some(&app_config_digest))
                 .await
                 .context("cannot activate enqueued deployment")?;
             info!("Activated enqueued deployment");
@@ -1946,7 +1946,7 @@ async fn persist_startup_deployment(
                 .await
                 .context("cannot insert deployment")?;
             api_conn
-                .activate_deployment(deployment_id, chrono::Utc::now(), app_config_digest)
+                .activate_deployment(deployment_id, chrono::Utc::now(), Some(&app_config_digest))
                 .await
                 .context("cannot activate deployment")?;
             info!("Activated new deployment");
@@ -2174,7 +2174,7 @@ pub(crate) async fn run_internal(
             active_deployment_id,
             persist,
             &compiled_and_linked.component_registry_ro,
-            server_verified.app_config_digest.as_deref(),
+            &server_verified.app_config_digest,
         )
         .await,
     )
@@ -2447,8 +2447,8 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 pub(crate) struct ServerVerified {
     app_name: String,
     activity_vm_runtime: ActivityVmRuntimeMode,
-    pub(crate) app_config_digest: Option<String>,
-    pub(crate) app_policy_json: Option<String>,
+    pub(crate) app_config_digest: AppConfigDigest,
+    pub(crate) app_policy: AppPolicyV1,
     platform_exec_activities: crate::config::server::PlatformExecActivities,
     launch: ServerVerifiedLaunch,
     allowed_exec_activities: AllowExecActivities,
@@ -2629,8 +2629,8 @@ impl ServerVerified {
         Ok(Self {
             app_name: config.app_name.clone(),
             activity_vm_runtime,
-            app_config_digest: config.app_config_digest.clone(),
-            app_policy_json: config.app_policy_json.clone(),
+            app_config_digest: config.app_policy.digest(),
+            app_policy: config.app_policy.clone(),
             platform_exec_activities: config.platform_exec_activities.clone(),
             launch: ServerVerifiedLaunch {
                 engines,
@@ -3985,7 +3985,7 @@ async fn record_secret_exposure_audits(
 pub(crate) struct ServerConfigurationAuditV2 {
     format: ServerConfigurationFormatV2,
     obelisk_version: String,
-    app_config_digest: Option<String>,
+    app_config_digest: AppConfigDigest,
     environment: EnvironmentAuditV2,
     deployment_security: DeploymentSecurityAuditV2,
 }

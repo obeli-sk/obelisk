@@ -32,6 +32,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use tracing::{info, warn};
 
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -292,9 +293,9 @@ fn prepare_server_startup(
     let mut config = config_holder.load_config()?;
     let mut app = config_holder.load_app_config()?;
     config_holder.path_prefixes.app_name = app.effective_name()?;
-    let app_config_digest = app.digest()?;
-    let app_policy_json = String::from_utf8(app.policy_json()?)?;
-    tracing::info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");
+    let app_policy = app.policy();
+    let app_config_digest = app_policy.digest();
+    info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");
     let env_vars = StartupEnvVars::capture();
     let js_runtime = parse_js_runtime_from_env(&env_vars)?;
     let activity_vm_runtime = parse_activity_vm_runtime_from_env(&env_vars)?;
@@ -307,8 +308,8 @@ fn prepare_server_startup(
                 "app.toml allows exec activities, but server.toml has exec activities off"
             );
         }
-        PlatformExecActivities::All => eprintln!(
-            "warning: server.toml enables unrestricted platform exec activity allowance; app.toml still controls deployments"
+        PlatformExecActivities::All => warn!(
+            "server.toml enables unrestricted platform exec activity allowance; app.toml still controls deployments"
         ),
         PlatformExecActivities::Allowlist(platform) => {
             for (name, digests) in &app.allowed_exec_activities {
@@ -331,12 +332,11 @@ fn prepare_server_startup(
     config
         .app_name
         .clone_from(&config_holder.path_prefixes.app_name);
-    config.app_config_digest = Some(app_config_digest);
-    config.app_policy_json = Some(app_policy_json);
+    config.app_policy = app_policy;
 
     let legacy_api_token = legacy_env.filter(|token| !token.is_empty()).map(|token| {
-        eprintln!(
-            "warning: {API_TOKEN_LEGACY} is deprecated; use {API_TOKEN} or configure api.token_hashes in server.toml for server authentication"
+        warn!(
+            "{API_TOKEN_LEGACY} is deprecated; use {API_TOKEN} or configure api.token_hashes in server.toml for server authentication"
         );
         secrecy::SecretString::from(token)
     });
