@@ -341,6 +341,6 @@ mod tests {
             .unwrap()
             .load_app_config()
             .unwrap();
-        assert_eq!(default.digest().unwrap(), explicit.digest().unwrap());
+        assert_eq!(default.policy().digest(), explicit.policy().digest());
     }
 }

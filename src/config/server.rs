@@ -35,10 +35,7 @@ pub(crate) struct ServerConfigToml {
     pub(crate) app_name: String,
     #[serde(skip)]
     #[schemars(skip)]
-    pub(crate) app_config_digest: Option<String>,
-    #[serde(skip)]
-    #[schemars(skip)]
-    pub(crate) app_policy_json: Option<String>,
+    pub(crate) app_policy: crate::config::app::AppPolicyV1,
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) source_path: Option<PathBuf>,

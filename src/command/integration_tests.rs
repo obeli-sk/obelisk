@@ -830,8 +830,7 @@ impl TestServer {
             .unwrap();
         let mut config = config_holder.load_config().unwrap();
         let app = config_holder.load_app_config().unwrap();
-        config.app_config_digest = Some(app.digest().unwrap());
-        config.app_policy_json = Some(String::from_utf8(app.policy_json().unwrap()).unwrap());
+        config.app_policy = app.policy();
         config.secrets = app.secrets;
         config.public_env = app.public_env;
         config.allowed_exec_activities = app.allowed_exec_activities;
@@ -2473,7 +2472,7 @@ async fn app_config_webapi_reports_running_policy() {
     let app: crate::config::app::AppConfigToml =
         toml::from_str(&std::fs::read_to_string(server.tmp_dir.path().join("app.toml")).unwrap())
             .unwrap();
-    let expected_digest = app.digest().unwrap();
+    let expected_digest = app.policy().digest().to_string();
     let digest = server
         .client
         .get(format!("{}/v1/app-config-digest", server.base_url))
@@ -2494,7 +2493,7 @@ async fn app_config_webapi_reports_running_policy() {
     assert_eq!(config["app_config_digest"], expected_digest);
     assert_eq!(
         config["policy"],
-        serde_json::from_slice::<Value>(&app.policy_json().unwrap()).unwrap()
+        serde_json::to_value(app.policy()).unwrap()
     );
 
     let deployments: Value = server
