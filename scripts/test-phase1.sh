@@ -13,6 +13,9 @@ fi
 if [[ "${OBELISK_UNSTABLE_ACTIVITY_VM:-}" == qemu-tcg || "${OBELISK_UNSTABLE_ACTIVITY_VM:-}" == qemu-kvm ]]; then
   cargo nextest run --no-output-indent --workspace --profile ci-test-populate-codegen-cache \
     populate_activity_vm_qemu_cache ${ADDITIONAL_FEATURES:-}
+elif [[ "${OBELISK_UNSTABLE_ACTIVITY_VM:-}" == firecracker ]]; then
+  cargo nextest run --no-output-indent --workspace --profile ci-test-populate-codegen-cache \
+    populate_activity_vm_firecracker_cache ${ADDITIONAL_FEATURES:-}
 elif [[ "${OBELISK_UNSTABLE_ACTIVITY_VM:-}" == bochs-wasm ]]; then
   cargo nextest run --no-output-indent --workspace --profile ci-test-populate-codegen-cache \
     populate_activity_vm_codegen_cache ${ADDITIONAL_FEATURES:-}

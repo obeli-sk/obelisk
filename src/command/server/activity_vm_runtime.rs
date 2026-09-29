@@ -4,8 +4,8 @@ use concepts::ContentDigest;
 #[cfg(debug_assertions)]
 use concepts::component_id::Digest;
 use embedded_assets::{
-    ACTIVITY_VM_BOCHS_WASM_RUNTIME_LOCATION, ACTIVITY_VM_QEMU_KVM_RUNTIME_LOCATION,
-    ACTIVITY_VM_QEMU_TCG_RUNTIME_LOCATION,
+    ACTIVITY_VM_BOCHS_WASM_RUNTIME_LOCATION, ACTIVITY_VM_FIRECRACKER_RUNTIME_LOCATION,
+    ACTIVITY_VM_QEMU_KVM_RUNTIME_LOCATION, ACTIVITY_VM_QEMU_TCG_RUNTIME_LOCATION,
 };
 use oci_client::Reference;
 #[cfg(debug_assertions)]
@@ -24,29 +24,41 @@ pub(crate) async fn fetch(
     match mode {
         ActivityVmRuntimeMode::Disabled => Ok(None),
         ActivityVmRuntimeMode::Firecracker => {
-            // Prototype: no published artifact yet, so the bundle must be built locally.
-            let bundle = std::env::var_os("OBELISK_FIRECRACKER_BUNDLE")
-                .map(PathBuf::from)
-                .context("the firecracker activity VM requires OBELISK_FIRECRACKER_BUNDLE")?;
-            ensure!(bundle.is_dir(), "Firecracker bundle {bundle:?} is missing");
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open("/dev/kvm")
-                .context("Firecracker requires read/write access to /dev/kvm")?;
-            let mut hasher = sha2::Sha256::new();
-            for file in [
-                "guest/vmlinux",
-                "guest/initramfs.cpio.gz",
-                "guest/machine.json",
-                "firecracker-path",
-            ] {
-                let digest = utils::sha256sum::calculate_sha256_file(bundle.join(file)).await?;
-                sha2::Digest::update(&mut hasher, digest.0.0);
+            #[cfg(debug_assertions)]
+            if let Some(bundle) = std::env::var_os("OBELISK_FIRECRACKER_BUNDLE").map(PathBuf::from)
+            {
+                tracing::warn!("Overriding Firecracker bundle with {bundle:?}");
+                ensure!(bundle.is_dir(), "local Firecracker bundle is missing");
+                check_firecracker_on_path(&bundle).await?;
+                let mut hasher = Sha256::new();
+                for file in [
+                    "guest/vmlinux",
+                    "guest/initramfs.cpio.gz",
+                    "guest/machine.json",
+                ] {
+                    let digest = utils::sha256sum::calculate_sha256_file(bundle.join(file)).await?;
+                    hasher.update(digest.0.0);
+                }
+                let digest = ContentDigest(Digest(hasher.finalize().into()));
+                return Ok(Some(RuntimeSource::Firecracker { bundle, digest }));
             }
-            let digest = ContentDigest(concepts::component_id::Digest(
-                sha2::Digest::finalize(hasher).into(),
-            ));
+            let location = ACTIVITY_VM_FIRECRACKER_RUNTIME_LOCATION.trim();
+            ensure!(
+                !location.is_empty(),
+                "the Firecracker runtime has no published release yet"
+            );
+            let reference = Reference::from_str(
+                location
+                    .strip_prefix("oci://")
+                    .context("Firecracker runtime reference must start with `oci://`")?,
+            )?;
+            let digest =
+                ContentDigest::from_str(reference.digest().context(
+                    "Firecracker runtime OCI reference must be pinned by manifest digest",
+                )?)?;
+            let bundle =
+                crate::oci::pull_firecracker_bundle_to_cache(&reference, cache_root).await?;
+            check_firecracker_on_path(&bundle).await?;
             Ok(Some(RuntimeSource::Firecracker { bundle, digest }))
         }
         ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm => {
@@ -161,6 +173,43 @@ async fn check_native_qemu_on_path(bundle: &Path, accelerator: &str) -> anyhow::
     Ok(())
 }
 
+async fn check_firecracker_on_path(bundle: &Path) -> anyhow::Result<()> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/kvm")
+        .context("Firecracker requires read/write access to /dev/kvm")?;
+    let actual = first_line_of_version("firecracker").await?;
+    let expected = tokio::fs::read_to_string(bundle.join("firecracker-version.txt")).await?;
+    // Every VM cold boots, so a different Firecracker only needs to support the same config.
+    if actual != expected.trim() {
+        tracing::warn!(
+            "Firecracker version mismatch: bundle was tested with {}, PATH has {actual}",
+            expected.trim()
+        );
+    }
+    first_line_of_version("mkfs.erofs").await?;
+    Ok(())
+}
+
+async fn first_line_of_version(program: &str) -> anyhow::Result<String> {
+    let output = tokio::process::Command::new(program)
+        .arg("--version")
+        .output()
+        .await
+        .with_context(|| format!("{program} must be available on PATH"))?;
+    ensure!(
+        output.status.success(),
+        "{program} --version exited with {}",
+        output.status
+    );
+    String::from_utf8(output.stdout)?
+        .lines()
+        .next()
+        .map(str::to_owned)
+        .with_context(|| format!("{program} --version printed nothing"))
+}
+
 async fn qemu_version_on_path() -> anyhow::Result<String> {
     let output = tokio::process::Command::new("qemu-system-x86_64")
         .arg("--version")
@@ -203,6 +252,21 @@ mod tests {
             unreachable!()
         };
         activity_vm_runner::compile(&engine, &wasm).unwrap();
+    }
+
+    #[tokio::test]
+    async fn populate_activity_vm_firecracker_cache() {
+        test_utils::set_up();
+        let workspace = PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap());
+        let Some(RuntimeSource::Firecracker { bundle, .. }) = fetch(
+            &workspace.join("test-wasm-cache"),
+            ActivityVmRuntimeMode::Firecracker,
+        )
+        .await
+        .unwrap() else {
+            unreachable!()
+        };
+        assert!(bundle.join("guest/vmlinux").is_file());
     }
 
     #[tokio::test]

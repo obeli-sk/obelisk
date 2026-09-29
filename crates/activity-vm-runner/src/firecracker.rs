@@ -38,20 +38,13 @@ struct Bundle {
 
 impl Bundle {
     fn load(bundle: &Path) -> anyhow::Result<Self> {
-        let read_path = |name: &str| -> anyhow::Result<PathBuf> {
-            let path = bundle.join(name);
-            Ok(PathBuf::from(
-                std::fs::read_to_string(&path)
-                    .with_context(|| format!("cannot read {}", path.display()))?
-                    .trim(),
-            ))
-        };
         let guest = bundle.join("guest");
         let machine = std::fs::read(guest.join("machine.json"))
             .context("cannot read the Firecracker bundle's machine.json")?;
         Ok(Self {
-            firecracker: read_path("firecracker-path")?,
-            mkfs_erofs: read_path("mkfs-erofs-path")?,
+            // Taken from PATH like native QEMU; a cold boot does not need the build's exact version.
+            firecracker: PathBuf::from("firecracker"),
+            mkfs_erofs: PathBuf::from("mkfs.erofs"),
             kernel: guest.join("vmlinux"),
             initrd: guest.join("initramfs.cpio.gz"),
             machine: serde_json::from_slice(&machine)?,

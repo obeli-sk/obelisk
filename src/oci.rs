@@ -42,39 +42,93 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
         matches!(accelerator, "tcg" | "kvm"),
         "invalid QEMU accelerator"
     );
+    pull_vm_bundle_to_cache(
+        image,
+        &cache_root.join("activity-vm/native-qemu"),
+        &VmBundleArtifact {
+            label: "native QEMU",
+            name: &format!("activity-vm-qemu-{accelerator}"),
+            version_file: "qemu-version.txt",
+            required: &["vm.state", "guest/machine.json"],
+        },
+    )
+    .await
+}
+
+pub(crate) async fn pull_firecracker_bundle_to_cache(
+    image: &Reference,
+    cache_root: &Path,
+) -> anyhow::Result<PathBuf> {
+    pull_vm_bundle_to_cache(
+        image,
+        &cache_root.join("activity-vm/firecracker"),
+        &VmBundleArtifact {
+            label: "Firecracker",
+            name: "activity-vm-firecracker",
+            version_file: "firecracker-version.txt",
+            required: &[
+                "guest/vmlinux",
+                "guest/initramfs.cpio.gz",
+                "guest/machine.json",
+            ],
+        },
+    )
+    .await
+}
+
+/// An activity VM runtime pushed by its runtime repository as `<name>.tar.zst` plus a version layer.
+struct VmBundleArtifact<'a> {
+    label: &'a str,
+    name: &'a str,
+    version_file: &'a str,
+    required: &'a [&'a str],
+}
+
+impl VmBundleArtifact<'_> {
+    fn is_complete(&self, bundle: &Path) -> bool {
+        bundle.join(self.version_file).is_file()
+            && self.required.iter().all(|file| bundle.join(file).is_file())
+    }
+}
+
+async fn pull_vm_bundle_to_cache(
+    image: &Reference,
+    parent: &Path,
+    artifact: &VmBundleArtifact<'_>,
+) -> anyhow::Result<PathBuf> {
+    let label = artifact.label;
     let pinned_digest = image
         .digest()
-        .context("native QEMU OCI reference needs a digest")?;
-    let parent = cache_root.join("activity-vm/native-qemu");
+        .with_context(|| format!("{label} OCI reference needs a digest"))?;
     let destination = parent.join(pinned_digest.replace(':', "-"));
-    if destination.join("vm.state").is_file() && destination.join("qemu-version.txt").is_file() {
+    if artifact.is_complete(&destination) {
         return Ok(destination);
     }
     if destination.exists() {
         tokio::fs::remove_dir_all(&destination).await?;
     }
-    tokio::fs::create_dir_all(&parent).await?;
+    tokio::fs::create_dir_all(parent).await?;
 
     let client = oci_client::Client::default();
     let auth = get_oci_auth(image)?;
     let (manifest, manifest_digest, _) = retry(
         || client.pull_manifest_and_config(image, &auth),
         OCI_CLIENT_RETRIES,
-        "pulling native QEMU manifest",
+        "pulling activity VM runtime manifest",
     )
     .await?;
     ensure!(
         manifest_digest == pinned_digest,
-        "native QEMU manifest digest mismatch"
+        "{label} manifest digest mismatch"
     );
-    let artifact_kind = format!("activity-vm-qemu-{accelerator}.v1");
+    let artifact_kind = format!("{}.v1", artifact.name);
     ensure!(
         manifest
             .annotations
             .as_ref()
             .and_then(|a| a.get("dev.obelisk.artifact.kind"))
             .is_some_and(|kind| kind == &artifact_kind),
-        "unexpected native QEMU artifact kind"
+        "unexpected {label} artifact kind"
     );
     let layer = |title: &str, media_type: &str| -> anyhow::Result<&OciDescriptor> {
         let mut matching = manifest.layers.iter().filter(|layer| {
@@ -87,18 +141,21 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
         });
         let first = matching
             .next()
-            .context("native QEMU OCI layer is missing")?;
-        ensure!(matching.next().is_none(), "duplicate native QEMU OCI layer");
+            .with_context(|| format!("{label} OCI layer {title} is missing"))?;
+        ensure!(
+            matching.next().is_none(),
+            "duplicate {label} OCI layer {title}"
+        );
         Ok(first)
     };
     let bundle_layer = layer(
-        &format!("activity-vm-qemu-{accelerator}.tar.zst"),
-        &format!("application/vnd.obelisk.activity-vm-qemu-{accelerator}.v1+zstd"),
+        &format!("{}.tar.zst", artifact.name),
+        &format!("application/vnd.obelisk.{}.v1+zstd", artifact.name),
     )?;
-    let version_layer = layer("qemu-version.txt", "text/plain")?;
-    let work = tempfile::tempdir_in(&parent)?;
+    let version_layer = layer(artifact.version_file, "text/plain")?;
+    let work = tempfile::tempdir_in(parent)?;
     let archive_path = work.path().join("bundle.tar.zst");
-    let version_path = work.path().join("qemu-version.txt");
+    let version_path = work.path().join(artifact.version_file);
     for (descriptor, path) in [
         (bundle_layer, &archive_path),
         (version_layer, &version_path),
@@ -109,11 +166,10 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
             path,
             descriptor,
             &ContentDigest::from_str(&descriptor.digest)?,
-            "native QEMU artifact",
+            "activity VM runtime artifact",
         )
         .await?;
     }
-
     let extracted = work.path().join("bundle");
     tokio::fs::create_dir(&extracted).await?;
     let archive = archive_path.clone();
@@ -125,25 +181,22 @@ pub(crate) async fn pull_native_qemu_bundle_to_cache(
         Ok(())
     })
     .await??;
-    let bundle_version = tokio::fs::read_to_string(extracted.join("qemu-version.txt")).await?;
+    let bundle_version = tokio::fs::read_to_string(extracted.join(artifact.version_file)).await?;
     let manifest_version = tokio::fs::read_to_string(&version_path).await?;
     ensure!(
         !bundle_version.trim().is_empty() && bundle_version.trim() == manifest_version.trim(),
-        "native QEMU version in bundle does not match OCI metadata"
+        "{label} version in bundle does not match OCI metadata"
     );
-    ensure!(
-        extracted.join("vm.state").is_file(),
-        "native QEMU snapshot is missing"
-    );
-    ensure!(
-        extracted.join("guest/machine.json").is_file(),
-        "native QEMU machine is missing"
-    );
+    for file in artifact.required {
+        ensure!(
+            extracted.join(file).is_file(),
+            "{label} bundle is missing {file}"
+        );
+    }
     if let Err(error) = tokio::fs::rename(&extracted, &destination).await {
         ensure!(
-            destination.join("vm.state").is_file()
-                && destination.join("qemu-version.txt").is_file(),
-            "caching native QEMU bundle failed: {error}"
+            artifact.is_complete(&destination),
+            "caching {label} bundle failed: {error}"
         );
     }
     Ok(destination)

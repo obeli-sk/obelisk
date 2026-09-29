@@ -295,6 +295,8 @@
                 cargo-expand
                 cargo-insta
                 cargo-nextest
+                erofs-utils # Firecracker activity VM store images
+                firecracker # Firecracker activity VM runtime
                 gh # scripts/sync-branch-protection.sh
                 git-cliff
                 gzip
