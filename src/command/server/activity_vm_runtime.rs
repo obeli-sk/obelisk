@@ -1,15 +1,11 @@
 use activity_vm_runner::RuntimeSource;
 use anyhow::{Context as _, ensure};
 use concepts::ContentDigest;
-#[cfg(debug_assertions)]
-use concepts::component_id::Digest;
 use embedded_assets::{
     ACTIVITY_VM_BOCHS_WASM_RUNTIME_LOCATION, ACTIVITY_VM_FIRECRACKER_RUNTIME_LOCATION,
     ACTIVITY_VM_QEMU_KVM_RUNTIME_LOCATION, ACTIVITY_VM_QEMU_TCG_RUNTIME_LOCATION,
 };
 use oci_client::Reference;
-#[cfg(debug_assertions)]
-use sha2::{Digest as _, Sha256};
 use std::path::Path;
 use std::str::FromStr as _;
 
@@ -40,16 +36,18 @@ pub(crate) async fn fetch(
                 tracing::warn!("Overriding Firecracker bundle with {bundle:?}");
                 ensure!(bundle.is_dir(), "local Firecracker bundle is missing");
                 check_firecracker_on_path(&bundle).await?;
-                let mut hasher = Sha256::new();
+                let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
                 for file in [
                     "guest/vmlinux",
                     "guest/initramfs.cpio.gz",
                     "guest/machine.json",
                 ] {
                     let digest = utils::sha256sum::calculate_sha256_file(bundle.join(file)).await?;
-                    hasher.update(digest.0.0);
+                    sha2::Digest::update(&mut hasher, digest.0.0);
                 }
-                let digest = ContentDigest(Digest(hasher.finalize().into()));
+                let digest = ContentDigest(concepts::component_id::Digest(
+                    sha2::Digest::finalize(hasher).into(),
+                ));
                 return Ok(Some(RuntimeSource::Firecracker { bundle, digest }));
             }
             let location = ACTIVITY_VM_FIRECRACKER_RUNTIME_LOCATION.trim();
@@ -84,12 +82,14 @@ pub(crate) async fn fetch(
                 tracing::warn!("Overriding native QEMU bundle with {bundle:?}");
                 ensure!(bundle.is_dir(), "local native QEMU bundle is missing");
                 check_native_qemu_on_path(&bundle, accelerator).await?;
-                let mut hasher = Sha256::new();
+                let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
                 for file in ["vm.state", "guest/machine.json"] {
                     let digest = utils::sha256sum::calculate_sha256_file(bundle.join(file)).await?;
-                    hasher.update(digest.0.0);
+                    sha2::Digest::update(&mut hasher, digest.0.0);
                 }
-                let digest = ContentDigest(Digest(hasher.finalize().into()));
+                let digest = ContentDigest(concepts::component_id::Digest(
+                    sha2::Digest::finalize(hasher).into(),
+                ));
                 return Ok(Some(RuntimeSource::QemuNative { bundle, digest }));
             }
             ensure!(
