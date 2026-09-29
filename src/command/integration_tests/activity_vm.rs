@@ -454,11 +454,9 @@ fn native_qemu_children() -> Vec<u32> {
                 .parse::<u32>()
                 .ok()?;
             let command = std::fs::read(entry.path().join("cmdline")).ok()?;
-            (parent == parent_pid
-                && command
-                    .windows(18)
-                    .any(|part| part == b"qemu-system-x86_64"))
-            .then_some(pid)
+            let is_vmm = |name: &[u8]| command.windows(name.len()).any(|part| part == name);
+            (parent == parent_pid && (is_vmm(b"qemu-system-x86_64") || is_vmm(b"firecracker")))
+                .then_some(pid)
         })
         .collect()
 }
@@ -468,7 +466,9 @@ async fn native_qemu_interruption_case(ip: String, cancel: bool) {
 
     if !matches!(
         parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
-        ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm
+        ActivityVmRuntimeMode::QemuTcg
+            | ActivityVmRuntimeMode::QemuKvm
+            | ActivityVmRuntimeMode::Firecracker
     ) {
         return;
     }
@@ -561,7 +561,9 @@ async fn native_qemu_lock_expiry_kills_vm() {
 async fn native_qemu_guest_memory() {
     if !matches!(
         parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
-        ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm
+        ActivityVmRuntimeMode::QemuTcg
+            | ActivityVmRuntimeMode::QemuKvm
+            | ActivityVmRuntimeMode::Firecracker
     ) {
         return;
     }
@@ -596,7 +598,9 @@ memory.gib = 2
 async fn native_qemu_guest_cpus() {
     if !matches!(
         parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
-        ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm
+        ActivityVmRuntimeMode::QemuTcg
+            | ActivityVmRuntimeMode::QemuKvm
+            | ActivityVmRuntimeMode::Firecracker
     ) {
         return;
     }

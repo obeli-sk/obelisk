@@ -16,6 +16,7 @@ chrono.workspace = true
 concepts.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
+nix = { version = "0.31", features = ["inotify"] }
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true

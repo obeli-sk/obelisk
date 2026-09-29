@@ -12,9 +12,11 @@ use wasmtime::{Engine, Linker, Module, Store};
 use wasmtime_wasi::p1::WasiP1Ctx;
 use wasmtime_wasi::{FsPerms, WasiCtxBuilder, p1, p2::pipe};
 
+mod firecracker;
 mod http_bridge;
 mod native_qemu;
 
+pub use firecracker::validate as validate_firecracker;
 pub use native_qemu::{validate_guest_cpus, validate_guest_memory};
 
 /// Guest RAM set by the Bochs runtime's `bochsrc`; Bochs cannot change it per activity.
@@ -33,6 +35,10 @@ pub enum RuntimeSource {
         bundle: PathBuf,
         digest: ContentDigest,
     },
+    Firecracker {
+        bundle: PathBuf,
+        digest: ContentDigest,
+    },
 }
 
 impl RuntimeSource {
@@ -40,7 +46,7 @@ impl RuntimeSource {
     pub fn path(&self) -> &Path {
         match self {
             Self::BochsWasm(path) => path,
-            Self::QemuNative { bundle, .. } => bundle,
+            Self::QemuNative { bundle, .. } | Self::Firecracker { bundle, .. } => bundle,
         }
     }
 }
@@ -51,6 +57,12 @@ pub enum RuntimeBackend {
         module: Module,
     },
     QemuNative {
+        bundle: PathBuf,
+        /// Total guest RAM.
+        guest_memory: u64,
+        guest_cpus: u32,
+    },
+    Firecracker {
         bundle: PathBuf,
         /// Total guest RAM.
         guest_memory: u64,
@@ -106,6 +118,26 @@ pub async fn execute(
             guest_cpus,
         } => {
             return native_qemu::execute(
+                bundle,
+                *guest_memory,
+                *guest_cpus,
+                mapdirs,
+                guest_args,
+                env,
+                stdin,
+                policy,
+                http_client_traces,
+                max_stdout_bytes,
+                max_stderr_bytes,
+            )
+            .await;
+        }
+        RuntimeBackend::Firecracker {
+            bundle,
+            guest_memory,
+            guest_cpus,
+        } => {
+            return firecracker::execute(
                 bundle,
                 *guest_memory,
                 *guest_cpus,

@@ -10,9 +10,7 @@ use embedded_assets::{
 use oci_client::Reference;
 #[cfg(debug_assertions)]
 use sha2::{Digest as _, Sha256};
-use std::path::Path;
-#[cfg(debug_assertions)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 
 use super::ActivityVmRuntimeMode;
@@ -25,6 +23,32 @@ pub(crate) async fn fetch(
 ) -> anyhow::Result<Option<RuntimeSource>> {
     match mode {
         ActivityVmRuntimeMode::Disabled => Ok(None),
+        ActivityVmRuntimeMode::Firecracker => {
+            // Prototype: no published artifact yet, so the bundle must be built locally.
+            let bundle = std::env::var_os("OBELISK_FIRECRACKER_BUNDLE")
+                .map(PathBuf::from)
+                .context("the firecracker activity VM requires OBELISK_FIRECRACKER_BUNDLE")?;
+            ensure!(bundle.is_dir(), "Firecracker bundle {bundle:?} is missing");
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/kvm")
+                .context("Firecracker requires read/write access to /dev/kvm")?;
+            let mut hasher = sha2::Sha256::new();
+            for file in [
+                "guest/vmlinux",
+                "guest/initramfs.cpio.gz",
+                "guest/machine.json",
+                "firecracker-path",
+            ] {
+                let digest = utils::sha256sum::calculate_sha256_file(bundle.join(file)).await?;
+                sha2::Digest::update(&mut hasher, digest.0.0);
+            }
+            let digest = ContentDigest(concepts::component_id::Digest(
+                sha2::Digest::finalize(hasher).into(),
+            ));
+            Ok(Some(RuntimeSource::Firecracker { bundle, digest }))
+        }
         ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm => {
             let (location, accelerator) = match mode {
                 ActivityVmRuntimeMode::QemuTcg => (ACTIVITY_VM_QEMU_TCG_RUNTIME_LOCATION, "tcg"),

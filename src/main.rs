@@ -380,8 +380,9 @@ pub(crate) fn parse_activity_vm_runtime_from_env(
         Some("bochs-wasm") => Ok(ActivityVmRuntimeMode::BochsWasm),
         Some("qemu-tcg") => Ok(ActivityVmRuntimeMode::QemuTcg),
         Some("qemu-kvm") => Ok(ActivityVmRuntimeMode::QemuKvm),
+        Some("firecracker") => Ok(ActivityVmRuntimeMode::Firecracker),
         Some(other) => anyhow::bail!(
-            "invalid OBELISK_UNSTABLE_ACTIVITY_VM value `{other:?}`; expected `bochs-wasm`, `qemu-tcg`, or `qemu-kvm`"
+            "invalid OBELISK_UNSTABLE_ACTIVITY_VM value `{other:?}`; expected `bochs-wasm`, `qemu-tcg`, `qemu-kvm`, or `firecracker`"
         ),
     }
 }
