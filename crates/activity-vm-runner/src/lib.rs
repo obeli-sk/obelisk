@@ -12,12 +12,19 @@ use wasmtime::{Engine, Linker, Module, Store};
 use wasmtime_wasi::p1::WasiP1Ctx;
 use wasmtime_wasi::{FsPerms, WasiCtxBuilder, p1, p2::pipe};
 
+#[cfg(target_os = "linux")]
 mod firecracker;
 mod http_bridge;
 mod native_qemu;
 
+#[cfg(target_os = "linux")]
 pub use firecracker::validate as validate_firecracker;
 pub use native_qemu::{validate_guest_cpus, validate_guest_memory};
+
+#[cfg(not(target_os = "linux"))]
+pub fn validate_firecracker(_bundle: &Path, _memory: u64, _cpus: u32) -> anyhow::Result<()> {
+    bail!("Firecracker is only supported on Linux")
+}
 
 /// Guest RAM set by the Bochs runtime's `bochsrc`; Bochs cannot change it per activity.
 pub const BOCHS_GUEST_MEMORY: u64 = 512 << 20;
@@ -132,6 +139,7 @@ pub async fn execute(
             )
             .await;
         }
+        #[cfg(target_os = "linux")]
         RuntimeBackend::Firecracker {
             bundle,
             guest_memory,
@@ -152,6 +160,8 @@ pub async fn execute(
             )
             .await;
         }
+        #[cfg(not(target_os = "linux"))]
+        RuntimeBackend::Firecracker { .. } => bail!("Firecracker is only supported on Linux"),
         RuntimeBackend::BochsWasm { engine, module } => (engine, module),
     };
     let started = Instant::now();
