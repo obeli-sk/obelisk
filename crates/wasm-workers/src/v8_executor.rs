@@ -4,7 +4,7 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::time::Duration;
-use tokio::runtime::Builder;
+use tokio::runtime::{Builder, Runtime};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 
 /// How often [`V8Executor::drain`] re-checks the isolate permits.
@@ -108,6 +108,21 @@ struct Job {
 thread_local! {
     /// State a prewarm hook prepared for the next isolate on this thread, off the critical path.
     static WARM: RefCell<Option<Box<dyn Any>>> = const { RefCell::new(None) };
+    /// The runtime `WARM` was created under: a `JsRuntime` posts V8's delayed tasks to it.
+    static WARM_TOKIO_RUNTIME: RefCell<Option<Runtime>> = const { RefCell::new(None) };
+}
+
+fn new_tokio_runtime() -> Runtime {
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("native V8 Tokio runtime must initialize")
+}
+
+/// Drops the warm state before the runtime it may have spawned tasks on.
+fn drop_warm() {
+    drop(WARM.with(|warm| warm.borrow_mut().take()));
+    drop(WARM_TOKIO_RUNTIME.with(|runtime| runtime.borrow_mut().take()));
 }
 
 pub(crate) fn has_warm() -> bool {
@@ -153,7 +168,7 @@ fn isolate_thread(mut job: Job, threads: &Weak<IdleThreads>) {
         };
         job = next;
     }
-    WARM.with(|warm| warm.borrow_mut().take());
+    drop_warm();
 }
 
 fn wait_for_job(threads: &Weak<IdleThreads>, prewarm: Option<Prewarm>) -> Option<Job> {
@@ -165,9 +180,13 @@ fn wait_for_job(threads: &Weak<IdleThreads>, prewarm: Option<Prewarm>) -> Option
         id
     };
     // Already listed: a job arriving meanwhile queues here instead of starting a cold thread.
-    match prewarm {
-        Some(prewarm) => prewarm(),
-        None => drop(WARM.with(|warm| warm.borrow_mut().take())),
+    if let Some(prewarm) = prewarm {
+        let tokio_runtime = new_tokio_runtime();
+        {
+            let _guard = tokio_runtime.enter();
+            prewarm();
+        }
+        WARM_TOKIO_RUNTIME.with(|runtime| *runtime.borrow_mut() = Some(tokio_runtime));
     }
     match receiver.recv_timeout(IDLE_THREAD_TIMEOUT) {
         Ok(job) => Some(job),
@@ -330,7 +349,8 @@ pub struct V8Admission {
 
 impl V8Admission {
     /// Runs `prewarm` on the isolate thread after `run` finishes, while it waits for the next
-    /// isolate. Whatever it stores with [`put_warm`] is only ever taken on that thread.
+    /// isolate, inside the Tokio runtime that isolate will run on. Whatever it stores with
+    /// [`put_warm`] is only ever taken on that thread.
     #[must_use]
     pub fn with_prewarm(mut self, prewarm: impl FnOnce() + Send + 'static) -> Self {
         self.prewarm = Some(Box::new(prewarm));
@@ -380,10 +400,9 @@ fn run_isolate<F, Fut, T>(
     Fut: Future<Output = T> + 'static,
     T: Send + 'static,
 {
-    let tokio_runtime = Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("native V8 Tokio runtime must initialize");
+    let tokio_runtime = WARM_TOKIO_RUNTIME
+        .with(|runtime| runtime.borrow_mut().take())
+        .unwrap_or_else(new_tokio_runtime);
     // Two-level driver: `deno_unsync::spawn` gives the non-`Send` isolate future the local task
     // scheduling `deno_core` ops require, and the bootstrap around it is what the runtime polls.
     // Neither a `LocalSet` nor masking the isolate future directly works: both leave terminated
@@ -400,6 +419,8 @@ fn run_isolate<F, Fut, T>(
         .expect("native V8 root task must not be cancelled")
         .into_inner();
     let _ = result_tx.send(result);
+    // A warm isolate this job did not take is bound to this runtime.
+    drop(WARM.with(|warm| warm.borrow_mut().take()));
     // Tasks the isolate left on the runtime still hold host state, so the permit goes last.
     drop(tokio_runtime);
     drop(reservation);
