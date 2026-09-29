@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- *(V8)* A JS activity running in a prewarmed isolate no longer aborts the server when V8
+  schedules a delayed task, such as an `Atomics.waitAsync` timeout or a GC follow-up. Introduced
+  in 0.42.0-rc.7.
+
 ## [0.42.0-rc.7](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.6...v0.42.0-rc.7)
 
 This release candidate adds experimental native QEMU (TCG and KVM) and Firecracker backends for
