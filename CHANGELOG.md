@@ -6,45 +6,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0-rc.7](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.6...v0.42.0-rc.7)
+
+This release candidate adds experimental native QEMU (TCG and KVM) and Firecracker backends for
+VM activities, with configurable guest memory and vCPUs, and puts every VM backend behind an explicit opt-in.
+V8 activities start faster through reused and prewarmed isolate threads, and a batch Web API
+endpoint reads creation and completion events for many executions at once. Existing
+`[[activity_vm]]` deployments must set `memory` and `OBELISK_UNSTABLE_ACTIVITY_VM`, and
+`OBELISK_JS_RUNTIME=boawasm` must be renamed to `boa-wasm`.
+
 ### Added
 
-- *(web API)* `POST /v1/executions/events/batch` reads each requested execution's `Created` and
-  optional `Finished` event in request order using one database transaction.
-- *(activity-vm)* Experimental QEMU KVM mode added alongside TCG, with separate pinned runtime
-  bundles for each accelerator.
-- *(activity-vm)* Required `memory` on `[[activity_vm]]` sets the guest RAM, for example
-  `memory.gib = 4`. Native QEMU restores a 256 MiB snapshot and plugs the rest through
+- *(activity-vm)* Experimental native QEMU backends, selected with
+  `OBELISK_UNSTABLE_ACTIVITY_VM=qemu-tcg` or `qemu-kvm`. Each accelerator has its own pinned
+  runtime bundle, pulled from OCI and restored from a snapshot. `qemu-system-x86_64` must be on
+  `PATH` and match the QEMU version the snapshot was built with; KVM also needs `/dev/kvm`.
+  [#1038](https://github.com/obeli-sk/obelisk/pull/1038),
+  [#1040](https://github.com/obeli-sk/obelisk/pull/1040),
+  [#1045](https://github.com/obeli-sk/obelisk/pull/1045),
+  [#1052](https://github.com/obeli-sk/obelisk/pull/1052)
+- *(activity-vm)* Experimental Firecracker backend, selected with
+  `OBELISK_UNSTABLE_ACTIVITY_VM=firecracker`. Every execution cold boots a microVM from a pinned
+  runtime bundle pulled from OCI. `firecracker` and `mkfs.erofs` must be on `PATH`, and
+  `/dev/kvm` must be readable and writable.
+  [#1068](https://github.com/obeli-sk/obelisk/pull/1068)
+- *(activity-vm)* **Breaking:** Required `memory` on `[[activity_vm]]` sets the guest RAM, for
+  example `memory.gib = 4`. Native QEMU restores a 256 MiB snapshot and plugs the rest through
   `virtio-mem`, from 256 MiB up to 16.25 GiB; plugging 8 GiB adds about 45 ms on KVM. The Bochs
   guest has a fixed 512 MiB and accepts only that value.
-- *(activity-vm)* Optional `cpus` on `[[activity_vm]]` sets the guest vCPUs, default 1. Native
-  QEMU restores a 1-vCPU snapshot and hot-adds the rest, up to 16; each extra vCPU adds about
-  5 ms on KVM, and TCG pays about 60 ms for the first and 10-15 ms for each further one. Bochs
-  accepts only 1.
+  [#1057](https://github.com/obeli-sk/obelisk/pull/1057)
+- *(activity-vm)* Optional `cpus` on `[[activity_vm]]` sets the guest vCPUs, default 1. Bochs
+  accepts only 1. [#1062](https://github.com/obeli-sk/obelisk/pull/1062)
+- *(web API)* `POST /v1/executions/events/batch` reads each requested execution's `Created` and
+  optional `Finished` event in request order using one database transaction.
+  [#1037](https://github.com/obeli-sk/obelisk/pull/1037)
 
 ### Changed
 
-- *(activity-vm)* `[[activity_vm]]` deployments now require
-  `OBELISK_UNSTABLE_ACTIVITY_VM=bochs-wasm`, `qemu-tcg`, or `qemu-kvm`
-  on the deployment CLI and server. Without it, deployment validation rejects VM activities;
-  existing VM deployments also need it to activate.
+- *(activity-vm)* **Breaking:** `[[activity_vm]]` deployments now require
+  `OBELISK_UNSTABLE_ACTIVITY_VM=bochs-wasm`, `qemu-tcg`, `qemu-kvm`, or `firecracker` on the
+  deployment CLI and server. Without it, deployment validation rejects VM activities; existing VM
+  deployments also need it to activate. [#1035](https://github.com/obeli-sk/obelisk/pull/1035),
+  [#1039](https://github.com/obeli-sk/obelisk/pull/1039)
+- *(activity-vm)* Empty stdout and stderr chunks are no longer written to execution logs.
+  [#1047](https://github.com/obeli-sk/obelisk/pull/1047)
+- *(activity-vm)* The guest checks proxy readiness every 10 ms instead of every second, so VM
+  executions no longer start their command up to a second late.
+  [#1066](https://github.com/obeli-sk/obelisk/pull/1066)
+- *(JavaScript)* **Breaking:** The value selecting Boa compiled to WASM is renamed from
+  `OBELISK_JS_RUNTIME=boawasm` to `OBELISK_JS_RUNTIME=boa-wasm`; the old value is rejected.
+  [#1039](https://github.com/obeli-sk/obelisk/pull/1039)
 - *(V8)* Isolate threads are reused: a thread whose isolate finished runs the next one instead of
-  exiting, and idle threads exit after 60 seconds. Every isolate is still fresh. Creating an isolate
-  on a fresh thread costs about twice as much, so a sequential JS workflow calling 1000 V8 activities
-  finishes about 25% faster.
-- *(V8)* An idle isolate thread prepares the runtime for the next JS activity while it waits:
-  the isolate is created and the activity bootstrap has run before the activity arrives. The runtime
-  is used once, so every activity still runs in a fresh isolate. 1000 sequential V8 activity calls
-  now take about 1.7 seconds, down from 2.8.
-- *(V8)* Switch back to Boa in WASM was updated to `OBELISK_JS_RUNTIME=boa-wasm`.
+  exiting, and idle threads exit after 60 seconds. While idle, a thread prepares the runtime for
+  the next JS activity, so the isolate is created and the activity bootstrap has run before the
+  activity arrives. Every activity still runs in a fresh isolate. 1000 sequential V8 activity
+  calls now take about 1.7 seconds, down from 2.8.
+  [#1036](https://github.com/obeli-sk/obelisk/pull/1036)
+- *(build)* The Nix package no longer pulls the Rust toolchain into its runtime closure, and
+  static musl builds are pushed to the obeli-sk Cachix cache.
+  [#1055](https://github.com/obeli-sk/obelisk/pull/1055)
 
 ### Fixed
 
 - *(deployment)* `--allow-unavailable-runtime-config` now permits storing and enqueuing deployments
-  while app approval of public environment names or outbound HTTP destinations is pending. It already
-  tolerated missing values, secrets, and exec approvals. Activation still verifies strictly.
-  `server verify --fix` and `deployment verify --fix` can now scaffold uncovered outbound
-  destinations in `app.toml` for review, alongside existing public environment and secret
-  scaffolds.
+  while app approval of public environment names or outbound HTTP destinations is pending. It
+  already tolerated missing values, secrets, and exec approvals. Activation still verifies
+  strictly. `server verify --fix` and `deployment verify --fix` can now scaffold uncovered
+  outbound destinations in `app.toml` for review, alongside existing public environment and
+  secret scaffolds. [#1032](https://github.com/obeli-sk/obelisk/pull/1032)
 
 ## [0.42.0-rc.6](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.5...v0.42.0-rc.6)
 
