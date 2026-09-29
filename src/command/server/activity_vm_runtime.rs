@@ -10,7 +10,7 @@ use embedded_assets::{
 use oci_client::Reference;
 #[cfg(debug_assertions)]
 use sha2::{Digest as _, Sha256};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr as _;
 
 use super::ActivityVmRuntimeMode;
@@ -25,7 +25,8 @@ pub(crate) async fn fetch(
         ActivityVmRuntimeMode::Disabled => Ok(None),
         ActivityVmRuntimeMode::Firecracker => {
             #[cfg(debug_assertions)]
-            if let Some(bundle) = std::env::var_os("OBELISK_FIRECRACKER_BUNDLE").map(PathBuf::from)
+            if let Some(bundle) =
+                std::env::var_os("OBELISK_FIRECRACKER_BUNDLE").map(std::path::PathBuf::from)
             {
                 tracing::warn!("Overriding Firecracker bundle with {bundle:?}");
                 ensure!(bundle.is_dir(), "local Firecracker bundle is missing");
@@ -68,7 +69,8 @@ pub(crate) async fn fetch(
                 _ => unreachable!(),
             };
             #[cfg(debug_assertions)]
-            if let Some(bundle) = std::env::var_os("OBELISK_NATIVE_QEMU_BUNDLE").map(PathBuf::from)
+            if let Some(bundle) =
+                std::env::var_os("OBELISK_NATIVE_QEMU_BUNDLE").map(std::path::PathBuf::from)
             {
                 tracing::warn!("Overriding native QEMU bundle with {bundle:?}");
                 ensure!(bundle.is_dir(), "local native QEMU bundle is missing");
@@ -105,7 +107,7 @@ pub(crate) async fn fetch(
         ActivityVmRuntimeMode::BochsWasm => {
             #[cfg(debug_assertions)]
             if let Some(module) =
-                std::env::var_os("OBELISK_ACTIVITY_VM_RUNTIME_MODULE").map(PathBuf::from)
+                std::env::var_os("OBELISK_ACTIVITY_VM_RUNTIME_MODULE").map(std::path::PathBuf::from)
             {
                 tracing::warn!("Overriding activity-vm-runtime with {module:?}");
                 ensure!(module.is_file(), "local activity VM module is missing");
