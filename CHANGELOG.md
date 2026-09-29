@@ -6,11 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+### Changed
 
-- *(V8)* A JS activity running in a prewarmed isolate no longer aborts the server when V8
-  schedules a delayed task, such as an `Atomics.waitAsync` timeout or a GC follow-up. Introduced
-  in 0.42.0-rc.7.
+- *(V8)* Idle isolate threads no longer prepare the next JS activity's runtime in advance; reused
+  threads still create a fresh isolate per activity. The prewarm saved about 1 ms per activity
+  and, in 0.42.0-rc.7, could abort the server when V8 scheduled a delayed task.
 
 ## [0.42.0-rc.7](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.6...v0.42.0-rc.7)
 
