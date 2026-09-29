@@ -4239,6 +4239,7 @@ dependencies = [
  "chrono",
  "http-body-util",
  "hyper",
+ "nix",
  "obeli-sk-concepts",
  "obeli-sk-wasm-workers",
  "obeli-sk-worker-common",

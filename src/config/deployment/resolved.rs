@@ -913,6 +913,10 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
                 activity_vm_runner::validate_guest_cpus(bundle, guest_cpus)
                     .with_context(|| format!("invalid `cpus` of activity_vm `{name}`"))?;
             }
+            activity_vm_runner::RuntimeSource::Firecracker { bundle, .. } => {
+                activity_vm_runner::validate_firecracker(bundle, guest_memory, guest_cpus)
+                    .with_context(|| format!("invalid activity_vm `{name}`"))?;
+            }
             activity_vm_runner::RuntimeSource::BochsWasm(_) => {
                 ensure!(
                     guest_memory == activity_vm_runner::BOCHS_GUEST_MEMORY,
@@ -1026,7 +1030,8 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             activity_vm_runner::RuntimeSource::BochsWasm(wasm) => {
                 utils::sha256sum::calculate_sha256_file(wasm).await?
             }
-            activity_vm_runner::RuntimeSource::QemuNative { digest, .. } => digest.clone(),
+            activity_vm_runner::RuntimeSource::QemuNative { digest, .. }
+            | activity_vm_runner::RuntimeSource::Firecracker { digest, .. } => digest.clone(),
         };
         let closure_identities = closure
             .iter()

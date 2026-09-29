@@ -45,6 +45,7 @@ fi
 cmd+=(
   --skip populate_codegen_cache --skip populate_js_codegen_cache
   --skip populate_activity_vm_codegen_cache --skip populate_activity_vm_qemu_cache
+  --skip populate_activity_vm_firecracker_cache
 )
 
 "${cmd[@]}"

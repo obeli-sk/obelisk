@@ -663,6 +663,7 @@ pub(crate) enum ActivityVmRuntimeMode {
     BochsWasm,
     QemuTcg,
     QemuKvm,
+    Firecracker,
 }
 
 pub(crate) enum ServerAuth {
@@ -6250,6 +6251,13 @@ fn prespawn_activity_vm(
         }
         activity_vm_runner::RuntimeSource::QemuNative { bundle, .. } => {
             activity_vm_runner::RuntimeBackend::QemuNative {
+                bundle,
+                guest_memory: activity_vm.guest_memory,
+                guest_cpus: activity_vm.guest_cpus,
+            }
+        }
+        activity_vm_runner::RuntimeSource::Firecracker { bundle, .. } => {
+            activity_vm_runner::RuntimeBackend::Firecracker {
                 bundle,
                 guest_memory: activity_vm.guest_memory,
                 guest_cpus: activity_vm.guest_cpus,

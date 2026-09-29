@@ -439,7 +439,7 @@ async fn http_headers_host_and_forbidden() {
     activity_vm_http_headers_case(test_addr!(174)).await;
 }
 
-fn native_qemu_children() -> Vec<u32> {
+fn vm_processes() -> Vec<u32> {
     let parent_pid = std::process::id();
     std::fs::read_dir("/proc")
         .unwrap()
@@ -454,21 +454,21 @@ fn native_qemu_children() -> Vec<u32> {
                 .parse::<u32>()
                 .ok()?;
             let command = std::fs::read(entry.path().join("cmdline")).ok()?;
-            (parent == parent_pid
-                && command
-                    .windows(18)
-                    .any(|part| part == b"qemu-system-x86_64"))
-            .then_some(pid)
+            let is_vmm = |name: &[u8]| command.windows(name.len()).any(|part| part == name);
+            (parent == parent_pid && (is_vmm(b"qemu-system-x86_64") || is_vmm(b"firecracker")))
+                .then_some(pid)
         })
         .collect()
 }
 
-async fn native_qemu_interruption_case(ip: String, cancel: bool) {
+async fn vm_interruption_case(ip: String, cancel: bool) {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     if !matches!(
         parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
-        ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm
+        ActivityVmRuntimeMode::QemuTcg
+            | ActivityVmRuntimeMode::QemuKvm
+            | ActivityVmRuntimeMode::Firecracker
     ) {
         return;
     }
@@ -515,12 +515,8 @@ methods = ["GET"]
             .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             .await
             .unwrap();
-        let children = native_qemu_children();
-        assert_eq!(
-            children.len(),
-            1,
-            "expected one running native QEMU: {children:?}"
-        );
+        let children = vm_processes();
+        assert_eq!(children.len(), 1, "expected one running VM: {children:?}");
         if cancel {
             server.cancel_execution_with_retries(&execution_id).await;
         }
@@ -530,7 +526,7 @@ methods = ["GET"]
         tokio::join!(follow, observe_and_interrupt)
     })
     .await
-    .expect("native QEMU activity did not finish after interruption");
+    .expect("VM activity did not finish after interruption");
     assert_eq!(response.status().as_u16(), 201);
     let expected_kind = if cancel { "cancelled" } else { "timed_out" };
     assert_eq!(
@@ -543,25 +539,27 @@ methods = ["GET"]
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("native QEMU process {pid} survived {expected_kind}"));
+    .unwrap_or_else(|_| panic!("VM process {pid} survived {expected_kind}"));
     server.shutdown().await;
 }
 
 #[tokio::test]
-async fn native_qemu_cancellation_kills_vm() {
-    native_qemu_interruption_case(test_addr!(181), true).await;
+async fn cancellation_kills_vm() {
+    vm_interruption_case(test_addr!(181), true).await;
 }
 
 #[tokio::test]
-async fn native_qemu_lock_expiry_kills_vm() {
-    native_qemu_interruption_case(test_addr!(182), false).await;
+async fn lock_expiry_kills_vm() {
+    vm_interruption_case(test_addr!(182), false).await;
 }
 
 #[tokio::test]
-async fn native_qemu_guest_memory() {
+async fn guest_memory() {
     if !matches!(
         parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
-        ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm
+        ActivityVmRuntimeMode::QemuTcg
+            | ActivityVmRuntimeMode::QemuKvm
+            | ActivityVmRuntimeMode::Firecracker
     ) {
         return;
     }
@@ -593,10 +591,12 @@ memory.gib = 2
 }
 
 #[tokio::test]
-async fn native_qemu_guest_cpus() {
+async fn guest_cpus() {
     if !matches!(
         parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
-        ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm
+        ActivityVmRuntimeMode::QemuTcg
+            | ActivityVmRuntimeMode::QemuKvm
+            | ActivityVmRuntimeMode::Firecracker
     ) {
         return;
     }

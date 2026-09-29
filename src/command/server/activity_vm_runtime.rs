@@ -4,15 +4,13 @@ use concepts::ContentDigest;
 #[cfg(debug_assertions)]
 use concepts::component_id::Digest;
 use embedded_assets::{
-    ACTIVITY_VM_BOCHS_WASM_RUNTIME_LOCATION, ACTIVITY_VM_QEMU_KVM_RUNTIME_LOCATION,
-    ACTIVITY_VM_QEMU_TCG_RUNTIME_LOCATION,
+    ACTIVITY_VM_BOCHS_WASM_RUNTIME_LOCATION, ACTIVITY_VM_FIRECRACKER_RUNTIME_LOCATION,
+    ACTIVITY_VM_QEMU_KVM_RUNTIME_LOCATION, ACTIVITY_VM_QEMU_TCG_RUNTIME_LOCATION,
 };
 use oci_client::Reference;
 #[cfg(debug_assertions)]
 use sha2::{Digest as _, Sha256};
 use std::path::Path;
-#[cfg(debug_assertions)]
-use std::path::PathBuf;
 use std::str::FromStr as _;
 
 use super::ActivityVmRuntimeMode;
@@ -25,6 +23,45 @@ pub(crate) async fn fetch(
 ) -> anyhow::Result<Option<RuntimeSource>> {
     match mode {
         ActivityVmRuntimeMode::Disabled => Ok(None),
+        ActivityVmRuntimeMode::Firecracker => {
+            #[cfg(debug_assertions)]
+            if let Some(bundle) =
+                std::env::var_os("OBELISK_FIRECRACKER_BUNDLE").map(std::path::PathBuf::from)
+            {
+                tracing::warn!("Overriding Firecracker bundle with {bundle:?}");
+                ensure!(bundle.is_dir(), "local Firecracker bundle is missing");
+                check_firecracker_on_path(&bundle).await?;
+                let mut hasher = Sha256::new();
+                for file in [
+                    "guest/vmlinux",
+                    "guest/initramfs.cpio.gz",
+                    "guest/machine.json",
+                ] {
+                    let digest = utils::sha256sum::calculate_sha256_file(bundle.join(file)).await?;
+                    hasher.update(digest.0.0);
+                }
+                let digest = ContentDigest(Digest(hasher.finalize().into()));
+                return Ok(Some(RuntimeSource::Firecracker { bundle, digest }));
+            }
+            let location = ACTIVITY_VM_FIRECRACKER_RUNTIME_LOCATION.trim();
+            ensure!(
+                !location.is_empty(),
+                "the Firecracker runtime has no published release yet"
+            );
+            let reference = Reference::from_str(
+                location
+                    .strip_prefix("oci://")
+                    .context("Firecracker runtime reference must start with `oci://`")?,
+            )?;
+            let digest =
+                ContentDigest::from_str(reference.digest().context(
+                    "Firecracker runtime OCI reference must be pinned by manifest digest",
+                )?)?;
+            let bundle =
+                crate::oci::pull_firecracker_bundle_to_cache(&reference, cache_root).await?;
+            check_firecracker_on_path(&bundle).await?;
+            Ok(Some(RuntimeSource::Firecracker { bundle, digest }))
+        }
         ActivityVmRuntimeMode::QemuTcg | ActivityVmRuntimeMode::QemuKvm => {
             let (location, accelerator) = match mode {
                 ActivityVmRuntimeMode::QemuTcg => (ACTIVITY_VM_QEMU_TCG_RUNTIME_LOCATION, "tcg"),
@@ -32,7 +69,8 @@ pub(crate) async fn fetch(
                 _ => unreachable!(),
             };
             #[cfg(debug_assertions)]
-            if let Some(bundle) = std::env::var_os("OBELISK_NATIVE_QEMU_BUNDLE").map(PathBuf::from)
+            if let Some(bundle) =
+                std::env::var_os("OBELISK_NATIVE_QEMU_BUNDLE").map(std::path::PathBuf::from)
             {
                 tracing::warn!("Overriding native QEMU bundle with {bundle:?}");
                 ensure!(bundle.is_dir(), "local native QEMU bundle is missing");
@@ -69,7 +107,7 @@ pub(crate) async fn fetch(
         ActivityVmRuntimeMode::BochsWasm => {
             #[cfg(debug_assertions)]
             if let Some(module) =
-                std::env::var_os("OBELISK_ACTIVITY_VM_RUNTIME_MODULE").map(PathBuf::from)
+                std::env::var_os("OBELISK_ACTIVITY_VM_RUNTIME_MODULE").map(std::path::PathBuf::from)
             {
                 tracing::warn!("Overriding activity-vm-runtime with {module:?}");
                 ensure!(module.is_file(), "local activity VM module is missing");
@@ -137,6 +175,43 @@ async fn check_native_qemu_on_path(bundle: &Path, accelerator: &str) -> anyhow::
     Ok(())
 }
 
+async fn check_firecracker_on_path(bundle: &Path) -> anyhow::Result<()> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/kvm")
+        .context("Firecracker requires read/write access to /dev/kvm")?;
+    let actual = first_line_of_version("firecracker").await?;
+    let expected = tokio::fs::read_to_string(bundle.join("firecracker-version.txt")).await?;
+    // Every VM cold boots, so a different Firecracker only needs to support the same config.
+    if actual != expected.trim() {
+        tracing::warn!(
+            "Firecracker version mismatch: bundle was tested with {}, PATH has {actual}",
+            expected.trim()
+        );
+    }
+    first_line_of_version("mkfs.erofs").await?;
+    Ok(())
+}
+
+async fn first_line_of_version(program: &str) -> anyhow::Result<String> {
+    let output = tokio::process::Command::new(program)
+        .arg("--version")
+        .output()
+        .await
+        .with_context(|| format!("{program} must be available on PATH"))?;
+    ensure!(
+        output.status.success(),
+        "{program} --version exited with {}",
+        output.status
+    );
+    String::from_utf8(output.stdout)?
+        .lines()
+        .next()
+        .map(str::to_owned)
+        .with_context(|| format!("{program} --version printed nothing"))
+}
+
 async fn qemu_version_on_path() -> anyhow::Result<String> {
     let output = tokio::process::Command::new("qemu-system-x86_64")
         .arg("--version")
@@ -179,6 +254,21 @@ mod tests {
             unreachable!()
         };
         activity_vm_runner::compile(&engine, &wasm).unwrap();
+    }
+
+    #[tokio::test]
+    async fn populate_activity_vm_firecracker_cache() {
+        test_utils::set_up();
+        let workspace = PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap());
+        let Some(RuntimeSource::Firecracker { bundle, .. }) = fetch(
+            &workspace.join("test-wasm-cache"),
+            ActivityVmRuntimeMode::Firecracker,
+        )
+        .await
+        .unwrap() else {
+            unreachable!()
+        };
+        assert!(bundle.join("guest/vmlinux").is_file());
     }
 
     #[tokio::test]

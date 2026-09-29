@@ -54,6 +54,10 @@ jobs:
             report: junit-activity-vm-qemu-kvm.xml
             features: ""
             activity_vm_runtime: qemu-kvm
+          - name: activity-vm-firecracker
+            report: junit-activity-vm-firecracker.xml
+            features: ""
+            activity_vm_runtime: firecracker
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -68,7 +72,7 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      # Test WASMs and the native QEMU bundle are content-addressed and don't change often.
+      # Test WASMs and the native QEMU and Firecracker bundles are content-addressed and don't change often.
       - id: wasm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -92,7 +96,7 @@ jobs:
         run: nix develop --command cargo nextest run --workspace --no-run
 
       - name: Enable KVM access
-        if: ${{ matrix.activity_vm_runtime == 'qemu-kvm' }}
+        if: ${{ matrix.activity_vm_runtime == 'qemu-kvm' || matrix.activity_vm_runtime == 'firecracker' }}
         run: |
           test -c /dev/kvm
           sudo chmod a+rw /dev/kvm

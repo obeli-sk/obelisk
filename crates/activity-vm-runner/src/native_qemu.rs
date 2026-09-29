@@ -394,7 +394,7 @@ async fn wait_until_running(socket: &Path) -> anyhow::Result<Qmp> {
     Ok(qmp)
 }
 
-async fn install_mapping(share: &Path, mapping: &MapDir) -> anyhow::Result<()> {
+pub(super) async fn install_mapping(share: &Path, mapping: &MapDir) -> anyhow::Result<()> {
     ensure!(
         mapping.guest.starts_with('/') && !mapping.guest.split('/').any(|part| part == ".."),
         "unsafe native QEMU guest mapping: {}",
@@ -424,7 +424,10 @@ async fn install_mapping(share: &Path, mapping: &MapDir) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn invocation_script(args: &[String], env: &HashMap<String, String>) -> anyhow::Result<String> {
+pub(super) fn invocation_script(
+    args: &[String],
+    env: &HashMap<String, String>,
+) -> anyhow::Result<String> {
     ensure!(
         args.first().is_some_and(|arg| arg == "-no-stdin"),
         "unexpected VM invocation"
