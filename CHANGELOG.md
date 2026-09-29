@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `memory.gib = 4`. Native QEMU restores a 256 MiB snapshot and plugs the rest through
   `virtio-mem`, from 256 MiB up to 16.25 GiB; plugging 8 GiB adds about 45 ms on KVM. The Bochs
   guest has a fixed 512 MiB and accepts only that value.
+- *(activity-vm)* Optional `cpus` on `[[activity_vm]]` sets the guest vCPUs, default 1. Native
+  QEMU restores a 1-vCPU snapshot and hot-adds the rest, up to 16; each extra vCPU adds about
+  5 ms on KVM, and TCG pays about 60 ms for the first and 10-15 ms for each further one. Bochs
+  accepts only 1.
 
 ### Changed
 

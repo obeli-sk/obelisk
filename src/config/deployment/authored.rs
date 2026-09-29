@@ -751,6 +751,14 @@ pub(crate) struct ActivityVmComponentConfigToml {
     /// Total guest RAM, for example `memory.gib = 4`. Native QEMU accepts 256 MiB up to its
     /// bundle's limit; Bochs has a fixed 512 MiB guest and accepts only that.
     pub(crate) memory: ByteSizeConfig,
+    /// Guest vCPUs. Native QEMU accepts 1 up to its bundle's limit; Bochs accepts only 1.
+    #[serde(default = "default_activity_vm_cpus")]
+    #[schemars(range(min = 1))]
+    pub(crate) cpus: u32,
+}
+
+fn default_activity_vm_cpus() -> u32 {
+    1
 }
 
 // --- activity_exec config ---

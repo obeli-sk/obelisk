@@ -998,6 +998,13 @@
         "memory": {
           "description": "Total guest RAM, for example `memory.gib = 4`. Native QEMU accepts 256 MiB up to its\nbundle's limit; Bochs has a fixed 512 MiB guest and accepts only that.",
           "$ref": "#/$defs/ByteSizeConfig"
+        },
+        "cpus": {
+          "description": "Guest vCPUs. Native QEMU accepts 1 up to its bundle's limit; Bochs accepts only 1.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 1,
+          "default": 1
         }
       },
       "required": [

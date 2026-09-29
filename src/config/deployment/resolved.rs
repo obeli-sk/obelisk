@@ -904,11 +904,14 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             nix_caches,
             allowed_hosts,
             memory: guest_memory,
+            cpus: guest_cpus,
         } = self;
         match runtime {
             activity_vm_runner::RuntimeSource::QemuNative { bundle, .. } => {
                 activity_vm_runner::validate_guest_memory(bundle, guest_memory)
                     .with_context(|| format!("invalid `memory` of activity_vm `{name}`"))?;
+                activity_vm_runner::validate_guest_cpus(bundle, guest_cpus)
+                    .with_context(|| format!("invalid `cpus` of activity_vm `{name}`"))?;
             }
             activity_vm_runner::RuntimeSource::BochsWasm(_) => {
                 ensure!(
@@ -916,6 +919,10 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
                     "activity_vm `{name}` sets `memory` to {} MiB, but the Bochs backend's guest has a fixed {} MiB",
                     guest_memory >> 20,
                     activity_vm_runner::BOCHS_GUEST_MEMORY >> 20
+                );
+                ensure!(
+                    guest_cpus == 1,
+                    "activity_vm `{name}` sets `cpus` to {guest_cpus}, but the Bochs backend's guest has 1 vCPU"
                 );
             }
         }
@@ -1092,6 +1099,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             exposed_secrets,
             memory: cell_memory,
             guest_memory,
+            guest_cpus,
             activity: verified,
         })
     }
@@ -1111,6 +1119,8 @@ pub(crate) struct ActivityVmConfigVerified {
     pub(crate) memory: Option<u64>,
     /// The activity's `memory`: total guest RAM.
     pub(crate) guest_memory: u64,
+    /// The activity's `cpus`: guest vCPUs.
+    pub(crate) guest_cpus: u32,
     pub(crate) activity: ActivityExecConfigVerified,
 }
 
@@ -1832,6 +1842,7 @@ pub(crate) async fn resolve_local_refs(
             nix_caches,
             allowed_hosts: a.allowed_hosts,
             memory: u64::from(a.memory),
+            cpus: a.cpus,
         });
     }
 
@@ -3078,6 +3089,7 @@ pub struct ActivityVmComponentConfigResolved {
     pub nix_caches: Vec<NixCacheToml>,
     pub allowed_hosts: Vec<AllowedHostToml>,
     pub memory: u64,
+    pub cpus: u32,
 }
 
 /// Resolved form of `WorkflowWasmComponentConfigToml`.
