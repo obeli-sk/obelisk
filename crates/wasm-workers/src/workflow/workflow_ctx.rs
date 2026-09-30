@@ -1136,7 +1136,7 @@ impl WorkflowCtx {
     }
 
     pub(crate) fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
-        self.event_history.deadline_tracker.check_epoch_callback()
+        self.event_history.deadline_tracker.epoch_callback_check()
     }
 
     pub(crate) async fn flush(&mut self) -> Result<(), DbErrorWrite> {

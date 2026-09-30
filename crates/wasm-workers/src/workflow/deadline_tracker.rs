@@ -35,7 +35,7 @@ pub trait DeadlineTracker: Send + Sync {
     fn close_to_expired(&self) -> bool;
 
     /// Called by epoch callback
-    fn check_epoch_callback(&self) -> Result<(), EpochCallbackError>;
+    fn epoch_callback_check(&self) -> Result<(), EpochCallbackError>;
 
     /// Called after `close_to_expired` returned `true`, Return new lock expiry date (now + duration). Internally track that time minus leeway.
     fn extend_by(&mut self, lock_extension: Duration) -> ExtendBy;
@@ -170,7 +170,7 @@ impl DeadlineTracker for DeadlineTrackerClockFn {
         self.close_to_expired <= self.clock_fn.now()
     }
 
-    fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
+    fn epoch_callback_check(&self) -> Result<(), EpochCallbackError> {
         if let Some(kind) = self.interrupt_kind() {
             Err(EpochCallbackError::Interrupt(kind))
         } else if self.lock_expires_at <= self.clock_fn.now() {
@@ -270,7 +270,7 @@ impl DeadlineTracker for DeadlineTrackerFactoryForReplay {
         false
     }
 
-    fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
+    fn epoch_callback_check(&self) -> Result<(), EpochCallbackError> {
         Ok(())
     }
 
