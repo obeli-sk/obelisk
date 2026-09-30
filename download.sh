@@ -1,15 +1,26 @@
 #!/bin/sh
 
-# Downloads the latest binary from GitHub Releases into the current directory.
-# Usage:
+# Downloads a binary from GitHub Releases into the current directory.
+# Usage (latest release):
 # curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
+# Usage (specific release tag, passed as an argument or via OBELISK_VERSION):
+# curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash -s -- v0.42.0-rc.8
 
 set -eu
 
 # Set pipefail if it works in a subshell, disregard if unsupported
 (set -o pipefail 2> /dev/null) && set -o pipefail
 
-base_url="https://github.com/obeli-sk/obelisk/releases/latest/download/obelisk-"
+version="${1:-${OBELISK_VERSION:-latest}}"
+if [ "$version" = "latest" ]; then
+    base_url="https://github.com/obeli-sk/obelisk/releases/latest/download/obelisk-"
+else
+    case "$version" in
+        v*) ;;
+        *)  version="v${version}" ;;
+    esac
+    base_url="https://github.com/obeli-sk/obelisk/releases/download/${version}/obelisk-"
+fi
 
 os="$(uname -s)"
 if [ "$os" = "Linux" ]; then

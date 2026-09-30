@@ -70,6 +70,8 @@ Uses [WASM Component Model](https://component-model.bytecodealliance.org/) and
 ### Pre-built Binary
 ```sh
 curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
+# or a specific release tag:
+curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash -s -- v0.42.0-rc.8
 ```
 
 ### Docker
