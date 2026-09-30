@@ -7,7 +7,7 @@ use super::host_exports::latest::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
-use crate::workflow::deadline_tracker::{InterruptKind, PreemptRequested};
+use crate::workflow::deadline_tracker::InterruptKind;
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
@@ -411,9 +411,9 @@ impl EventHistory {
     ) -> Result<ChildReturnValue, ApplyError> {
         match self.deadline_tracker.check_preempt() {
             Ok(()) => {}
-            Err(PreemptRequested::Interrupt(kind)) => {
+            Err(kind) => {
                 info!("Execution interrupt detected in check_preempt: {kind:?}");
-                return Err(ApplyError::Interrupt(kind));
+                return Err(ApplyError::Interrupt(kind.into()));
             }
         }
 

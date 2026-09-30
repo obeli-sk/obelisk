@@ -18,8 +18,8 @@ pub enum InterruptKind {
     PauseOrCancel,
 }
 
-#[derive(Clone, Copy)]
-enum WatcherInterruptKind {
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum WatcherInterruptKind {
     ExecutorClosing,
     PauseOrCancel,
 }
@@ -39,7 +39,7 @@ pub enum DeadlineTracker {
 }
 
 impl DeadlineTracker {
-    pub fn check_preempt(&self) -> Result<(), PreemptRequested> {
+    pub(crate) fn check_preempt(&self) -> Result<(), WatcherInterruptKind> {
         match self {
             Self::ClockFn(tracker) => tracker.check_preempt(),
             Self::Replay => Ok(()),
@@ -74,12 +74,6 @@ impl DeadlineTracker {
             Self::Replay => unreachable!("`close_to_expired` is always false for replay"),
         }
     }
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum PreemptRequested {
-    #[error("execution interrupt: {0:?}")]
-    Interrupt(InterruptKind),
 }
 
 pub enum DeadlineTrackerFactory {
@@ -176,9 +170,9 @@ impl DeadlineTrackerClockFn {
 }
 
 impl DeadlineTrackerClockFn {
-    fn check_preempt(&self) -> Result<(), PreemptRequested> {
+    fn check_preempt(&self) -> Result<(), WatcherInterruptKind> {
         if let Some(kind) = self.interrupt_kind() {
-            Err(PreemptRequested::Interrupt(kind.into()))
+            Err(kind)
         } else {
             Ok(())
         }
