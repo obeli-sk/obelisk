@@ -215,7 +215,7 @@ impl DeadlineTrackerClockFn {
             tokio::select! {
                 () = tokio::time::sleep(expiry) => expiry_reason,
                 Ok(_) = execution_interrupt_watcher.wait_for(|&v| v) => ResponseSubscriptionEnd::ExecutorClosing,
-                Ok(_) = local_interrupt_watcher.wait_for(|&v| v) => ResponseSubscriptionEnd::ExecutionUpdated,
+                Ok(_) = local_interrupt_watcher.wait_for(|&v| v) => ResponseSubscriptionEnd::PauseOrCancel,
             }
         }))
     }

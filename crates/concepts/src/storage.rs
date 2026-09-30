@@ -1300,7 +1300,7 @@ pub enum ResponseSubscriptionEnd {
     /// Execution run should return without writing any more events, execution remains blocked waiting for response
     LockDeadlineReached,
     ExecutorClosing,
-    ExecutionUpdated,
+    PauseOrCancel,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]

@@ -589,7 +589,7 @@ impl EventHistory {
                 ResponseSubscriptionEnd::ExecutorClosing,
             )) => Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing)),
             Err(SubscribeToResponsesError::SubscriptionEnded(
-                ResponseSubscriptionEnd::ExecutionUpdated,
+                ResponseSubscriptionEnd::PauseOrCancel,
             )) => Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel)),
         }
     }
@@ -794,7 +794,7 @@ impl EventHistory {
                         ResponseSubscriptionEnd::ExecutorClosing,
                     )) => return Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing)),
                     Err(SubscribeToResponsesError::SubscriptionEnded(
-                        ResponseSubscriptionEnd::ExecutionUpdated,
+                        ResponseSubscriptionEnd::PauseOrCancel,
                     )) => return Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel)),
                 }
             } // loop
