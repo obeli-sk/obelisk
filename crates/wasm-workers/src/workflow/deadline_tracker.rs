@@ -34,10 +34,6 @@ pub trait DeadlineTracker: Send + Sync {
 
     fn check_epoch_callback(&self) -> Result<(), EpochCallbackError>;
 
-    fn native_interruption(&self) -> Option<TrackResult> {
-        None
-    }
-
     /// Called after `close_to_expired` returned `true`, Return new lock expiry date (now + duration). Internally track that time minus leeway.
     fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc>;
 }
@@ -88,7 +84,6 @@ pub(crate) struct DeadlineTrackerTokio {
     pub(crate) leeway: Duration, // Fire this much sooner than requested.
     execution_interrupt_watcher: watch::Receiver<bool>,
     local_interrupt_watcher: watch::Receiver<bool>,
-    native_deadline_tx: watch::Sender<tokio::time::Instant>,
 }
 
 fn interrupt_kind_from_watchers(
@@ -170,44 +165,6 @@ impl DeadlineTracker for DeadlineTrackerTokio {
         }
     }
 
-    fn native_interruption(&self) -> Option<TrackResult> {
-        let now = tokio::time::Instant::now();
-        if self.deadline_minus_leeway <= now {
-            return Some(Err(ResponseSubscriptionEnd::LockDeadlineReached));
-        }
-        if let Some(kind) = self.interrupt_kind() {
-            return Some(Err(match kind {
-                InterruptKind::ExecutorClosing => ResponseSubscriptionEnd::ExecutorClosing,
-                InterruptKind::PauseOrCancel => ResponseSubscriptionEnd::ExecutionUpdated,
-                InterruptKind::WorkflowEventLimitReached => unreachable!("not watcher-driven"),
-            }));
-        }
-        let mut deadline_rx = self.native_deadline_tx.subscribe();
-        let mut execution_interrupt_watcher = self.execution_interrupt_watcher.clone();
-        let mut local_interrupt_watcher = self.local_interrupt_watcher.clone();
-        Some(Ok(Box::pin(async move {
-            loop {
-                let deadline = *deadline_rx.borrow_and_update();
-                tokio::select! {
-                    () = tokio::time::sleep_until(deadline) => {
-                        return ResponseSubscriptionEnd::LockDeadlineReached;
-                    }
-                    changed = deadline_rx.changed() => {
-                        if changed.is_err() {
-                            return ResponseSubscriptionEnd::ExecutorClosing;
-                        }
-                    }
-                    Ok(_) = execution_interrupt_watcher.wait_for(|&v| v) => {
-                        return ResponseSubscriptionEnd::ExecutorClosing;
-                    }
-                    Ok(_) = local_interrupt_watcher.wait_for(|&v| v) => {
-                        return ResponseSubscriptionEnd::ExecutionUpdated;
-                    }
-                }
-            }
-        })))
-    }
-
     fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc> {
         let now_instant = tokio::time::Instant::now();
         self.deadline = now_instant + lock_extension;
@@ -269,7 +226,6 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
         trace!("Setting deadline to now + {deadline_duration_minus_leeway:?}");
 
         let deadline_minus_leeway = now + deadline_duration_minus_leeway;
-        let (native_deadline_tx, _) = watch::channel(deadline_minus_leeway);
         let tracker = DeadlineTrackerTokio {
             deadline,
             deadline_minus_leeway,
@@ -277,7 +233,6 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
             leeway: self.leeway,
             execution_interrupt_watcher,
             local_interrupt_watcher,
-            native_deadline_tx,
         };
         Ok(Box::new(tracker))
     }
@@ -380,10 +335,6 @@ impl DeadlineTracker for DeadlineTrackerSim {
         } else {
             Ok(())
         }
-    }
-
-    fn native_interruption(&self) -> Option<TrackResult> {
-        Some(self.track(None))
     }
 
     fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc> {
