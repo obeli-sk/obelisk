@@ -31,14 +31,15 @@ if [ "$os" = "Linux" ]; then
         *)        echo "Unsupported architecture ${machine}" && exit 1 ;;
     esac
 
-    # The gnu binary needs the glibc loader at its FHS path, missing on NixOS, musl distros and some sandboxes.
-    if [ -e "$glibc_loader" ]; then
+    # NixOS may place a stub at the glibc loader path, so it is checked before the loader.
+    if [ -e /etc/NIXOS ] || grep -qs "NixOS" /etc/issue /etc/os-release; then
+        lib="musl"
+        printf "Downloading musl-based binary on NixOS. Consider installing with\nnix profile install github:obeli-sk/obelisk/latest\n"
+    elif [ -e "$glibc_loader" ]; then
         lib="gnu"
     else
+        # Musl distros and sandboxes without FHS paths.
         lib="musl"
-        if [ -e /etc/NIXOS ] || grep -qs "NixOS" /etc/issue /etc/os-release; then
-            printf "Downloading musl-based binary on NixOS. Consider installing with\nnix profile install github:obeli-sk/obelisk/latest\n"
-        fi
     fi
     url="${base_url}${target}${lib}.tar.gz"
 
