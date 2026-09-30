@@ -206,9 +206,7 @@ use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstanceLinked;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointJsConfig;
 use wasm_workers::webhook::webhook_trigger::WebhookJsRuntime;
 use wasm_workers::webhook::webhook_trigger::WebhookServerState;
-use wasm_workers::workflow::deadline_tracker::{
-    DeadlineTrackerFactoryForReplay, DeadlineTrackerFactoryTokio,
-};
+use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactory;
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsRuntimeExt;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerLinked;
@@ -6961,14 +6959,14 @@ impl WorkerLinked {
                 ))
             }
             LinkedWorkerKind::WorkflowWasm(workflow_linked) => {
-                let factory = DeadlineTrackerFactoryTokio::new(
+                let factory = DeadlineTrackerFactory::new(
                     workflow_linked.workflows_lock_extension_leeway,
                     Now.clone_box(),
                 );
                 let replay_worker = Arc::new(workflow_linked.replay_linked.into_worker(
                     deployment_id,
                     db_pool.clone(),
-                    Arc::new(DeadlineTrackerFactoryForReplay {}),
+                    Arc::new(DeadlineTrackerFactory::for_replay()),
                     CancelRegistry::new(),
                     logs_storage_config.clone(),
                 ));
@@ -6985,14 +6983,14 @@ impl WorkerLinked {
                 ))
             }
             LinkedWorkerKind::WorkflowJs(workflow_js_linked) => {
-                let factory = DeadlineTrackerFactoryTokio::new(
+                let factory = DeadlineTrackerFactory::new(
                     workflow_js_linked.workflows_lock_extension_leeway,
                     Now.clone_box(),
                 );
                 let replay_worker = Arc::new(workflow_js_linked.replay_linked.into_worker(
                     deployment_id,
                     db_pool.clone(),
-                    Arc::new(DeadlineTrackerFactoryForReplay {}),
+                    Arc::new(DeadlineTrackerFactory::for_replay()),
                     CancelRegistry::new(),
                     logs_storage_config.clone(),
                 ));

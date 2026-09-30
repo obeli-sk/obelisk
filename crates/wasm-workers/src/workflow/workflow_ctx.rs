@@ -1077,7 +1077,7 @@ impl WorkflowCtx {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         worker_span: Span,
         backtrace_capture: BacktraceCapture,
-        deadline_tracker: Box<dyn DeadlineTracker>,
+        deadline_tracker: DeadlineTracker,
         fn_registry: Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
         locked_event: Locked,
@@ -1136,7 +1136,7 @@ impl WorkflowCtx {
     }
 
     pub(crate) fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
-        self.event_history.deadline_tracker.check_epoch_callback()
+        self.event_history.deadline_tracker.epoch_callback_check()
     }
 
     pub(crate) async fn flush(&mut self) -> Result<(), DbErrorWrite> {
@@ -3535,9 +3535,7 @@ pub(crate) mod tests {
     use crate::cancellation_driver;
     use crate::testing_fn_registry::fn_registry_dummy;
     use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
-    use crate::workflow::deadline_tracker::{
-        DeadlineTrackerFactory as _, DeadlineTrackerFactoryTokio,
-    };
+    use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
     use crate::workflow::event_history::ApplyError;
     use crate::workflow::host_exports::SUFFIX_FN_SUBMIT;
     use crate::workflow::workflow_ctx::{
@@ -3744,7 +3742,7 @@ pub(crate) mod tests {
                 join_next_blocking_strategy,
                 tracing::info_span!("workflow-test"),
                 BacktraceCapture::Disabled,
-                DeadlineTrackerFactoryTokio::new(Duration::ZERO, self.clock_fn.clone_box())
+                DeadlineTrackerFactory::new(Duration::ZERO, self.clock_fn.clone_box())
                     .create(
                         ctx.locked_event.lock_expires_at,
                         tokio::sync::watch::channel(false).1,

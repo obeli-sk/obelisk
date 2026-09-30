@@ -7,7 +7,8 @@ use super::host_exports::latest::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
-use crate::workflow::deadline_tracker::{InterruptKind, PreemptRequested};
+use crate::workflow::deadline_tracker::InterruptKind;
+use crate::workflow::deadline_tracker::TrackInterruptKind;
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
@@ -168,7 +169,7 @@ pub(crate) struct EventHistory {
     index_delay_id_to_expires_at: IndexMap<DelayId, DateTime<Utc>>,
     responses: Vec<(ResponseWithCursor, ProcessingStatus)>,
     worker_span: Span,
-    pub(crate) deadline_tracker: Box<dyn DeadlineTracker>,
+    pub(crate) deadline_tracker: DeadlineTracker,
     lock_extension: Duration, // 0 == disabled
     pub(crate) locked_event: Locked,
     pub(crate) fn_registry: Arc<dyn FunctionRegistry>,
@@ -190,9 +191,13 @@ pub(crate) struct EventHistory {
     // Upper bound on captured writes a replay pass may collect. `None` outside replay.
     max_replay_captured_writes: Option<usize>,
     max_events_per_run: Option<usize>,
+    // Needed for bounding by `max_events_per_run`
     written_events_this_run: usize,
+    // Needed for deciding whether to extend the lock
     written_events_since_lock_extension: usize,
+    // See `events_since_response_refresh`.
     response_refresh_interval: Option<usize>,
+    // Needed for flushing non-blocking events, guarded by `response_refresh_interval`
     events_since_response_refresh: usize,
 }
 
@@ -245,7 +250,7 @@ impl EventHistory {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
-        deadline_tracker: Box<dyn DeadlineTracker>,
+        deadline_tracker: DeadlineTracker,
         locked_event: Locked,
         lock_extension: Option<Duration>,
         subscription_interruption: Option<Duration>,
@@ -393,9 +398,9 @@ impl EventHistory {
         db_connection: &mut dyn WorkflowDbConnection,
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, WorkflowFunctionError> {
-        Ok(self
-            .apply_event_call(event_call, event_call_cursor, db_connection, called_at)
-            .await?)
+        self.apply_event_call(event_call, event_call_cursor, db_connection, called_at)
+            .await
+            .map_err(WorkflowFunctionError::from) // wrap with `WorkflowFunctionError`, downcasted from trap in `WasmtimeWorkflowRuntime`.
     }
 
     async fn apply_event_call(
@@ -407,23 +412,31 @@ impl EventHistory {
     ) -> Result<ChildReturnValue, ApplyError> {
         match self.deadline_tracker.check_preempt() {
             Ok(()) => {}
-            Err(PreemptRequested::Interrupt(kind)) => {
+            Err(kind) => {
                 info!("Execution interrupt detected in check_preempt: {kind:?}");
-                return Err(ApplyError::Interrupt(kind));
+                return Err(ApplyError::Interrupt(kind.into()));
             }
         }
 
-        if self.deadline_tracker.close_to_expired()
-            && self.lock_extension > Duration::ZERO
-            && self.written_events_since_lock_extension > 0
-        {
-            self.extend_lock(event_call_cursor, db_connection, called_at)
+        if matches!(&event_call_kind, EventCallKind::Blocking(_)) {
+            // Try extending the lock before blocking event to allow waiting for the response longer.
+            // Lock cannot be extended after the blocking event is written as the execution becomes blocked until a response arrives.
+            self.try_extend_lock(event_call_cursor, db_connection)
                 .await?;
-            self.written_events_since_lock_extension = 0;
         }
 
         let event_call = event_call_cursor.next(event_call_kind);
-        self.apply_inner(event_call, db_connection, called_at).await
+        let ok = self
+            .apply_inner(event_call, db_connection, called_at)
+            .await?;
+
+        if self.written_events_since_lock_extension > 0 {
+            // Try to extend lock after event is fully processed, e.g. when blocking event found its response.
+            self.try_extend_lock(event_call_cursor, db_connection)
+                .await?;
+        }
+
+        Ok(ok)
     }
 
     /// Apply the event and wait if new, replay if already in the event history, or
@@ -437,11 +450,7 @@ impl EventHistory {
     ) -> Result<ChildReturnValue, ApplyError> {
         debug!("applying {event_call:?}");
 
-        // A non-terminating workflow (e.g. a `joinNextTry` busy loop on a response that is never
-        // injected) would collect captured writes forever during replay, since the replay deadline
-        // never expires the lock. Once the collection hits the bound, interrupt replay so the writes
-        // gathered so far are returned as an advanceable prefix; advancing them and replaying again
-        // resumes collection from the persisted tip, stepping the workflow forward N writes at a time.
+        // Bound replay with busy loops (e.g. a loop { joinNextTry }) with `max_replay_captured_writes`.
         if let Some(max) = self.max_replay_captured_writes
             && let Some(collected) = db_connection.captured_writes_collected()
             && collected >= max
@@ -534,11 +543,11 @@ impl EventHistory {
                 .await
             }
         }?;
-        let written_events = self.event_history.len() - event_history_len_before;
+        let written_events = self.event_history.len() - event_history_len_before; // replay does not add events, just marks them `Processed`.
         self.written_events_this_run += written_events;
         self.written_events_since_lock_extension += written_events;
-        if written_events > 0
-            && let Some(max_events_per_run) = self.max_events_per_run
+
+        if let Some(max_events_per_run) = self.max_events_per_run
             && self.written_events_this_run >= max_events_per_run
         {
             debug!(
@@ -580,7 +589,7 @@ impl EventHistory {
                 ResponseSubscriptionEnd::ExecutorClosing,
             )) => Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing)),
             Err(SubscribeToResponsesError::SubscriptionEnded(
-                ResponseSubscriptionEnd::ExecutionUpdated,
+                ResponseSubscriptionEnd::PauseOrCancel,
             )) => Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel)),
         }
     }
@@ -615,15 +624,26 @@ impl EventHistory {
         db_connection.append_backtrace(backtrace).await
     }
 
+    async fn try_extend_lock(
+        &mut self,
+        event_call_cursor: &mut EventCallCursor,
+        db_connection: &mut dyn WorkflowDbConnection,
+    ) -> Result<(), DbErrorWrite> {
+        if self.deadline_tracker.close_to_expired() && self.lock_extension > Duration::ZERO {
+            self.extend_lock(event_call_cursor, db_connection).await?;
+        }
+        Ok(())
+    }
+
     async fn extend_lock(
         &mut self,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
-        self.locked_event.lock_expires_at = self.deadline_tracker.extend_by(self.lock_extension);
+        let extend_by = self.deadline_tracker.extend_by(self.lock_extension);
+        self.locked_event.lock_expires_at = extend_by.lock_expires_at;
         let append_req = AppendRequest {
-            created_at: called_at,
+            created_at: extend_by.now,
             event: ExecutionRequest::Locked(self.locked_event.clone()),
         };
         info!(
@@ -642,6 +662,7 @@ impl EventHistory {
             )
             .await?;
         event_call_cursor.next_version = event_call_cursor.next_version.increment();
+        self.written_events_since_lock_extension = 0;
         Ok(())
     }
 
@@ -717,6 +738,7 @@ impl EventHistory {
         ) {
             // JoinNext was written, wait for next response.
             debug!(join_set_id = %join_next_variant.join_set_id(), "Waiting for {join_next_variant:?}");
+
             let key = join_next_variant.as_key();
 
             // Subscribe to the next response, waking on an interrupt or the deadline.
@@ -724,12 +746,11 @@ impl EventHistory {
                 let subscription_end_fut =
                     match self.deadline_tracker.track(self.subscription_interruption) {
                         Ok(subscription_end_fut) => subscription_end_fut,
-                        Err(ResponseSubscriptionEnd::PollIntervalElapsed) => continue,
-                        Err(ResponseSubscriptionEnd::LockDeadlineReached) => break,
-                        Err(ResponseSubscriptionEnd::ExecutorClosing) => {
+                        Err(TrackInterruptKind::LockDeadlineReached) => break,
+                        Err(TrackInterruptKind::ExecutorClosing) => {
                             return Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing));
                         }
-                        Err(ResponseSubscriptionEnd::ExecutionUpdated) => {
+                        Err(TrackInterruptKind::PauseOrCancel) => {
                             return Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel));
                         }
                     };
@@ -756,14 +777,16 @@ impl EventHistory {
                         {
                             debug!(join_set_id = %join_next_variant.join_set_id(), "Got result");
                             return Ok(accept_resp);
-                        } // this did not unblock the execution, loop
+                        } // else: this did not unblock the execution, loop
                     }
                     Err(SubscribeToResponsesError::DbErrorRead(err)) => {
                         return Err(ApplyError::DbError(DbErrorWrite::from(err)));
                     }
                     Err(SubscribeToResponsesError::SubscriptionEnded(
                         ResponseSubscriptionEnd::PollIntervalElapsed,
-                    )) => {}
+                    )) => {
+                        // Multi node with no notification mechanism polls again.
+                    }
                     Err(SubscribeToResponsesError::SubscriptionEnded(
                         ResponseSubscriptionEnd::LockDeadlineReached,
                     )) => break,
@@ -771,13 +794,15 @@ impl EventHistory {
                         ResponseSubscriptionEnd::ExecutorClosing,
                     )) => return Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing)),
                     Err(SubscribeToResponsesError::SubscriptionEnded(
-                        ResponseSubscriptionEnd::ExecutionUpdated,
+                        ResponseSubscriptionEnd::PauseOrCancel,
                     )) => return Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel)),
                 }
-            }
+            } // loop
             debug!("Giving up on waiting for response");
         }
         debug!(join_set_id = %join_next_variant.join_set_id(),  "Interrupting on {join_next_variant:?}");
+        // Execution is already in BlockedByJoinSet, executor should not append any events.
+        // When the matching response is appended, both DAOs move it to PendingAt(max(lock deadline, response time)).
         Err(ApplyError::InterruptDbUpdated)
     }
 
@@ -4031,6 +4056,139 @@ mod tests {
         db_close.close().await;
     }
 
+    #[tokio::test]
+    async fn join_next_extends_near_expired_lock_before_blocking_request() {
+        test_utils::set_up();
+        let sim_clock = SimClock::epoch();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        let child_execution_id = execution_id.next_level(&join_set_id);
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
+
+        let (mut history, mut cursor, mut connection) = load_event_history(
+            db_pool.connection_test().await.unwrap(),
+            execution_id.clone(),
+            sim_clock.now(),
+            Duration::from_secs(1),
+            deadline_tracker_factory_test(&sim_clock),
+            JoinNextBlockingStrategy::Interrupt,
+            fn_registry.clone(),
+        )
+        .await;
+        apply_create_join_set_start_async(
+            &mut *connection,
+            &mut history,
+            &mut cursor,
+            join_set_id.clone(),
+            MOCK_FFQN,
+            child_execution_id.clone(),
+            sim_clock.now(),
+        )
+        .await;
+        connection
+            .flush_non_blocking_event_cache(sim_clock.now())
+            .await
+            .unwrap();
+        drop(connection);
+
+        let finished_version = finish_child_execution(
+            db_connection.as_ref(),
+            child_execution_id.clone(),
+            sim_clock.now(),
+            SUPPORTED_RETURN_VALUE_OK_EMPTY,
+        )
+        .await;
+        db_connection
+            .append_response(
+                sim_clock.now(),
+                execution_id.clone(),
+                JoinSetResponseEvent {
+                    join_set_id: join_set_id.clone(),
+                    event: JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id: child_execution_id.clone(),
+                        finished_version,
+                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+
+        let (mut history, mut cursor, mut connection) = load_event_history(
+            db_pool.connection_test().await.unwrap(),
+            execution_id.clone(),
+            sim_clock.now(),
+            Duration::from_secs(1),
+            Arc::new(DeadlineTrackerFactory::new(
+                Duration::from_millis(100),
+                sim_clock.clone_box(),
+            )),
+            JoinNextBlockingStrategy::Await {
+                non_blocking_event_batching: 0,
+                subscription_interruption: None,
+            },
+            fn_registry,
+        )
+        .await;
+        history.lock_extension = Duration::from_secs(1);
+        apply_create_join_set_start_async(
+            &mut *connection,
+            &mut history,
+            &mut cursor,
+            join_set_id.clone(),
+            MOCK_FFQN,
+            child_execution_id.clone(),
+            sim_clock.now(),
+        )
+        .await;
+
+        sim_clock.move_time_forward(Duration::from_millis(900));
+        let extended_deadline = sim_clock.now() + Duration::from_secs(1);
+        history
+            .apply_event_call(
+                EventCallKind::Blocking(EventCallBlocking::JoinNextRequestingFfqn(
+                    JoinNextRequestingFfqn {
+                        join_set_id,
+                        wasm_backtrace: None,
+                        requested_ffqn: MOCK_FFQN,
+                    },
+                )),
+                &mut cursor,
+                &mut *connection,
+                sim_clock.now(),
+            )
+            .await
+            .unwrap();
+        let log = db_connection.get(&execution_id).await.unwrap();
+        let locked_idx = log
+            .events
+            .iter()
+            .position(|event| {
+                matches!(&event.event, ExecutionRequest::Locked(locked) if locked.lock_expires_at == extended_deadline)
+            })
+            .expect("lock should extend before the blocking request");
+        let join_next_idx = log
+            .events
+            .iter()
+            .position(|event| {
+                matches!(
+                    &event.event,
+                    ExecutionRequest::HistoryEvent {
+                        event: HistoryEvent::JoinNext { .. },
+                        ..
+                    }
+                )
+            })
+            .expect("join-next should be written");
+        assert!(locked_idx < join_next_idx);
+        drop(db_connection);
+        drop(connection);
+        db_close.close().await;
+    }
+
     #[rstest]
     #[tokio::test]
     async fn start_async_respond_then_join_next(
@@ -5230,7 +5388,7 @@ mod tests {
         execution_id: ExecutionId,
         now: DateTime<Utc>,
         lock_expires_at: Duration,
-        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        deadline_factory: Arc<DeadlineTrackerFactory>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> (EventHistory, EventCallCursor, Box<dyn WorkflowDbConnection>) {

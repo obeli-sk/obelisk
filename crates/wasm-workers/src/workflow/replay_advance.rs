@@ -166,7 +166,7 @@ impl From<ReplayInternalError> for AdvanceError {
             }
             ReplayInternalError::LockExpired { .. } => {
                 unreachable!(
-                    "advance() asserts DeadlineTrackerFactoryForReplay, which never expires the lock"
+                    "advance() asserts DeadlineTrackerFactory::Replay, which never expires the lock"
                 )
             }
             ReplayInternalError::ExecutorClosing(_) => Self::ExecutorClosing,
@@ -234,7 +234,7 @@ impl From<ReplayInternalError> for ReplayError {
             }
             ReplayInternalError::LockExpired { .. } => {
                 unreachable!(
-                    "replay() asserts DeadlineTrackerFactoryForReplay, which never expires the lock"
+                    "replay() asserts DeadlineTrackerFactory::Replay, which never expires the lock"
                 )
             }
             ReplayInternalError::ExecutorClosing(_) => Self::ExecutorClosing,

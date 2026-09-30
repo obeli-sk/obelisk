@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   threads still create a fresh isolate per activity. The prewarm saved about 1 ms per activity
   and, in 0.42.0-rc.7, could abort the server when V8 scheduled a delayed task.
 
+### Fixed
+
+- *(workflow)* A workflow entering a blocking join near its lock expiry extends the lock before
+  waiting for the child response, preventing a missed response wakeup.
+
 ## [0.42.0-rc.7](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.6...v0.42.0-rc.7)
 
 This release candidate adds experimental native QEMU (TCG and KVM) and Firecracker backends for

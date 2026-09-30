@@ -1297,9 +1297,10 @@ pub enum DbErrorReadWithTimeout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResponseSubscriptionEnd {
     PollIntervalElapsed,
+    /// Execution run should return without writing any more events, execution remains blocked waiting for response
     LockDeadlineReached,
     ExecutorClosing,
-    ExecutionUpdated,
+    PauseOrCancel,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
