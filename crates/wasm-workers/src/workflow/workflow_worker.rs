@@ -198,7 +198,7 @@ pub struct WorkflowWorker {
     engine: Option<Arc<Engine>>,
     fn_registry: Arc<dyn FunctionRegistry>,
     pub(crate) cancel_registry: CancelRegistry,
-    pub(crate) deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+    pub(crate) deadline_factory: Arc<DeadlineTrackerFactory>,
     pub(crate) logs_storage_config: Option<LogStrageConfig>,
 }
 
@@ -469,7 +469,7 @@ impl WorkflowWorkerLinked {
         self,
         deployment_id: DeploymentId,
         db_pool: Arc<dyn DbPool>,
-        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        deadline_factory: Arc<DeadlineTrackerFactory>,
         cancel_registry: CancelRegistry,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> WorkflowWorker {
@@ -597,7 +597,7 @@ struct WorkflowWorkerView<'a> {
     runtime: &'a dyn WorkflowRuntime,
     fn_registry: Arc<dyn FunctionRegistry>,
     cancel_registry: CancelRegistry,
-    deadline_factory: &'a dyn DeadlineTrackerFactory,
+    deadline_factory: &'a DeadlineTrackerFactory,
     logs_storage_config: Option<LogStrageConfig>,
 }
 
@@ -612,7 +612,7 @@ impl WorkflowWorker {
         #[cfg(any(test, feature = "test"))] engine: Option<Arc<Engine>>,
         exported_functions_noext: Vec<FunctionMetadata>,
         fn_registry: Arc<dyn FunctionRegistry>,
-        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        deadline_factory: Arc<DeadlineTrackerFactory>,
         cancel_registry: CancelRegistry,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> Self {
@@ -1336,7 +1336,7 @@ impl WorkflowWorker {
     ) -> Result<Vec<BacktraceInfo>, ReplayError> {
         assert!(
             self.deadline_factory.is_for_replay(),
-            "capture_backtraces() requires DeadlineTrackerFactoryForReplay"
+            "capture_backtraces() requires DeadlineTrackerFactory::Replay"
         );
         let db_conn = self
             .db_pool
@@ -1415,7 +1415,7 @@ impl WorkflowWorker {
     ) -> Result<MeasuredReplayResponse, ReplayError> {
         assert!(
             self.deadline_factory.is_for_replay(),
-            "replay() requires DeadlineTrackerFactoryForReplay"
+            "replay() requires DeadlineTrackerFactory::Replay"
         );
         let db_conn = self
             .db_pool
@@ -1495,7 +1495,7 @@ impl WorkflowWorker {
     ) -> Result<AdvanceResponse, AdvanceError> {
         assert!(
             self.deadline_factory.is_for_replay(),
-            "advance() requires DeadlineTrackerFactoryForReplay"
+            "advance() requires DeadlineTrackerFactory::Replay"
         );
         info!("Advance to requested {requested:?}");
         // Check version before replaying.
@@ -1947,9 +1947,7 @@ pub(crate) mod tests {
     use crate::activity::cancel_registry::CancelRegistry;
     use crate::cancellation_driver;
     use crate::testing_fn_registry::{TestingFnRegistry, fn_registry_dummy};
-    use crate::workflow::deadline_tracker::{
-        DeadlineTrackerFactoryForReplay, DeadlineTrackerFactoryTokio,
-    };
+    use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
     use crate::workflow::workflow_worker::test::{compile_workflow, compile_workflow_with_engine};
     use crate::{
         activity::activity_worker::tests::{FIBO_10_INPUT, FIBO_10_OUTPUT, new_activity_fibo},
@@ -2127,7 +2125,7 @@ pub(crate) mod tests {
                 .into_worker(
                     DEPLOYMENT_ID_DUMMY,
                     db_pool,
-                    Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn)),
+                    Arc::new(DeadlineTrackerFactory::new(Duration::ZERO, clock_fn)),
                     cancel_registry,
                     None, // logs_storage_config
                 ),
@@ -2170,7 +2168,7 @@ pub(crate) mod tests {
         .into_worker(
             deployment_id,
             db_pool,
-            Arc::new(DeadlineTrackerFactoryForReplay {}),
+            Arc::new(DeadlineTrackerFactory::for_replay()),
             CancelRegistry::new(),
             logs_storage_config,
         )

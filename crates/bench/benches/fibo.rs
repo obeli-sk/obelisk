@@ -29,7 +29,7 @@ mod bench {
     use wasm_workers::activity::cancel_registry::CancelRegistry;
     use wasm_workers::engines::{EngineConfig, Engines, PoolingConfig};
     use wasm_workers::testing_fn_registry::TestingFnRegistry;
-    use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
+    use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactory;
     use wasm_workers::workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
         WorkflowConfigMode, WorkflowWorkerCompiled,
@@ -215,7 +215,7 @@ mod bench {
             .into_worker(
                 DEPLOYMENT_ID_DUMMY,
                 db_pool.clone(),
-                Arc::new(DeadlineTrackerFactoryTokio::new(
+                Arc::new(DeadlineTrackerFactory::new(
                     Duration::ZERO,
                     clock_fn.clone_box(),
                 )),

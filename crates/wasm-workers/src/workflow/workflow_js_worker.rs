@@ -399,7 +399,7 @@ impl WorkflowJsWorkerLinked {
         self,
         deployment_id: DeploymentId,
         db_pool: Arc<dyn DbPool>,
-        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        deadline_factory: Arc<DeadlineTrackerFactory>,
         cancel_registry: CancelRegistry,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> WorkflowJsWorker {
@@ -431,7 +431,7 @@ impl WorkflowJsWorker {
     ) -> Result<Vec<BacktraceInfo>, ReplayError> {
         assert!(
             self.inner.deadline_factory.is_for_replay(),
-            "capture_backtraces() requires DeadlineTrackerFactoryForReplay"
+            "capture_backtraces() requires DeadlineTrackerFactory::Replay"
         );
         let db_conn = self
             .inner
@@ -518,7 +518,7 @@ impl WorkflowJsWorker {
     ) -> Result<MeasuredReplayResponse, ReplayError> {
         assert!(
             self.inner.deadline_factory.is_for_replay(),
-            "replay() requires DeadlineTrackerFactoryForReplay"
+            "replay() requires DeadlineTrackerFactory::Replay"
         );
         let db_conn = self
             .inner
@@ -568,7 +568,7 @@ impl WorkflowJsWorker {
     ) -> Result<AdvanceResponse, AdvanceError> {
         assert!(
             self.inner.deadline_factory.is_for_replay(),
-            "advance() requires DeadlineTrackerFactoryForReplay"
+            "advance() requires DeadlineTrackerFactory::Replay"
         );
         info!("Advance to requested {requested:?}");
         let db_conn = self
@@ -635,7 +635,7 @@ mod tests {
     use crate::testing_fn_registry::TestingFnRegistry;
     use crate::v8_executor::V8Executor;
     use crate::workflow::deadline_tracker::{
-        DeadlineTrackerFactory, DeadlineTrackerFactoryTokio, deadline_tracker_factory_test,
+        DeadlineTrackerFactory, deadline_tracker_factory_test,
     };
     use crate::workflow::workflow_worker::tests::{
         build_workflow_replay_worker_from_worker, compile_workflow_worker_runnable,
@@ -792,7 +792,6 @@ mod tests {
         user_return_type: ReturnTypeExtendable,
         max_replay_captured_writes: Option<usize>,
     ) -> WorkflowJsWorker {
-        use crate::workflow::deadline_tracker::DeadlineTrackerFactoryForReplay;
         let config = WorkflowConfig {
             memory: None,
             component_id,
@@ -828,7 +827,7 @@ mod tests {
         linked.into_worker(
             deployment_id,
             db_pool,
-            Arc::new(DeadlineTrackerFactoryForReplay {}),
+            Arc::new(DeadlineTrackerFactory::for_replay()),
             CancelRegistry::new(),
             logs_storage_config,
         )
@@ -900,7 +899,7 @@ mod tests {
             .unwrap();
 
         let (guard, db_pool, db_close) = db_tests::Database::Sqlite.set_up().await;
-        let deadline_factory = Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn));
+        let deadline_factory = Arc::new(DeadlineTrackerFactory::new(Duration::ZERO, clock_fn));
 
         (
             Arc::new(linked.into_worker(
@@ -1243,7 +1242,7 @@ mod tests {
             workflow_engine,
             DEPLOYMENT_ID_DUMMY,
             JoinNextBlockingStrategy::Interrupt,
-            Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn)),
+            Arc::new(DeadlineTrackerFactory::new(Duration::ZERO, clock_fn)),
         )
     }
 
@@ -1257,7 +1256,7 @@ mod tests {
         workflow_engine: Arc<Engine>,
         deployment_id: DeploymentId,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        deadline_factory: Arc<DeadlineTrackerFactory>,
     ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
         compile_js_workflow_worker_with_deployment_id_and_return_type(
             js_source,
@@ -1285,7 +1284,7 @@ mod tests {
         workflow_engine: Arc<Engine>,
         deployment_id: DeploymentId,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        deadline_factory: Arc<DeadlineTrackerFactory>,
         return_type: ReturnTypeExtendable,
         max_events_per_run: usize,
         response_refresh_interval: usize,
@@ -1320,7 +1319,7 @@ mod tests {
         workflow_engine: Arc<Engine>,
         deployment_id: DeploymentId,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        deadline_factory: Arc<DeadlineTrackerFactory>,
         params: &[ParameterType],
         return_type: ReturnTypeExtendable,
         max_events_per_run: usize,
@@ -1989,15 +1988,13 @@ mod tests {
                 TestingFnRegistry::new_from_components(components);
 
             // `Await` needs the SimClock deadline tracker for determinism; `Interrupt` never calls `track`.
-            let deadline_factory: Arc<dyn DeadlineTrackerFactory> =
-                match join_next_blocking_strategy {
-                    JoinNextBlockingStrategy::Await { .. } => {
-                        deadline_tracker_factory_test(&sim_clock)
-                    }
-                    JoinNextBlockingStrategy::Interrupt => Arc::new(
-                        DeadlineTrackerFactoryTokio::new(Duration::ZERO, sim_clock.clone_box()),
-                    ),
-                };
+            let deadline_factory: Arc<DeadlineTrackerFactory> = match join_next_blocking_strategy {
+                JoinNextBlockingStrategy::Await { .. } => deadline_tracker_factory_test(&sim_clock),
+                JoinNextBlockingStrategy::Interrupt => Arc::new(DeadlineTrackerFactory::new(
+                    Duration::ZERO,
+                    sim_clock.clone_box(),
+                )),
+            };
 
             let workflow_engine =
                 Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
@@ -2645,7 +2642,7 @@ mod tests {
                 workflow_engine.clone(),
                 DEPLOYMENT_ID_DUMMY,
                 JoinNextBlockingStrategy::Interrupt,
-                Arc::new(DeadlineTrackerFactoryTokio::new(
+                Arc::new(DeadlineTrackerFactory::new(
                     Duration::ZERO,
                     sim_clock.clone_box(),
                 )),
@@ -2839,7 +2836,7 @@ mod tests {
                 workflow_engine.clone(),
                 DEPLOYMENT_ID_DUMMY,
                 JoinNextBlockingStrategy::Interrupt,
-                Arc::new(DeadlineTrackerFactoryTokio::new(
+                Arc::new(DeadlineTrackerFactory::new(
                     Duration::ZERO,
                     sim_clock.clone_box(),
                 )),
@@ -4230,7 +4227,7 @@ mod tests {
                 workflow_engine.clone(),
                 original_deployment_id,
                 JoinNextBlockingStrategy::Interrupt,
-                Arc::new(DeadlineTrackerFactoryTokio::new(
+                Arc::new(DeadlineTrackerFactory::new(
                     Duration::ZERO,
                     sim_clock.clone_box(),
                 )),
@@ -4246,7 +4243,7 @@ mod tests {
                 workflow_engine,
                 upgrade_deployment_id,
                 JoinNextBlockingStrategy::Interrupt,
-                Arc::new(DeadlineTrackerFactoryTokio::new(
+                Arc::new(DeadlineTrackerFactory::new(
                     Duration::ZERO,
                     sim_clock.clone_box(),
                 )),
@@ -6284,7 +6281,7 @@ function inner() {
                 non_blocking_event_batching: 0,
                 subscription_interruption: None,
             },
-            Arc::new(DeadlineTrackerFactoryTokio::new(
+            Arc::new(DeadlineTrackerFactory::new(
                 Duration::ZERO,
                 clock_fn.clone_box(),
             )),
@@ -6480,7 +6477,7 @@ function inner() {
         .into_worker(
             DEPLOYMENT_ID_DUMMY,
             db_pool.clone(),
-            Arc::new(DeadlineTrackerFactoryTokio::new(
+            Arc::new(DeadlineTrackerFactory::new(
                 Duration::ZERO,
                 clock_fn.clone_box(),
             )),

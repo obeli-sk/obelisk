@@ -168,7 +168,7 @@ pub(crate) struct EventHistory {
     index_delay_id_to_expires_at: IndexMap<DelayId, DateTime<Utc>>,
     responses: Vec<(ResponseWithCursor, ProcessingStatus)>,
     worker_span: Span,
-    pub(crate) deadline_tracker: Box<dyn DeadlineTracker>,
+    pub(crate) deadline_tracker: DeadlineTracker,
     lock_extension: Duration, // 0 == disabled
     pub(crate) locked_event: Locked,
     pub(crate) fn_registry: Arc<dyn FunctionRegistry>,
@@ -249,7 +249,7 @@ impl EventHistory {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
-        deadline_tracker: Box<dyn DeadlineTracker>,
+        deadline_tracker: DeadlineTracker,
         locked_event: Locked,
         lock_extension: Option<Duration>,
         subscription_interruption: Option<Duration>,
@@ -5260,7 +5260,7 @@ mod tests {
         execution_id: ExecutionId,
         now: DateTime<Utc>,
         lock_expires_at: Duration,
-        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        deadline_factory: Arc<DeadlineTrackerFactory>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> (EventHistory, EventCallCursor, Box<dyn WorkflowDbConnection>) {

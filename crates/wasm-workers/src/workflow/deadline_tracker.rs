@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{storage::ResponseSubscriptionEnd, time::ClockFn};
 use std::{pin::Pin, time::Duration};
@@ -19,26 +18,47 @@ pub enum InterruptKind {
     PauseOrCancel,
 }
 
-#[async_trait]
-pub trait DeadlineTracker: Send + Sync {
-    /// Host functions must check whether the execution was interrupted because epoch callback is triggered only in WASM execution.
-    fn check_preempt(&self) -> Result<(), PreemptRequested>;
+pub enum DeadlineTracker {
+    ClockFn(DeadlineTrackerClockFn),
+    Replay,
+}
 
-    /// Called after the workflow made progress and is now blocked waiting for a response.
-    /// Returns a future that reports why the caller should stop waiting. If
-    /// `subscription_interruption` is specified, it can also end for periodic polling.
-    /// Future must return on lock expiry with `ResponseSubscriptionEnd::LockDeadlineReached`.
-    /// Leeway for lock expiry is not observed, so a successful return might trigger lock extension that might race with executor locking.
-    fn track(&self, subscription_interruption: Option<Duration>) -> TrackResult;
+impl DeadlineTracker {
+    pub fn check_preempt(&self) -> Result<(), PreemptRequested> {
+        match self {
+            Self::ClockFn(tracker) => tracker.check_preempt(),
+            Self::Replay => Ok(()),
+        }
+    }
 
-    /// Returns `true` if `now` >= `lock_expires_at` - `leeway`.
-    fn close_to_expired(&self) -> bool;
+    pub fn track(&self, subscription_interruption: Option<Duration>) -> TrackResult {
+        match self {
+            Self::ClockFn(tracker) => tracker.track(subscription_interruption),
+            Self::Replay => unreachable!("`track` is not called for the interrupt strategy"),
+        }
+    }
 
-    /// Called by epoch callback
-    fn epoch_callback_check(&self) -> Result<(), EpochCallbackError>;
+    #[must_use]
+    pub fn close_to_expired(&self) -> bool {
+        match self {
+            Self::ClockFn(tracker) => tracker.close_to_expired(),
+            Self::Replay => false,
+        }
+    }
 
-    /// Called after `close_to_expired` returned `true`, Return new lock expiry date (now + duration). Internally track that time minus leeway.
-    fn extend_by(&mut self, lock_extension: Duration) -> ExtendBy;
+    pub fn epoch_callback_check(&self) -> Result<(), EpochCallbackError> {
+        match self {
+            Self::ClockFn(tracker) => tracker.epoch_callback_check(),
+            Self::Replay => Ok(()),
+        }
+    }
+
+    pub fn extend_by(&mut self, lock_extension: Duration) -> ExtendBy {
+        match self {
+            Self::ClockFn(tracker) => tracker.extend_by(lock_extension),
+            Self::Replay => unreachable!("`close_to_expired` is always false for replay"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -47,22 +67,51 @@ pub enum PreemptRequested {
     Interrupt(InterruptKind),
 }
 
-pub trait DeadlineTrackerFactory: Send + Sync {
-    /// `execution_interrupt_watcher` is the executor-wide shutdown signal
-    /// (`InterruptKind::ExecutorClosing`); `local_interrupt_watcher` is the
-    /// per-execution pause/cancel signal (`InterruptKind::PauseOrCancel`). Either
-    /// firing interrupts the run; the kind decides the disposition.
-    fn create(
+pub enum DeadlineTrackerFactory {
+    ClockFn {
+        leeway: Duration,
+        clock_fn: Box<dyn ClockFn>,
+    },
+    Replay,
+}
+
+impl DeadlineTrackerFactory {
+    #[must_use]
+    pub fn new(leeway: Duration, clock_fn: Box<dyn ClockFn>) -> Self {
+        Self::ClockFn { leeway, clock_fn }
+    }
+
+    #[must_use]
+    pub fn for_replay() -> Self {
+        Self::Replay
+    }
+
+    #[must_use]
+    pub fn is_for_replay(&self) -> bool {
+        matches!(self, Self::Replay)
+    }
+
+    pub fn create(
         &self,
         lock_expires_at: DateTime<Utc>,
         execution_interrupt_watcher: watch::Receiver<bool>,
         local_interrupt_watcher: watch::Receiver<bool>,
-    ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired>;
-
-    /// True iff this factory produces trackers that never expire the lock.
-    /// Required precondition for `replay()` / `advance()` entry points.
-    fn is_for_replay(&self) -> bool {
-        false
+    ) -> Result<DeadlineTracker, LockAlreadyExpired> {
+        let Self::ClockFn { leeway, clock_fn } = self else {
+            return Ok(DeadlineTracker::Replay);
+        };
+        let started_at = clock_fn.now();
+        if (lock_expires_at - started_at).to_std().is_err() {
+            return Err(LockAlreadyExpired { started_at });
+        }
+        Ok(DeadlineTracker::ClockFn(DeadlineTrackerClockFn {
+            lock_expires_at,
+            close_to_expired: lock_expires_at - *leeway,
+            clock_fn: clock_fn.clone_box(),
+            leeway: *leeway,
+            execution_interrupt_watcher,
+            local_interrupt_watcher,
+        }))
     }
 }
 
@@ -80,7 +129,7 @@ pub enum EpochCallbackError {
     Interrupt(InterruptKind),
 }
 
-pub(crate) struct DeadlineTrackerClockFn {
+pub struct DeadlineTrackerClockFn {
     pub(crate) lock_expires_at: DateTime<Utc>, // updated on every extension
     pub(crate) close_to_expired: DateTime<Utc>, // lock_expires_at - leeway, updated on every extension
     pub(crate) clock_fn: Box<dyn ClockFn>,
@@ -111,8 +160,7 @@ impl DeadlineTrackerClockFn {
     }
 }
 
-#[async_trait]
-impl DeadlineTracker for DeadlineTrackerClockFn {
+impl DeadlineTrackerClockFn {
     fn check_preempt(&self) -> Result<(), PreemptRequested> {
         if let Some(kind) = self.interrupt_kind() {
             Err(PreemptRequested::Interrupt(kind))
@@ -186,47 +234,12 @@ pub struct ExtendBy {
     pub now: DateTime<Utc>,
 }
 
-// TODO: Rename to DeadlineTrackerFactoryClockFn
-pub struct DeadlineTrackerFactoryTokio {
-    pub leeway: Duration, // Used by `close_to_expiry` for lock extension.
-    pub clock_fn: Box<dyn ClockFn>,
-}
-impl DeadlineTrackerFactoryTokio {
-    #[must_use]
-    pub fn new(leeway: Duration, clock_fn: Box<dyn ClockFn>) -> Self {
-        Self { leeway, clock_fn }
-    }
-}
-impl Clone for DeadlineTrackerFactoryTokio {
+impl Clone for DeadlineTrackerFactory {
     fn clone(&self) -> Self {
-        Self {
-            leeway: self.leeway,
-            clock_fn: self.clock_fn.clone_box(),
+        match self {
+            Self::ClockFn { leeway, clock_fn } => Self::new(*leeway, clock_fn.clone_box()),
+            Self::Replay => Self::Replay,
         }
-    }
-}
-
-impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
-    fn create(
-        &self,
-        lock_expires_at: DateTime<Utc>,
-        execution_interrupt_watcher: watch::Receiver<bool>,
-        local_interrupt_watcher: watch::Receiver<bool>,
-    ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
-        let started_at = self.clock_fn.now();
-        if (lock_expires_at - started_at).to_std().is_err() {
-            return Err(LockAlreadyExpired { started_at });
-        }
-        let close_to_expired = lock_expires_at - self.leeway;
-        let tracker = DeadlineTrackerClockFn {
-            lock_expires_at,
-            close_to_expired,
-            clock_fn: self.clock_fn.clone_box(),
-            leeway: self.leeway,
-            execution_interrupt_watcher,
-            local_interrupt_watcher,
-        };
-        Ok(Box::new(tracker))
     }
 }
 
@@ -234,47 +247,9 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
 #[must_use]
 pub fn deadline_tracker_factory_test(
     sim_clock: &test_utils::sim_clock::SimClock,
-) -> std::sync::Arc<impl DeadlineTrackerFactory + use<>> {
-    std::sync::Arc::new(DeadlineTrackerFactoryTokio {
-        leeway: Duration::ZERO,
-        clock_fn: sim_clock.clone_box(),
-    })
-}
-
-pub struct DeadlineTrackerFactoryForReplay {}
-
-impl DeadlineTrackerFactory for DeadlineTrackerFactoryForReplay {
-    fn create(
-        &self,
-        _lock_expires_at: DateTime<Utc>,
-        _execution_interrupt_watcher: watch::Receiver<bool>,
-        _local_interrupt_watcher: watch::Receiver<bool>,
-    ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
-        Ok(Box::new(DeadlineTrackerFactoryForReplay {}))
-    }
-
-    fn is_for_replay(&self) -> bool {
-        true
-    }
-}
-impl DeadlineTracker for DeadlineTrackerFactoryForReplay {
-    fn check_preempt(&self) -> Result<(), PreemptRequested> {
-        Ok(())
-    }
-
-    fn track(&self, _max_duration: Option<Duration>) -> TrackResult {
-        unreachable!("`track` is not called for the interrupt strategy")
-    }
-
-    fn close_to_expired(&self) -> bool {
-        false
-    }
-
-    fn epoch_callback_check(&self) -> Result<(), EpochCallbackError> {
-        Ok(())
-    }
-
-    fn extend_by(&mut self, _lock_extension: Duration) -> ExtendBy {
-        unreachable!("`close_to_expired` returns always false")
-    }
+) -> std::sync::Arc<DeadlineTrackerFactory> {
+    std::sync::Arc::new(DeadlineTrackerFactory::new(
+        Duration::ZERO,
+        sim_clock.clone_box(),
+    ))
 }
