@@ -15,21 +15,19 @@ os="$(uname -s)"
 if [ "$os" = "Linux" ]; then
     machine="$(uname -m)"
     case "$machine" in
-        x86_64)   target="x86_64-unknown-linux-" ;;
-        aarch64)  target="aarch64-unknown-linux-" ;;
+        x86_64)   target="x86_64-unknown-linux-";  glibc_loader="/lib64/ld-linux-x86-64.so.2" ;;
+        aarch64)  target="aarch64-unknown-linux-"; glibc_loader="/lib/ld-linux-aarch64.so.1" ;;
         *)        echo "Unsupported architecture ${machine}" && exit 1 ;;
     esac
 
-    # Use musl on NixOS and musl-based systems.
-    ldd_version=$(ldd --version 2>&1 || true)
-    issue=$(cat /etc/issue 2>/dev/null || true)
-    if echo "$ldd_version" | grep -q "musl" || echo "$issue" | grep -q "NixOS"; then
-        lib="musl"
-        if echo "$issue" | grep -q "NixOS"; then
-            echo -e "Downloading musl-based bianry on NixOS. Consider installing with\nnix profile install github:obeli-sk/obelisk/latest"
-        fi
-    else
+    # The gnu binary needs the glibc loader at its FHS path, missing on NixOS, musl distros and some sandboxes.
+    if [ -e "$glibc_loader" ]; then
         lib="gnu"
+    else
+        lib="musl"
+        if [ -e /etc/NIXOS ] || grep -qs "NixOS" /etc/issue /etc/os-release; then
+            printf "Downloading musl-based binary on NixOS. Consider installing with\nnix profile install github:obeli-sk/obelisk/latest\n"
+        fi
     fi
     url="${base_url}${target}${lib}.tar.gz"
 
