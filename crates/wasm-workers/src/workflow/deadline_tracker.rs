@@ -18,6 +18,21 @@ pub enum InterruptKind {
     PauseOrCancel,
 }
 
+#[derive(Clone, Copy)]
+enum WatcherInterruptKind {
+    ExecutorClosing,
+    PauseOrCancel,
+}
+
+impl From<WatcherInterruptKind> for InterruptKind {
+    fn from(kind: WatcherInterruptKind) -> Self {
+        match kind {
+            WatcherInterruptKind::ExecutorClosing => Self::ExecutorClosing,
+            WatcherInterruptKind::PauseOrCancel => Self::PauseOrCancel,
+        }
+    }
+}
+
 pub enum DeadlineTracker {
     ClockFn(DeadlineTrackerClockFn),
     Replay,
@@ -141,18 +156,18 @@ pub struct DeadlineTrackerClockFn {
 fn interrupt_kind_from_watchers(
     execution_interrupt_watcher: &watch::Receiver<bool>,
     local_interrupt_watcher: &watch::Receiver<bool>,
-) -> Option<InterruptKind> {
+) -> Option<WatcherInterruptKind> {
     if *execution_interrupt_watcher.borrow() {
-        Some(InterruptKind::ExecutorClosing)
+        Some(WatcherInterruptKind::ExecutorClosing)
     } else if *local_interrupt_watcher.borrow() {
-        Some(InterruptKind::PauseOrCancel)
+        Some(WatcherInterruptKind::PauseOrCancel)
     } else {
         None
     }
 }
 
 impl DeadlineTrackerClockFn {
-    fn interrupt_kind(&self) -> Option<InterruptKind> {
+    fn interrupt_kind(&self) -> Option<WatcherInterruptKind> {
         interrupt_kind_from_watchers(
             &self.execution_interrupt_watcher,
             &self.local_interrupt_watcher,
@@ -163,7 +178,7 @@ impl DeadlineTrackerClockFn {
 impl DeadlineTrackerClockFn {
     fn check_preempt(&self) -> Result<(), PreemptRequested> {
         if let Some(kind) = self.interrupt_kind() {
-            Err(PreemptRequested::Interrupt(kind))
+            Err(PreemptRequested::Interrupt(kind.into()))
         } else {
             Ok(())
         }
@@ -178,9 +193,8 @@ impl DeadlineTrackerClockFn {
 
         if let Some(kind) = self.interrupt_kind() {
             return Err(match kind {
-                InterruptKind::ExecutorClosing => ResponseSubscriptionEnd::ExecutorClosing,
-                InterruptKind::PauseOrCancel => ResponseSubscriptionEnd::ExecutionUpdated,
-                InterruptKind::WorkflowEventLimitReached => unreachable!("not watcher-driven"), // FIXME: Exract narrower enum
+                WatcherInterruptKind::ExecutorClosing => ResponseSubscriptionEnd::ExecutorClosing,
+                WatcherInterruptKind::PauseOrCancel => ResponseSubscriptionEnd::ExecutionUpdated,
             });
         }
 
@@ -220,7 +234,7 @@ impl DeadlineTrackerClockFn {
 
     fn epoch_callback_check(&self) -> Result<(), EpochCallbackError> {
         if let Some(kind) = self.interrupt_kind() {
-            Err(EpochCallbackError::Interrupt(kind))
+            Err(EpochCallbackError::Interrupt(kind.into()))
         } else if self.lock_expires_at <= self.clock_fn.now() {
             Err(EpochCallbackError::LockExpired)
         } else {
