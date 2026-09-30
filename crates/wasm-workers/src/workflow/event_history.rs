@@ -8,6 +8,7 @@ use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::workflow::deadline_tracker::InterruptKind;
+use crate::workflow::deadline_tracker::TrackInterruptKind;
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
@@ -745,15 +746,11 @@ impl EventHistory {
                 let subscription_end_fut =
                     match self.deadline_tracker.track(self.subscription_interruption) {
                         Ok(subscription_end_fut) => subscription_end_fut,
-                        Err(ResponseSubscriptionEnd::PollIntervalElapsed) => {
-                            // Multi node with no notification mechanism polls again.
-                            continue;
-                        }
-                        Err(ResponseSubscriptionEnd::LockDeadlineReached) => break,
-                        Err(ResponseSubscriptionEnd::ExecutorClosing) => {
+                        Err(TrackInterruptKind::LockDeadlineReached) => break,
+                        Err(TrackInterruptKind::ExecutorClosing) => {
                             return Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing));
                         }
-                        Err(ResponseSubscriptionEnd::ExecutionUpdated) => {
+                        Err(TrackInterruptKind::PauseOrCancel) => {
                             return Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel));
                         }
                     };
@@ -789,7 +786,6 @@ impl EventHistory {
                         ResponseSubscriptionEnd::PollIntervalElapsed,
                     )) => {
                         // Multi node with no notification mechanism polls again.
-                        continue;
                     }
                     Err(SubscribeToResponsesError::SubscriptionEnded(
                         ResponseSubscriptionEnd::LockDeadlineReached,

@@ -4,9 +4,10 @@ use std::{pin::Pin, time::Duration};
 use tokio::sync::watch;
 
 /// Future that reports why a blocked wait should stop.
-pub type ResponseSubscriptionFuture = Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>;
+pub(crate) type ResponseSubscriptionFuture =
+    Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>;
 /// Either a future that will report the wait's end, or an immediate end reason.
-pub type TrackResult = Result<ResponseSubscriptionFuture, ResponseSubscriptionEnd>;
+pub(crate) type TrackResult = Result<ResponseSubscriptionFuture, TrackInterruptKind>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptKind {
@@ -20,6 +21,13 @@ pub enum InterruptKind {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum WatcherInterruptKind {
+    ExecutorClosing,
+    PauseOrCancel,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TrackInterruptKind {
+    LockDeadlineReached,
     ExecutorClosing,
     PauseOrCancel,
 }
@@ -46,7 +54,7 @@ impl DeadlineTracker {
         }
     }
 
-    pub fn track(&self, subscription_interruption: Option<Duration>) -> TrackResult {
+    pub(crate) fn track(&self, subscription_interruption: Option<Duration>) -> TrackResult {
         match self {
             Self::ClockFn(tracker) => tracker.track(subscription_interruption),
             Self::Replay => unreachable!("`track` is not called for the interrupt strategy"),
@@ -182,13 +190,13 @@ impl DeadlineTrackerClockFn {
         let now = self.clock_fn.now();
 
         let Ok(duration_to_expiry) = (self.lock_expires_at - now).to_std() else {
-            return Err(ResponseSubscriptionEnd::LockDeadlineReached);
+            return Err(TrackInterruptKind::LockDeadlineReached);
         };
 
         if let Some(kind) = self.interrupt_kind() {
             return Err(match kind {
-                WatcherInterruptKind::ExecutorClosing => ResponseSubscriptionEnd::ExecutorClosing,
-                WatcherInterruptKind::PauseOrCancel => ResponseSubscriptionEnd::ExecutionUpdated,
+                WatcherInterruptKind::ExecutorClosing => TrackInterruptKind::ExecutorClosing,
+                WatcherInterruptKind::PauseOrCancel => TrackInterruptKind::PauseOrCancel,
             });
         }
 
