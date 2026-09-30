@@ -417,14 +417,23 @@ impl EventHistory {
             }
         }
 
+        if matches!(&event_call_kind, EventCallKind::Blocking(_)) {
+            // Try extending the lock before blocking event to allow waiting for the response longer.
+            // Lock cannot be extended after the blocking event is written as the execution becomes blocked until a response arrives.
+            self.try_extend_lock(event_call_cursor, db_connection)
+                .await?;
+        }
+
         let event_call = event_call_cursor.next(event_call_kind);
         let ok = self
-            .apply_inner(event_call, db_connection, called_at, event_call_cursor)
+            .apply_inner(event_call, db_connection, called_at)
             .await?;
 
-        // Try to extend lock after event is fully processed, e.g. when blocking event found its response.
-        self.try_extend_lock(event_call_cursor, db_connection)
-            .await?;
+        if self.written_events_since_lock_extension > 0 {
+            // Try to extend lock after event is fully processed, e.g. when blocking event found its response.
+            self.try_extend_lock(event_call_cursor, db_connection)
+                .await?;
+        }
 
         Ok(ok)
     }
@@ -437,7 +446,6 @@ impl EventHistory {
         event_call: EventCall,
         db_connection: &mut dyn WorkflowDbConnection,
         called_at: DateTime<Utc>,
-        event_call_cursor: &mut EventCallCursor,
     ) -> Result<ChildReturnValue, ApplyError> {
         debug!("applying {event_call:?}");
 
@@ -530,7 +538,6 @@ impl EventHistory {
                     db_connection,
                     lock_expires_at,
                     called_at,
-                    event_call_cursor,
                 )
                 .await
             }
@@ -621,10 +628,7 @@ impl EventHistory {
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
     ) -> Result<(), DbErrorWrite> {
-        if self.deadline_tracker.close_to_expired()
-            && self.lock_extension > Duration::ZERO
-            && self.written_events_since_lock_extension > 0
-        {
+        if self.deadline_tracker.close_to_expired() && self.lock_extension > Duration::ZERO {
             self.extend_lock(event_call_cursor, db_connection).await?;
         }
         Ok(())
@@ -668,7 +672,6 @@ impl EventHistory {
         db_connection: &mut dyn WorkflowDbConnection,
         lock_expires_at: DateTime<Utc>,
         called_at: DateTime<Utc>,
-        event_call_cursor: &mut EventCallCursor,
     ) -> Result<ChildReturnValue, ApplyError> {
         let join_next_variant = event_call.join_next_variant();
         let keys = event_call.as_keys();
@@ -734,10 +737,6 @@ impl EventHistory {
         ) {
             // JoinNext was written, wait for next response.
             debug!(join_set_id = %join_next_variant.join_set_id(), "Waiting for {join_next_variant:?}");
-
-            // Try to extend lock so the wait for response can take longer.
-            self.try_extend_lock(event_call_cursor, db_connection)
-                .await?;
 
             let key = join_next_variant.as_key();
 
@@ -4058,6 +4057,139 @@ mod tests {
             .unwrap();
 
         drop(db_connection);
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn join_next_extends_near_expired_lock_before_blocking_request() {
+        test_utils::set_up();
+        let sim_clock = SimClock::epoch();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        let child_execution_id = execution_id.next_level(&join_set_id);
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
+
+        let (mut history, mut cursor, mut connection) = load_event_history(
+            db_pool.connection_test().await.unwrap(),
+            execution_id.clone(),
+            sim_clock.now(),
+            Duration::from_secs(1),
+            deadline_tracker_factory_test(&sim_clock),
+            JoinNextBlockingStrategy::Interrupt,
+            fn_registry.clone(),
+        )
+        .await;
+        apply_create_join_set_start_async(
+            &mut *connection,
+            &mut history,
+            &mut cursor,
+            join_set_id.clone(),
+            MOCK_FFQN,
+            child_execution_id.clone(),
+            sim_clock.now(),
+        )
+        .await;
+        connection
+            .flush_non_blocking_event_cache(sim_clock.now())
+            .await
+            .unwrap();
+        drop(connection);
+
+        let finished_version = finish_child_execution(
+            db_connection.as_ref(),
+            child_execution_id.clone(),
+            sim_clock.now(),
+            SUPPORTED_RETURN_VALUE_OK_EMPTY,
+        )
+        .await;
+        db_connection
+            .append_response(
+                sim_clock.now(),
+                execution_id.clone(),
+                JoinSetResponseEvent {
+                    join_set_id: join_set_id.clone(),
+                    event: JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id: child_execution_id.clone(),
+                        finished_version,
+                        result: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+
+        let (mut history, mut cursor, mut connection) = load_event_history(
+            db_pool.connection_test().await.unwrap(),
+            execution_id.clone(),
+            sim_clock.now(),
+            Duration::from_secs(1),
+            Arc::new(DeadlineTrackerFactory::new(
+                Duration::from_millis(100),
+                sim_clock.clone_box(),
+            )),
+            JoinNextBlockingStrategy::Await {
+                non_blocking_event_batching: 0,
+                subscription_interruption: None,
+            },
+            fn_registry,
+        )
+        .await;
+        history.lock_extension = Duration::from_secs(1);
+        apply_create_join_set_start_async(
+            &mut *connection,
+            &mut history,
+            &mut cursor,
+            join_set_id.clone(),
+            MOCK_FFQN,
+            child_execution_id.clone(),
+            sim_clock.now(),
+        )
+        .await;
+
+        sim_clock.move_time_forward(Duration::from_millis(900));
+        let extended_deadline = sim_clock.now() + Duration::from_secs(1);
+        history
+            .apply_event_call(
+                EventCallKind::Blocking(EventCallBlocking::JoinNextRequestingFfqn(
+                    JoinNextRequestingFfqn {
+                        join_set_id,
+                        wasm_backtrace: None,
+                        requested_ffqn: MOCK_FFQN,
+                    },
+                )),
+                &mut cursor,
+                &mut *connection,
+                sim_clock.now(),
+            )
+            .await
+            .unwrap();
+        let log = db_connection.get(&execution_id).await.unwrap();
+        let locked_idx = log
+            .events
+            .iter()
+            .position(|event| {
+                matches!(&event.event, ExecutionRequest::Locked(locked) if locked.lock_expires_at == extended_deadline)
+            })
+            .expect("lock should extend before the blocking request");
+        let join_next_idx = log
+            .events
+            .iter()
+            .position(|event| {
+                matches!(
+                    &event.event,
+                    ExecutionRequest::HistoryEvent {
+                        event: HistoryEvent::JoinNext { .. },
+                        ..
+                    }
+                )
+            })
+            .expect("join-next should be written");
+        assert!(locked_idx < join_next_idx);
+        drop(db_connection);
+        drop(connection);
         db_close.close().await;
     }
 
