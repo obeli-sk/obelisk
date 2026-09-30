@@ -6,16 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0-rc.8](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.7...v0.42.0-rc.8)
+
+This release candidate fixes a workflow response wakeup race near lock expiry and removes V8
+activity prewarming, which could abort the server when V8 scheduled a delayed task. Reused V8
+threads still run each activity in a fresh isolate. Firecracker builds are now limited to Linux.
+
 ### Changed
 
 - *(V8)* Idle isolate threads no longer prepare the next JS activity's runtime in advance; reused
   threads still create a fresh isolate per activity. The prewarm saved about 1 ms per activity
   and, in 0.42.0-rc.7, could abort the server when V8 scheduled a delayed task.
+  [#1071](https://github.com/obeli-sk/obelisk/pull/1071)
+- *(activity-vm)* Firecracker is built only on Linux. Selecting a Linux-only VM runtime on another
+  platform now reports an unsupported-platform error.
+  [#1069](https://github.com/obeli-sk/obelisk/pull/1069)
 
 ### Fixed
 
 - *(workflow)* A workflow entering a blocking join near its lock expiry extends the lock before
   waiting for the child response, preventing a missed response wakeup.
+  [#1074](https://github.com/obeli-sk/obelisk/pull/1074)
 
 ## [0.42.0-rc.7](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.6...v0.42.0-rc.7)
 
