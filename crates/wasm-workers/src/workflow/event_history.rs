@@ -190,9 +190,13 @@ pub(crate) struct EventHistory {
     // Upper bound on captured writes a replay pass may collect. `None` outside replay.
     max_replay_captured_writes: Option<usize>,
     max_events_per_run: Option<usize>,
+    // Needed for bounding by `max_events_per_run`
     written_events_this_run: usize,
+    // Needed for deciding whether to extend the lock
     written_events_since_lock_extension: usize,
+    // See `events_since_response_refresh`.
     response_refresh_interval: Option<usize>,
+    // Needed for flushing non-blocking events, guarded by `response_refresh_interval`
     events_since_response_refresh: usize,
 }
 
@@ -393,9 +397,9 @@ impl EventHistory {
         db_connection: &mut dyn WorkflowDbConnection,
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, WorkflowFunctionError> {
-        Ok(self
-            .apply_event_call(event_call, event_call_cursor, db_connection, called_at)
-            .await?)
+        self.apply_event_call(event_call, event_call_cursor, db_connection, called_at)
+            .await
+            .map_err(WorkflowFunctionError::from) // wrap with `WorkflowFunctionError`, downcasted from trap in `WasmtimeWorkflowRuntime`.
     }
 
     async fn apply_event_call(
@@ -413,17 +417,16 @@ impl EventHistory {
             }
         }
 
-        if self.deadline_tracker.close_to_expired()
-            && self.lock_extension > Duration::ZERO
-            && self.written_events_since_lock_extension > 0
-        {
-            self.extend_lock(event_call_cursor, db_connection, called_at)
-                .await?;
-            self.written_events_since_lock_extension = 0;
-        }
-
         let event_call = event_call_cursor.next(event_call_kind);
-        self.apply_inner(event_call, db_connection, called_at).await
+        let ok = self
+            .apply_inner(event_call, db_connection, called_at, event_call_cursor)
+            .await?;
+
+        // Try to extend lock after event is fully processed, e.g. when blocking event found its response.
+        self.try_extend_lock(event_call_cursor, db_connection)
+            .await?;
+
+        Ok(ok)
     }
 
     /// Apply the event and wait if new, replay if already in the event history, or
@@ -434,14 +437,11 @@ impl EventHistory {
         event_call: EventCall,
         db_connection: &mut dyn WorkflowDbConnection,
         called_at: DateTime<Utc>,
+        event_call_cursor: &mut EventCallCursor,
     ) -> Result<ChildReturnValue, ApplyError> {
         debug!("applying {event_call:?}");
 
-        // A non-terminating workflow (e.g. a `joinNextTry` busy loop on a response that is never
-        // injected) would collect captured writes forever during replay, since the replay deadline
-        // never expires the lock. Once the collection hits the bound, interrupt replay so the writes
-        // gathered so far are returned as an advanceable prefix; advancing them and replaying again
-        // resumes collection from the persisted tip, stepping the workflow forward N writes at a time.
+        // Bound replay with busy loops (e.g. a loop { joinNextTry }) with `max_replay_captured_writes`.
         if let Some(max) = self.max_replay_captured_writes
             && let Some(collected) = db_connection.captured_writes_collected()
             && collected >= max
@@ -530,15 +530,16 @@ impl EventHistory {
                     db_connection,
                     lock_expires_at,
                     called_at,
+                    event_call_cursor,
                 )
                 .await
             }
         }?;
-        let written_events = self.event_history.len() - event_history_len_before;
+        let written_events = self.event_history.len() - event_history_len_before; // replay does not add events, just marks them `Processed`.
         self.written_events_this_run += written_events;
         self.written_events_since_lock_extension += written_events;
-        if written_events > 0
-            && let Some(max_events_per_run) = self.max_events_per_run
+
+        if let Some(max_events_per_run) = self.max_events_per_run
             && self.written_events_this_run >= max_events_per_run
         {
             debug!(
@@ -615,15 +616,29 @@ impl EventHistory {
         db_connection.append_backtrace(backtrace).await
     }
 
+    async fn try_extend_lock(
+        &mut self,
+        event_call_cursor: &mut EventCallCursor,
+        db_connection: &mut dyn WorkflowDbConnection,
+    ) -> Result<(), DbErrorWrite> {
+        if self.deadline_tracker.close_to_expired()
+            && self.lock_extension > Duration::ZERO
+            && self.written_events_since_lock_extension > 0
+        {
+            self.extend_lock(event_call_cursor, db_connection).await?;
+        }
+        Ok(())
+    }
+
     async fn extend_lock(
         &mut self,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
-        self.locked_event.lock_expires_at = self.deadline_tracker.extend_by(self.lock_extension);
+        let extend_by = self.deadline_tracker.extend_by(self.lock_extension);
+        self.locked_event.lock_expires_at = extend_by.lock_expires_at;
         let append_req = AppendRequest {
-            created_at: called_at,
+            created_at: extend_by.now,
             event: ExecutionRequest::Locked(self.locked_event.clone()),
         };
         info!(
@@ -642,6 +657,7 @@ impl EventHistory {
             )
             .await?;
         event_call_cursor.next_version = event_call_cursor.next_version.increment();
+        self.written_events_since_lock_extension = 0;
         Ok(())
     }
 
@@ -652,6 +668,7 @@ impl EventHistory {
         db_connection: &mut dyn WorkflowDbConnection,
         lock_expires_at: DateTime<Utc>,
         called_at: DateTime<Utc>,
+        event_call_cursor: &mut EventCallCursor,
     ) -> Result<ChildReturnValue, ApplyError> {
         let join_next_variant = event_call.join_next_variant();
         let keys = event_call.as_keys();
@@ -717,6 +734,11 @@ impl EventHistory {
         ) {
             // JoinNext was written, wait for next response.
             debug!(join_set_id = %join_next_variant.join_set_id(), "Waiting for {join_next_variant:?}");
+
+            // Try to extend lock so the wait for response can take longer.
+            self.try_extend_lock(event_call_cursor, db_connection)
+                .await?;
+
             let key = join_next_variant.as_key();
 
             // Subscribe to the next response, waking on an interrupt or the deadline.
@@ -724,7 +746,10 @@ impl EventHistory {
                 let subscription_end_fut =
                     match self.deadline_tracker.track(self.subscription_interruption) {
                         Ok(subscription_end_fut) => subscription_end_fut,
-                        Err(ResponseSubscriptionEnd::PollIntervalElapsed) => continue,
+                        Err(ResponseSubscriptionEnd::PollIntervalElapsed) => {
+                            // Multi node with no notification mechanism polls again.
+                            continue;
+                        }
                         Err(ResponseSubscriptionEnd::LockDeadlineReached) => break,
                         Err(ResponseSubscriptionEnd::ExecutorClosing) => {
                             return Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing));
@@ -756,14 +781,17 @@ impl EventHistory {
                         {
                             debug!(join_set_id = %join_next_variant.join_set_id(), "Got result");
                             return Ok(accept_resp);
-                        } // this did not unblock the execution, loop
+                        } // else: this did not unblock the execution, loop
                     }
                     Err(SubscribeToResponsesError::DbErrorRead(err)) => {
                         return Err(ApplyError::DbError(DbErrorWrite::from(err)));
                     }
                     Err(SubscribeToResponsesError::SubscriptionEnded(
                         ResponseSubscriptionEnd::PollIntervalElapsed,
-                    )) => {}
+                    )) => {
+                        // Multi node with no notification mechanism polls again.
+                        continue;
+                    }
                     Err(SubscribeToResponsesError::SubscriptionEnded(
                         ResponseSubscriptionEnd::LockDeadlineReached,
                     )) => break,
@@ -774,10 +802,12 @@ impl EventHistory {
                         ResponseSubscriptionEnd::ExecutionUpdated,
                     )) => return Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel)),
                 }
-            }
+            } // loop
             debug!("Giving up on waiting for response");
         }
         debug!(join_set_id = %join_next_variant.join_set_id(),  "Interrupting on {join_next_variant:?}");
+        // Execution is already in BlockedByJoinSet, executor should not append any events.
+        // When the matching response is appended, both DAOs move it to PendingAt(max(lock deadline, response time)).
         Err(ApplyError::InterruptDbUpdated)
     }
 

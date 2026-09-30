@@ -3,7 +3,6 @@ use chrono::{DateTime, Utc};
 use concepts::{storage::ResponseSubscriptionEnd, time::ClockFn};
 use std::{pin::Pin, time::Duration};
 use tokio::sync::watch;
-use tracing::{trace, warn};
 
 /// Future that reports why a blocked wait should stop.
 pub type ResponseSubscriptionFuture = Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>;
@@ -22,20 +21,24 @@ pub enum InterruptKind {
 
 #[async_trait]
 pub trait DeadlineTracker: Send + Sync {
-    /// Host functions must check whether the execution was interrupted.
+    /// Host functions must check whether the execution was interrupted because epoch callback is triggered only in WASM execution.
     fn check_preempt(&self) -> Result<(), PreemptRequested>;
 
     /// Called after the workflow made progress and is now blocked waiting for a response.
     /// Returns a future that reports why the caller should stop waiting. If
-    /// `max_duration` is specified, it can also end for periodic polling.
-    fn track(&self, max_duration: Option<Duration>) -> TrackResult;
+    /// `subscription_interruption` is specified, it can also end for periodic polling.
+    /// Future must return on lock expiry with `ResponseSubscriptionEnd::LockDeadlineReached`.
+    /// Leeway for lock expiry is not observed, so a successful return might trigger lock extension that might race with executor locking.
+    fn track(&self, subscription_interruption: Option<Duration>) -> TrackResult;
 
+    /// Returns `true` if `now` >= `lock_expires_at` - `leeway`.
     fn close_to_expired(&self) -> bool;
 
+    /// Called by epoch callback
     fn check_epoch_callback(&self) -> Result<(), EpochCallbackError>;
 
     /// Called after `close_to_expired` returned `true`, Return new lock expiry date (now + duration). Internally track that time minus leeway.
-    fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc>;
+    fn extend_by(&mut self, lock_extension: Duration) -> ExtendBy;
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -77,11 +80,11 @@ pub enum EpochCallbackError {
     Interrupt(InterruptKind),
 }
 
-pub(crate) struct DeadlineTrackerTokio {
-    pub(crate) deadline: tokio::time::Instant,
-    pub(crate) deadline_minus_leeway: tokio::time::Instant, // Tracked as instant because calling track happens later after creation.
+pub(crate) struct DeadlineTrackerClockFn {
+    pub(crate) lock_expires_at: DateTime<Utc>, // updated on every extension
+    pub(crate) close_to_expired: DateTime<Utc>, // lock_expires_at - leeway, updated on every extension
     pub(crate) clock_fn: Box<dyn ClockFn>,
-    pub(crate) leeway: Duration, // Fire this much sooner than requested.
+    pub(crate) leeway: Duration, // for close_to_expired
     execution_interrupt_watcher: watch::Receiver<bool>,
     local_interrupt_watcher: watch::Receiver<bool>,
 }
@@ -99,7 +102,7 @@ fn interrupt_kind_from_watchers(
     }
 }
 
-impl DeadlineTrackerTokio {
+impl DeadlineTrackerClockFn {
     fn interrupt_kind(&self) -> Option<InterruptKind> {
         interrupt_kind_from_watchers(
             &self.execution_interrupt_watcher,
@@ -109,7 +112,7 @@ impl DeadlineTrackerTokio {
 }
 
 #[async_trait]
-impl DeadlineTracker for DeadlineTrackerTokio {
+impl DeadlineTracker for DeadlineTrackerClockFn {
     fn check_preempt(&self) -> Result<(), PreemptRequested> {
         if let Some(kind) = self.interrupt_kind() {
             Err(PreemptRequested::Interrupt(kind))
@@ -118,75 +121,74 @@ impl DeadlineTracker for DeadlineTrackerTokio {
         }
     }
 
-    fn track(&self, max_duration: Option<Duration>) -> TrackResult {
-        let now = tokio::time::Instant::now();
-        if self.deadline_minus_leeway <= now {
-            Err(ResponseSubscriptionEnd::LockDeadlineReached)
-        } else if let Some(kind) = self.interrupt_kind() {
-            Err(match kind {
+    fn track(&self, subscription_interruption: Option<Duration>) -> TrackResult {
+        let now = self.clock_fn.now();
+
+        let Ok(duration_to_expiry) = (self.lock_expires_at - now).to_std() else {
+            return Err(ResponseSubscriptionEnd::LockDeadlineReached);
+        };
+
+        if let Some(kind) = self.interrupt_kind() {
+            return Err(match kind {
                 InterruptKind::ExecutorClosing => ResponseSubscriptionEnd::ExecutorClosing,
                 InterruptKind::PauseOrCancel => ResponseSubscriptionEnd::ExecutionUpdated,
-                InterruptKind::WorkflowEventLimitReached => unreachable!("not watcher-driven"),
-            })
-        } else {
-            let (expiry, expiry_reason) = match max_duration {
-                Some(max_duration) if now + max_duration < self.deadline_minus_leeway => (
-                    now + max_duration,
-                    ResponseSubscriptionEnd::PollIntervalElapsed,
-                ),
-                _ => (
-                    self.deadline_minus_leeway,
-                    ResponseSubscriptionEnd::LockDeadlineReached,
-                ),
-            };
-            let mut execution_interrupt_watcher = self.execution_interrupt_watcher.clone();
-            let mut local_interrupt_watcher = self.local_interrupt_watcher.clone();
-            Ok(Box::pin(async move {
-                tokio::select! {
-                    () = tokio::time::sleep_until(expiry) => expiry_reason,
-                    Ok(_) = execution_interrupt_watcher.wait_for(|&v| v) => ResponseSubscriptionEnd::ExecutorClosing,
-                    Ok(_) = local_interrupt_watcher.wait_for(|&v| v) => ResponseSubscriptionEnd::ExecutionUpdated,
-                }
-            }))
+                InterruptKind::WorkflowEventLimitReached => unreachable!("not watcher-driven"), // FIXME: Exract narrower enum
+            });
+        }
+
+        let (expiry, expiry_reason) = match subscription_interruption {
+            Some(max_duration) if max_duration < duration_to_expiry => {
+                (max_duration, ResponseSubscriptionEnd::PollIntervalElapsed)
+            }
+            _ => (
+                duration_to_expiry,
+                ResponseSubscriptionEnd::LockDeadlineReached,
+            ),
+        };
+        let mut execution_interrupt_watcher = self.execution_interrupt_watcher.clone();
+        let mut local_interrupt_watcher = self.local_interrupt_watcher.clone();
+        Ok(Box::pin(async move {
+            tokio::select! {
+                () = tokio::time::sleep(expiry) => expiry_reason,
+                Ok(_) = execution_interrupt_watcher.wait_for(|&v| v) => ResponseSubscriptionEnd::ExecutorClosing,
+                Ok(_) = local_interrupt_watcher.wait_for(|&v| v) => ResponseSubscriptionEnd::ExecutionUpdated,
+            }
+        }))
+    }
+
+    fn extend_by(&mut self, lock_extension: Duration) -> ExtendBy {
+        let now = self.clock_fn.now();
+        self.lock_expires_at = now + lock_extension;
+        self.close_to_expired = self.lock_expires_at - self.leeway;
+        ExtendBy {
+            lock_expires_at: self.lock_expires_at,
+            now,
         }
     }
 
     fn close_to_expired(&self) -> bool {
-        self.deadline_minus_leeway <= tokio::time::Instant::now()
+        self.close_to_expired <= self.clock_fn.now()
     }
 
     fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
         if let Some(kind) = self.interrupt_kind() {
             Err(EpochCallbackError::Interrupt(kind))
-        } else if self.deadline <= tokio::time::Instant::now() {
+        } else if self.lock_expires_at <= self.clock_fn.now() {
             Err(EpochCallbackError::LockExpired)
         } else {
             Ok(())
         }
     }
-
-    fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc> {
-        let now_instant = tokio::time::Instant::now();
-        self.deadline = now_instant + lock_extension;
-        let lock_duration = if lock_extension > self.leeway {
-            lock_extension.checked_sub(self.leeway).unwrap()
-        } else {
-            warn!(
-                "Not setting the leeway as deadline duration {lock_extension:?} is shorter than leeway {:?}",
-                self.leeway
-            );
-            lock_extension
-        };
-        self.deadline_minus_leeway = now_instant + lock_duration;
-        self.native_deadline_tx
-            .send_replace(self.deadline_minus_leeway);
-
-        self.clock_fn.now() + lock_extension
-    }
 }
 
+pub struct ExtendBy {
+    pub lock_expires_at: DateTime<Utc>,
+    pub now: DateTime<Utc>,
+}
+
+// TODO: Rename to DeadlineTrackerFactoryClockFn
 pub struct DeadlineTrackerFactoryTokio {
-    pub leeway: Duration, // Fire this much sooner than requested.
+    pub leeway: Duration, // Used by `close_to_expiry` for lock extension.
     pub clock_fn: Box<dyn ClockFn>,
 }
 impl DeadlineTrackerFactoryTokio {
@@ -212,23 +214,13 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
         local_interrupt_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         let started_at = self.clock_fn.now();
-        let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
+        if (lock_expires_at - started_at).to_std().is_err() {
             return Err(LockAlreadyExpired { started_at });
-        };
-        let now = tokio::time::Instant::now();
-        let deadline = now + deadline_duration;
-        let deadline_duration_minus_leeway = if deadline_duration > self.leeway {
-            deadline_duration.checked_sub(self.leeway).unwrap()
-        } else {
-            warn!("Not setting the leeway as deadline duration is too short");
-            deadline_duration
-        };
-        trace!("Setting deadline to now + {deadline_duration_minus_leeway:?}");
-
-        let deadline_minus_leeway = now + deadline_duration_minus_leeway;
-        let tracker = DeadlineTrackerTokio {
-            deadline,
-            deadline_minus_leeway,
+        }
+        let close_to_expired = lock_expires_at - self.leeway;
+        let tracker = DeadlineTrackerClockFn {
+            lock_expires_at,
+            close_to_expired,
             clock_fn: self.clock_fn.clone_box(),
             leeway: self.leeway,
             execution_interrupt_watcher,
@@ -238,166 +230,14 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
     }
 }
 
-/// Deterministic-test deadline tracker driven by `SimClock` instead of real
-/// tokio time. Deadlines are compared against simulated time and the `track`
-/// future only resolves when the test advances the sim clock past the deadline,
-/// so a blocked `Await` join-next waits for the response notification rather than
-/// racing real wall-clock latency.
-#[cfg(test)]
-pub(crate) struct DeadlineTrackerSim {
-    deadline: DateTime<Utc>,
-    deadline_minus_leeway: DateTime<Utc>,
-    leeway: Duration,
-    clock: test_utils::sim_clock::SimClock,
-    execution_interrupt_watcher: watch::Receiver<bool>,
-    local_interrupt_watcher: watch::Receiver<bool>,
-}
-
-#[cfg(test)]
-fn add_duration(time: DateTime<Utc>, duration: Duration) -> DateTime<Utc> {
-    time + chrono::TimeDelta::from_std(duration).expect("test durations never overflow TimeDelta")
-}
-
-#[cfg(test)]
-impl DeadlineTrackerSim {
-    fn interrupt_kind(&self) -> Option<InterruptKind> {
-        interrupt_kind_from_watchers(
-            &self.execution_interrupt_watcher,
-            &self.local_interrupt_watcher,
-        )
-    }
-}
-
-#[cfg(test)]
-#[async_trait]
-impl DeadlineTracker for DeadlineTrackerSim {
-    fn check_preempt(&self) -> Result<(), PreemptRequested> {
-        if let Some(kind) = self.interrupt_kind() {
-            Err(PreemptRequested::Interrupt(kind))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn track(&self, max_duration: Option<Duration>) -> TrackResult {
-        let now = self.clock.now();
-        if self.deadline_minus_leeway <= now {
-            return Err(ResponseSubscriptionEnd::LockDeadlineReached);
-        } else if let Some(kind) = self.interrupt_kind() {
-            return Err(match kind {
-                InterruptKind::ExecutorClosing => ResponseSubscriptionEnd::ExecutorClosing,
-                InterruptKind::PauseOrCancel => ResponseSubscriptionEnd::ExecutionUpdated,
-                InterruptKind::WorkflowEventLimitReached => unreachable!("not watcher-driven"),
-            });
-        }
-        let (expiry, expiry_reason) = match max_duration {
-            Some(max_duration) if add_duration(now, max_duration) < self.deadline_minus_leeway => (
-                add_duration(now, max_duration),
-                ResponseSubscriptionEnd::PollIntervalElapsed,
-            ),
-            _ => (
-                self.deadline_minus_leeway,
-                ResponseSubscriptionEnd::LockDeadlineReached,
-            ),
-        };
-        let clock = self.clock.clone();
-        // Subscribe now, before the future is awaited, so time advances between
-        // this call and the first poll are not missed.
-        let mut time_watcher = self.clock.subscribe();
-        let mut execution_interrupt_watcher = self.execution_interrupt_watcher.clone();
-        let mut local_interrupt_watcher = self.local_interrupt_watcher.clone();
-        Ok(Box::pin(async move {
-            loop {
-                if clock.now() >= expiry {
-                    return expiry_reason;
-                }
-                tokio::select! {
-                    // `Err` means the `SimClock` was dropped: time will never advance again.
-                    res = time_watcher.changed() => if res.is_err() {
-                        return ResponseSubscriptionEnd::PollIntervalElapsed;
-                    },
-                    Ok(_) = execution_interrupt_watcher.wait_for(|&v| v) => return ResponseSubscriptionEnd::ExecutorClosing,
-                    Ok(_) = local_interrupt_watcher.wait_for(|&v| v) => return ResponseSubscriptionEnd::ExecutionUpdated,
-                }
-            }
-        }))
-    }
-
-    fn close_to_expired(&self) -> bool {
-        self.deadline_minus_leeway <= self.clock.now()
-    }
-
-    fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
-        if let Some(kind) = self.interrupt_kind() {
-            Err(EpochCallbackError::Interrupt(kind))
-        } else if self.deadline <= self.clock.now() {
-            Err(EpochCallbackError::LockExpired)
-        } else {
-            Ok(())
-        }
-    }
-
-    fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc> {
-        let now = self.clock.now();
-        self.deadline = add_duration(now, lock_extension);
-        let lock_duration = if lock_extension > self.leeway {
-            lock_extension.checked_sub(self.leeway).unwrap()
-        } else {
-            warn!(
-                "Not setting the leeway as deadline duration {lock_extension:?} is shorter than leeway {:?}",
-                self.leeway
-            );
-            lock_extension
-        };
-        self.deadline_minus_leeway = add_duration(now, lock_duration);
-        self.deadline
-    }
-}
-
-#[cfg(test)]
-pub(crate) struct DeadlineTrackerFactorySim {
-    leeway: Duration,
-    clock: test_utils::sim_clock::SimClock,
-}
-
-#[cfg(test)]
-impl DeadlineTrackerFactory for DeadlineTrackerFactorySim {
-    fn create(
-        &self,
-        lock_expires_at: DateTime<Utc>,
-        execution_interrupt_watcher: watch::Receiver<bool>,
-        local_interrupt_watcher: watch::Receiver<bool>,
-    ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
-        let started_at = self.clock.now();
-        let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
-            return Err(LockAlreadyExpired { started_at });
-        };
-        let deadline_minus_leeway = if deadline_duration > self.leeway {
-            lock_expires_at
-                - chrono::TimeDelta::from_std(self.leeway).expect("leeway fits in TimeDelta")
-        } else {
-            warn!("Not setting the leeway as deadline duration is too short");
-            lock_expires_at
-        };
-        Ok(Box::new(DeadlineTrackerSim {
-            deadline: lock_expires_at,
-            deadline_minus_leeway,
-            leeway: self.leeway,
-            clock: self.clock.clone(),
-            execution_interrupt_watcher,
-            local_interrupt_watcher,
-        }))
-    }
-}
-
 #[cfg(test)]
 #[must_use]
 pub fn deadline_tracker_factory_test(
     sim_clock: &test_utils::sim_clock::SimClock,
 ) -> std::sync::Arc<impl DeadlineTrackerFactory + use<>> {
-    std::sync::Arc::new(DeadlineTrackerFactorySim {
+    std::sync::Arc::new(DeadlineTrackerFactoryTokio {
         leeway: Duration::ZERO,
-        clock: sim_clock.clone(),
+        clock_fn: sim_clock.clone_box(),
     })
 }
 
@@ -434,7 +274,7 @@ impl DeadlineTracker for DeadlineTrackerFactoryForReplay {
         Ok(())
     }
 
-    fn extend_by(&mut self, _lock_extension: Duration) -> DateTime<Utc> {
+    fn extend_by(&mut self, _lock_extension: Duration) -> ExtendBy {
         unreachable!("`close_to_expired` returns always false")
     }
 }
