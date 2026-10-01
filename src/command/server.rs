@@ -2326,7 +2326,8 @@ pub(crate) async fn run_internal(
             }
             ServerAuth::Auth { api_token } => {
                 let api_auth = Arc::new(crate::server::auth::ApiAuth::new(&api_config, api_token));
-                info!(
+                // Not `tracing`, see `auth_middleware`.
+                eprintln!(
                     "API startup token: {}",
                     api_auth.startup_token().expose_secret()
                 );
