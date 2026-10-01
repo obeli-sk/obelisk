@@ -1307,6 +1307,7 @@ pub(crate) async fn deployment_verify_config(
         prepared_dirs.wasm_cache_dir.clone(),
         prepared_dirs.metadata_dir.clone(),
         params.runtime_config_availability,
+        params.js_runtime,
         params.activity_vm_runtime,
         server_verified.component_cells.clone(),
         server_verified.fuel,
@@ -2445,6 +2446,7 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 #[derive(Clone)]
 pub(crate) struct ServerVerified {
     app_name: String,
+    js_runtime: JsRuntimeMode,
     activity_vm_runtime: ActivityVmRuntimeMode,
     pub(crate) app_config_digest: AppConfigDigest,
     pub(crate) app_policy: AppPolicyV1,
@@ -2627,6 +2629,7 @@ impl ServerVerified {
 
         Ok(Self {
             app_name: config.app_name.clone(),
+            js_runtime,
             activity_vm_runtime,
             app_config_digest: config.app_policy.digest(),
             app_policy: config.app_policy.clone(),
@@ -3374,6 +3377,7 @@ async fn submit_deployment_manifest(
                 runtime_config_availability,
             )
             .map_err(SubmitDeploymentError::from_preflight)?;
+            let js_runtime = server_verified.js_runtime;
             let activity_vm_runtime = server_verified.activity_vm_runtime;
             let compiled_linked = deployment_verify_config_compile_link(
                 server_verified,
@@ -3389,7 +3393,7 @@ async fn submit_deployment_manifest(
                     runtime_config_availability,
                     suppress_type_checking_errors: false,
                     suppress_linking_errors: false,
-                    js_runtime: JsRuntimeMode::BoaWasm,
+                    js_runtime,
                     activity_vm_runtime,
                 },
                 termination_watcher,
@@ -3758,7 +3762,7 @@ async fn prepare_switch_deployment(
         runtime_config_availability: action.runtime_config_availability(),
         suppress_type_checking_errors: false,
         suppress_linking_errors: false,
-        js_runtime: JsRuntimeMode::BoaWasm,
+        js_runtime: deployment_switch_manager.inner.server_verified.js_runtime,
         activity_vm_runtime: deployment_switch_manager
             .inner
             .server_verified
@@ -4697,7 +4701,7 @@ pub(crate) async fn generate_secret_config_digests(
         config,
         engines,
         secret_registry,
-        JsRuntimeMode::BoaWasm,
+        JsRuntimeMode::default(),
         activity_vm_runtime,
     ))
     .await?;
@@ -4715,7 +4719,7 @@ pub(crate) async fn generate_secret_config_digests(
             runtime_config_availability: RuntimeConfigAvailability::AllowUnavailable,
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
-            js_runtime: JsRuntimeMode::BoaWasm,
+            js_runtime: JsRuntimeMode::default(),
             activity_vm_runtime,
         },
         &mut termination_watcher,
@@ -4940,6 +4944,7 @@ impl DeploymentVerified {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         runtime_config_availability: RuntimeConfigAvailability,
+        js_runtime: JsRuntimeMode,
         activity_vm_runtime_mode: ActivityVmRuntimeMode,
         component_cells: ComponentCells,
         fuel: Option<u64>,
@@ -5152,38 +5157,41 @@ impl DeploymentVerified {
             })
             .collect::<Vec<_>>();
 
-        // Skip fetching when no JS activities are configured
-        let activity_js_runtime_fetch: OptionFuture<_> = if deployment.activities_js.is_empty() {
-            None
-        } else {
-            Some(fetch_activity_js_runtime(
-                wasm_cache_dir.clone(),
-                metadata_dir.clone(),
-            ))
-        }
-        .into();
+        // The V8 engine runs JS natively, only Boa needs the runtime component.
+        let activity_js_runtime_fetch: OptionFuture<_> =
+            if deployment.activities_js.is_empty() || js_runtime != JsRuntimeMode::BoaWasm {
+                None
+            } else {
+                Some(fetch_activity_js_runtime(
+                    wasm_cache_dir.clone(),
+                    metadata_dir.clone(),
+                ))
+            }
+            .into();
 
-        // Skip fetching when no JS workflows are configured
-        let workflow_js_runtime_fetch: OptionFuture<_> = if deployment.workflows_js.is_empty() {
-            None
-        } else {
-            Some(fetch_workflow_js_runtime(
-                wasm_cache_dir.clone(),
-                metadata_dir.clone(),
-            ))
-        }
-        .into();
+        // The V8 engine runs JS natively, only Boa needs the runtime component.
+        let workflow_js_runtime_fetch: OptionFuture<_> =
+            if deployment.workflows_js.is_empty() || js_runtime != JsRuntimeMode::BoaWasm {
+                None
+            } else {
+                Some(fetch_workflow_js_runtime(
+                    wasm_cache_dir.clone(),
+                    metadata_dir.clone(),
+                ))
+            }
+            .into();
 
-        // Skip fetching when no JS webhooks are configured
-        let webhook_js_runtime_fetch: OptionFuture<_> = if deployment.webhooks_js.is_empty() {
-            None
-        } else {
-            Some(fetch_webhook_js_runtime(
-                wasm_cache_dir.clone(),
-                metadata_dir.clone(),
-            ))
-        }
-        .into();
+        // The V8 engine runs JS natively, only Boa needs the runtime component.
+        let webhook_js_runtime_fetch: OptionFuture<_> =
+            if deployment.webhooks_js.is_empty() || js_runtime != JsRuntimeMode::BoaWasm {
+                None
+            } else {
+                Some(fetch_webhook_js_runtime(
+                    wasm_cache_dir.clone(),
+                    metadata_dir.clone(),
+                ))
+            }
+            .into();
 
         // Abort/cancel safety:
         // If an error happens or Ctrl-C is pressed the whole process will shut down.
@@ -5230,9 +5238,7 @@ impl DeploymentVerified {
                 }
 
                 let activities_js_verified = if !deployment.activities_js.is_empty() {
-                    let activity_js_wasm_path = activity_js_runtime_result.transpose()?;
-                    let activity_js_wasm_path: Arc<Path> = Arc::from(activity_js_wasm_path
-                        .expect("None only if there are no JS activities, see `activity_js_runtime_fetch`"));
+                    let activity_js_wasm_path: Option<Arc<Path>> = activity_js_runtime_result.transpose()?.map(Arc::from);
                     let mut activities_js_verified = Vec::with_capacity(deployment.activities_js.len());
                     for js in deployment.activities_js {
                         activities_js_verified.push(
@@ -5253,9 +5259,7 @@ impl DeploymentVerified {
                 };
 
                 let workflows_js_verified = if !deployment.workflows_js.is_empty() {
-                    let workflow_js_wasm_path = workflow_js_runtime_result.transpose()?;
-                    let workflow_js_wasm_path: Arc<Path> = Arc::from(workflow_js_wasm_path
-                        .expect("None only if there are no JS workflows, see `workflow_js_runtime_fetch`"));
+                    let workflow_js_wasm_path: Option<Arc<Path>> = workflow_js_runtime_result.transpose()?.map(Arc::from);
                     let mut workflows_js_verified = Vec::with_capacity(deployment.workflows_js.len());
                     for workflow_js in deployment.workflows_js {
                         workflows_js_verified.push(
@@ -5277,9 +5281,7 @@ impl DeploymentVerified {
 
                 let mut webhooks_js_by_names = IndexMap::new();
                 if !deployment.webhooks_js.is_empty() {
-                    let webhook_js_wasm_path = webhook_js_runtime_result.transpose()?
-                        .expect("None only if there are no JS webhooks, see `webhook_js_runtime_fetch`");
-                    let webhook_js_wasm_path: Arc<Path> = Arc::from(webhook_js_wasm_path);
+                    let webhook_js_wasm_path: Option<Arc<Path>> = webhook_js_runtime_result.transpose()?.map(Arc::from);
                     for webhook_js in deployment.webhooks_js {
                         let (k, v) = webhook_js.fetch_and_verify(
                             webhook_js_wasm_path.clone(),
@@ -5415,11 +5417,12 @@ async fn compile_and_link(
     let parent_span = Span::current();
 
     // JS runtimes are compiled in parallel, then all other WASM components.
-    let activity_js_runnable = if let Some(first_activity_js) = activities_js.first() {
+    let activity_js_runnable = if let Some(first_activity_js) = activities_js.first()
+        && let Some(wasm_path) = first_activity_js.wasm_path.clone()
+    {
         let engine = engines.activity_engine.clone();
         let build_semaphore = build_semaphore.clone();
         let parent_span = parent_span.clone();
-        let wasm_path = first_activity_js.wasm_path.clone();
         let component_type = first_activity_js.component_id().component_type;
         let runnable = tokio::task::spawn_blocking(move || {
             let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
@@ -5434,11 +5437,12 @@ async fn compile_and_link(
     } else {
         None
     };
-    let workflow_js_runnable = if let Some(first_workflow_js) = workflows_js.first() {
+    let workflow_js_runnable = if let Some(first_workflow_js) = workflows_js.first()
+        && let Some(wasm_path) = first_workflow_js.wasm_path.clone()
+    {
         let engine = engines.workflow_engine.clone();
         let build_semaphore = build_semaphore.clone();
         let parent_span = parent_span.clone();
-        let wasm_path = first_workflow_js.wasm_path.clone();
         let runnable = tokio::task::spawn_blocking(move || {
             let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
             let span = info_span!(parent: parent_span, "workflow_js_wasm_compile");
@@ -5452,11 +5456,12 @@ async fn compile_and_link(
     } else {
         None
     };
-    let webhook_js_runnable = if let Some((_, first_webhook_js)) = webhooks_js_by_names.first() {
+    let webhook_js_runnable = if let Some((_, first_webhook_js)) = webhooks_js_by_names.first()
+        && let Some(wasm_path) = first_webhook_js.wasm_path.clone()
+    {
         let engine = engines.webhook_engine.clone();
         let build_semaphore = build_semaphore.clone();
         let parent_span = parent_span.clone();
-        let wasm_path = first_webhook_js.wasm_path.clone();
         let runnable = tokio::task::spawn_blocking(move || {
             let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
             let span = info_span!(parent: parent_span, "webhook_js_wasm_compile");
@@ -5531,7 +5536,7 @@ async fn compile_and_link(
             let engines = engines.clone();
             let parent_span = parent_span.clone();
             let v8_executor = v8_executor.clone();
-            let activity_js_runnable = activity_js_runnable.clone().expect("must have been filled above");
+            let activity_js_runnable = activity_js_runnable.clone();
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "activity_js_compile", component_id = %activity_js.component_id());
                 span.in_scope(|| {
@@ -5652,7 +5657,7 @@ async fn compile_and_link(
             let engines = engines.clone();
             let parent_span = parent_span.clone();
             let v8_executor = v8_executor.clone();
-            let workflow_js_runnable = workflow_js_runnable.clone().expect("must have been filled above");
+            let workflow_js_runnable = workflow_js_runnable.clone();
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "workflow_js_compile", component_id = %workflow_js.component_id());
                 span.in_scope(|| {
@@ -5736,7 +5741,7 @@ async fn compile_and_link(
                     let parent_span = parent_span.clone();
                     let global_http_config = global_http_config.clone();
                     let v8_executor = v8_executor.clone();
-                    let webhook_js_runnable = webhook_js_runnable.clone().expect("must have been filled above");
+                    let webhook_js_runnable = webhook_js_runnable.clone();
                     tokio::task::spawn_blocking(move || {
                         let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                         let span = info_span!(parent: parent_span, "webhook_js_compile", component_id = %webhook_js.component_id);
@@ -5763,12 +5768,13 @@ async fn compile_and_link(
                                 memory: webhooks_wasm_memory,
                             };
 
-                            let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
-                                config,
-                                webhook_js_runnable
-                            )?
-                            .with_js_runtime(webhook_js_runtime)
-                            .with_v8_executor(v8_executor);
+                            let webhook_compiled = if let Some(webhook_js_runnable) = webhook_js_runnable {
+                                webhook_trigger::WebhookEndpointCompiled::new(config, webhook_js_runnable)?
+                                    .with_js_runtime(webhook_js_runtime)
+                                    .with_v8_executor(v8_executor)
+                            } else {
+                                webhook_trigger::WebhookEndpointCompiled::new_native_js(config, v8_executor)
+                            };
                             Ok(CompiledComponent::Webhook {
                                 webhook_name,
                                 webhook_compiled,
@@ -5832,7 +5838,7 @@ async fn compile_and_link(
                     component_id: webhook_compiled.config.component_id.clone(),
                     imports: webhook_compiled.imports().to_vec(),
                     workflow_or_activity_config: None,
-                    wit: webhook_compiled.runnable_component.wasm_component.wit(),
+                    wit: webhook_compiled.wit(),
                     wit_origin: WitOrigin::Wasm,
                 };
                 component_registry.insert(component)?;
@@ -6095,21 +6101,30 @@ fn prespawn_activity_wasm(
 fn prespawn_activity_js(
     activity_js: ActivityJsConfigVerified,
     engines: &Engines,
-    runnable_component: RunnableComponent,
+    runnable_component: Option<RunnableComponent>,
     runtime: ActivityJsRuntime,
     v8_executor: V8Executor,
 ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = activity_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
     let frame_files = activity_js.as_frame_sources();
-    let inner = ActivityWorkerCompiled::new_with_config(
-        runnable_component,
-        activity_js.activity_config,
-        engines.activity_engine.clone(),
-        Now.clone_box(),
-        Arc::new(TokioSleep),
-    )
-    .with_context(|| format!("cannot compile JS activity runtime for {component_id}"))?
+    let inner = if let Some(runnable_component) = runnable_component {
+        ActivityWorkerCompiled::new_with_config(
+            runnable_component,
+            activity_js.activity_config,
+            engines.activity_engine.clone(),
+            Now.clone_box(),
+            Arc::new(TokioSleep),
+        )
+        .with_context(|| format!("cannot compile JS activity runtime for {component_id}"))?
+    } else {
+        ActivityWorkerCompiled::new_native_js(
+            activity_js.activity_config,
+            engines.activity_engine.clone(),
+            Now.clone_box(),
+            Arc::new(TokioSleep),
+        )
+    }
     .with_v8_executor(v8_executor);
 
     let wit_origin = if activity_js.user_wasm_component.is_some() {
@@ -6511,7 +6526,7 @@ fn prespawn_workflow_wasm(
 fn prespawn_workflow_js(
     workflow_js: WorkflowJsConfigVerified,
     engines: &Engines,
-    runnable_component: RunnableComponent,
+    runnable_component: Option<RunnableComponent>,
     workflows_lock_extension_leeway: Duration,
     max_replay_captured_writes: usize,
     workflow_js_runtime: WorkflowJsRuntime,
@@ -6526,11 +6541,22 @@ fn prespawn_workflow_js(
         WitOrigin::Synthesized
     };
 
-    let replay_inner = WorkflowWorkerCompiled::new_with_config(
+    let compile = |runnable_component: Option<RunnableComponent>, config| match runnable_component {
+        Some(runnable_component) => WorkflowWorkerCompiled::new_with_config(
+            runnable_component,
+            config,
+            engine.clone(),
+            Now.clone_box(),
+        ),
+        None => Ok(WorkflowWorkerCompiled::new_native_js(
+            config,
+            engine.clone(),
+            Now.clone_box(),
+        )),
+    };
+    let replay_inner = compile(
         runnable_component.clone(),
         replay_workflow_config(&workflow_js.workflow_config, max_replay_captured_writes),
-        engine.clone(),
-        Now.clone_box(),
     )
     .with_context(|| format!("cannot compile replay JS workflow runtime for {component_id}"))?;
     let replay_compiled = match &workflow_js.user_wasm_component {
@@ -6552,13 +6578,8 @@ fn prespawn_workflow_js(
     }
     .with_context(|| format!("cannot create replay JS workflow worker for {component_id}"))?;
 
-    let inner = WorkflowWorkerCompiled::new_with_config(
-        runnable_component,
-        workflow_js.workflow_config,
-        engine,
-        Now.clone_box(),
-    )
-    .with_context(|| format!("cannot compile JS workflow runtime for {component_id}"))?;
+    let inner = compile(runnable_component, workflow_js.workflow_config)
+        .with_context(|| format!("cannot compile JS workflow runtime for {component_id}"))?;
 
     let worker = match workflow_js.user_wasm_component {
         Some(component) => Ok(WorkflowJsWorkerCompiled::new_graph_with_wasm_component(
@@ -7602,6 +7623,7 @@ mod tests {
             prepared_dirs.wasm_cache_dir.clone(),
             prepared_dirs.metadata_dir.clone(),
             params.runtime_config_availability,
+            params.js_runtime,
             params.activity_vm_runtime,
             server_verified.component_cells,
             server_verified.fuel,

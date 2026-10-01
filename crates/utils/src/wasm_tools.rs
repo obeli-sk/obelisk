@@ -144,7 +144,31 @@ impl WasmComponent {
         wit: &str,
         component_type: ComponentType,
     ) -> Result<Self, DecodeError> {
+        Self::new_from_wit_string_with_deps(wit, &[], component_type)
+    }
+
+    /// Create a `WasmComponent` from a WIT string whose world refers to the `deps` packages,
+    /// given as WIT text in dependency order.
+    pub fn new_from_wit_string_with_deps(
+        wit: &str,
+        deps: &[&str],
+        component_type: ComponentType,
+    ) -> Result<Self, DecodeError> {
         let mut resolve = Resolve::default();
+        for dep in deps {
+            let group = wit_parser::UnresolvedPackageGroup::parse(PathBuf::new(), dep).map_err(
+                |(map, err)| {
+                    let rendered = err.render(&map);
+                    DecodeError::new_with_source(
+                        "cannot parse WIT dependency",
+                        anyhow::Error::from(err).context(rendered),
+                    )
+                },
+            )?;
+            resolve.push_group(group).map_err(|source| {
+                DecodeError::new_with_source("cannot push WIT dependency", source)
+            })?;
+        }
         let group = wit_parser::UnresolvedPackageGroup::parse(PathBuf::new(), wit).map_err(
             |(map, err)| {
                 let rendered = err.render(&map);

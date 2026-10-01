@@ -548,7 +548,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
 
 #[derive(Debug)]
 pub(crate) struct ActivityJsConfigVerified {
-    pub(crate) wasm_path: Arc<Path>, // same for all JS activities
+    pub(crate) wasm_path: Option<Arc<Path>>, // Boa runtime, same for all JS activities; None under V8
     pub(crate) js_entry_path: String,
     pub(crate) js_files: BTreeMap<String, String>,
     pub(crate) ffqn: FunctionFqn,
@@ -1137,7 +1137,7 @@ impl ActivityVmConfigVerified {
 
 #[derive(Debug)]
 pub(crate) struct WorkflowJsConfigVerified {
-    pub(crate) wasm_path: Arc<Path>, // same for all JS workflows
+    pub(crate) wasm_path: Option<Arc<Path>>, // Boa runtime, same for all JS workflows; None under V8
     pub(crate) js_entry_path: String,
     pub(crate) js_files: BTreeMap<String, String>,
     pub(crate) ffqn: FunctionFqn,
@@ -1294,7 +1294,7 @@ pub(crate) trait ActivityJsComponentConfigResolvedExt {
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify(
         self,
-        wasm_path: Arc<Path>,
+        wasm_path: Option<Arc<Path>>,
         wasm_cache_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
@@ -1308,7 +1308,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
     #[instrument(skip_all, fields(component_name = self.name.as_str()))]
     async fn fetch_and_verify(
         self,
-        wasm_path: Arc<Path>,
+        wasm_path: Option<Arc<Path>>,
         wasm_cache_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
@@ -1499,7 +1499,7 @@ pub(crate) trait WorkflowJsComponentConfigResolvedExt {
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify(
         self,
-        wasm_path: Arc<Path>,
+        wasm_path: Option<Arc<Path>>,
         wasm_cache_dir: Arc<Path>,
         cell: ConcurrencyCell,
         fuel: Option<u64>,
@@ -1513,7 +1513,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
     #[instrument(skip_all, fields(component_name = self.name.as_str()))]
     async fn fetch_and_verify(
         self,
-        wasm_path: Arc<Path>,
+        wasm_path: Option<Arc<Path>>,
         wasm_cache_dir: Arc<Path>,
         cell: ConcurrencyCell,
         fuel: Option<u64>,
@@ -2254,7 +2254,7 @@ impl TryFrom<WebhookRoute> for WebhookRouteVerified {
 
 #[derive(Debug)]
 pub(crate) struct WebhookJsConfigVerified {
-    pub(crate) wasm_path: Arc<Path>,
+    pub(crate) wasm_path: Option<Arc<Path>>, // Boa runtime; None under V8
     pub(crate) component_id: ComponentId,
     pub(crate) js_entry_path: String,
     pub(crate) js_files: BTreeMap<String, String>,
@@ -2367,7 +2367,7 @@ impl WebhookWasmComponentConfigResolvedExt for WebhookWasmComponentConfigResolve
 pub(crate) trait WebhookJsComponentConfigResolvedExt {
     async fn fetch_and_verify(
         self,
-        wasm_path: Arc<Path>,
+        wasm_path: Option<Arc<Path>>,
         wasm_cache_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
@@ -2378,7 +2378,7 @@ impl WebhookJsComponentConfigResolvedExt for WebhookJsComponentConfigResolved {
     #[instrument(skip_all, fields(component_name = self.name.as_str()))]
     async fn fetch_and_verify(
         self,
-        wasm_path: Arc<Path>,
+        wasm_path: Option<Arc<Path>>,
         wasm_cache_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
