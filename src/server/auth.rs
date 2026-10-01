@@ -109,9 +109,13 @@ pub(crate) async fn auth_middleware(
         Err(reason) => {
             warn!(
                 "Denied {} {}: {reason}. Clients must send `Authorization: Bearer <token>` \
-                (CLI: `--api-token` or OBELISK_API_TOKEN). This server's startup token: {}",
+                (CLI: `--api-token` or OBELISK_API_TOKEN).",
                 req.method(),
                 req.uri().path(),
+            );
+            // Not `tracing`: log sinks (files, OTLP) are shipped and readable by anyone with log access, while the token grants full admin.
+            eprintln!(
+                "This server's startup token: {}",
                 auth.startup_token.expose_secret()
             );
             deny_response(req.headers())
