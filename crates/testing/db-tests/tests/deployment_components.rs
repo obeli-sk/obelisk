@@ -331,6 +331,82 @@ async fn component_metadata_deduplicates_by_digest_across_deployments(database: 
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
+async fn component_metadata_upsert_replaces_only_imports(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let deployment_id = DeploymentId::generate();
+    insert_deployment(api_conn.as_ref(), deployment_id, sim_clock.now()).await;
+    let digest: ComponentDigest =
+        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            .parse()
+            .unwrap();
+    let record = |import: &str, export: &str, wit: &str| ComponentMetadataRecord {
+        component_digest: digest.clone(),
+        imports: vec![PersistedFunctionMetadata::from(mk_function(import, false))],
+        exports: vec![PersistedFunctionMetadata::from(mk_function(export, true))],
+        wit: wit.to_string(),
+        wit_origin: WitOrigin::Synthesized,
+    };
+    api_conn
+        .upsert_component_metadata(vec![record(
+            "obelisk:workflow/workflow-dynamic-support@7.0.0.call-json",
+            "testing:pkg/exported.fn",
+            "package testing:pkg;",
+        )])
+        .await
+        .unwrap();
+    api_conn
+        .upsert_component_metadata(vec![record(
+            "testing:act/api.get",
+            "testing:pkg/other.fn",
+            "package testing:other;",
+        )])
+        .await
+        .unwrap();
+    api_conn
+        .insert_deployment_components(
+            deployment_id,
+            vec![DeploymentComponentRecord {
+                deployment_id,
+                component_name: StrVariant::from("js_workflow"),
+                component_digest: digest.clone(),
+                component_type: ComponentType::Workflow,
+            }],
+        )
+        .await
+        .unwrap();
+
+    let components = api_conn
+        .list_deployment_components(deployment_id)
+        .await
+        .unwrap();
+    assert_eq!(1, components.len());
+    let ffqns = |functions: &[PersistedFunctionMetadata]| {
+        functions
+            .iter()
+            .map(|function| function.ffqn.to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ["testing:act/api.get"],
+        ffqns(&components[0].imports).as_slice()
+    );
+    assert_eq!(
+        ["testing:pkg/exported.fn"],
+        ffqns(&components[0].exports).as_slice()
+    );
+    assert_eq!("package testing:pkg;", components[0].wit);
+
+    drop(api_conn);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
 async fn deployment_component_insert_is_idempotent(database: Database) {
     set_up();
     let sim_clock = SimClock::default();

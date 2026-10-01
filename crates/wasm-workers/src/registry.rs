@@ -1,5 +1,6 @@
 //! Component registry for a single deployment.
 //!
+use crate::js_imports::{BuiltinModule, js_component_imports};
 use crate::workflow::replay_advance::AdvanceResponse;
 use crate::workflow::workflow_js_worker::WorkflowJsWorker;
 use crate::workflow::workflow_worker::{
@@ -21,7 +22,7 @@ use indexmap::IndexMap;
 use std::fmt::Debug;
 use std::ops::Deref;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{debug, error};
 
 pub use concepts::storage::WitOrigin;
 
@@ -254,6 +255,30 @@ impl ComponentConfigRegistry {
         assert!(old.is_none());
 
         Ok(())
+    }
+
+    /// Replace the runtime imports of an inserted JS component with the functions its code can call.
+    /// Call after all components are inserted. Imports that cannot be resolved are left for linking to report.
+    pub fn resolve_js_imports<'a>(
+        &mut self,
+        name: &StrVariant,
+        js_files: impl IntoIterator<Item = &'a str>,
+        builtin_modules: &[BuiltinModule],
+    ) {
+        let inner = &mut self.inner;
+        let component = inner
+            .names_to_components
+            .get_mut(name)
+            .expect("JS component must be inserted");
+        match js_component_imports(
+            js_files,
+            &component.imports,
+            &inner.export_hierarchy,
+            builtin_modules,
+        ) {
+            Ok(imports) => component.imports = imports,
+            Err(err) => debug!("Not resolving JS imports of {name}: {err}"),
+        }
     }
 
     /// Verify that each imported function can be matched by looking at the available exports.

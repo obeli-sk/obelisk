@@ -3844,9 +3844,10 @@ impl SqlitePool {
     ) -> Result<(), DbErrorWrite> {
         let mut stmt = tx
             .prepare(
-                "INSERT OR IGNORE INTO t_component_metadata \
+                "INSERT INTO t_component_metadata \
                  (component_digest, imports_json, exports_json, wit, wit_origin) \
-                 VALUES (:component_digest, :imports_json, :exports_json, :wit, :wit_origin)",
+                 VALUES (:component_digest, :imports_json, :exports_json, :wit, :wit_origin) \
+                 ON CONFLICT (component_digest) DO UPDATE SET imports_json = excluded.imports_json",
             )
             .map_err(RusqliteError::from)?;
         for record in records {

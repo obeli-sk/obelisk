@@ -187,6 +187,7 @@ use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::http_request_policy::{AllowedHostConfig, GlobalHttpConfig};
+use wasm_workers::js_imports::{WEBHOOK_BUILTIN_MODULES, WORKFLOW_BUILTIN_MODULES};
 use wasm_workers::log_db_forwarder;
 use wasm_workers::registry::ComponentConfig;
 use wasm_workers::registry::ComponentConfigImportable;
@@ -5854,6 +5855,24 @@ async fn compile_and_link(
             wit_origin: WitOrigin::Synthesized,
         };
         component_registry.insert(component_config)?; // Mostly just for name uniqueness checking
+    }
+    for worker in &workers_compiled {
+        if let CompiledWorkerKind::WorkflowJs(workflow_js) = &worker.worker {
+            component_registry.resolve_js_imports(
+                &worker.exec_config.component_id.name,
+                workflow_js.worker.js_files().values().map(String::as_str),
+                WORKFLOW_BUILTIN_MODULES,
+            );
+        }
+    }
+    for (webhook_compiled, _) in webhooks_compiled_by_names.values() {
+        if let Some(js_config) = &webhook_compiled.config.js_config {
+            component_registry.resolve_js_imports(
+                &webhook_compiled.config.component_id.name,
+                js_config.files.values().map(String::as_str),
+                WEBHOOK_BUILTIN_MODULES,
+            );
+        }
     }
     let (component_registry_ro, supressed_errors) = component_registry.verify_registry();
     let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());

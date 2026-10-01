@@ -336,6 +336,11 @@ impl WorkflowJsWorkerCompiled {
         self.inner.imported_functions()
     }
 
+    #[must_use]
+    pub fn js_files(&self) -> &BTreeMap<String, String> {
+        &self.js_files
+    }
+
     /// Return WIT text describing the user interface including extension packages.
     /// Returns `None` if WIT generation fails (should not happen for valid configs).
     #[must_use]
