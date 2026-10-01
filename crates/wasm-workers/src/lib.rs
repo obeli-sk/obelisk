@@ -15,6 +15,7 @@ pub mod http_request_policy;
 pub mod js_imports;
 pub mod js_worker_utils;
 pub mod log_db_forwarder;
+pub(crate) mod native_js_imports;
 pub mod policy_builder;
 pub mod registry;
 pub mod std_output_stream;

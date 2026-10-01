@@ -54,8 +54,9 @@ pub struct ActivityConfig {
 pub struct ActivityWorkerCompiled {
     #[debug(skip)]
     engine: Arc<Engine>,
+    /// `None` for native JS activities, which run through `run_native_js`.
     #[debug(skip)]
-    instance_pre: InstancePre<ActivityCtx>,
+    instance_pre: Option<InstancePre<ActivityCtx>>,
     exim: ExIm,
     #[debug(skip)]
     clock_fn: Box<dyn ClockFn>,
@@ -108,8 +109,28 @@ impl ActivityWorkerCompiled {
             exported_ffqn_to_index,
             config,
             v8_executor: V8Executor::default(),
-            instance_pre,
+            instance_pre: Some(instance_pre),
         })
+    }
+
+    /// Activity host for the V8 JS runtime, which needs no WASM component.
+    #[must_use]
+    pub fn new_native_js(
+        config: ActivityConfig,
+        engine: Arc<Engine>,
+        clock_fn: Box<dyn ClockFn>,
+        sleep: Arc<dyn Sleep>,
+    ) -> Self {
+        Self {
+            engine,
+            exim: crate::native_js_imports::ACTIVITY.exim.clone(),
+            clock_fn,
+            sleep,
+            exported_ffqn_to_index: hashbrown::HashMap::new(),
+            config,
+            v8_executor: V8Executor::default(),
+            instance_pre: None,
+        }
     }
 
     #[must_use]
@@ -186,7 +207,7 @@ impl ActivityWorkerCompiled {
 
 pub struct ActivityWorker {
     engine: Arc<Engine>,
-    instance_pre: InstancePre<ActivityCtx>,
+    instance_pre: Option<InstancePre<ActivityCtx>>,
     exim: ExIm,
     clock_fn: Box<dyn ClockFn>,
     sleep: Arc<dyn Sleep>,
@@ -605,7 +626,13 @@ impl ActivityWorker {
         version: &Version,
         store: &mut Store<ActivityCtx>,
     ) -> Result<CallFuncParams, WorkerError> {
-        let instance = match self.instance_pre.instantiate_async(&mut *store).await {
+        let instance = match self
+            .instance_pre
+            .as_ref()
+            .expect("native JS activities do not instantiate WASM")
+            .instantiate_async(&mut *store)
+            .await
+        {
             Ok(instance) => instance,
             Err(err) => {
                 let reason = err.to_string();

@@ -242,7 +242,8 @@ pub enum WebhookServerError {
 
 pub struct WebhookEndpointCompiled {
     pub config: WebhookEndpointConfig,
-    pub runnable_component: RunnableComponent,
+    /// `None` for native JS webhooks, which are served by `handle_native_v8_request`.
+    runnable_component: Option<RunnableComponent>,
     js_runtime: WebhookJsRuntime,
     v8_executor: crate::v8_executor::V8Executor,
 }
@@ -266,10 +267,25 @@ impl WebhookEndpointCompiled {
     ) -> Result<Self, WasmFileError> {
         Ok(Self {
             config,
-            runnable_component,
+            runnable_component: Some(runnable_component),
             js_runtime: WebhookJsRuntime::BoaWasm,
             v8_executor: crate::v8_executor::V8Executor::default(),
         })
+    }
+
+    /// Webhook host for the V8 JS runtime, which needs no WASM component.
+    #[must_use]
+    pub fn new_native_js(
+        config: WebhookEndpointConfig,
+        v8_executor: crate::v8_executor::V8Executor,
+    ) -> Self {
+        assert!(config.js_config.is_some(), "native webhooks must be JS");
+        Self {
+            config,
+            runnable_component: None,
+            js_runtime: WebhookJsRuntime::V8,
+            v8_executor,
+        }
     }
 
     #[must_use]
@@ -286,7 +302,19 @@ impl WebhookEndpointCompiled {
 
     #[must_use]
     pub fn imports(&self) -> &[FunctionMetadata] {
-        &self.runnable_component.wasm_component.exim.imports_flat
+        self.wasm_component().imported_functions()
+    }
+
+    #[must_use]
+    pub fn wit(&self) -> String {
+        self.wasm_component().wit()
+    }
+
+    fn wasm_component(&self) -> &utils::wasm_tools::WasmComponent {
+        match &self.runnable_component {
+            Some(runnable_component) => &runnable_component.wasm_component,
+            None => &crate::native_js_imports::WEBHOOK,
+        }
     }
 
     #[instrument(skip_all, fields(component_id = %self.config.component_id), err)]
@@ -295,6 +323,59 @@ impl WebhookEndpointCompiled {
         engine: &Engine,
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<WebhookEndpointInstanceLinked, WasmFileError> {
+        // Resolve JS imports against the function registry before linking and
+        // serialize the result once — the runtime reads it from an env var, so
+        // there's no point doing the work per request. The webhook runtime
+        // currently consumes pairs as `[js_name, wit_name]` tuples, so we
+        // flatten `NamedFnImport` to that shape at the boundary.
+        let resolved_imports = if let Some(js_config) = &self.config.js_config {
+            let mut resolved = std::collections::HashMap::new();
+            for source in js_config.files.values() {
+                let imports = crate::js_imports::resolve_js_imports(
+                    source,
+                    fn_registry,
+                    crate::js_imports::WEBHOOK_BUILTIN_MODULES,
+                )
+                .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
+                for (specifier, functions) in imports {
+                    resolved.entry(specifier).or_insert(functions);
+                }
+            }
+            resolved
+        } else {
+            std::collections::HashMap::new()
+        };
+        let resolved_imports_json = if resolved_imports.is_empty() {
+            None
+        } else {
+            let tupled: std::collections::HashMap<&IfcFqnName, Vec<(&str, &str)>> =
+                resolved_imports
+                    .iter()
+                    .map(|(ifc_fqn, funcs)| {
+                        (
+                            ifc_fqn,
+                            funcs
+                                .iter()
+                                .map(|f| (f.js_name.as_str(), f.wit_name.as_str()))
+                                .collect(),
+                        )
+                    })
+                    .collect();
+            let json =
+                serde_json::to_string(&tupled).expect("resolved imports must be serializable");
+            Some(Arc::from(json))
+        };
+
+        let Some(runnable_component) = &self.runnable_component else {
+            return Ok(WebhookEndpointInstanceLinked {
+                config: Arc::new(self.config),
+                proxy_pre: None,
+                resolved_imports_json,
+                resolved_imports,
+                js_runtime: self.js_runtime,
+                v8_executor: self.v8_executor,
+            });
+        };
         let mut linker = Linker::new(engine);
         // Link wasi
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
@@ -382,52 +463,9 @@ impl WebhookEndpointCompiled {
             }
         }
 
-        // Resolve JS imports against the function registry before linking and
-        // serialize the result once — the runtime reads it from an env var, so
-        // there's no point doing the work per request. The webhook runtime
-        // currently consumes pairs as `[js_name, wit_name]` tuples, so we
-        // flatten `NamedFnImport` to that shape at the boundary.
-        let resolved_imports = if let Some(js_config) = &self.config.js_config {
-            let mut resolved = std::collections::HashMap::new();
-            for source in js_config.files.values() {
-                let imports = crate::js_imports::resolve_js_imports(
-                    source,
-                    fn_registry,
-                    crate::js_imports::WEBHOOK_BUILTIN_MODULES,
-                )
-                .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
-                for (specifier, functions) in imports {
-                    resolved.entry(specifier).or_insert(functions);
-                }
-            }
-            resolved
-        } else {
-            std::collections::HashMap::new()
-        };
-        let resolved_imports_json = if resolved_imports.is_empty() {
-            None
-        } else {
-            let tupled: std::collections::HashMap<&IfcFqnName, Vec<(&str, &str)>> =
-                resolved_imports
-                    .iter()
-                    .map(|(ifc_fqn, funcs)| {
-                        (
-                            ifc_fqn,
-                            funcs
-                                .iter()
-                                .map(|f| (f.js_name.as_str(), f.wit_name.as_str()))
-                                .collect(),
-                        )
-                    })
-                    .collect();
-            let json =
-                serde_json::to_string(&tupled).expect("resolved imports must be serializable");
-            Some(Arc::from(json))
-        };
-
         // Pre-instantiate to catch missing imports
         let proxy_pre = linker
-            .instantiate_pre(&self.runnable_component.wasmtime_component)
+            .instantiate_pre(&runnable_component.wasmtime_component)
             .map_err(|err: wasmtime::Error| {
                 WasmFileError::linking_error("linking error while creating instantiate_pre", err)
             })?;
@@ -441,7 +479,7 @@ impl WebhookEndpointCompiled {
                 )
             })?)
         };
-        let proxy_pre = Arc::new(proxy_pre);
+        let proxy_pre = Some(Arc::new(proxy_pre));
 
         Ok(WebhookEndpointInstanceLinked {
             config: Arc::new(self.config),
@@ -456,8 +494,9 @@ impl WebhookEndpointCompiled {
 
 #[derive(Clone, derive_more::Debug)]
 pub struct WebhookEndpointInstanceLinked {
+    /// `None` for native JS webhooks.
     #[debug(skip)]
-    proxy_pre: Arc<WebhookProxyPre<WebhookEndpointCtx>>,
+    proxy_pre: Option<Arc<WebhookProxyPre<WebhookEndpointCtx>>>,
     config: Arc<WebhookEndpointConfig>,
     /// Set on JS webhooks; serialized `HashMap<String, Vec<(String, String)>>` passed
     /// to the runtime via the `__OBELISK_RESOLVED_IMPORTS__` env var.
@@ -503,7 +542,7 @@ impl WebhookEndpointInstanceLinked {
 #[derive(Clone, derive_more::Debug)]
 pub struct WebhookEndpointInstance {
     #[debug(skip)]
-    proxy_pre: Arc<WebhookProxyPre<WebhookEndpointCtx>>,
+    proxy_pre: Option<Arc<WebhookProxyPre<WebhookEndpointCtx>>>,
     config: Arc<WebhookEndpointConfig>,
     #[debug(skip)]
     stdout: Option<StdOutputConfigWithSender>,
@@ -2387,7 +2426,11 @@ impl RequestHandler {
                 )
                 .await;
             }
-            match found_instance.proxy_pre.as_ref() {
+            match found_instance
+                .proxy_pre
+                .as_deref()
+                .expect("WASM webhooks are linked with a proxy")
+            {
                 WebhookProxyPre::P2(proxy_pre) => {
                     let (sender, receiver) = tokio::sync::oneshot::channel();
                     let req = store
@@ -2763,7 +2806,10 @@ pub(crate) mod tests {
         )
         .unwrap();
 
-        assert!(matches!(linked.proxy_pre.as_ref(), WebhookProxyPre::P3(_)));
+        assert!(matches!(
+            linked.proxy_pre.as_deref(),
+            Some(WebhookProxyPre::P3(_))
+        ));
     }
 
     #[tokio::test]

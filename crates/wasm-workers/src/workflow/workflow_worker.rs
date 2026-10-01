@@ -168,7 +168,8 @@ pub struct WorkflowWorkerCompiled {
     config: WorkflowConfig,
     engine: Arc<Engine>,
     clock_fn: Box<dyn ClockFn>,
-    wasmtime_component: wasmtime::component::Component,
+    /// `None` for native JS workflows, which can only be linked by `link_native`.
+    wasmtime_component: Option<wasmtime::component::Component>,
     exported_functions_ext: Vec<FunctionMetadata>,
     exports_hierarchy_ext: Vec<PackageIfcFns>,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
@@ -298,13 +299,51 @@ impl WorkflowWorkerCompiled {
             config,
             engine,
             clock_fn,
-            wasmtime_component,
+            wasmtime_component: Some(wasmtime_component),
             exported_functions_ext,
             exports_hierarchy_ext,
             exported_ffqn_to_index,
             exported_functions_noext,
             imported_functions,
         })
+    }
+
+    /// Workflow host for the V8 JS runtime, which needs no WASM component.
+    #[must_use]
+    pub fn new_native_js(
+        config: WorkflowConfig,
+        engine: Arc<Engine>,
+        clock_fn: Box<dyn ClockFn>,
+    ) -> Self {
+        Self {
+            config,
+            engine,
+            clock_fn,
+            wasmtime_component: None,
+            exported_functions_ext: Vec::new(),
+            exports_hierarchy_ext: Vec::new(),
+            exported_ffqn_to_index: hashbrown::HashMap::new(),
+            exported_functions_noext: Vec::new(),
+            imported_functions: crate::native_js_imports::WORKFLOW
+                .imported_functions()
+                .to_vec(),
+        }
+    }
+
+    pub(crate) fn link_native(
+        self,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        runtime: Arc<dyn WorkflowRuntime>,
+    ) -> WorkflowWorkerLinked {
+        WorkflowWorkerLinked {
+            config: self.config,
+            clock_fn: self.clock_fn,
+            runtime,
+            #[cfg(any(test, feature = "test"))]
+            engine: self.engine,
+            exported_functions_noext: self.exported_functions_noext,
+            fn_registry,
+        }
     }
 
     #[instrument(skip_all, fields(component_id = %self.config.component_id))]
@@ -415,7 +454,11 @@ impl WorkflowWorkerCompiled {
 
         // Pre-instantiate to catch missing imports
         let instance_pre = linker
-            .instantiate_pre(&self.wasmtime_component)
+            .instantiate_pre(
+                self.wasmtime_component
+                    .as_ref()
+                    .expect("native JS workflows must be linked by `link_native`"),
+            )
             .map_err(|err| WasmFileError::linking_error("preinstantiation error", err))?;
 
         let memory = self.config.memory;
@@ -457,11 +500,6 @@ impl WorkflowWorkerLinked {
         map: impl FnOnce(Arc<dyn WorkflowRuntime>) -> Arc<dyn WorkflowRuntime>,
     ) -> Self {
         self.runtime = map(self.runtime);
-        self
-    }
-
-    pub(crate) fn with_runtime(mut self, runtime: Arc<dyn WorkflowRuntime>) -> Self {
-        self.runtime = runtime;
         self
     }
 

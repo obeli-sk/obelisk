@@ -1000,7 +1000,7 @@ async fn generate_wit_deps(
         runtime_config_availability: RuntimeConfigAvailability::AllowUnavailable, // Just extracting WITs, not running components
         suppress_type_checking_errors: true, // Just extracting WITs, not running components
         suppress_linking_errors: true,       // Just extracting WITs, not running components
-        js_runtime: crate::command::server::JsRuntimeMode::BoaWasm,
+        js_runtime: crate::command::server::JsRuntimeMode::default(),
         activity_vm_runtime,
     };
 
@@ -1019,7 +1019,7 @@ async fn generate_wit_deps(
         server_config,
         engines,
         secret_registry,
-        crate::command::server::JsRuntimeMode::BoaWasm,
+        crate::command::server::JsRuntimeMode::default(),
         activity_vm_runtime,
     ))
     .await?;

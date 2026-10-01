@@ -366,9 +366,8 @@ impl WorkflowJsWorkerCompiled {
             }
         }
 
-        let linked = self.inner.link(fn_registry)?;
         let linked = match runtime {
-            WorkflowJsRuntimeExt::BoaWasm => linked.map_runtime(|inner| {
+            WorkflowJsRuntimeExt::BoaWasm => self.inner.link(fn_registry)?.map_runtime(|inner| {
                 Arc::new(BoaWasmRuntime {
                     inner,
                     entry_path: self.js_entry_path.clone(),
@@ -377,15 +376,16 @@ impl WorkflowJsWorkerCompiled {
                     resolved_imports,
                 })
             }),
-            WorkflowJsRuntimeExt::V8(v8_executor) => {
-                linked.with_runtime(Arc::new(NativeV8WorkflowRuntime::new(
+            WorkflowJsRuntimeExt::V8(v8_executor) => self.inner.link_native(
+                fn_registry,
+                Arc::new(NativeV8WorkflowRuntime::new(
                     self.js_entry_path.clone(),
                     self.js_files.clone(),
                     self.user_return_type.clone(),
                     resolved_imports,
                     v8_executor,
-                )))
-            }
+                )),
+            ),
         };
         Ok(WorkflowJsWorkerLinked {
             inner: linked,
