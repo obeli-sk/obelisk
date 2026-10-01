@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0-rc.9](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.8...v0.42.0-rc.9)
+
+This release candidate mounts the native QEMU activity closure from an EROFS image, which
+requires `mkfs.erofs` on the server's `PATH`. JS components now list the imports of their JS code,
+and a workflow replay version mismatch is reported as nondeterminism instead of panicking.
+`download.sh` can install a specific release and picks the musl binary more reliably.
+
+### Added
+
+- *(download)* `download.sh` accepts a release tag as its first argument or via `OBELISK_VERSION`,
+  e.g. `curl ... download.sh | bash -s -- v0.42.0-rc.9`. Defaults to the latest release.
+  ([1abc60a](https://github.com/obeli-sk/obelisk/commit/1abc60aa988b35db070adee2a5d74cdfe9d5a8cb))
+
 ### Changed
 
 - *(activity-vm)* Native QEMU mounts each activity's read-only Nix closure from an EROFS image
@@ -14,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(download)* `download.sh` selects the musl binary whenever the glibc dynamic loader is missing,
+  and on NixOS even when a stub loader is installed at the FHS path.
+  ([27b7e32](https://github.com/obeli-sk/obelisk/commit/27b7e322409ccbde8699f2472df1b4f099e15a8f),
+  [6fe3400](https://github.com/obeli-sk/obelisk/commit/6fe340006ae1db6089af86d4d510e3c5f6a9f1e3))
+- *(workflow)* An event version mismatch during replay is reported as nondeterminism instead of
+  panicking. [#1077](https://github.com/obeli-sk/obelisk/pull/1077)
 - *(JS)* Components list the interfaces their JS code imports instead of the imports of the JS
   runtime. The dynamic call interfaces are listed only when the code imports
   `obelisk:workflow-dynamic@1.0.0` or `obelisk:webhook-dynamic@1.0.0`. Each new deployment
