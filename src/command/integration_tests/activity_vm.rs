@@ -242,15 +242,6 @@ async fn stream_log(server: &TestServer, execution_id: &str, stream_type: &str) 
 
 #[tokio::test]
 async fn output_forwarded_before_completion() {
-    // Firecracker's guest mailbox mirrors output files only once they are closed.
-    if !matches!(
-        parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
-        ActivityVmRuntimeMode::BochsWasm
-            | ActivityVmRuntimeMode::QemuTcg
-            | ActivityVmRuntimeMode::QemuKvm
-    ) {
-        return;
-    }
     let deployment_toml = r#"[[activity_vm]]
 memory.mib = 512
 exec.lock_expiry.seconds = 120

@@ -20,6 +20,8 @@ use wasm_workers::http_request_policy::HttpRequestPolicy;
 const MAILBOX_PORT: u32 = 1024;
 /// Suffix of files the mirror is still writing; neither side forwards them.
 const MIRROR_TMP: &str = ".mbtmp";
+/// Set in a frame's name length when its data extends the file instead of replacing it.
+const APPEND_FLAG: u16 = 0x8000;
 
 #[derive(Deserialize)]
 struct Machine {
@@ -203,7 +205,6 @@ pub(super) async fn execute(
         run_script,
     )));
 
-    // The guest mailbox mirrors a file only once it is closed, so activity output arrives at exit.
     let tail = OutputTail::spawn(queue.path().to_owned(), Vec::new(), output_sink);
     let mut phases = AbortOnDrop(tokio::spawn(log_guest_phases(
         queue.path().to_owned(),
@@ -278,7 +279,9 @@ async fn mirror_to_host(
     loop {
         let mut header = [0_u8; 10];
         stream.read_exact(&mut header).await?;
-        let name_len = usize::from(u16::from_le_bytes([header[0], header[1]]));
+        let name_field = u16::from_le_bytes([header[0], header[1]]);
+        let append = name_field & APPEND_FLAG != 0;
+        let name_len = usize::from(name_field & !APPEND_FLAG);
         let data_len = u64::from_le_bytes(header[2..].try_into().expect("8 bytes"));
         let mut name = vec![0_u8; name_len];
         stream.read_exact(&mut name).await?;
@@ -293,10 +296,20 @@ async fn mirror_to_host(
             data.len() as u64 == data_len,
             "guest mailbox closed mid-file"
         );
-        let temporary = queue.join(format!("{name}{MIRROR_TMP}"));
-        tokio::fs::write(&temporary, data).await?;
         received.lock().unwrap().insert(name.clone());
-        tokio::fs::rename(temporary, queue.join(name)).await?;
+        if append {
+            tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(queue.join(name))
+                .await?
+                .write_all(&data)
+                .await?;
+        } else {
+            let temporary = queue.join(format!("{name}{MIRROR_TMP}"));
+            tokio::fs::write(&temporary, data).await?;
+            tokio::fs::rename(temporary, queue.join(name)).await?;
+        }
     }
 }
 
