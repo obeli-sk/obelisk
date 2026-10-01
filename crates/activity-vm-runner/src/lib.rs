@@ -16,6 +16,7 @@ use wasmtime_wasi::{FsPerms, WasiCtxBuilder, p1, p2::pipe};
 mod firecracker;
 mod http_bridge;
 mod native_qemu;
+mod store_image;
 
 #[cfg(target_os = "linux")]
 pub use firecracker::validate as validate_firecracker;

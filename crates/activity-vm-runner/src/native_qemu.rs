@@ -1,6 +1,6 @@
 use super::{
-    AbortOnDrop, MapDir, VmOutput, firecracker, http_bridge, log_guest_phases,
-    replace_output_from_guest_files,
+    AbortOnDrop, MapDir, VmOutput, http_bridge, log_guest_phases, replace_output_from_guest_files,
+    store_image,
 };
 use anyhow::{Context as _, bail, ensure};
 use concepts::storage::http_client_trace::HttpClientTrace;
@@ -12,7 +12,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use wasm_workers::http_request_policy::HttpRequestPolicy;
-use wasmtime_wasi::FsPerms;
 
 #[derive(Deserialize)]
 struct Machine {
@@ -133,7 +132,7 @@ pub(super) async fn execute(
 
     let image = if let Some(bytes) = machine.store_image_bytes {
         ensure!(bytes > 0, "QEMU EROFS drive size must be positive");
-        Some(firecracker::store_image_with_size(Path::new("mkfs.erofs"), &mapdirs, bytes).await?)
+        Some(store_image::store_image_with_size(Path::new("mkfs.erofs"), &mapdirs, bytes).await?)
     } else {
         None
     };
@@ -146,7 +145,7 @@ pub(super) async fn execute(
     let qmp_socket = control.path().join("qmp.sock");
     if image.is_none() {
         for mapping in &mapdirs {
-            install_mapping(share.path(), mapping).await?;
+            store_image::install_mapping(share.path(), mapping).await?;
         }
         tokio::fs::create_dir_all(share.path().join("nix/store")).await?;
     }
@@ -426,36 +425,6 @@ async fn wait_until_running(socket: &Path) -> anyhow::Result<Qmp> {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     Ok(qmp)
-}
-
-pub(super) async fn install_mapping(share: &Path, mapping: &MapDir) -> anyhow::Result<()> {
-    ensure!(
-        mapping.guest.starts_with('/') && !mapping.guest.split('/').any(|part| part == ".."),
-        "unsafe native QEMU guest mapping: {}",
-        mapping.guest
-    );
-    let destination = share.join(mapping.guest.trim_start_matches('/'));
-    tokio::fs::create_dir_all(destination.parent().context("mapping has no parent")?).await?;
-    let source = mapping.host.clone();
-    tokio::task::spawn_blocking(move || {
-        let status = std::process::Command::new("cp")
-            .args(["-a", "-l", "--"])
-            .arg(&source)
-            .arg(&destination)
-            .status()?;
-        ensure!(
-            status.success(),
-            "copying native QEMU mapping {} failed: {status}",
-            source.display()
-        );
-        Ok::<_, anyhow::Error>(())
-    })
-    .await??;
-    ensure!(
-        mapping.permissions == FsPerms::ReadOnly,
-        "native QEMU supports writable files only in its mailbox"
-    );
-    Ok(())
 }
 
 pub(super) fn invocation_script(
