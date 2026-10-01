@@ -324,9 +324,7 @@ impl WorkflowWorkerCompiled {
             exports_hierarchy_ext: Vec::new(),
             exported_ffqn_to_index: hashbrown::HashMap::new(),
             exported_functions_noext: Vec::new(),
-            imported_functions: crate::native_js_imports::WORKFLOW
-                .imported_functions()
-                .to_vec(),
+            imported_functions: Vec::new(),
         }
     }
 

@@ -5839,7 +5839,11 @@ async fn compile_and_link(
                     imports: webhook_compiled.imports().to_vec(),
                     workflow_or_activity_config: None,
                     wit: webhook_compiled.wit(),
-                    wit_origin: WitOrigin::Wasm,
+                    wit_origin: if webhook_compiled.config.js_config.is_some() {
+                        WitOrigin::Synthesized
+                    } else {
+                        WitOrigin::Wasm
+                    },
                 };
                 component_registry.insert(component)?;
                 let old =
@@ -6704,7 +6708,7 @@ impl WorkerCompiled {
                 exports_ext: worker.exported_functions_ext().to_vec(),
                 exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
             }),
-            imports: worker.imported_functions().to_vec(),
+            imports: Vec::new(), // JS activities cannot import functions.
             wit,
             wit_origin,
         };
@@ -6841,7 +6845,7 @@ impl WorkerCompiled {
                 exports_ext: worker.exported_functions_ext().to_vec(),
                 exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
             }),
-            imports: worker.imported_functions().to_vec(),
+            imports: Vec::new(), // Filled in by `resolve_js_imports`.
             wit,
             wit_origin,
         };

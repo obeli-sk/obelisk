@@ -634,6 +634,15 @@ impl ExIm {
         &self.exports_hierarchy_ext
     }
 
+    #[must_use]
+    pub fn empty() -> ExIm {
+        let exim_lite = ExImLite {
+            imports: Vec::new(),
+            exports: Vec::new(),
+        };
+        Self::decode(exim_lite, ComponentType::Activity).expect("empty `ExIm` must be valid")
+    }
+
     fn decode(exim_lite: ExImLite, component_type: ComponentType) -> Result<ExIm, DecodeError> {
         let mut exports_hierarchy_ext = exim_lite.exports;
         // Verify that there is no -obelisk-ext export and that the `-cancellable`

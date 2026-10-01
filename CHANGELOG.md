@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(JS)* With the V8 engine, the server no longer fetches the JS runtime components from the OCI
+  registry. ([8009cd1](https://github.com/obeli-sk/obelisk/commit/8009cd1109cf8384c77787007844feab79a1d785))
+- *(JS)* Imports of JS workflows and webhooks are read only from their JS code, so both JS engines
+  list the same imports. The dynamic call interface is the only listed `obelisk` interface, and
+  only when the code imports `obelisk:workflow-dynamic@1.0.0` or `obelisk:webhook-dynamic@1.0.0`.
+  JS activities list no imports, and JS webhooks no longer expose the WIT of the JS runtime.
+
 ## [0.42.0-rc.9](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.8...v0.42.0-rc.9)
 
 This release candidate mounts the native QEMU activity closure from an EROFS image, which

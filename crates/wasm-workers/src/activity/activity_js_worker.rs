@@ -110,11 +110,6 @@ impl ActivityJsWorkerCompiled {
         self.user_wasm_component.exports_hierarchy_ext()
     }
 
-    #[must_use]
-    pub fn imported_functions(&self) -> &[FunctionMetadata] {
-        self.inner.imported_functions()
-    }
-
     /// Return WIT text describing the user interface including extension packages.
     #[must_use]
     pub fn wit(&self) -> String {

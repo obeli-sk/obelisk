@@ -257,7 +257,7 @@ impl ComponentConfigRegistry {
         Ok(())
     }
 
-    /// Replace the runtime imports of an inserted JS component with the functions its code can call.
+    /// Set the imports of an inserted JS component from its code.
     /// Call after all components are inserted. Imports that cannot be resolved are left for linking to report.
     pub fn resolve_js_imports<'a>(
         &mut self,
@@ -270,12 +270,7 @@ impl ComponentConfigRegistry {
             .names_to_components
             .get_mut(name)
             .expect("JS component must be inserted");
-        match js_component_imports(
-            js_files,
-            &component.imports,
-            &inner.export_hierarchy,
-            builtin_modules,
-        ) {
+        match js_component_imports(js_files, &inner.export_hierarchy, builtin_modules) {
             Ok(imports) => component.imports = imports,
             Err(err) => debug!("Not resolving JS imports of {name}: {err}"),
         }
