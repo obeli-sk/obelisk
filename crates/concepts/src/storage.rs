@@ -2242,7 +2242,8 @@ pub trait DbExternalApi: DbConnection {
         file: &str,
     ) -> Result<Option<ContentDigest>, DbErrorRead>;
 
-    /// Insert or reuse normalized component metadata rows.
+    /// Insert normalized component metadata rows, reusing existing ones but replacing their imports:
+    /// JS components resolve imports against the other components of the deployment.
     async fn upsert_component_metadata(
         &self,
         records: Vec<ComponentMetadataRecord>,

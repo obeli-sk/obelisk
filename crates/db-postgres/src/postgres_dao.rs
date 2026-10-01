@@ -470,7 +470,7 @@ async fn upsert_component_metadata_tx(
             "INSERT INTO t_component_metadata \
              (component_digest, imports_json, exports_json, wit, wit_origin) \
              VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (component_digest) DO NOTHING",
+             ON CONFLICT (component_digest) DO UPDATE SET imports_json = EXCLUDED.imports_json",
             &[
                 &record.component_digest.as_slice(),
                 &Json(&record.imports),
