@@ -919,7 +919,11 @@ impl EventHistory {
                         event_call.version.0
                             + u32::try_from(idx).expect("an EventCall has at most three events"),
                     );
-                    assert_eq!(expected_version, matched_version);
+                    if expected_version != matched_version {
+                        return Err(ApplyError::NondeterminismDetected(format!(
+                            "event version mismatch for {key}: expected {expected_version}, found {matched_version}",
+                        )));
+                    }
                     // JoinNext is still unprocessed. This can only happen on the last key (the JoinNext key).
                     assert_eq!(
                         last_key_idx, idx,
@@ -937,7 +941,11 @@ impl EventHistory {
                         event_call.version.0
                             + u32::try_from(idx).expect("an EventCall has at most three events"),
                     );
-                    assert_eq!(expected_version, matched_version);
+                    if expected_version != matched_version {
+                        return Err(ApplyError::NondeterminismDetected(format!(
+                            "event version mismatch for {key}: expected {expected_version}, found {matched_version}",
+                        )));
+                    }
                     if idx == last_key_idx {
                         return Ok(FindMatchingAtomicResponse::Found {
                             value: found,
@@ -3842,6 +3850,7 @@ impl EventCallNonBlocking {
 mod tests {
     use super::super::event_history::{
         EventCallBlocking, EventCallCursor, EventCallKind, EventCallNonBlocking, EventHistory,
+        ProcessingStatus,
     };
     use super::super::workflow_worker::JoinNextBlockingStrategy;
     use super::SubmitChildExecution;
@@ -3887,6 +3896,57 @@ mod tests {
 
     pub const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn1");
     pub const MOCK_FFQN_2: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn2");
+
+    #[tokio::test]
+    async fn replay_version_mismatch_reports_nondeterminism() {
+        test_utils::set_up();
+        let sim_clock = SimClock::epoch();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
+        let (mut history, mut cursor, mut connection) = load_event_history(
+            db_pool.connection_test().await.unwrap(),
+            execution_id,
+            sim_clock.now(),
+            Duration::from_secs(1),
+            deadline_tracker_factory_test(&sim_clock),
+            JoinNextBlockingStrategy::Interrupt,
+            TestingFnRegistry::new_from_components(vec![]),
+        )
+        .await;
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::Named, StrVariant::Arc("test".into())).unwrap();
+        history.event_history.push((
+            HistoryEvent::JoinSetCreate {
+                join_set_id: join_set_id.clone(),
+            },
+            ProcessingStatus::Unprocessed,
+            Version::new(752),
+        ));
+        cursor.replay_versions.push_back(Version::new(749));
+
+        let err = history
+            .apply_event_call(
+                EventCallKind::NonBlocking(EventCallNonBlocking::JoinSetCreate(JoinSetCreate {
+                    join_set_id,
+                    wasm_backtrace: None,
+                })),
+                &mut cursor,
+                &mut *connection,
+                sim_clock.now(),
+            )
+            .await
+            .unwrap_err();
+        let reason = assert_matches!(err, ApplyError::NondeterminismDetected(reason) => reason);
+        assert_eq!(
+            "event version mismatch for CreateJoinSet(n:test): expected 749, found 752",
+            reason
+        );
+
+        drop(connection);
+        drop(db_connection);
+        db_close.close().await;
+    }
 
     #[tokio::test]
     async fn already_due_one_off_delays_are_resolved_before_cache_flush() {
