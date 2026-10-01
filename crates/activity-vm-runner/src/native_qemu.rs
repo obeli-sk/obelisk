@@ -1,6 +1,6 @@
 use super::{
-    AbortOnDrop, MapDir, VmOutput, http_bridge, log_guest_phases, replace_output_from_guest_files,
-    store_image,
+    AbortOnDrop, MapDir, OutputSink, OutputTail, VmOutput, guest_result, http_bridge,
+    log_guest_phases, spawn_console_reader, store_image,
 };
 use anyhow::{Context as _, bail, ensure};
 use concepts::storage::http_client_trace::HttpClientTrace;
@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use wasm_workers::http_request_policy::HttpRequestPolicy;
 
 #[derive(Deserialize)]
@@ -119,8 +119,8 @@ pub(super) async fn execute(
     stdin: Option<Vec<u8>>,
     policy: HttpRequestPolicy,
     traces: Arc<Mutex<Vec<HttpClientTrace>>>,
+    output_sink: OutputSink,
     max_stdout_bytes: usize,
-    max_stderr_bytes: usize,
 ) -> anyhow::Result<VmOutput> {
     let started = Instant::now();
     let guest = bundle.join("guest");
@@ -205,32 +205,20 @@ pub(super) async fn execute(
         .kill_on_drop(true)
         .spawn()
         .context("starting native QEMU")?;
-    let mut stderr_pipe = child
-        .stderr
-        .take()
-        .context("native QEMU stderr is missing")?;
-    let mut stdout_pipe = child
-        .stdout
-        .take()
-        .context("native QEMU serial output is missing")?;
-    let stdout_reader = tokio::spawn(async move {
-        let mut buffer = [0_u8; 4096];
-        let mut output = Vec::new();
-        while let Ok(count) = stdout_pipe.read(&mut buffer).await {
-            if count == 0 {
-                break;
-            }
-            tracing::debug!(serial = %String::from_utf8_lossy(&buffer[..count]), "Native QEMU serial output");
-            if output.len() < 64 * 1024 {
-                output.extend_from_slice(&buffer[..count.min(64 * 1024 - output.len())]);
-            }
-        }
-        output
-    });
-    let stderr_reader = tokio::spawn(async move {
-        let mut stderr = Vec::new();
-        stderr_pipe.read_to_end(&mut stderr).await.map(|_| stderr)
-    });
+    let stderr_reader = spawn_console_reader(
+        child
+            .stderr
+            .take()
+            .context("native QEMU stderr is missing")?,
+        output_sink.clone(),
+    );
+    let stdout_reader = spawn_console_reader(
+        child
+            .stdout
+            .take()
+            .context("native QEMU serial output is missing")?,
+        output_sink.clone(),
+    );
     let mut qmp =
         match tokio::time::timeout(Duration::from_secs(15), wait_until_running(&qmp_socket))
             .await
@@ -241,7 +229,7 @@ pub(super) async fn execute(
             Err(error) => {
                 let _ = child.start_kill();
                 child.wait().await?;
-                let stderr = stderr_reader.await??;
+                let stderr = stderr_reader.await?;
                 let serial = stdout_reader.await?;
                 bail!(
                     "native QEMU snapshot restore failed: {error:#}\n{}{}",
@@ -291,6 +279,7 @@ pub(super) async fn execute(
         .write_all(clock.as_bytes())
         .await?;
 
+    let tail = OutputTail::spawn(queue.path().to_owned(), Vec::new(), output_sink);
     let mut phases = AbortOnDrop(tokio::spawn(log_guest_phases(
         queue.path().to_owned(),
         started,
@@ -307,18 +296,16 @@ pub(super) async fn execute(
             bail!("native QEMU exited before activity completion: {status}");
         }
     };
-    let stderr = stderr_reader.await??;
-    let serial = stdout_reader.await?;
-    let mut output = VmOutput {
-        exit_code,
-        stdout: Vec::new(),
-        stderr: [stderr, serial].concat(),
-    };
-    replace_output_from_guest_files(
-        &mut output,
+    stderr_reader.await?;
+    stdout_reader.await?;
+    tail.finish().await;
+    let output = guest_result(
         queue.path(),
         max_stdout_bytes,
-        max_stderr_bytes,
+        VmOutput {
+            exit_code,
+            stdout: Vec::new(),
+        },
     )
     .await?;
     tracing::debug!(

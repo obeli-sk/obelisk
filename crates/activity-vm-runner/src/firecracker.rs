@@ -1,6 +1,6 @@
 use super::{
-    AbortOnDrop, MapDir, VmOutput, http_bridge, log_guest_phases, native_qemu,
-    replace_output_from_guest_files, store_image,
+    AbortOnDrop, MapDir, OutputSink, OutputTail, VmOutput, guest_result, http_bridge,
+    log_guest_phases, native_qemu, spawn_console_reader, store_image,
 };
 use anyhow::{Context as _, bail, ensure};
 use concepts::storage::http_client_trace::HttpClientTrace;
@@ -20,6 +20,8 @@ use wasm_workers::http_request_policy::HttpRequestPolicy;
 const MAILBOX_PORT: u32 = 1024;
 /// Suffix of files the mirror is still writing; neither side forwards them.
 const MIRROR_TMP: &str = ".mbtmp";
+/// Set in a frame's name length when its data extends the file instead of replacing it.
+const APPEND_FLAG: u16 = 0x8000;
 
 #[derive(Deserialize)]
 struct Machine {
@@ -88,8 +90,8 @@ pub(super) async fn execute(
     stdin: Option<Vec<u8>>,
     policy: HttpRequestPolicy,
     traces: Arc<Mutex<Vec<HttpClientTrace>>>,
+    output_sink: OutputSink,
     max_stdout_bytes: usize,
-    max_stderr_bytes: usize,
 ) -> anyhow::Result<VmOutput> {
     let started = Instant::now();
     let bundle = Bundle::load(bundle)?;
@@ -155,31 +157,20 @@ pub(super) async fn execute(
         .kill_on_drop(true)
         .spawn()
         .with_context(|| format!("starting {}", bundle.firecracker.display()))?;
-    let mut stdout_pipe = child
-        .stdout
-        .take()
-        .context("Firecracker serial output is missing")?;
-    let mut stderr_pipe = child
-        .stderr
-        .take()
-        .context("Firecracker stderr is missing")?;
-    let stdout_reader = tokio::spawn(async move {
-        let mut buffer = [0_u8; 4096];
-        let mut output = Vec::new();
-        while let Ok(count) = stdout_pipe.read(&mut buffer).await
-            && count > 0
-        {
-            tracing::debug!(serial = %String::from_utf8_lossy(&buffer[..count]), "Firecracker serial output");
-            if output.len() < 64 * 1024 {
-                output.extend_from_slice(&buffer[..count.min(64 * 1024 - output.len())]);
-            }
-        }
-        output
-    });
-    let stderr_reader = tokio::spawn(async move {
-        let mut stderr = Vec::new();
-        stderr_pipe.read_to_end(&mut stderr).await.map(|_| stderr)
-    });
+    let stdout_reader = spawn_console_reader(
+        child
+            .stdout
+            .take()
+            .context("Firecracker serial output is missing")?,
+        output_sink.clone(),
+    );
+    let stderr_reader = spawn_console_reader(
+        child
+            .stderr
+            .take()
+            .context("Firecracker stderr is missing")?,
+        output_sink.clone(),
+    );
 
     let connection = tokio::select! {
         accepted = tokio::time::timeout(Duration::from_secs(15), listener.accept()) => {
@@ -187,7 +178,7 @@ pub(super) async fn execute(
         }
         exited = child.wait() => {
             let status = exited?;
-            let stderr = stderr_reader.await??;
+            let stderr = stderr_reader.await?;
             let serial = stdout_reader.await?;
             bail!(
                 "Firecracker exited before the guest connected: {status}\n{}{}",
@@ -214,6 +205,7 @@ pub(super) async fn execute(
         run_script,
     )));
 
+    let tail = OutputTail::spawn(queue.path().to_owned(), Vec::new(), output_sink);
     let mut phases = AbortOnDrop(tokio::spawn(log_guest_phases(
         queue.path().to_owned(),
         started,
@@ -230,18 +222,16 @@ pub(super) async fn execute(
             bail!("Firecracker exited before activity completion: {status}");
         }
     };
-    let stderr = stderr_reader.await??;
-    let serial = stdout_reader.await?;
-    let mut output = VmOutput {
-        exit_code,
-        stdout: Vec::new(),
-        stderr: [stderr, serial].concat(),
-    };
-    replace_output_from_guest_files(
-        &mut output,
+    stderr_reader.await?;
+    stdout_reader.await?;
+    tail.finish().await;
+    let output = guest_result(
         queue.path(),
         max_stdout_bytes,
-        max_stderr_bytes,
+        VmOutput {
+            exit_code,
+            stdout: Vec::new(),
+        },
     )
     .await?;
     tracing::debug!(
@@ -289,7 +279,9 @@ async fn mirror_to_host(
     loop {
         let mut header = [0_u8; 10];
         stream.read_exact(&mut header).await?;
-        let name_len = usize::from(u16::from_le_bytes([header[0], header[1]]));
+        let name_field = u16::from_le_bytes([header[0], header[1]]);
+        let append = name_field & APPEND_FLAG != 0;
+        let name_len = usize::from(name_field & !APPEND_FLAG);
         let data_len = u64::from_le_bytes(header[2..].try_into().expect("8 bytes"));
         let mut name = vec![0_u8; name_len];
         stream.read_exact(&mut name).await?;
@@ -304,10 +296,20 @@ async fn mirror_to_host(
             data.len() as u64 == data_len,
             "guest mailbox closed mid-file"
         );
-        let temporary = queue.join(format!("{name}{MIRROR_TMP}"));
-        tokio::fs::write(&temporary, data).await?;
         received.lock().unwrap().insert(name.clone());
-        tokio::fs::rename(temporary, queue.join(name)).await?;
+        if append {
+            tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(queue.join(name))
+                .await?
+                .write_all(&data)
+                .await?;
+        } else {
+            let temporary = queue.join(format!("{name}{MIRROR_TMP}"));
+            tokio::fs::write(&temporary, data).await?;
+            tokio::fs::rename(temporary, queue.join(name)).await?;
+        }
     }
 }
 

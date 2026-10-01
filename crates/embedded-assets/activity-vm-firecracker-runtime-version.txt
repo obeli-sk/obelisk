@@ -1,1 +1,1 @@
-oci://docker.io/getobelisk/activity-vm-firecracker-runtime:2026-09-29@sha256:f1cc4b8a740b766e3be9e15d012497a544e3c0e604012f1cf62b516b087a444d
+oci://docker.io/getobelisk/activity-vm-firecracker-runtime:2026-10-01@sha256:09a19047a740f641882a294de4737871f124747129308f9dd37de7ee3f72cdc4

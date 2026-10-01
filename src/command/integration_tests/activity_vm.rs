@@ -209,37 +209,79 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
         json!({ "ok": "stdout-result" })
     );
 
-    let streams = loop {
-        let logs = server.get_logs(&exec_id, 10).await;
-        let streams: Vec<(String, String)> = logs
-            .as_array()
-            .expect("logs must be an array")
-            .iter()
-            .filter(|entry| entry["type"] == "stream")
-            .map(|entry| {
-                use base64::prelude::*;
-                let payload = BASE64_STANDARD
-                    .decode(entry["payload"].as_str().expect("payload must be a string"))
-                    .expect("payload must be base64");
-                (
-                    entry["stream_type"].as_str().unwrap().to_string(),
-                    String::from_utf8(payload).unwrap(),
-                )
-            })
-            .collect();
-        if streams.len() >= 2 {
-            break streams;
+    // Output arrives in chunks, with emulator and init diagnostics interleaved on stderr.
+    let (stdout, stderr) = loop {
+        let stdout = stream_log(&server, &exec_id, "stdout").await;
+        let stderr = stream_log(&server, &exec_id, "stderr").await;
+        if stdout == "\"stdout-result\"\n" && stderr.contains("guest diagnostic\n") {
+            break (stdout, stderr);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
-    let [(stdout_type, stdout), (stderr_type, stderr)] = streams.as_slice() else {
-        panic!("expected one stdout and one stderr entry, got {streams:?}");
-    };
-    assert_eq!(stdout_type, "stdout");
     assert_eq!(stdout, "\"stdout-result\"\n");
-    assert_eq!(stderr_type, "stderr");
-    // Emulator and init diagnostics are appended after the guest's stderr.
-    assert!(stderr.starts_with("guest diagnostic\n"), "{stderr:?}");
+    assert!(stderr.contains("guest diagnostic\n"), "{stderr:?}");
+    server.shutdown().await;
+}
+
+/// Concatenates the payloads of one stream type.
+async fn stream_log(server: &TestServer, execution_id: &str, stream_type: &str) -> String {
+    use base64::prelude::*;
+    let logs = server.get_logs(execution_id, 1000).await;
+    logs.as_array()
+        .expect("logs must be an array")
+        .iter()
+        .filter(|entry| entry["type"] == "stream" && entry["stream_type"] == stream_type)
+        .map(|entry| {
+            let payload = BASE64_STANDARD
+                .decode(entry["payload"].as_str().expect("payload must be a string"))
+                .expect("payload must be base64");
+            String::from_utf8_lossy(&payload).into_owned()
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn output_forwarded_before_completion() {
+    if parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap()
+        == ActivityVmRuntimeMode::Disabled
+    {
+        return;
+    }
+    let deployment_toml = r#"[[activity_vm]]
+memory.mib = 512
+exec.lock_expiry.seconds = 120
+max_retries = 0
+ffqn = "testing:vm/hang.run"
+content = '''#!/usr/bin/env bash
+printf '%s\n' 'before hang' >&2
+exec sleep 600
+'''
+params = []
+return_type = "result<string, string>"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+"#;
+    let server =
+        TestServer::start_inline_deployment(test_addr!(186), "", deployment_toml, &[]).await;
+    let execution_id = server.generate_execution_id().await;
+    let follow = server.submit_follow_with_id(&execution_id, "testing:vm/hang.run", vec![]);
+    let observe_and_cancel = async {
+        while !stream_log(&server, &execution_id, "stderr")
+            .await
+            .contains("before hang\n")
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        server.cancel_execution_with_retries(&execution_id).await;
+    };
+    let (response, ()) = tokio::time::timeout(Duration::from_secs(60), async {
+        tokio::join!(follow, observe_and_cancel)
+    })
+    .await
+    .expect("stderr must reach the logs while the VM is still running");
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({ "execution_failed": { "kind": "cancelled" } })
+    );
     server.shutdown().await;
 }
 
