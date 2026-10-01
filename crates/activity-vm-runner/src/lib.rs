@@ -1,11 +1,12 @@
 use anyhow::{Context as _, bail};
 use concepts::ContentDigest;
+use concepts::storage::LogStreamType;
 use concepts::storage::http_client_trace::HttpClientTrace;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::io::AsyncReadExt as _;
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncSeekExt as _};
 use wasm_workers::http_request_policy::HttpRequestPolicy;
 use wasm_workers::store_limits::StoreMemoryLimiter;
 use wasmtime::{Engine, Linker, Module, Store};
@@ -33,8 +34,10 @@ pub const BOCHS_GUEST_MEMORY: u64 = 512 << 20;
 pub struct VmOutput {
     pub exit_code: i32,
     pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
 }
+
+/// Receives guest and emulator output while the VM runs.
+pub type OutputSink = Arc<dyn Fn(LogStreamType, &[u8]) + Send + Sync>;
 
 #[derive(Clone, Debug)]
 pub enum RuntimeSource {
@@ -115,8 +118,8 @@ pub async fn execute(
     stdin: Option<Vec<u8>>,
     policy: HttpRequestPolicy,
     http_client_traces: Arc<Mutex<Vec<HttpClientTrace>>>,
+    output_sink: OutputSink,
     max_stdout_bytes: usize,
-    max_stderr_bytes: usize,
     memory: Option<u64>,
 ) -> anyhow::Result<VmOutput> {
     let (engine, module) = match backend {
@@ -135,8 +138,8 @@ pub async fn execute(
                 stdin,
                 policy,
                 http_client_traces,
+                output_sink,
                 max_stdout_bytes,
-                max_stderr_bytes,
             )
             .await;
         }
@@ -156,8 +159,8 @@ pub async fn execute(
                 stdin,
                 policy,
                 http_client_traces,
+                output_sink,
                 max_stdout_bytes,
-                max_stderr_bytes,
             )
             .await;
         }
@@ -190,7 +193,12 @@ pub async fn execute(
         http_client_traces,
     )));
     let stdout = pipe::MemoryOutputPipe::new(max_stdout_bytes.saturating_add(1));
-    let stderr = pipe::MemoryOutputPipe::new(max_stderr_bytes);
+    let stderr = pipe::MemoryOutputPipe::new(16 * 1024 * 1024);
+    let tail = OutputTail::spawn(
+        queue.path().to_owned(),
+        vec![stdout.clone(), stderr.clone()],
+        output_sink,
+    );
     let exit_code = run_until_activity_completes(
         engine,
         module,
@@ -204,16 +212,14 @@ pub async fn execute(
         started,
     )
     .await?;
-    let mut output = VmOutput {
-        exit_code,
-        stdout: stdout.contents().to_vec(),
-        stderr: stderr.contents().to_vec(),
-    };
-    replace_output_from_guest_files(
-        &mut output,
+    tail.finish().await;
+    let output = guest_result(
         queue.path(),
         max_stdout_bytes,
-        max_stderr_bytes,
+        VmOutput {
+            exit_code,
+            stdout: stdout.contents().to_vec(),
+        },
     )
     .await?;
     tracing::debug!(
@@ -230,6 +236,112 @@ impl<T> Drop for AbortOnDrop<T> {
     fn drop(&mut self) {
         self.0.abort();
     }
+}
+
+/// Bounds the emulator console output kept in memory for error messages.
+const CONSOLE_CAPTURE_BYTES: usize = 64 * 1024;
+const OUTPUT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Forwards output as the guest writes it, so it survives the VM being dropped mid-run.
+struct OutputTail {
+    stop: tokio::sync::oneshot::Sender<()>,
+    task: AbortOnDrop<()>,
+}
+
+impl OutputTail {
+    /// Tails the guest's `stdout` and `stderr` files and the in-memory console pipes.
+    fn spawn(queue: PathBuf, consoles: Vec<pipe::MemoryOutputPipe>, sink: OutputSink) -> Self {
+        let (stop, mut stopped) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let mut files = [
+                (queue.join("stdout"), LogStreamType::StdOut, 0),
+                (queue.join("stderr"), LogStreamType::StdErr, 0),
+            ];
+            let mut consoles = consoles
+                .into_iter()
+                .map(|pipe| (pipe, 0))
+                .collect::<Vec<_>>();
+            loop {
+                let stopping = tokio::select! {
+                    () = tokio::time::sleep(OUTPUT_POLL_INTERVAL) => false,
+                    _ = &mut stopped => true,
+                };
+                for (path, stream, offset) in &mut files {
+                    if let Err(error) = forward_appended(path, *stream, offset, &sink).await {
+                        tracing::debug!(path = %path.display(), "Cannot tail activity VM output: {error}");
+                    }
+                }
+                for (console, offset) in &mut consoles {
+                    let contents = console.contents();
+                    if let Some(appended) = contents.get(*offset..)
+                        && !appended.is_empty()
+                    {
+                        sink(LogStreamType::StdErr, appended);
+                        *offset = contents.len();
+                    }
+                }
+                if stopping {
+                    return;
+                }
+            }
+        });
+        Self {
+            stop,
+            task: AbortOnDrop(task),
+        }
+    }
+
+    /// Forwards everything written so far.
+    async fn finish(self) {
+        let _ = self.stop.send(());
+        let mut task = self.task;
+        let _ = (&mut task.0).await;
+    }
+}
+
+/// Reopens by path because Firecracker replaces the file instead of appending to it.
+async fn forward_appended(
+    path: &Path,
+    stream: LogStreamType,
+    offset: &mut u64,
+    sink: &OutputSink,
+) -> std::io::Result<()> {
+    let mut file = match tokio::fs::File::open(path).await {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    file.seek(std::io::SeekFrom::Start(*offset)).await?;
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer).await?;
+        if count == 0 {
+            return Ok(());
+        }
+        sink(stream, &buffer[..count]);
+        *offset += u64::try_from(count).expect("buffer length fits in u64");
+    }
+}
+
+/// Forwards emulator output as diagnostics, keeping a bounded copy for error messages.
+fn spawn_console_reader(
+    mut pipe: impl AsyncRead + Unpin + Send + 'static,
+    sink: OutputSink,
+) -> tokio::task::JoinHandle<Vec<u8>> {
+    tokio::spawn(async move {
+        let mut buffer = [0_u8; 4096];
+        let mut captured = Vec::new();
+        while let Ok(count) = pipe.read(&mut buffer).await
+            && count > 0
+        {
+            let chunk = &buffer[..count];
+            tracing::debug!(console = %String::from_utf8_lossy(chunk), "Activity VM console output");
+            sink(LogStreamType::StdErr, chunk);
+            let room = CONSOLE_CAPTURE_BYTES.saturating_sub(captured.len());
+            captured.extend_from_slice(&chunk[..count.min(room)]);
+        }
+        captured
+    })
 }
 
 /// Stops the VM once the guest marks the activity complete, skipping the emulated shutdown.
@@ -396,34 +508,23 @@ async fn run_module(
     }
 }
 
-async fn replace_output_from_guest_files(
-    output: &mut VmOutput,
+/// Prefers the activity's own stdout and exit code over the console's.
+async fn guest_result(
     queue: &Path,
     max_stdout_bytes: usize,
-    max_stderr_bytes: usize,
-) -> anyhow::Result<()> {
+    console: VmOutput,
+) -> anyhow::Result<VmOutput> {
     let Some(stdout) = read_guest_output(queue.join("stdout"), max_stdout_bytes).await? else {
-        return Ok(());
+        return Ok(console);
     };
-    let stderr = read_guest_output(queue.join("stderr"), max_stderr_bytes)
-        .await?
-        .unwrap_or_default();
-
-    // The VM has one serial console, so retain any emulator or init output as diagnostics.
-    // Activity output itself travels through the 9p control directory and remains separated.
-    let mut diagnostics = stderr;
-    diagnostics.append(&mut output.stderr);
-    diagnostics.append(&mut output.stdout);
-    output.stdout = stdout;
-    output.stderr = diagnostics;
-
-    if let Ok(exit_code) = tokio::fs::read_to_string(queue.join("exit-code")).await {
-        output.exit_code = exit_code
+    let exit_code = match tokio::fs::read_to_string(queue.join("exit-code")).await {
+        Ok(exit_code) => exit_code
             .trim()
             .parse()
-            .context("parsing activity VM guest exit code")?;
-    }
-    Ok(())
+            .context("parsing activity VM guest exit code")?,
+        Err(_) => console.exit_code,
+    };
+    Ok(VmOutput { exit_code, stdout })
 }
 
 async fn read_guest_output(path: PathBuf, max_bytes: usize) -> anyhow::Result<Option<Vec<u8>>> {
@@ -517,50 +618,87 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guest_files_separate_output_and_override_exit_code() {
+    async fn guest_files_override_console_output_and_exit_code() {
         let queue = tempfile::tempdir().unwrap();
         tokio::fs::write(queue.path().join("stdout"), b"\"result\"\n")
-            .await
-            .unwrap();
-        tokio::fs::write(queue.path().join("stderr"), b"guest diagnostic\n")
             .await
             .unwrap();
         tokio::fs::write(queue.path().join("exit-code"), b"7\n")
             .await
             .unwrap();
-        let mut output = VmOutput {
+        let console = VmOutput {
             exit_code: 0,
             stdout: b"serial console\n".to_vec(),
-            stderr: b"emulator diagnostic\n".to_vec(),
         };
 
-        replace_output_from_guest_files(&mut output, queue.path(), 1024, 1024)
-            .await
-            .unwrap();
+        let output = guest_result(queue.path(), 1024, console).await.unwrap();
 
         assert_eq!(output.exit_code, 7);
         assert_eq!(output.stdout, b"\"result\"\n");
-        assert_eq!(
-            output.stderr,
-            b"guest diagnostic\nemulator diagnostic\nserial console\n"
-        );
     }
 
     #[tokio::test]
-    async fn absent_guest_files_preserve_wasi_output() {
+    async fn absent_guest_files_preserve_console_output() {
         let queue = tempfile::tempdir().unwrap();
-        let mut output = VmOutput {
+        let console = VmOutput {
             exit_code: 3,
             stdout: b"stdout".to_vec(),
-            stderr: b"stderr".to_vec(),
         };
 
-        replace_output_from_guest_files(&mut output, queue.path(), 1024, 1024)
-            .await
-            .unwrap();
+        let output = guest_result(queue.path(), 1024, console).await.unwrap();
 
         assert_eq!(output.exit_code, 3);
         assert_eq!(output.stdout, b"stdout");
-        assert_eq!(output.stderr, b"stderr");
+    }
+
+    #[tokio::test]
+    async fn output_is_forwarded_while_the_guest_runs() {
+        let queue = tempfile::tempdir().unwrap();
+        let forwarded = Arc::new(Mutex::new(Vec::new()));
+        let sink: OutputSink = {
+            let forwarded = forwarded.clone();
+            Arc::new(move |stream, bytes: &[u8]| {
+                forwarded.lock().unwrap().push((stream, bytes.to_vec()));
+            })
+        };
+        let console = pipe::MemoryOutputPipe::new(1024);
+        let tail = OutputTail::spawn(queue.path().to_owned(), vec![console.clone()], sink);
+        let stderr = queue.path().join("stderr");
+        tokio::fs::write(&stderr, b"before hang\n").await.unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while forwarded.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("stderr must be forwarded before the guest finishes");
+
+        // Firecracker replaces the whole file; only the appended part must be forwarded.
+        let replacement = queue.path().join("stderr.tmp");
+        tokio::fs::write(&replacement, b"before hang\nafter\n")
+            .await
+            .unwrap();
+        tokio::fs::rename(replacement, &stderr).await.unwrap();
+        tokio::fs::write(queue.path().join("stdout"), b"\"result\"\n")
+            .await
+            .unwrap();
+        wasmtime_wasi::p2::OutputStream::write(
+            &mut console.clone(),
+            bytes::Bytes::from_static(b"console\n"),
+        )
+        .unwrap();
+        tail.finish().await;
+
+        let mut forwarded = forwarded.lock().unwrap().clone();
+        forwarded.sort_by_key(|(stream, bytes)| (*stream as u8, bytes.clone()));
+        assert_eq!(
+            forwarded,
+            [
+                (LogStreamType::StdOut, b"\"result\"\n".to_vec()),
+                (LogStreamType::StdErr, b"after\n".to_vec()),
+                (LogStreamType::StdErr, b"before hang\n".to_vec()),
+                (LogStreamType::StdErr, b"console\n".to_vec()),
+            ]
+        );
     }
 }

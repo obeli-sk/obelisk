@@ -1,9 +1,11 @@
 use activity_vm_runner::{MapDir, RuntimeBackend};
 use async_trait::async_trait;
+use concepts::prefixed_ulid::RunId;
+use concepts::storage::LogStreamType;
 use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
-    ComponentType, FunctionFqn, FunctionMetadata, PackageIfcFns, ParameterType,
+    ComponentType, ExecutionId, FunctionFqn, FunctionMetadata, PackageIfcFns, ParameterType,
     ReturnTypeExtendable,
 };
 use executor::worker::{
@@ -230,6 +232,19 @@ impl Worker for ActivityVmWorker {
             .activity_obtain_cancellation_token(ctx.execution_id.clone());
         let mut execution_interrupt_watcher = ctx.execution_interrupt_watcher.clone();
         let http_client_traces = Arc::new(Mutex::new(Vec::new()));
+        let output_sink: activity_vm_runner::OutputSink = {
+            let forward_stdout = self.forward_stdout.clone();
+            let forward_stderr = self.forward_stderr.clone();
+            let execution_id = ctx.execution_id.clone();
+            let run_id = ctx.locked_event.run_id;
+            Arc::new(move |stream, bytes: &[u8]| {
+                let config = match stream {
+                    LogStreamType::StdOut => forward_stdout.as_ref(),
+                    LogStreamType::StdErr => forward_stderr.as_ref(),
+                };
+                forward(config, bytes, &execution_id, run_id);
+            })
+        };
         let execution = activity_vm_runner::execute(
             &self.backend,
             self.mapdirs.clone(),
@@ -238,8 +253,8 @@ impl Worker for ActivityVmWorker {
             stdin,
             policy,
             http_client_traces.clone(),
+            output_sink,
             max_stdout,
-            16 * 1024 * 1024,
             self.memory,
         );
         // Dropping the execution stops the VM, like in the regular activity worker.
@@ -269,8 +284,6 @@ impl Worker for ActivityVmWorker {
             "Activity VM runner returned to worker"
         );
 
-        forward(self.forward_stdout.as_ref(), &output.stdout, &ctx);
-        forward(self.forward_stderr.as_ref(), &output.stderr, &ctx);
         let output_variant_is_unit =
             output_variant_is_unit(output.exit_code, &self.user_return_type);
         if !output_variant_is_unit && output.stdout.len() > max_stdout {
@@ -354,7 +367,12 @@ fn output_variant_is_unit(exit_code: i32, return_type: &ReturnTypeExtendable) ->
     }
 }
 
-fn forward(config: Option<&StdOutputConfigWithSender>, bytes: &[u8], ctx: &WorkerContext) {
+fn forward(
+    config: Option<&StdOutputConfigWithSender>,
+    bytes: &[u8],
+    execution_id: &ExecutionId,
+    run_id: RunId,
+) {
     use std::io::Write as _;
     if bytes.is_empty() {
         return;
@@ -371,8 +389,8 @@ fn forward(config: Option<&StdOutputConfigWithSender>, bytes: &[u8], ctx: &Worke
             forwarding_from,
         }) => {
             let _ = sender.try_send(concepts::storage::LogInfoAppendRow {
-                execution_id: ctx.execution_id.clone(),
-                run_id: ctx.locked_event.run_id,
+                execution_id: execution_id.clone(),
+                run_id,
                 log_entry: concepts::storage::LogEntry::Stream {
                     created_at: chrono::Utc::now(),
                     payload: bytes.to_vec(),
@@ -388,7 +406,7 @@ fn forward(config: Option<&StdOutputConfigWithSender>, bytes: &[u8], ctx: &Worke
 mod tests {
     use super::*;
     use concepts::component_id::COMPONENT_DIGEST_DUMMY;
-    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionId, ExecutorId, RunId};
+    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId};
     use concepts::storage::{Locked, Version};
     use concepts::time::{Now, TokioSleep};
     use concepts::{ComponentRetryConfig, ExecutionMetadata, Params, ReturnType, StrVariant};
