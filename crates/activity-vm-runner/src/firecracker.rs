@@ -251,7 +251,7 @@ pub(super) async fn execute(
     Ok(output)
 }
 
-type ImageKey = Vec<(PathBuf, String)>;
+type ImageKey = (u64, Vec<(PathBuf, String)>);
 
 /// Mappings of a deployed activity do not change, so each distinct set is packed once per process.
 static STORE_IMAGES: std::sync::LazyLock<
@@ -262,16 +262,36 @@ async fn store_image(
     mkfs_erofs: &Path,
     mapdirs: &[MapDir],
 ) -> anyhow::Result<Arc<tempfile::TempDir>> {
-    let key = mapdirs
-        .iter()
-        .map(|mapping| (mapping.host.clone(), mapping.guest.clone()))
-        .collect::<Vec<_>>();
+    store_image_with_size(mkfs_erofs, mapdirs, 0).await
+}
+
+pub(super) async fn store_image_with_size(
+    mkfs_erofs: &Path,
+    mapdirs: &[MapDir],
+    fixed_size: u64,
+) -> anyhow::Result<Arc<tempfile::TempDir>> {
+    let key = (
+        fixed_size,
+        mapdirs
+            .iter()
+            .map(|mapping| (mapping.host.clone(), mapping.guest.clone()))
+            .collect::<Vec<_>>(),
+    );
     let mut images = STORE_IMAGES.lock().await;
     if let Some(image) = images.get(&key) {
         return Ok(image.clone());
     }
     let dir = Arc::new(tempfile::tempdir()?);
     build_store_image(mkfs_erofs, mapdirs, &dir.path().join("store.img")).await?;
+    if fixed_size != 0 {
+        let image = dir.path().join("store.img");
+        let file = std::fs::OpenOptions::new().write(true).open(&image)?;
+        ensure!(
+            file.metadata()?.len() <= fixed_size,
+            "EROFS closure image exceeds the QEMU drive's fixed size"
+        );
+        file.set_len(fixed_size)?;
+    }
     images.insert(key, dir.clone());
     Ok(dir)
 }
