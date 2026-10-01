@@ -3787,6 +3787,31 @@ pub(crate) mod tests {
             SocketAddr,
             WatchGuard,
         ) {
+            let (set, server_addr, guard, ..) = start_js_webhook_server_with_http_and_db(
+                source,
+                allowed_host,
+                secret,
+                runtime,
+                None,
+            )
+            .await;
+            (set, server_addr, guard)
+        }
+
+        async fn start_js_webhook_server_with_http_and_db(
+            source: &str,
+            allowed_host: &str,
+            secret: Option<(&str, &str)>,
+            runtime: WebhookJsRuntime,
+            logs_store_min_level: Option<concepts::storage::LogLevel>,
+        ) -> (
+            tokio::task::JoinSet<Result<(), WebhookServerError>>,
+            SocketAddr,
+            WatchGuard,
+            Arc<dyn concepts::storage::DbPool>,
+            db_tests::DbGuard,
+            db_tests::DbPoolCloseableWrapper,
+        ) {
             use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
             use crate::http_request_policy::{ReplacementLocation, TestSecretResolver};
             use secrecy::SecretString;
@@ -3809,7 +3834,7 @@ pub(crate) mod tests {
                     .unwrap_or_default(),
             );
             let sim_clock = SimClock::default();
-            let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
+            let (db_guard, db_pool, db_close) = db_tests::Database::Sqlite.set_up().await;
             let fn_registry = TestingFnRegistry::new_from_components(vec![]);
             let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
             let (db_forwarder_sender, _) = mpsc::channel(1);
@@ -3834,7 +3859,7 @@ pub(crate) mod tests {
                         fuel: None,
                         backtrace_persist: false,
                         subscription_interruption: None,
-                        logs_store_min_level: None,
+                        logs_store_min_level,
                         allowed_hosts: Arc::from(vec![AllowedHostConfig {
                             pattern: host_pattern.clone(),
                             request_url_regex: None,
@@ -3893,7 +3918,7 @@ pub(crate) mod tests {
                 engine,
                 wh_server_state_watcher,
                 db_forwarder_sender,
-                db_pool,
+                db_pool.clone(),
                 sim_clock.clone_box(),
                 Arc::new(TokioSleep),
                 None,
@@ -3906,6 +3931,9 @@ pub(crate) mod tests {
                     server_termination_sender,
                     wh_server_state_sender,
                 },
+                db_pool,
+                db_guard,
+                db_close,
             )
         }
 
@@ -3949,6 +3977,100 @@ pub(crate) mod tests {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap();
             assert_eq!((status, body.as_str()), (200, "fetch works"));
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn webhook_js_persists_http_client_traces(
+            #[values(WebhookJsRuntime::BoaWasm, WebhookJsRuntime::V8)] runtime: WebhookJsRuntime,
+        ) {
+            use concepts::ExecutionId;
+            use concepts::storage::{
+                ExecutionListPagination, ExecutionRequest, ListExecutionsFilter, LogLevel,
+                http_client_trace::ResponseTrace,
+            };
+            use wiremock::{
+                Mock, MockServer, ResponseTemplate,
+                matchers::{method, path},
+            };
+            test_utils::set_up();
+            let mock_server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/hello"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("fetch works"))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+            let url = mock_server.uri();
+            // Logging persists the webhook execution row, so its Finished event is written.
+            let js_source = format!(
+                r#"
+                export default async function handle(request) {{
+                    const resp = await fetch("{url}/hello");
+                    const text = await resp.text();
+                    console.log(text);
+                    return new Response(text);
+                }}
+                "#
+            );
+            let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
+            let (_server, server_addr, _termination_sender, db_pool, _db_guard, _db_close) =
+                start_js_webhook_server_with_http_and_db(
+                    &js_source,
+                    &allowed,
+                    None,
+                    runtime,
+                    Some(LogLevel::Info),
+                )
+                .await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(200, resp.status().as_u16());
+
+            let conn = db_pool.external_api_conn().await.unwrap();
+            let executions = conn
+                .list_executions(
+                    ListExecutionsFilter::default(),
+                    ExecutionListPagination::default(),
+                )
+                .await
+                .unwrap();
+            let [execution] = executions.as_slice() else {
+                panic!("expected one webhook execution, got {executions:?}");
+            };
+            let ExecutionId::TopLevel(_) = execution.execution_id else {
+                panic!("webhook execution must be top-level");
+            };
+            let conn = db_pool.connection().await.unwrap();
+            let http_client_traces =
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        let exec_log = conn.get(&execution.execution_id).await.unwrap();
+                        if let ExecutionRequest::Finished {
+                            http_client_traces, ..
+                        } = &exec_log.last_event().event
+                        {
+                            break http_client_traces.clone();
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .expect("webhook execution must finish")
+                .expect("http_client_traces must be Some");
+            let [trace] = http_client_traces.as_slice() else {
+                panic!("expected one trace, got {http_client_traces:?}");
+            };
+            assert_eq!("GET", trace.req.method);
+            assert_eq!(format!("{url}/hello"), trace.req.uri);
+            assert_matches::assert_matches!(
+                trace.resp,
+                Some(ResponseTrace {
+                    status: Ok(200),
+                    ..
+                })
+            );
         }
 
         #[tokio::test]
