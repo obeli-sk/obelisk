@@ -332,11 +332,6 @@ impl WorkflowJsWorkerCompiled {
     }
 
     #[must_use]
-    pub fn imported_functions(&self) -> &[FunctionMetadata] {
-        self.inner.imported_functions()
-    }
-
-    #[must_use]
     pub fn js_files(&self) -> &BTreeMap<String, String> {
         &self.js_files
     }

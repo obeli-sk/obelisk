@@ -123,7 +123,7 @@ impl ActivityWorkerCompiled {
     ) -> Self {
         Self {
             engine,
-            exim: crate::native_js_imports::ACTIVITY.exim.clone(),
+            exim: ExIm::empty(),
             clock_fn,
             sleep,
             exported_ffqn_to_index: hashbrown::HashMap::new(),

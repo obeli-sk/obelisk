@@ -300,20 +300,23 @@ impl WebhookEndpointCompiled {
         self
     }
 
+    /// Imports of a WASM webhook, JS webhooks list the imports of their code instead.
     #[must_use]
     pub fn imports(&self) -> &[FunctionMetadata] {
-        self.wasm_component().imported_functions()
+        match (&self.config.js_config, &self.runnable_component) {
+            (None, Some(runnable_component)) => {
+                runnable_component.wasm_component.imported_functions()
+            }
+            _ => &[],
+        }
     }
 
+    /// WIT of a WASM webhook, JS webhooks have none of their own.
     #[must_use]
     pub fn wit(&self) -> String {
-        self.wasm_component().wit()
-    }
-
-    fn wasm_component(&self) -> &utils::wasm_tools::WasmComponent {
-        match &self.runnable_component {
-            Some(runnable_component) => &runnable_component.wasm_component,
-            None => &crate::native_js_imports::WEBHOOK,
+        match (&self.config.js_config, &self.runnable_component) {
+            (None, Some(runnable_component)) => runnable_component.wasm_component.wit(),
+            _ => String::new(),
         }
     }
 

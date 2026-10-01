@@ -6,18 +6,59 @@
 //! the synthetic module needs to expose.
 
 use boa_engine::ast::declaration::ImportName;
-use concepts::{FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns};
-use std::collections::{HashMap, HashSet};
+use concepts::{ComponentType, FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns};
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::str::FromStr;
+use std::sync::LazyLock;
+use utils::wasm_tools::WasmComponent;
+use utils::wit::{
+    WIT_OBELISK_TYPES_PACKAGE, WIT_OBELISK_WEBHOOK_PACKAGE, WIT_OBELISK_WORKFLOW_PACKAGE,
+};
 
 #[derive(Debug)]
 pub struct BuiltinModule {
     specifier: &'static str,
     exports: &'static [&'static str],
-    /// `obelisk` runtime interfaces backing this module, listed as imports only when the code imports it.
-    runtime_ifc_names: &'static [&'static str],
+    /// Listed as imports of a component whose code imports this module.
+    listed_imports: Option<&'static LazyLock<Vec<FunctionMetadata>>>,
 }
+
+/// Functions of an embedded `obelisk` interface.
+fn interface_functions(
+    pkg: &str,
+    ifc_fqn: &str,
+    component_type: ComponentType,
+) -> Vec<FunctionMetadata> {
+    let world = format!("package any:any; world any {{ import {ifc_fqn}; }}");
+    WasmComponent::new_from_wit_string_with_deps(
+        &world,
+        &[WIT_OBELISK_TYPES_PACKAGE[2], pkg],
+        component_type,
+    )
+    .expect("embedded WIT must be valid")
+    .imported_functions()
+    .iter()
+    .filter(|function| function.ffqn.ifc_fqn.deref() == ifc_fqn)
+    .cloned()
+    .collect()
+}
+
+static WORKFLOW_DYNAMIC_SUPPORT: LazyLock<Vec<FunctionMetadata>> = LazyLock::new(|| {
+    interface_functions(
+        WIT_OBELISK_WORKFLOW_PACKAGE[2],
+        "obelisk:workflow/workflow-dynamic-support@7.0.0",
+        ComponentType::Workflow,
+    )
+});
+
+static WEBHOOK_DYNAMIC_SUPPORT: LazyLock<Vec<FunctionMetadata>> = LazyLock::new(|| {
+    interface_functions(
+        WIT_OBELISK_WEBHOOK_PACKAGE[2],
+        "obelisk:webhook/webhook-dynamic-support@7.0.0",
+        ComponentType::WebhookEndpoint,
+    )
+});
 
 pub const WORKFLOW_BUILTIN_MODULES: &[BuiltinModule] = &[
     BuiltinModule {
@@ -35,15 +76,12 @@ pub const WORKFLOW_BUILTIN_MODULES: &[BuiltinModule] = &[
             "JoinSetExhaustedError",
             "ChildError",
         ],
-        runtime_ifc_names: &[],
+        listed_imports: None,
     },
     BuiltinModule {
         specifier: "obelisk:workflow-dynamic@1.0.0",
         exports: &["call", "schedule"],
-        runtime_ifc_names: &[
-            "workflow-dynamic-support",
-            "workflow-dynamic-support-backtrace",
-        ],
+        listed_imports: Some(&WORKFLOW_DYNAMIC_SUPPORT),
     },
 ];
 pub const WEBHOOK_BUILTIN_MODULES: &[BuiltinModule] = &[
@@ -57,15 +95,12 @@ pub const WEBHOOK_BUILTIN_MODULES: &[BuiltinModule] = &[
             "tryGet",
             "ChildError",
         ],
-        runtime_ifc_names: &[],
+        listed_imports: None,
     },
     BuiltinModule {
         specifier: "obelisk:webhook-dynamic@1.0.0",
         exports: &["call", "schedule"],
-        runtime_ifc_names: &[
-            "webhook-dynamic-support",
-            "webhook-dynamic-support-backtrace",
-        ],
+        listed_imports: Some(&WEBHOOK_DYNAMIC_SUPPORT),
     },
 ];
 
@@ -245,39 +280,33 @@ pub(crate) fn resolve_js_imports(
         .collect())
 }
 
-/// Functions a JS component can call, listed as its imports: every function of each interface
-/// its code imports, plus the imports of its runtime except for the interfaces backing builtin
-/// modules the code does not import.
+/// Imports of a JS component as read from its code: every function of each imported interface,
+/// plus the dynamic support interface when the code uses dynamic calls.
 pub fn js_component_imports<'a>(
     js_files: impl IntoIterator<Item = &'a str>,
-    runtime_imports: &[FunctionMetadata],
     all_exports: &[PackageIfcFns],
     builtin_modules: &[BuiltinModule],
 ) -> Result<Vec<FunctionMetadata>, String> {
     let mut interfaces = HashMap::new();
-    let mut used_builtin_modules = HashSet::new();
+    let mut used_builtin_modules = HashMap::new();
     for js_code in js_files {
         let extracted = extract_and_verify(js_code, all_exports, builtin_modules)?;
         interfaces.extend(extracted.interfaces);
-        used_builtin_modules.extend(extracted.builtin_modules.iter().map(|m| m.specifier));
+        used_builtin_modules.extend(
+            extracted
+                .builtin_modules
+                .into_iter()
+                .map(|module| (module.specifier, module)),
+        );
     }
-    let hidden_runtime_ifc_names = builtin_modules
-        .iter()
-        .filter(|module| !used_builtin_modules.contains(module.specifier))
-        .flat_map(|module| module.runtime_ifc_names.iter().copied())
-        .collect::<HashSet<_>>();
-    let mut imports = runtime_imports
-        .iter()
-        .filter(|function| {
-            let ifc_fqn = &function.ffqn.ifc_fqn;
-            ifc_fqn.namespace() != "obelisk"
-                || !hidden_runtime_ifc_names.contains(ifc_fqn.ifc_name())
-        })
-        .cloned()
+    let mut imports = interfaces
+        .into_values()
+        .flat_map(|ifc| ifc.fns.values().cloned())
         .chain(
-            interfaces
+            used_builtin_modules
                 .into_values()
-                .flat_map(|ifc| ifc.fns.values().cloned()),
+                .filter_map(|module| module.listed_imports)
+                .flat_map(|functions| functions.iter().cloned()),
         )
         .collect::<Vec<_>>();
     imports.sort_by(|a, b| {
@@ -309,57 +338,44 @@ mod tests {
     use concepts::FunctionFqn;
 
     #[test]
-    fn component_imports_list_imported_interfaces_and_used_runtime_support() {
-        let runtime_registry = fn_registry_dummy(&[
-            FunctionFqn::new_static("obelisk:workflow/workflow-support@7.0.0", "join-next"),
-            FunctionFqn::new_static("obelisk:workflow/workflow-dynamic-support@7.0.0", "call"),
-            FunctionFqn::new_static(
-                "obelisk:workflow/workflow-dynamic-support-backtrace@7.0.0",
-                "call",
-            ),
-        ]);
-        let runtime_imports = runtime_registry
-            .all_exports()
-            .iter()
-            .flat_map(|ifc| ifc.fns.values().cloned())
-            .collect::<Vec<_>>();
+    fn component_imports_list_imported_interfaces_and_dynamic_support() {
         let deployment_registry = fn_registry_dummy(&[
             FunctionFqn::new_static("app:act/api", "get"),
             FunctionFqn::new_static("app:act/api", "put"),
             FunctionFqn::new_static("app:other/api", "unused"),
         ]);
-        let ffqns = |js_files: &[&str]| {
+        let ifcs = |js_files: &[&str]| {
             js_component_imports(
                 js_files.iter().copied(),
-                &runtime_imports,
                 deployment_registry.all_exports(),
                 WORKFLOW_BUILTIN_MODULES,
             )
             .unwrap()
             .into_iter()
-            .map(|function| function.ffqn.to_string())
+            .map(|function| function.ffqn.ifc_fqn.to_string())
             .collect::<Vec<_>>()
         };
 
         assert_eq!(
-            ffqns(&["import { get } from 'app:act/api';"]),
-            [
-                "app:act/api.get",
-                "app:act/api.put",
-                "obelisk:workflow/workflow-support@7.0.0.join-next",
-            ]
-        );
-        assert_eq!(
-            ffqns(&[
+            ifcs(&[
+                "import { get } from 'app:act/api';",
                 "import { sleep } from 'obelisk:workflow@1.0.0';",
-                "import { call } from 'obelisk:workflow-dynamic@1.0.0';",
             ]),
-            [
-                "obelisk:workflow/workflow-dynamic-support-backtrace@7.0.0.call",
-                "obelisk:workflow/workflow-dynamic-support@7.0.0.call",
-                "obelisk:workflow/workflow-support@7.0.0.join-next",
-            ]
+            ["app:act/api", "app:act/api"]
         );
+        let dynamic = ifcs(&["import { call } from 'obelisk:workflow-dynamic@1.0.0';"]);
+        assert!(!dynamic.is_empty());
+        assert!(
+            dynamic
+                .iter()
+                .all(|ifc| ifc == "obelisk:workflow/workflow-dynamic-support@7.0.0")
+        );
+    }
+
+    #[test]
+    fn dynamic_support_is_not_empty() {
+        assert!(!WORKFLOW_DYNAMIC_SUPPORT.is_empty());
+        assert!(!WEBHOOK_DYNAMIC_SUPPORT.is_empty());
     }
 
     #[test]
