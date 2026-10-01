@@ -1,5 +1,6 @@
 use super::{
     AbortOnDrop, MapDir, VmOutput, http_bridge, log_guest_phases, replace_output_from_guest_files,
+    store_image,
 };
 use anyhow::{Context as _, bail, ensure};
 use concepts::storage::http_client_trace::HttpClientTrace;
@@ -11,7 +12,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use wasm_workers::http_request_policy::HttpRequestPolicy;
-use wasmtime_wasi::FsPerms;
 
 #[derive(Deserialize)]
 struct Machine {
@@ -20,6 +20,8 @@ struct Machine {
     hotplug: Option<Hotplug>,
     #[serde(default)]
     cpu_hotplug: Option<CpuHotplug>,
+    #[serde(default)]
+    store_image_bytes: Option<u64>,
     args: Vec<String>,
 }
 
@@ -128,6 +130,12 @@ pub(super) async fn execute(
     let snapshot = bundle.join("vm.state");
     ensure!(snapshot.is_file(), "native QEMU snapshot is missing");
 
+    let image = if let Some(bytes) = machine.store_image_bytes {
+        ensure!(bytes > 0, "QEMU EROFS drive size must be positive");
+        Some(store_image::store_image_with_size(Path::new("mkfs.erofs"), &mapdirs, bytes).await?)
+    } else {
+        None
+    };
     let share = match mapdirs.first().and_then(|mapping| mapping.host.parent()) {
         Some(parent) => tempfile::tempdir_in(parent)?,
         None => tempfile::tempdir()?,
@@ -135,14 +143,16 @@ pub(super) async fn execute(
     let queue = tempfile::tempdir()?;
     let control = tempfile::tempdir()?;
     let qmp_socket = control.path().join("qmp.sock");
-    for mapping in &mapdirs {
-        install_mapping(share.path(), mapping).await?;
+    if image.is_none() {
+        for mapping in &mapdirs {
+            store_image::install_mapping(share.path(), mapping).await?;
+        }
+        tokio::fs::create_dir_all(share.path().join("nix/store")).await?;
     }
     tracing::debug!(
         elapsed_ms = started.elapsed().as_millis(),
         "Native QEMU mappings staged"
     );
-    tokio::fs::create_dir_all(share.path().join("nix/store")).await?;
     tokio::fs::write(
         queue.path().join("http-guest.sh"),
         include_bytes!("../guest/http-guest.sh"),
@@ -173,6 +183,13 @@ pub(super) async fn execute(
             arg.replace("{pack}", &guest.to_string_lossy())
                 .replace("{share}", &share.path().to_string_lossy())
                 .replace("{queue}", &queue.path().to_string_lossy())
+                .replace(
+                    "{image}",
+                    &image
+                        .as_ref()
+                        .map(|dir| dir.path().join("store.img").to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                )
                 .replace("{ram}", &machine.ram)
         })
         .collect::<Vec<_>>();
@@ -214,9 +231,25 @@ pub(super) async fn execute(
         let mut stderr = Vec::new();
         stderr_pipe.read_to_end(&mut stderr).await.map(|_| stderr)
     });
-    let mut qmp = tokio::time::timeout(Duration::from_secs(15), wait_until_running(&qmp_socket))
-        .await
-        .context("native QEMU did not restore its snapshot within 15 seconds")??;
+    let mut qmp =
+        match tokio::time::timeout(Duration::from_secs(15), wait_until_running(&qmp_socket))
+            .await
+            .context("native QEMU did not restore its snapshot within 15 seconds")
+            .and_then(|qmp| qmp)
+        {
+            Ok(qmp) => qmp,
+            Err(error) => {
+                let _ = child.start_kill();
+                child.wait().await?;
+                let stderr = stderr_reader.await??;
+                let serial = stdout_reader.await?;
+                bail!(
+                    "native QEMU snapshot restore failed: {error:#}\n{}{}",
+                    String::from_utf8_lossy(&stderr),
+                    String::from_utf8_lossy(&serial)
+                );
+            }
+        };
     tracing::debug!(
         elapsed_ms = started.elapsed().as_millis(),
         "Native QEMU snapshot restored"
@@ -394,36 +427,6 @@ async fn wait_until_running(socket: &Path) -> anyhow::Result<Qmp> {
     Ok(qmp)
 }
 
-pub(super) async fn install_mapping(share: &Path, mapping: &MapDir) -> anyhow::Result<()> {
-    ensure!(
-        mapping.guest.starts_with('/') && !mapping.guest.split('/').any(|part| part == ".."),
-        "unsafe native QEMU guest mapping: {}",
-        mapping.guest
-    );
-    let destination = share.join(mapping.guest.trim_start_matches('/'));
-    tokio::fs::create_dir_all(destination.parent().context("mapping has no parent")?).await?;
-    let source = mapping.host.clone();
-    tokio::task::spawn_blocking(move || {
-        let status = std::process::Command::new("cp")
-            .args(["-a", "-l", "--"])
-            .arg(&source)
-            .arg(&destination)
-            .status()?;
-        ensure!(
-            status.success(),
-            "copying native QEMU mapping {} failed: {status}",
-            source.display()
-        );
-        Ok::<_, anyhow::Error>(())
-    })
-    .await??;
-    ensure!(
-        mapping.permissions == FsPerms::ReadOnly,
-        "native QEMU supports writable files only in its mailbox"
-    );
-    Ok(())
-}
-
 pub(super) fn invocation_script(
     args: &[String],
     env: &HashMap<String, String>,
@@ -473,6 +476,7 @@ mod tests {
                 max_bytes: 16 << 30,
                 block_bytes: 2 << 20,
             }),
+            store_image_bytes: None,
             args: Vec::new(),
         }
     }

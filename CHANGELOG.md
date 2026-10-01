@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(activity-vm)* Native QEMU mounts each activity's read-only Nix closure from an EROFS image
+  instead of a 9p share. The HTTP/result mailbox still uses 9p. `mkfs.erofs` is now required on
+  the server's `PATH`. [#1079](https://github.com/obeli-sk/obelisk/pull/1079)
+
 ## [0.42.0-rc.8](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.7...v0.42.0-rc.8)
 
 This release candidate fixes a workflow response wakeup race near lock expiry and removes V8
