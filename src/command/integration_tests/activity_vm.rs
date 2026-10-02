@@ -1,6 +1,63 @@
+use crate::command::server;
 use crate::{command::server::ActivityVmRuntimeMode, parse_activity_vm_runtime_from_env};
+use std::sync::Arc;
 
 use super::*;
+
+async fn start_vm_server(
+    ip: String,
+    server_toml: &str,
+    deployment_toml: &str,
+    sleep: Option<Arc<dyn concepts::time::Sleep>>,
+) -> TestServer {
+    let (persisted_logs, _) = tokio::sync::broadcast::channel(1000);
+    TestServer::start_inline_deployment_with_hooks(
+        ip,
+        server_toml,
+        deployment_toml,
+        &[],
+        JsRuntimeMode::BoaWasm,
+        server::RuntimeTestHooks {
+            activity_vm_sleep: sleep,
+            persisted_logs: Some(persisted_logs),
+        },
+    )
+    .await
+}
+
+async fn wait_for_vm_output(
+    logs: &mut tokio::sync::broadcast::Receiver<concepts::storage::LogInfoAppendRow>,
+    execution_id: &str,
+    expected_stdout: Option<&str>,
+    expected_stderr: &str,
+) -> (String, String) {
+    use concepts::storage::{LogEntry, LogStreamType};
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    loop {
+        let row = logs
+            .recv()
+            .await
+            .expect("persisted log observer must remain connected");
+        if row.execution_id.to_string() == execution_id
+            && let LogEntry::Stream {
+                payload,
+                stream_type,
+                ..
+            } = row.log_entry
+        {
+            match stream_type {
+                LogStreamType::StdOut => stdout.push_str(&String::from_utf8_lossy(&payload)),
+                LogStreamType::StdErr => stderr.push_str(&String::from_utf8_lossy(&payload)),
+            }
+            if expected_stdout.is_none_or(|expected| stdout == expected)
+                && stderr.contains(expected_stderr)
+            {
+                break (stdout, stderr);
+            }
+        }
+    }
+}
 
 async fn activity_vm_case(
     ip: String,
@@ -196,8 +253,8 @@ params = []
 return_type = "result<string, string>"
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
 "#;
-    let server =
-        TestServer::start_inline_deployment(test_addr!(140), "", deployment_toml, &[]).await;
+    let mut server = start_vm_server(test_addr!(140), "", deployment_toml, None).await;
+    let mut logs = server.persisted_logs.take().unwrap();
     let exec_id = server.generate_execution_id().await;
     let response = server
         .submit_follow_with_id(&exec_id, "testing:vm/stderr.run", vec![])
@@ -209,17 +266,25 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
         json!({ "ok": "stdout-result" })
     );
 
-    // Output arrives in chunks, with emulator and init diagnostics interleaved on stderr.
-    let (stdout, stderr) = loop {
-        let stdout = stream_log(&server, &exec_id, "stdout").await;
-        let stderr = stream_log(&server, &exec_id, "stderr").await;
-        if stdout == "\"stdout-result\"\n" && stderr.contains("guest diagnostic\n") {
-            break (stdout, stderr);
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    };
+    let (stdout, stderr) = tokio::time::timeout(
+        Duration::from_secs(10),
+        wait_for_vm_output(
+            &mut logs,
+            &exec_id,
+            Some("\"stdout-result\"\n"),
+            "guest diagnostic\n",
+        ),
+    )
+    .await
+    .expect("guest output must be persisted");
     assert_eq!(stdout, "\"stdout-result\"\n");
     assert!(stderr.contains("guest diagnostic\n"), "{stderr:?}");
+    assert_eq!(stream_log(&server, &exec_id, "stdout").await, stdout);
+    assert!(
+        stream_log(&server, &exec_id, "stderr")
+            .await
+            .contains("guest diagnostic\n")
+    );
     server.shutdown().await;
 }
 
@@ -260,17 +325,17 @@ params = []
 return_type = "result<string, string>"
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
 "#;
-    let server =
-        TestServer::start_inline_deployment(test_addr!(186), "", deployment_toml, &[]).await;
+    let mut server = start_vm_server(test_addr!(186), "", deployment_toml, None).await;
+    let mut logs = server.persisted_logs.take().unwrap();
     let execution_id = server.generate_execution_id().await;
     let follow = server.submit_follow_with_id(&execution_id, "testing:vm/hang.run", vec![]);
     let observe_and_cancel = async {
-        while !stream_log(&server, &execution_id, "stderr")
-            .await
-            .contains("before hang\n")
-        {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        wait_for_vm_output(&mut logs, &execution_id, None, "before hang\n").await;
+        assert!(
+            stream_log(&server, &execution_id, "stderr")
+                .await
+                .contains("before hang\n")
+        );
         server.cancel_execution_with_retries(&execution_id).await;
     };
     let (response, ()) = tokio::time::timeout(Duration::from_secs(60), async {
@@ -306,6 +371,50 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
         "testing:vm/failure.run",
         vec![],
         json!({ "err": "expected-failure" }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn shebang_without_newline() {
+    let deployment_toml = r##"[[activity_vm]]
+memory.mib = 512
+ffqn = "testing:vm/empty.run"
+max_retries = 0
+content = "#!/bin/sh"
+params = []
+return_type = "result"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+"##;
+    activity_vm_case(
+        test_addr!(187),
+        "",
+        deployment_toml,
+        "testing:vm/empty.run",
+        vec![],
+        json!({ "ok": null }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn invalid_shebang_completes_with_error() {
+    let deployment_toml = r#"[[activity_vm]]
+memory.mib = 512
+ffqn = "testing:vm/invalid.run"
+max_retries = 0
+content = "not a shebang\n"
+params = []
+return_type = "result"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+"#;
+    activity_vm_case(
+        test_addr!(188),
+        "",
+        deployment_toml,
+        "testing:vm/invalid.run",
+        vec![],
+        json!({ "err": null }),
     )
     .await;
 }
@@ -396,12 +505,12 @@ replace_in = ["headers"]
 
 #[tokio::test]
 async fn http_loopback_connect_to() {
-    activity_vm_http_case(test_addr!(138), false).await;
+    Box::pin(activity_vm_http_case(test_addr!(138), false)).await;
 }
 
 #[tokio::test]
 async fn http_obelisk_host() {
-    activity_vm_http_case(test_addr!(139), true).await;
+    Box::pin(activity_vm_http_case(test_addr!(139), true)).await;
 }
 
 /// End-to-end (VM guest curl -> proxy -> bridge -> server): the outbound Host is derived
@@ -504,7 +613,7 @@ fn vm_processes() -> Vec<u32> {
 }
 
 async fn vm_interruption_case(ip: String, cancel: bool) {
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::io::{AsyncBufReadExt as _, BufReader};
 
     if !matches!(
         parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
@@ -522,18 +631,15 @@ async fn vm_interruption_case(ip: String, cancel: bool) {
     let server_toml = format!(
         "[[outbound_http.allowed_host]]\npattern = \"http://{authority}\"\nmethods = [\"GET\"]\n"
     );
-    // The deadline includes cold VM boot and curl startup on shared CI runners.
-    let lock_expiry = if cancel { 120 } else { 30 };
     let deployment_toml = format!(
         r#"[[activity_vm]]
 memory.mib = 512
 ffqn = "testing:vm/hang.run"
-exec.lock_expiry.seconds = {lock_expiry}
+exec.lock_expiry.seconds = 120
 max_retries = 0
 content = '''#!/usr/bin/env bash
 set -eu
 curl -fsS --connect-to {authority}:127.0.0.1:80 http://{authority}/ready
-exec sleep 600
 '''
 params = []
 return_type = "result<string, string>"
@@ -546,25 +652,23 @@ pattern = "http://{authority}"
 methods = ["GET"]
 "#
     );
-    let server = TestServer::start_inline_deployment(ip, &server_toml, &deployment_toml, &[]).await;
+    let deadline = Arc::new(test_utils::manual_sleep::ManualSleep::default());
+    let server = start_vm_server(ip, &server_toml, &deployment_toml, Some(deadline.clone())).await;
     let execution_id = server.generate_execution_id().await;
     let follow = server.submit_follow_with_id(&execution_id, "testing:vm/hang.run", vec![]);
     let observe_ready = async {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = [0_u8; 2048];
-        let count = stream.read(&mut request).await.unwrap();
-        assert!(request[..count].starts_with(b"GET /ready HTTP/1.1"));
-        stream
-            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-            .await
-            .unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut stream = BufReader::new(stream);
+        let mut request = Vec::new();
+        stream.read_until(b'\n', &mut request).await.unwrap();
+        assert_eq!(request, b"GET /ready HTTP/1.1\r\n");
         let children = vm_processes();
         assert_eq!(children.len(), 1, "expected one running VM: {children:?}");
-        children[0]
+        (children[0], stream)
     };
     let (response, pid) = tokio::time::timeout(Duration::from_secs(60), async {
         tokio::pin!(follow);
-        let pid = tokio::select! {
+        let (pid, _request) = tokio::select! {
             pid = observe_ready => pid,
             response = &mut follow => panic!(
                 "VM activity finished before readiness: {}",
@@ -573,6 +677,8 @@ methods = ["GET"]
         };
         if cancel {
             server.cancel_execution_with_retries(&execution_id).await;
+        } else {
+            deadline.expire();
         }
         (follow.await, pid)
     })
@@ -584,13 +690,10 @@ methods = ["GET"]
         response.json::<Value>().await.unwrap(),
         json!({ "execution_failed": { "kind": expected_kind } })
     );
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while std::path::Path::new(&format!("/proc/{pid}")).exists() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("VM process {pid} survived {expected_kind}"));
+    assert!(
+        !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        "VM process {pid} survived {expected_kind}",
+    );
     server.shutdown().await;
 }
 

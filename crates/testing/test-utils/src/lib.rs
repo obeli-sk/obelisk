@@ -21,6 +21,7 @@ use tracing_subscriber::fmt::{
 use tracing_subscriber::registry::LookupSpan;
 
 pub mod arbitrary;
+pub mod manual_sleep;
 pub mod sim_clock;
 
 static INIT: std::sync::Once = std::sync::Once::new();

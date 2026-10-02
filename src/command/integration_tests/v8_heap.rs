@@ -24,7 +24,7 @@ async fn v8_heap_exhaustion_keeps_server_available() {
             panic!("heap regression subprocess timed out");
         }
     } else {
-        run_heap_exhaustion().await;
+        Box::pin(run_heap_exhaustion()).await;
     }
 }
 

@@ -7,7 +7,7 @@
 //! fixed ports, allowing parallel test execution without conflicts.
 //! The `test_addr!` macro ensures unique addresses at link time.
 
-use crate::command::server::{JsRuntimeMode, ServerAuth};
+use crate::command::server::{self, JsRuntimeMode, ServerAuth};
 use crate::config::env_var::StartupEnvVars;
 use crate::server::web_api_server::ReplayResponseSer;
 use crate::{
@@ -631,6 +631,7 @@ struct TestServer {
     server_handle: JoinHandle<anyhow::Result<()>>,
     sqlite_file: std::path::PathBuf,
     tmp_dir: tempfile::TempDir,
+    persisted_logs: Option<tokio::sync::broadcast::Receiver<concepts::storage::LogInfoAppendRow>>,
 }
 
 impl TestServer {
@@ -723,6 +724,25 @@ impl TestServer {
         files: &[(&str, &str)],
         js_runtime: JsRuntimeMode,
     ) -> Self {
+        Self::start_inline_deployment_with_hooks(
+            ip,
+            server_toml_tail,
+            deployment_toml,
+            files,
+            js_runtime,
+            server::RuntimeTestHooks::default(),
+        )
+        .await
+    }
+
+    async fn start_inline_deployment_with_hooks(
+        ip: String,
+        server_toml_tail: &str,
+        deployment_toml: &str,
+        files: &[(&str, &str)],
+        js_runtime: JsRuntimeMode,
+        test_hooks: server::RuntimeTestHooks,
+    ) -> Self {
         let (tmp_dir, server_path, deployment_path) =
             util::write_server_config(&ip, "", server_toml_tail);
         for (rel, content) in files {
@@ -735,7 +755,17 @@ impl TestServer {
         std::fs::write(&deployment_path, deployment_toml).unwrap();
         authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Self::launch(ip, tmp_dir, server_path, deployment, true, None, js_runtime).await
+        Box::pin(Self::launch_with_hooks(
+            ip,
+            tmp_dir,
+            server_path,
+            deployment,
+            true,
+            None,
+            js_runtime,
+            test_hooks,
+        ))
+        .await
     }
 
     async fn start_with_server_lines_and_component(
@@ -821,6 +851,34 @@ impl TestServer {
         api_token: Option<secrecy::SecretString>,
         js_runtime: JsRuntimeMode,
     ) -> Self {
+        Box::pin(Self::launch_with_hooks(
+            ip,
+            tmp_dir,
+            server_path,
+            deployment,
+            no_auth,
+            api_token,
+            js_runtime,
+            server::RuntimeTestHooks::default(),
+        ))
+        .await
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    async fn launch_with_hooks(
+        ip: String,
+        tmp_dir: tempfile::TempDir,
+        server_path: std::path::PathBuf,
+        deployment: LocalDeployment,
+        no_auth: bool,
+        api_token: Option<secrecy::SecretString>,
+        js_runtime: JsRuntimeMode,
+        test_hooks: server::RuntimeTestHooks,
+    ) -> Self {
+        let persisted_logs = test_hooks
+            .persisted_logs
+            .as_ref()
+            .map(tokio::sync::broadcast::Sender::subscribe);
         test_utils::set_up();
 
         let project_dirs = crate::project_dirs();
@@ -874,6 +932,7 @@ impl TestServer {
                 &StartupEnvVars::capture(),
             )
             .unwrap(),
+            test_hooks,
         };
 
         let prepared_dirs = prepare_dirs(
@@ -946,6 +1005,7 @@ impl TestServer {
             server_handle,
             sqlite_file,
             tmp_dir,
+            persisted_logs,
         }
     }
 

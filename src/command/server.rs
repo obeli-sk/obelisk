@@ -647,6 +647,15 @@ pub(crate) struct RunParams {
     pub(crate) auth: ServerAuth,
     pub(crate) js_runtime: JsRuntimeMode,
     pub(crate) activity_vm_runtime: ActivityVmRuntimeMode,
+    #[cfg(test)]
+    pub(crate) test_hooks: RuntimeTestHooks,
+}
+
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub(crate) struct RuntimeTestHooks {
+    pub(crate) activity_vm_sleep: Option<Arc<dyn concepts::time::Sleep>>,
+    pub(crate) persisted_logs: Option<tokio::sync::broadcast::Sender<LogInfoAppendRow>>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -2202,6 +2211,8 @@ pub(crate) async fn run_internal(
             &cancel_registry,
             &termination_watcher,
             prepared_dirs.clone(),
+            #[cfg(test)]
+            params.test_hooks,
         )
         .instrument(span)
         .await,
@@ -3815,6 +3826,7 @@ fn spawn_deployment_context(
     db_pool: &Arc<dyn DbPool>,
     cancel_registry: &CancelRegistry,
     log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+    #[cfg(test)] test_hooks: &RuntimeTestHooks,
 ) -> DeploymentContext {
     let mut exec_task_handles: Vec<ExecutorTaskHandle> = Vec::with_capacity(workers_linked.len());
     let mut replay_workers = ReplayWorkerRegistry::default();
@@ -3824,6 +3836,8 @@ fn spawn_deployment_context(
             db_pool,
             cancel_registry.clone(),
             log_forwarder_sender,
+            #[cfg(test)]
+            test_hooks,
         );
         exec_task_handles.push(handle);
         if let Some((component_id, worker)) = replay_entry {
@@ -3907,6 +3921,8 @@ async fn switch_hot_redeploy(
         &db_pool,
         &cancel_registry,
         &log_forwarder_sender,
+        #[cfg(test)]
+        &RuntimeTestHooks::default(),
     );
     drop(write_guard_ctx);
 
@@ -4210,6 +4226,7 @@ async fn spawn_tasks_and_threads(
     cancel_registry: &CancelRegistry,
     termination_watcher: &watch::Receiver<()>,
     prepared_dirs: PreparedDirs,
+    #[cfg(test)] test_hooks: RuntimeTestHooks,
 ) -> Result<ServerInit, anyhow::Error> {
     server_compiled_linked
         .runtime_config_availability
@@ -4282,7 +4299,23 @@ async fn spawn_tasks_and_threads(
     // Spawn Log -> Db Forwarder
     let (log_forwarder_sender, log_db_forarder) = {
         let (log_forwarder_sender, receiver) = mpsc::channel(1000); // TODO: make configurable
+        #[cfg(not(test))]
         let log_db_forarder = log_db_forwarder::spawn_new(db_pool.clone(), receiver);
+        #[cfg(test)]
+        let log_db_forarder = log_db_forwarder::spawn_with_observer(
+            db_pool.clone(),
+            receiver,
+            Arc::new({
+                let persisted_logs = test_hooks.persisted_logs.clone();
+                move |rows| {
+                    if let Some(sender) = &persisted_logs {
+                        for row in rows {
+                            let _ = sender.send(row.clone());
+                        }
+                    }
+                }
+            }),
+        );
         (log_forwarder_sender, log_db_forarder)
     };
 
@@ -4316,6 +4349,8 @@ async fn spawn_tasks_and_threads(
             &db_pool,
             cancel_registry,
             &log_forwarder_sender,
+            #[cfg(test)]
+            &test_hooks,
         )));
     let webhook_registry = Arc::new(webhook_registry);
     let deployment_switch_manager = DeploymentSwitchManagerHandle::new(
@@ -6963,6 +6998,7 @@ impl WorkerLinked {
         db_pool: &Arc<dyn DbPool>,
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+        #[cfg(test)] test_hooks: &RuntimeTestHooks,
     ) -> (ExecutorTaskHandle, Option<(ComponentId, ReplayWorker)>) {
         let logs_storage_config = self.logs_store_min_level.map(|min_level| LogStrageConfig {
             min_level,
@@ -6996,11 +7032,14 @@ impl WorkerLinked {
                 ))
             }
             LinkedWorkerKind::ActivityVm(vm_activity_compiled) => {
+                let sleep: Arc<dyn concepts::time::Sleep> = Arc::new(TokioSleep);
+                #[cfg(test)]
+                let sleep = test_hooks.activity_vm_sleep.clone().unwrap_or(sleep);
                 Arc::from(vm_activity_compiled.into_worker(
                     cancel_registry,
                     log_forwarder_sender,
                     Now.clone_box(),
-                    Arc::new(TokioSleep),
+                    sleep,
                 ))
             }
             LinkedWorkerKind::WorkflowWasm(workflow_linked) => {

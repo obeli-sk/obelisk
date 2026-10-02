@@ -9,10 +9,28 @@ use tracing::{Level, debug, instrument, trace, warn};
 
 const RECV_MANY_LIMIT: usize = 500; // max items per tx
 const DB_ERR_DELAY_MS: u64 = 100;
+type PersistObserver = Arc<dyn Fn(&[LogInfoAppendRow]) + Send + Sync>;
 
 pub fn spawn_new(
     db_pool: Arc<dyn DbPool>,
+    receiver: mpsc::Receiver<LogInfoAppendRow>,
+) -> AbortOnDropHandle {
+    spawn(db_pool, receiver, None)
+}
+
+#[cfg(feature = "test")]
+pub fn spawn_with_observer(
+    db_pool: Arc<dyn DbPool>,
+    receiver: mpsc::Receiver<LogInfoAppendRow>,
+    observer: PersistObserver,
+) -> AbortOnDropHandle {
+    spawn(db_pool, receiver, Some(observer))
+}
+
+fn spawn(
+    db_pool: Arc<dyn DbPool>,
     mut receiver: mpsc::Receiver<LogInfoAppendRow>,
+    observer: Option<PersistObserver>,
 ) -> AbortOnDropHandle {
     AbortOnDropHandle::new(
         utils::spawn::spawn_named("log_db_forwarder", {
@@ -23,7 +41,9 @@ pub fn spawn_new(
                 loop {
                     let res = db_pool.connection().await;
                     let res = match res {
-                        Ok(conn) => tick(conn.as_ref(), &mut receiver, &mut buffer).await,
+                        Ok(conn) => {
+                            tick(conn.as_ref(), &mut receiver, &mut buffer, observer.as_ref()).await
+                        }
                         Err(err) => Err(TickError::DbErrorWrite(err.into())),
                     };
                     let res = match res {
@@ -63,11 +83,15 @@ async fn tick(
     db_connection: &dyn DbConnection,
     receiver: &mut mpsc::Receiver<LogInfoAppendRow>,
     buffer: &mut Vec<LogInfoAppendRow>,
+    observer: Option<&PersistObserver>,
 ) -> Result<TickProgress, TickError> {
     let forwarded = receiver.recv_many(buffer, RECV_MANY_LIMIT).await;
     if forwarded > 0 {
         let stopwatch = Instant::now();
         db_connection.append_log_batch(buffer).await?;
+        if let Some(observer) = observer {
+            observer(buffer);
+        }
         buffer.clear();
         let stopwatch = stopwatch.elapsed();
         trace!("Appended {forwarded} log rows in {stopwatch:?}");
