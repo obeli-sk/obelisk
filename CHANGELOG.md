@@ -57,6 +57,10 @@ collection.
   execution trees, so system-event retention, execution GC, and CAS cleanup still run. A
   `maintenance.gc.blocked` warning is emitted once per blocked period.
   [#1098](https://github.com/obeli-sk/obelisk/pull/1098)
+- *(deployment)* The transformed WASM Component cache is written atomically. Concurrent
+  processes transforming the same Core WASM Module no longer fail with "unexpected end-of-file"
+  while reading a partially written cache file.
+  [#1107](https://github.com/obeli-sk/obelisk/pull/1107)
 
 ## [0.42.0-rc.10](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.9...v0.42.0-rc.10)
 
