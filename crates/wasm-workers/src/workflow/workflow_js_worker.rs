@@ -3563,6 +3563,197 @@ mod tests {
         db_close.close().await;
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn workflow_js_v8_result_getter_interruption() {
+        const CHILD_MODE: &str = "OBELISK_TEST_RESULT_GETTER_INTERRUPT";
+        let Ok(mode) = std::env::var(CHILD_MODE) else {
+            for mode in ["pause", "expiry", "shutdown"] {
+                let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "workflow::workflow_js_worker::tests::workflow_js_v8_result_getter_interruption",
+                        "--nocapture",
+                    ])
+                    .env(CHILD_MODE, mode)
+                    .kill_on_drop(true)
+                    .spawn()
+                    .unwrap();
+                if let Ok(status) =
+                    tokio::time::timeout(Duration::from_secs(30), child.wait()).await
+                {
+                    assert!(status.unwrap().success(), "{mode} subprocess failed");
+                } else {
+                    child.kill().await.unwrap();
+                    child.wait().await.unwrap();
+                    panic!("{mode} result getter did not stop within 30 seconds");
+                }
+            }
+            return;
+        };
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+
+        let js_source = r"
+            export default function busy(params) {
+                if (params[0] === 'normal') return 'normal';
+                return { get value() { console.log('started'); for (;;) {} } };
+            }
+        ";
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "busy");
+
+        let _v8_interrupt_ticker =
+            crate::v8_interrupt_ticker::V8InterruptTicker::spawn_new(Duration::from_millis(10));
+        let (close_sender, close_receiver) = tokio::sync::watch::channel(false);
+
+        let sim_clock = SimClock::epoch();
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (log_sender, mut log_receiver) = mpsc::channel(1);
+
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let v8_executor = V8Executor::new(crate::v8_executor::V8ExecutorConfig {
+            workflows: crate::v8_executor::V8Cell::new(slots.clone(), 1, None),
+            ..Default::default()
+        });
+        let (worker, component_id, _) = compile_js_workflow_worker_with_deployment_id_and_signature(
+            js_source,
+            &ffqn,
+            db_pool.clone(),
+            &sim_clock,
+            fn_registry,
+            WorkflowJsRuntimeExt::V8(v8_executor.clone()),
+            workflow_engine.clone(),
+            DEPLOYMENT_ID_DUMMY,
+            JoinNextBlockingStrategy::Interrupt,
+            deadline_tracker_factory_test(&sim_clock),
+            &single_list_of_strings_params(),
+            default_return_type(),
+            usize::MAX,
+            usize::MAX,
+            Some(LogStrageConfig {
+                min_level: LogLevel::Debug,
+                log_sender,
+            }),
+        );
+        let cancel_registry = worker.inner.cancel_registry.clone();
+
+        let exec_task = new_js_workflow_exec_task_with_interrupt_watcher(
+            worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            close_receiver,
+        );
+
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let retry_id = ExecutionId::generate();
+        for attempt in 0..4 {
+            let normal = attempt == 3;
+            let execution_id = if mode == "expiry" && !normal {
+                retry_id.clone()
+            } else {
+                ExecutionId::generate()
+            };
+            let created_at = sim_clock.now();
+            if mode != "expiry" || attempt == 0 || normal {
+                db_connection
+                    .create(CreateRequest {
+                        created_at,
+                        execution_id: execution_id.clone(),
+                        ffqn: ffqn.clone(),
+                        params: Params::from_json_values_test(vec![json!(if normal {
+                            vec!["normal"]
+                        } else {
+                            Vec::<&str>::new()
+                        })]),
+                        parent: None,
+                        metadata: ExecutionMetadata::empty(),
+                        scheduled_at: created_at,
+                        component_id: component_id.clone(),
+                        deployment_id: DEPLOYMENT_ID_DUMMY,
+                        scheduled_by: None,
+                        paused: false,
+                        max_persisted_value_size_bytes: u64::MAX,
+                    })
+                    .await
+                    .unwrap();
+            }
+
+            let progress = exec_task
+                .tick_test(sim_clock.now(), RunId::generate())
+                .await;
+            if !normal {
+                let started = log_receiver.recv().await.unwrap();
+                assert_matches!(
+                    started.log_entry,
+                    LogEntry::Log { message, .. } if message == "started"
+                );
+                match mode.as_str() {
+                    "pause" => cancel_registry.signal_workflow_interrupt(&execution_id),
+                    "expiry" => sim_clock.move_time_forward(Duration::from_secs(4)),
+                    "shutdown" => close_sender.send(true).unwrap(),
+                    _ => unreachable!(),
+                }
+            }
+            tokio::time::timeout(Duration::from_secs(5), progress.wait_for_tasks())
+                .await
+                .expect("result getter must observe the workflow interrupt");
+            assert_eq!(slots.available_permits(), 1, "isolate slot leaked");
+
+            let log = db_connection.get(&execution_id).await.unwrap();
+            if normal {
+                assert_matches!(log.pending_state, PendingState::Finished(finished)
+                    if finished.result_kind == PendingStateFinishedResultKind::Ok);
+            } else {
+                match mode.as_str() {
+                    "expiry" => {
+                        assert_matches!(log.pending_state, PendingState::PendingAt(_));
+                        assert_eq!(
+                            log.events
+                                .iter()
+                                .filter(|event| matches!(
+                                    event.event,
+                                    ExecutionRequest::TemporarilyTimedOut { .. }
+                                ))
+                                .count(),
+                            attempt + 1
+                        );
+                    }
+                    "pause" => {
+                        assert_matches!(log.pending_state, PendingState::Locked(_));
+                        assert!(
+                            !log.events
+                                .iter()
+                                .any(|event| matches!(event.event, ExecutionRequest::Unlocked(_)))
+                        );
+                    }
+                    "shutdown" => {
+                        assert!(
+                            log.events
+                                .iter()
+                                .any(|event| matches!(event.event, ExecutionRequest::Unlocked(_)))
+                        );
+                        close_sender.send(false).unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+                if mode != "expiry" || attempt == 2 {
+                    db_pool
+                        .external_api_conn()
+                        .await
+                        .unwrap()
+                        .pause_execution(&execution_id, sim_clock.now())
+                        .await
+                        .unwrap();
+                }
+            }
+        }
+        v8_executor.close();
+        v8_executor.drain(Duration::from_secs(1)).await;
+        drop(db_connection);
+        db_close.close().await;
+    }
+
     #[tokio::test]
     async fn workflow_js_local_signal_interrupts_blocked_await() {
         use crate::activity::activity_worker::test::compile_activity_stub;

@@ -644,6 +644,10 @@ async fn execute(
         resolved_imports,
     } = args;
     let loader = Rc::new(InMemoryModuleLoader::new(files, resolved_imports));
+    // Declaration order keeps callback data alive through isolate teardown and queued interrupts.
+    #[allow(clippy::needless_late_init)]
+    let interrupt_data;
+    let _interrupt_guard;
     let mut runtime = JsRuntime::new(RuntimeOptions {
         module_loader: Some(loader.clone()),
         extensions: vec![obelisk_v8::init()],
@@ -667,14 +671,11 @@ async fn execute(
         panic_version: None,
         user_module_paths: loader.user_module_paths(),
     });
-    // Register with the interrupt ticker for the duration of JS execution. `interrupt_data`
-    // is declared before the guard so it outlives it; combined with the fact that the guard
-    // spans all JS execution, no `v8_interrupt_callback` can run after either is dropped.
-    let interrupt_data = Box::new(V8InterruptData {
+    interrupt_data = Box::new(V8InterruptData {
         workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
         handle: isolate.clone(),
     });
-    let interrupt_guard = crate::v8_interrupt_ticker::register(
+    _interrupt_guard = crate::v8_interrupt_ticker::register(
         isolate,
         v8_interrupt_callback,
         std::ptr::from_ref(interrupt_data.as_ref()).cast(),
@@ -702,10 +703,27 @@ async fn execute(
         evaluation.await
     }
     .await;
-    // JS has stopped; stop the ticker from poking this isolate before result extraction
-    // (which re-enters JS) so a late interrupt cannot trap it. `interrupt_data` stays alive
-    // until this function returns, after the isolate is dropped.
-    drop(interrupt_guard);
+    let envelope = match evaluated {
+        Ok(()) => (|| {
+            let value = runtime
+                .execute_script("obelisk:result", "globalThis.__obeliskResult")
+                .map_err(|err| NativeV8Failure::Trap(err.to_string()))?;
+            deno_core::scope!(scope, runtime);
+            let local = deno_core::v8::Local::new(scope, value);
+            deno_core::serde_v8::from_v8::<Value>(scope, local)
+                .map_err(|err| NativeV8Failure::ResultParsing(err.to_string()))
+        })(),
+        Err(err) => {
+            let reason = err.to_string();
+            if reason.contains("does not provide an export named 'default'") {
+                Err(NativeV8Failure::CannotInstantiate(format!(
+                    "JavaScript entry module has no default export: {reason}"
+                )))
+            } else {
+                Err(NativeV8Failure::Trap(reason))
+            }
+        }
+    };
     if let Some(reason) = panic.take_trap() {
         let op_state = runtime.op_state();
         let version = op_state
@@ -717,30 +735,11 @@ async fn execute(
         workflow_ctx.restore_version(version);
         return Err(NativeV8Failure::Panic(reason));
     }
-    if let Err(err) = evaluated {
-        if let Some(host_err) = workflow_ctx.take_native_host_error() {
-            return Err(NativeV8Failure::Host(host_err));
-        }
-        let reason = err.to_string();
-        if reason.contains("does not provide an export named 'default'") {
-            return Err(NativeV8Failure::CannotInstantiate(format!(
-                "JavaScript entry module has no default export: {reason}"
-            )));
-        }
-        return Err(NativeV8Failure::Trap(reason));
-    }
+    // Result getters can invoke host ops or be interrupted, so their control flow takes precedence.
     if let Some(host_err) = workflow_ctx.take_native_host_error() {
         return Err(NativeV8Failure::Host(host_err));
     }
-    let value = runtime
-        .execute_script("obelisk:result", "globalThis.__obeliskResult")
-        .map_err(|err| NativeV8Failure::Trap(err.to_string()))?;
-    let envelope = {
-        deno_core::scope!(scope, runtime);
-        let local = deno_core::v8::Local::new(scope, value);
-        deno_core::serde_v8::from_v8::<Value>(scope, local)
-            .map_err(|err| NativeV8Failure::ResultParsing(err.to_string()))?
-    };
+    let envelope = envelope?;
     let ok = envelope.get("ok").and_then(Value::as_bool).unwrap_or(false);
     let absent = envelope
         .get("absent")
