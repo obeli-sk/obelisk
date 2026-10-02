@@ -383,20 +383,49 @@ fn admin_router() -> Router<Arc<WebApiState>> {
 pub(crate) mod app_config {
     use super::*;
 
-    #[derive(ToSchema)]
-    #[allow(dead_code)]
-    pub(crate) struct AppConfigResponse {
-        pub(crate) app_config_digest: String,
-        pub(crate) policy: serde_json::Value,
+    #[derive(Serialize, ToSchema)]
+    pub(crate) struct AppConfigResponse<'a> {
+        #[schema(value_type = String)]
+        pub(crate) app_config_digest: &'a crate::config::app::AppConfigDigest,
+        #[schema(value_type = Object)]
+        pub(crate) policy: &'a crate::config::app::AppPolicyV1,
     }
 
-    #[utoipa::path(get, path = "/v1/app-config", tag = "app config", responses((status = 200, body = AppConfigResponse)))]
-    pub(crate) async fn get(State(state): State<Arc<WebApiState>>) -> Response {
-        let body = serde_json::json!({
-            "app_config_digest": state.server_verified.app_config_digest,
-            "policy": state.server_verified.app_policy,
-        });
-        (StatusCode::OK, Json(body)).into_response()
+    #[derive(AcceptExtractor, Clone, Copy, Default)]
+    pub(crate) enum AppConfigAcceptHeader {
+        #[accept(mediatype = "application/json")]
+        #[default]
+        Json,
+        #[accept(mediatype = "application/toml")]
+        Toml,
+    }
+
+    #[utoipa::path(get, path = "/v1/app-config", tag = "app config", responses((status = 200, content((AppConfigResponse = "application/json"), (String = "application/toml")))))]
+    pub(crate) async fn get(
+        State(state): State<Arc<WebApiState>>,
+        accept: AppConfigAcceptHeader,
+    ) -> Response {
+        let body = AppConfigResponse {
+            app_config_digest: &state.server_verified.app_config_digest,
+            policy: &state.server_verified.app_policy,
+        };
+        match accept {
+            AppConfigAcceptHeader::Json => (StatusCode::OK, Json(body)).into_response(),
+            AppConfigAcceptHeader::Toml => match toml::to_string_pretty(&body) {
+                Ok(toml) => (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/toml")],
+                    toml,
+                )
+                    .into_response(),
+                Err(err) => HttpResponse {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    message: format!("cannot serialize app config as TOML: {err}"),
+                    accept: AcceptHeader::Json,
+                }
+                .into_response(),
+            },
+        }
     }
 
     #[utoipa::path(get, path = "/v1/app-config-digest", tag = "app config", responses((status = 200, content((String = "text/plain"), (String = "application/json")))))]

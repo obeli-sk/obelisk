@@ -2686,6 +2686,28 @@ async fn app_config_webapi_reports_running_policy() {
         serde_json::to_value(app.policy()).unwrap()
     );
 
+    let config = server
+        .client
+        .get(format!("{}/v1/app-config", server.base_url))
+        .header("Accept", "application/toml")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(config.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        config.headers()[reqwest::header::CONTENT_TYPE],
+        "application/toml"
+    );
+    let config: toml::Table = toml::from_str(&config.text().await.unwrap()).unwrap();
+    assert_eq!(
+        config["app_config_digest"].as_str(),
+        Some(expected_digest.as_str())
+    );
+    assert_eq!(
+        config["policy"],
+        toml::Value::try_from(app.policy()).unwrap()
+    );
+
     let deployments: Value = server
         .client
         .get(format!("{}/v1/deployments", server.base_url))

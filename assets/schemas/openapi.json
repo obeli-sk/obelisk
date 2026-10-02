@@ -345,6 +345,11 @@
                 "schema": {
                   "$ref": "#/components/schemas/AppConfigResponse"
                 }
+              },
+              "application/toml": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -2384,7 +2389,9 @@
           "app_config_digest": {
             "type": "string"
           },
-          "policy": {}
+          "policy": {
+            "type": "object"
+          }
         }
       },
       "BacktraceInfoSer": {
