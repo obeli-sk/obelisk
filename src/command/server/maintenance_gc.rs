@@ -4,7 +4,7 @@ use crate::config::deployment::DurationConfig;
 use crate::config::server::RetentionTomlConfig;
 use crate::config::server::{GarbageCollectionTomlConfig, RetentionPolicyTomlConfig};
 use anyhow::{Context as _, bail};
-use concepts::storage::{DbPool, RetentionPolicy, SystemEventCode};
+use concepts::storage::{CasGcResult, DbPool, RetentionPolicy, SystemEventCode};
 use executor::AbortOnDropHandle;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
@@ -88,6 +88,7 @@ struct CategoryStats {
 struct SweepStats {
     execution_retention: CategoryStats,
     deployment_retention: CategoryStats,
+    deployment_execution_trees: u64,
     system_event_retention: CategoryStats,
     execution_gc: CategoryStats,
     cas_gc: CategoryStats,
@@ -101,6 +102,7 @@ impl SweepStats {
             execution_trees_deleted = self.execution_retention.affected,
             execution_retention_active = ?self.execution_retention.active,
             deployments_deleted = self.deployment_retention.affected,
+            deployment_execution_trees_deleted = self.deployment_execution_trees,
             deployment_retention_active = ?self.deployment_retention.active,
             system_events_deleted = self.system_event_retention.affected,
             system_event_retention_active = ?self.system_event_retention.active,
@@ -117,6 +119,7 @@ impl SweepStats {
         self.execution_retention
             .affected
             .saturating_add(self.deployment_retention.affected)
+            .saturating_add(self.deployment_execution_trees)
             .saturating_add(self.system_event_retention.affected)
             .saturating_add(self.execution_gc.affected)
             .saturating_add(self.cas_gc.affected)
@@ -127,6 +130,7 @@ impl SweepStats {
             "total_ms": duration_millis(total),
             "execution_retention": category_details(self.execution_retention),
             "deployment_retention": category_details(self.deployment_retention),
+            "deployment_execution_trees_deleted": self.deployment_execution_trees,
             "system_event_retention": category_details(self.system_event_retention),
             "execution_gc": category_details(self.execution_gc),
             "cas_gc": {
@@ -188,6 +192,7 @@ pub(super) fn spawn(
                 warn!(record_type, "Periodic retention disabled");
             }
         }
+        let mut deployment_retention_warned = false;
         loop {
             tokio::select! {
                 biased;
@@ -195,7 +200,17 @@ pub(super) fn spawn(
                 () = tokio::time::sleep(config.interval) => {}
             }
             let started = std::time::Instant::now();
-            let sweep = run_sweep(&db_pool, &deployment_switch_manager, config);
+            let sweep = run_sweep(
+                &db_pool,
+                config,
+                &mut deployment_retention_warned,
+                || async {
+                    deployment_switch_manager
+                        .gc_cas(false, config.batch_size)
+                        .await
+                        .map_err(|err| anyhow::anyhow!(err))
+                },
+            );
             let result = tokio::select! {
                 biased;
                 _ = termination_watcher.changed() => break,
@@ -240,11 +255,15 @@ pub(super) fn spawn(
     AbortOnDropHandle::new(handle.abort_handle())
 }
 
-async fn run_sweep(
+async fn run_sweep<Fut>(
     db_pool: &Arc<dyn DbPool>,
-    deployment_switch_manager: &DeploymentSwitchManagerHandle,
     config: ValidatedConfig,
-) -> Result<SweepStats, Box<SweepFailure>> {
+    deployment_retention_warned: &mut bool,
+    gc_cas: impl Fn() -> Fut + Send,
+) -> Result<SweepStats, Box<SweepFailure>>
+where
+    Fut: std::future::Future<Output = anyhow::Result<CasGcResult>> + Send,
+{
     let mut stats = SweepStats::default();
     if let Some(max_age) = config.executions {
         let cutoff = cutoff(max_age);
@@ -293,8 +312,37 @@ async fn run_sweep(
             .map_err(|source| Box::new(SweepFailure::new("deployment_retention", stats, source)))?;
             stats.deployment_retention.active += started.elapsed();
             stats.deployment_retention.affected += result.deleted_deployments;
-            delay_after_work(result.deleted_deployments, config.batch_delay).await;
-            if !result.has_more {
+            stats.deployment_execution_trees += result.deleted_execution_trees;
+            let work = result
+                .deleted_deployments
+                .saturating_add(result.deleted_execution_trees);
+            delay_after_work(work, config.batch_delay).await;
+            if !result.has_more || work == 0 {
+                let blocked = result.blocked_non_terminal > 0
+                    || result.blocked_by_execution_reference > 0
+                    || result.has_more;
+                if blocked && !*deployment_retention_warned {
+                    warn!(
+                        blocked_non_terminal = result.blocked_non_terminal,
+                        blocked_by_execution_reference = result.blocked_by_execution_reference,
+                        "Periodic deployment retention blocked; continuing other garbage collection"
+                    );
+                    crate::server::system_event_writer::record(
+                        db_pool.as_ref(),
+                        SystemEventCode::MaintenanceGcBlocked,
+                        None,
+                        None,
+                        serde_json::json!({
+                            "category": "deployment_retention",
+                            "blocked_non_terminal": result.blocked_non_terminal,
+                            "blocked_by_execution_reference": result.blocked_by_execution_reference,
+                            "has_more": result.has_more,
+                            "other_gc_continues": true,
+                        }),
+                    )
+                    .await;
+                }
+                *deployment_retention_warned = blocked;
                 break;
             }
         }
@@ -342,12 +390,9 @@ async fn run_sweep(
     }
     loop {
         let started = std::time::Instant::now();
-        let result = deployment_switch_manager
-            .gc_cas(false, config.batch_size)
-            .await
-            .map_err(|source| {
-                Box::new(SweepFailure::new("cas_gc", stats, anyhow::anyhow!(source)))
-            })?;
+        let result = gc_cas().await.map_err(|source| {
+            Box::new(SweepFailure::new("cas_gc", stats, anyhow::anyhow!(source)))
+        })?;
         stats.cas_gc.active += started.elapsed();
         stats.cas_gc.affected += result.deleted_blobs;
         stats.cas_bytes += result.deleted_bytes;
@@ -375,6 +420,231 @@ async fn delay_after_work(affected: u64, delay: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use concepts::{
+        ComponentId, ExecutionId, ExecutionMetadata, Params, SUPPORTED_RETURN_VALUE_OK_EMPTY,
+        prefixed_ulid::DeploymentId,
+        storage::{
+            AppendRequest, CreateRequest, DbPoolCloseable, DeploymentRecord, DeploymentStatus,
+            ExecutionRequest, SystemEvent, SystemEventFilter, SystemEventLevel, Version,
+        },
+    };
+    use db_tests::{Database, SOME_FFQN};
+    use rstest::rstest;
+
+    fn sweep_config() -> ValidatedConfig {
+        ValidatedConfig {
+            interval: Duration::from_secs(60),
+            batch_size: 1,
+            batch_delay: Duration::ZERO,
+            executions: None,
+            deployments: Some(Duration::from_secs(60)),
+            system_events: Some(Duration::from_secs(60)),
+        }
+    }
+
+    async fn insert_deployment(db_pool: &dyn DbPool, age: i64) -> DeploymentId {
+        let deployment_id = DeploymentId::generate();
+        db_pool
+            .external_api_conn()
+            .await
+            .unwrap()
+            .insert_deployment_with_components(
+                DeploymentRecord {
+                    deployment_id,
+                    description: None,
+                    digest: DeploymentRecord::compute_digest("{}"),
+                    created_at: chrono::Utc::now() - chrono::Duration::days(age),
+                    last_active_at: None,
+                    last_active_app_config_digest: None,
+                    status: DeploymentStatus::Inactive,
+                    deployment_toml: "{}".into(),
+                    obelisk_version: "test".into(),
+                    created_by: None,
+                    files: Vec::new(),
+                },
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        deployment_id
+    }
+
+    async fn create_execution(
+        db_pool: &dyn DbPool,
+        deployment_id: DeploymentId,
+        finished: bool,
+    ) -> ExecutionId {
+        let execution_id = ExecutionId::generate();
+        let now = chrono::Utc::now();
+        let conn = db_pool.connection().await.unwrap();
+        conn.create(CreateRequest {
+            created_at: now,
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: ExecutionMetadata::empty(),
+            scheduled_at: now,
+            component_id: ComponentId::dummy_activity(),
+            deployment_id,
+            scheduled_by: None,
+            paused: !finished,
+            max_persisted_value_size_bytes: u64::MAX,
+        })
+        .await
+        .unwrap();
+        if finished {
+            conn.append(
+                execution_id.clone(),
+                Version::new(1),
+                AppendRequest {
+                    created_at: now,
+                    event: ExecutionRequest::Finished {
+                        retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                        http_client_traces: None,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        }
+        execution_id
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn blocked_deployment_gc_continues_and_deduplicates_warning(
+        #[values(Database::Sqlite, Database::Postgres)] database: Database,
+        #[values(false, true)] has_newer_deployment: bool,
+    ) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let oldest = insert_deployment(db_pool.as_ref(), 3).await;
+        let blocked_execution = create_execution(db_pool.as_ref(), oldest, false).await;
+        if has_newer_deployment {
+            insert_deployment(db_pool.as_ref(), 2).await;
+        }
+        let admin = db_pool.admin_conn().await.unwrap();
+        let garbage = create_execution(db_pool.as_ref(), oldest, true).await;
+        admin.delete_execution_tree(&garbage, false).await.unwrap();
+        let mut old_event = SystemEvent::new(
+            SystemEventCode::MaintenanceGcCompleted,
+            None,
+            None,
+            serde_json::json!({}),
+        )
+        .unwrap();
+        old_event.created_at = chrono::Utc::now() - chrono::Duration::days(1);
+        let old_event_id = old_event.event_id;
+        admin.append_system_event(old_event).await.unwrap();
+        let cas = db_pool.cas_conn().await.unwrap();
+        let orphan = cas.write_blob(b"orphan").await.unwrap();
+        let mut warned = false;
+        for sweep in 0..2 {
+            let stats = tokio::time::timeout(
+                Duration::from_secs(10),
+                run_sweep(&db_pool, sweep_config(), &mut warned, || async {
+                    Ok(db_pool.cas_gc_conn().await?.gc_cas(false, 1).await?)
+                }),
+            )
+            .await
+            .expect("blocked retention must not hang the sweep")
+            .unwrap_or_else(|failure| panic!("{}: {}", failure.category, failure.source));
+            assert_eq!(stats.deployment_retention.affected, 0);
+            if sweep == 0 {
+                assert_eq!(stats.system_event_retention.affected, 1);
+                assert!(stats.execution_gc.affected > 0);
+                assert_eq!(stats.cas_gc.affected, 1);
+            }
+        }
+        assert!(warned);
+        assert!(
+            admin
+                .get_system_event(old_event_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(cas.read_blob(&orphan).await.unwrap().is_none());
+        let log = db_pool
+            .connection()
+            .await
+            .unwrap()
+            .get(&blocked_execution)
+            .await
+            .unwrap();
+        assert!(log.pending_state.is_paused());
+        let filter = SystemEventFilter {
+            code: Some(SystemEventCode::MaintenanceGcBlocked.as_str().to_owned()),
+            limit: 100,
+            ..Default::default()
+        };
+        let warnings = admin.list_system_events(filter.clone()).await.unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].level, SystemEventLevel::Warning);
+        assert_eq!(warnings[0].details["blocked_non_terminal"], 1);
+        assert_eq!(warnings[0].details["has_more"], has_newer_deployment);
+        assert_eq!(warnings[0].details["other_gc_continues"], true);
+        assert_eq!(
+            warnings[0].message(),
+            SystemEventCode::MaintenanceGcBlocked.message()
+        );
+
+        admin
+            .delete_execution_tree(&blocked_execution, true)
+            .await
+            .unwrap();
+        run_sweep(&db_pool, sweep_config(), &mut warned, || async {
+            Ok(db_pool.cas_gc_conn().await?.gc_cas(false, 1).await?)
+        })
+        .await
+        .unwrap_or_else(|failure| panic!("{}", failure.source));
+        assert!(!warned);
+        let blocked = insert_deployment(db_pool.as_ref(), 1).await;
+        create_execution(db_pool.as_ref(), blocked, false).await;
+        run_sweep(&db_pool, sweep_config(), &mut warned, || async {
+            Ok(db_pool.cas_gc_conn().await?.gc_cas(false, 1).await?)
+        })
+        .await
+        .unwrap_or_else(|failure| panic!("{}", failure.source));
+        assert_eq!(admin.list_system_events(filter).await.unwrap().len(), 2);
+        drop(admin);
+        db_close.close().await;
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn deployment_gc_execution_batches_count_as_progress(
+        #[values(Database::Sqlite, Database::Postgres)] database: Database,
+    ) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let deployment = insert_deployment(db_pool.as_ref(), 1).await;
+        create_execution(db_pool.as_ref(), deployment, true).await;
+        create_execution(db_pool.as_ref(), deployment, true).await;
+        let mut warned = false;
+        let stats = run_sweep(&db_pool, sweep_config(), &mut warned, || async {
+            Ok(db_pool.cas_gc_conn().await?.gc_cas(false, 1).await?)
+        })
+        .await
+        .unwrap_or_else(|failure| panic!("{}", failure.source));
+        assert_eq!(stats.deployment_execution_trees, 2);
+        assert_eq!(stats.deployment_retention.affected, 1);
+        assert!(!warned);
+        assert!(
+            db_pool
+                .external_api_conn()
+                .await
+                .unwrap()
+                .get_deployment(deployment)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        db_close.close().await;
+    }
 
     #[test]
     fn rejects_invalid_interval_and_retention_before_starting() {
