@@ -727,7 +727,7 @@ async fn execute_inner(
     let main = ModuleSpecifier::parse("obelisk-main:run")
         .map_err(|err| NativeV8Failure::CannotInstantiate(err.to_string()))?;
     let source = format!(
-        "import 'obelisk:workflow@1.0.0'; import workflow from {}; try {{ globalThis.__obeliskResult = {{ ok: true, value: await workflow(...{}) }}; }} catch (error) {{ globalThis.__obeliskResult = {{ ok: false, absent: error === undefined || (error instanceof Error && error.value === undefined), value: error instanceof Error && 'value' in error ? error.value : error }}; }}",
+        "import {{ ChildError }} from 'obelisk:workflow@1.0.0'; import workflow from {}; try {{ globalThis.__obeliskResult = {{ ok: true, value: await workflow(...{}) }}; }} catch (error) {{ const value = error instanceof ChildError ? error.value : error instanceof Error ? error.message : error; globalThis.__obeliskResult = {{ ok: false, absent: value === undefined, value }}; }}",
         serde_json::to_string(entry.as_str()).expect("URL must serialize"),
         serde_json::to_string(&params).expect("parameters must serialize")
     );
