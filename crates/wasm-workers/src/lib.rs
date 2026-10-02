@@ -23,6 +23,7 @@ pub mod store_limits;
 pub mod testing_fn_registry;
 pub(crate) mod v8_backtrace;
 pub mod v8_executor;
+pub(crate) mod v8_heap;
 pub mod v8_interrupt_ticker;
 pub(crate) mod v8_panic;
 pub(crate) mod v8_snapshot;
