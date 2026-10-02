@@ -272,6 +272,7 @@ impl args::Admin {
                         .json(&RetainSystemEventsRequest {
                             max_age_seconds: max_age.as_secs(),
                             batch_size,
+                            dry_run: false,
                         }),
                 )
                 .await?;

@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(api)* System event retention supports `dry_run` in REST and gRPC. Preview returns
+  the batch's would-delete count and `has_more` without deleting events.
+
 ### Changed
 
 - *(JS)* Boa compiled to WASM (`boa-wasm`) is the default engine again for workflows,

@@ -3615,6 +3615,84 @@ ffqn = "testing:integration/pkg.run"
 }
 
 #[tokio::test]
+async fn system_event_retention_dry_run_webapi_and_grpc() {
+    use concepts::storage::{SystemEvent, SystemEventCode};
+    use grpc::grpc_gen::{
+        RetainSystemEventsRequest, admin_repository_client::AdminRepositoryClient,
+    };
+
+    let server = TestServer::start(test_addr!(40_158)).await;
+    let db_pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+        .await
+        .unwrap();
+    let admin = db_pool.admin_conn().await.unwrap();
+    let mut event_ids = Vec::new();
+    for age_days in [2, 3] {
+        let mut event =
+            SystemEvent::new(SystemEventCode::MaintenanceGcFailed, None, None, json!({})).unwrap();
+        event.created_at = chrono::Utc::now() - chrono::Duration::days(age_days);
+        event_ids.push(event.event_id);
+        admin.append_system_event(event).await.unwrap();
+    }
+    let url = format!("{}/v1/admin/system-events/retain", server.base_url);
+    let response = server
+        .client
+        .post(&url)
+        .json(&json!({"max_age_seconds": 86400, "batch_size": 1, "dry_run": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({"deleted": 1, "has_more": true})
+    );
+    for event_id in &event_ids {
+        assert!(admin.get_system_event(*event_id).await.unwrap().is_some());
+    }
+
+    let mut client = AdminRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap();
+    let preview = client
+        .retain_system_events(RetainSystemEventsRequest {
+            max_age: Some(prost_wkt_types::Duration {
+                seconds: 86400,
+                nanos: 0,
+            }),
+            batch_size: 100,
+            dry_run: true,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(preview.deleted, 2);
+    assert!(!preview.has_more);
+    for event_id in &event_ids {
+        assert!(admin.get_system_event(*event_id).await.unwrap().is_some());
+    }
+
+    let response = server
+        .client
+        .post(&url)
+        .json(&json!({"max_age_seconds": 86400, "batch_size": 100}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({"deleted": 2, "has_more": false})
+    );
+    for event_id in &event_ids {
+        assert!(admin.get_system_event(*event_id).await.unwrap().is_none());
+    }
+    drop(admin);
+    db_pool.close().await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn admin_cleanup_webapi() {
     let server = TestServer::start(test_addr!(40_102)).await;
     let older_execution = server.generate_execution_id().await;

@@ -142,10 +142,26 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         admin.get_storage_status().await.unwrap().system_event_count,
         2
     );
-    let retention = admin
-        .retain_system_events(chrono::Utc::now() + Duration::seconds(1), 1)
+    let cutoff = chrono::Utc::now() + Duration::seconds(1);
+    for (limit, expected_deleted, expected_has_more) in
+        [(1, 1, true), (2, 2, false), (100, 2, false)]
+    {
+        let preview = admin
+            .retain_system_events(cutoff, limit, true)
+            .await
+            .unwrap();
+        assert_eq!(preview.deleted, expected_deleted);
+        assert_eq!(preview.has_more, expected_has_more);
+        assert!(admin.get_system_event(first_id).await.unwrap().is_some());
+        assert!(admin.get_system_event(second_id).await.unwrap().is_some());
+    }
+    let preview = admin
+        .retain_system_events(chrono::DateTime::UNIX_EPOCH, 1, true)
         .await
         .unwrap();
+    assert_eq!(preview.deleted, 0);
+    assert!(!preview.has_more);
+    let retention = admin.retain_system_events(cutoff, 1, false).await.unwrap();
     assert_eq!(retention.deleted, 1);
     assert!(retention.has_more);
     assert_eq!(
@@ -323,7 +339,7 @@ async fn system_event_cas_details_are_retained_with_the_event(database: Database
     assert!(cas.contains_blob(&digest).await.unwrap());
 
     admin
-        .retain_system_events(chrono::Utc::now() + Duration::seconds(1), 100)
+        .retain_system_events(chrono::Utc::now() + Duration::seconds(1), 100, false)
         .await
         .unwrap();
     assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 1);

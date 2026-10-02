@@ -453,10 +453,14 @@ pub(crate) mod admin {
     pub(crate) struct RetainSystemEventsRequest {
         pub(crate) max_age_seconds: u64,
         pub(crate) batch_size: u32,
+        // backcompat: 0.42.0-rc.10 requests omit dry_run.
+        #[serde(default)]
+        pub(crate) dry_run: bool,
     }
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub(crate) struct RetainSystemEventsResponse {
+        /// Events deleted, or that would be deleted when `dry_run` is true.
         pub(crate) deleted: u64,
         pub(crate) has_more: bool,
     }
@@ -648,7 +652,7 @@ pub(crate) mod admin {
                 .admin_conn()
                 .await
                 .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))?
-                .retain_system_events(cutoff, request.batch_size)
+                .retain_system_events(cutoff, request.batch_size, request.dry_run)
                 .await
                 .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))
         })

@@ -1436,8 +1436,10 @@ message GetNodeRunIdResponse {
 message RetainSystemEventsRequest {
     google.protobuf.Duration max_age = 1;
     uint32 batch_size = 2;
+    bool dry_run = 3;
 }
 message RetainSystemEventsResponse {
+    // Events deleted, or that would be deleted when dry_run is true.
     uint64 deleted = 1;
     bool has_more = 2;
 }
