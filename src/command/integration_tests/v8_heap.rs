@@ -120,21 +120,33 @@ memory.mib = 32
                 .unwrap();
             assert_eq!(normal, json!({ "ok": "ok" }));
         }
-        let failed = server
-            .client
-            .get(format!("{}/heap?{mode}", server.webhook_base_url))
-            .send()
-            .await
-            .unwrap();
-        assert!(failed.status().is_server_error());
-        let normal = server
-            .client
-            .get(format!("{}/heap", server.webhook_base_url))
-            .send()
-            .await
-            .unwrap();
+        let failed = webhook_after_teardown(&server, &format!("/heap?{mode}")).await;
+        assert_eq!(failed.status(), reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(failed.text().await.unwrap(), "Component Error");
+        let normal = webhook_after_teardown(&server, "/heap").await;
         assert!(normal.status().is_success());
         assert_eq!(normal.text().await.unwrap(), "ok");
     }
     server.shutdown_with_timeout(Duration::from_secs(10)).await;
+}
+
+async fn webhook_after_teardown(server: &TestServer, path: &str) -> reqwest::Response {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let response = server
+                .client
+                .get(format!("{}{path}", server.webhook_base_url))
+                .send()
+                .await
+                .unwrap();
+            if response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+                assert_eq!(response.text().await.unwrap(), "Instance limit reached");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            } else {
+                break response;
+            }
+        }
+    })
+    .await
+    .expect("webhook slot was not released after isolate teardown")
 }
