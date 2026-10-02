@@ -4464,6 +4464,15 @@ pub(crate) mod tests {
             }
 
             async fn new_with_backtrace(js_source: &str, backtrace_persist: bool) -> Self {
+                Self::new_with_runtime(js_source, backtrace_persist, WebhookJsRuntime::BoaWasm)
+                    .await
+            }
+
+            async fn new_with_runtime(
+                js_source: &str,
+                backtrace_persist: bool,
+                runtime: WebhookJsRuntime,
+            ) -> Self {
                 use crate::activity::activity_worker::test::compile_activity;
                 use crate::activity::activity_worker::tests::new_activity_fibo;
                 use concepts::time::TokioSleep;
@@ -4540,6 +4549,7 @@ pub(crate) mod tests {
                         runnable_component,
                     )
                     .unwrap()
+                    .with_js_runtime(runtime)
                     .link(&engine, fn_registry.as_ref())
                     .unwrap();
                     let mut router = MethodAwareRouter::default();
@@ -4634,6 +4644,48 @@ pub(crate) mod tests {
             assert_eq!(resp.status().as_u16(), 200);
             let body: serde_json::Value = resp.json().await.unwrap();
             assert_eq!(body["result"], serde_json::json!(55)); // fibo(10) = 55
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn webhook_js_date_scheduling(
+            #[values(WebhookJsRuntime::BoaWasm, WebhookJsRuntime::V8)] runtime: WebhookJsRuntime,
+        ) {
+            use std::str::FromStr as _;
+
+            test_utils::set_up();
+            let js_source = r#"
+                import { fiboSchedule } from "testing:fibo-obelisk-schedule/fibo";
+                import * as obelisk from "obelisk:webhook@1.0.0";
+                import * as dynamic from "obelisk:webhook-dynamic@1.0.0";
+                export default function handle(request) {
+                    const typed = fiboSchedule(new Date(2000000000123), 10);
+                    const dynamicId = obelisk.executionIdGenerate();
+                    dynamic.schedule(dynamicId, "testing:fibo/fibo.fibo", [10], new Date(2000000000456));
+                    let invalidRejected = false;
+                    try { fiboSchedule(new Date(NaN), 10); }
+                    catch (e) { invalidRejected = e instanceof TypeError; }
+                    return Response.json({ typed, dynamicId, invalidRejected });
+                }
+            "#;
+            let harness =
+                JsWebhookWithActivitiesHarness::new_with_runtime(js_source, false, runtime).await;
+            let resp = reqwest::get(format!("http://{}/", harness.server_addr))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            assert_eq!(body["invalidRejected"], true);
+            let conn = harness.db_pool.connection().await.unwrap();
+            for (key, millis) in [
+                ("typed", 2_000_000_000_123_i64),
+                ("dynamicId", 2_000_000_000_456),
+            ] {
+                let execution_id =
+                    concepts::ExecutionId::from_str(body[key].as_str().unwrap()).unwrap();
+                let request = conn.get_create_request(&execution_id).await.unwrap();
+                assert_eq!(request.scheduled_at.timestamp_millis(), millis);
+            }
         }
 
         #[tokio::test]
