@@ -2112,6 +2112,96 @@ mod tests {
     // ==================== Workflow tests ====================
 
     #[derive(Clone, Copy, Debug)]
+    enum ThrownErrorResult {
+        Message(&'static str),
+        Null,
+        Unit,
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[case::ordinary_error(
+        "throw new Error('expected-error');",
+        ThrownErrorResult::Message("expected-error")
+    )]
+    #[case::error_with_value(
+        "const e = new Error('expected-error'); e.value = 'wrong'; throw e;",
+        ThrownErrorResult::Message("expected-error")
+    )]
+    #[case::error_named_child(
+        "const e = new Error('expected-error'); e.name = 'ChildError'; e.value = 'wrong'; throw e;",
+        ThrownErrorResult::Message("expected-error")
+    )]
+    #[case::native_error(
+        "throw new TypeError('expected-error');",
+        ThrownErrorResult::Message("expected-error")
+    )]
+    #[case::string(
+        "throw 'expected-error';",
+        ThrownErrorResult::Message("expected-error")
+    )]
+    #[case::null("throw null;", ThrownErrorResult::Null)]
+    #[case::undefined("throw undefined;", ThrownErrorResult::Unit)]
+    #[tokio::test]
+    async fn workflow_js_thrown_error_contract(
+        database: Database,
+        #[values(WorkflowJsRuntime::V8, WorkflowJsRuntime::BoaWasm)] runtime: WorkflowJsRuntime,
+        #[case] body: &str,
+        #[case] expected: ThrownErrorResult,
+    ) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let return_type = match expected {
+            ThrownErrorResult::Message(_) => ChildErrProjection::String.parent_return_type(),
+            ThrownErrorResult::Unit => ChildErrProjection::Unit.parent_return_type(),
+            ThrownErrorResult::Null => ReturnTypeExtendable {
+                type_wrapper_tl: TypeWrapperTopLevel {
+                    ok: Some(Box::new(TypeWrapper::String)),
+                    err: Some(Box::new(TypeWrapper::Option(Box::new(TypeWrapper::String)))),
+                },
+                wit_type: StrVariant::Static("result<string, option<string>>"),
+            },
+        };
+        let harness = JsWorkflowTestHarness::new_with_runtime(
+            db_pool,
+            &format!("export default function run() {{ {body} }}"),
+            "test-thrown-error",
+            TestActivities::None,
+            JoinNextBlockingStrategy::Interrupt,
+            return_type,
+            u64::MAX,
+            match runtime {
+                WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
+                WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Executor::default()),
+            },
+        )
+        .await;
+        harness.tick().await;
+        let result = harness
+            .db_connection
+            .get_finished_result(&harness.execution_id)
+            .await
+            .unwrap();
+        match expected {
+            ThrownErrorResult::Message(message) => {
+                let err =
+                    assert_matches!(result, SupportedFunctionReturnValue::Err(Some(err)) => err);
+                assert_eq!(WastVal::String(message.into()), err.value);
+            }
+            ThrownErrorResult::Null => {
+                let err =
+                    assert_matches!(result, SupportedFunctionReturnValue::Err(Some(err)) => err);
+                assert_eq!(WastVal::Option(None), err.value);
+            }
+            ThrownErrorResult::Unit => {
+                assert_matches!(result, SupportedFunctionReturnValue::Err(None));
+            }
+        }
+        drop(harness);
+        db_close.close().await;
+    }
+
+    #[derive(Clone, Copy, Debug)]
     enum ChildErrorAwaitStyle {
         DirectImport,
         JoinNext,
