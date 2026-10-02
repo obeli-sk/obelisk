@@ -4162,6 +4162,7 @@ dependencies = [
  "itertools 0.15.0",
  "jsonwebtoken",
  "lzma-rs",
+ "obeli-db-tests",
  "obeli-sk-boa-engine",
  "obeli-sk-concepts",
  "obeli-sk-db-postgres",

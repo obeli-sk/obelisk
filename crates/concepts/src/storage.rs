@@ -1553,6 +1553,7 @@ pub enum SystemEventCode {
     AdminDeploymentRetainStarted,
     AdminDeploymentRetainCompleted,
     MaintenanceGcCompleted,
+    MaintenanceGcBlocked,
     MaintenanceGcFailed,
 }
 
@@ -1584,6 +1585,7 @@ impl SystemEventCode {
             Self::AdminDeploymentRetainStarted => "admin.deployment.retain.started",
             Self::AdminDeploymentRetainCompleted => "admin.deployment.retain.completed",
             Self::MaintenanceGcCompleted => "maintenance.gc.completed",
+            Self::MaintenanceGcBlocked => "maintenance.gc.blocked",
             Self::MaintenanceGcFailed => "maintenance.gc.failed",
         }
     }
@@ -1596,6 +1598,7 @@ impl SystemEventCode {
             | Self::DeploymentSwitchFailed
             | Self::OutboundHttpDenied
             | Self::WorkflowReplayLockExpired
+            | Self::MaintenanceGcBlocked
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
             Self::ComponentHttpPolicyApplied
             | SystemEventCode::ComponentSecretExposureAuthorized => SystemEventLevel::Debug,
@@ -1630,6 +1633,9 @@ impl SystemEventCode {
             Self::AdminDeploymentRetainStarted => "Deployment retention started",
             Self::AdminDeploymentRetainCompleted => "Deployment retention completed",
             Self::MaintenanceGcCompleted => "Periodic garbage collection completed",
+            Self::MaintenanceGcBlocked => {
+                "Periodic deployment retention blocked; other garbage collection continues"
+            }
             Self::MaintenanceGcFailed => "Periodic garbage collection failed",
         }
     }
@@ -1753,6 +1759,7 @@ impl SystemEvent {
                 SystemEventCode::AdminDeploymentRetainCompleted.message()
             }
             "maintenance.gc.completed" => SystemEventCode::MaintenanceGcCompleted.message(),
+            "maintenance.gc.blocked" => SystemEventCode::MaintenanceGcBlocked.message(),
             "maintenance.gc.failed" => SystemEventCode::MaintenanceGcFailed.message(),
             _ => &self.code,
         }
@@ -3831,6 +3838,7 @@ mod tests {
             SystemEventCode::AdminDeploymentRetainStarted,
             SystemEventCode::AdminDeploymentRetainCompleted,
             SystemEventCode::MaintenanceGcCompleted,
+            SystemEventCode::MaintenanceGcBlocked,
             SystemEventCode::MaintenanceGcFailed,
         ] {
             assert!(code.as_str().chars().count() <= 64);
