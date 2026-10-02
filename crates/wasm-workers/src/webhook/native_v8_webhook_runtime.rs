@@ -636,6 +636,11 @@ fn schedule_arg(
         return Ok(ScheduleAt::Now);
     };
     if let Some(millis) = schedule.get("atMillis").and_then(Value::as_f64) {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "Date.getTime() returns integral milliseconds within the u64 range after clamping negatives"
+        )]
         let millis = millis.max(0.0) as u64;
         return Ok(ScheduleAt::At(types::obelisk::types::time::Datetime {
             seconds: millis / 1000,

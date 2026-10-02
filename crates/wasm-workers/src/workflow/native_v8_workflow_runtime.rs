@@ -1057,8 +1057,13 @@ fn schedule_arg(args: &Value, name: &str) -> Result<HistoryEventScheduleAt, JsEr
     }
     // serde_v8 represents epoch milliseconds outside the 32-bit range as floats.
     if let Some(millis) = object.get("atMillis").and_then(Value::as_f64) {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "Date.getTime() returns integral milliseconds within the i64 range"
+        )]
+        let millis = millis as i64;
         let datetime = Utc
-            .timestamp_millis_opt(millis as i64)
+            .timestamp_millis_opt(millis)
             .single()
             .ok_or_else(|| JsErrorBox::type_error("schedule Date is invalid"))?;
         return Ok(HistoryEventScheduleAt::At(datetime));
