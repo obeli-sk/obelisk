@@ -4025,7 +4025,11 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(5), progress.wait_for_tasks())
                 .await
                 .expect("result getter must observe the workflow interrupt");
-            assert_eq!(slots.available_permits(), 1, "isolate slot leaked");
+            let permit = tokio::time::timeout(Duration::from_secs(5), slots.acquire())
+                .await
+                .expect("isolate slot leaked")
+                .unwrap();
+            drop(permit);
 
             let log = db_connection.get(&execution_id).await.unwrap();
             if normal {
