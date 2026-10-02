@@ -12,6 +12,7 @@ use concepts::{
     ComponentId, FunctionFqn, IfcFqnName, JoinSetId, Params, ResultParsingError,
     ResultParsingErrorFromVal, ReturnTypeExtendable, SupportedFunctionReturnValue, TrapKind,
 };
+use deno_core::futures::future::BoxFuture;
 use deno_core::{
     ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader, ModuleSource,
     ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, PollEventLoopOptions, ResolutionKind,
@@ -256,27 +257,18 @@ impl MainRuntimeHandle {
             .expect("workflow host-op task panicked or was dropped")
     }
 
-    /// Runs a [`WorkflowCtx`] async method to completion on the main runtime while blocking the
-    /// current (V8-pool) thread. `build` receives the ctx reborrowed as `'static`; the future
-    /// it returns is driven by the real multi-thread scheduler, so tokio wakers (e.g. the
-    /// sqlite-writer commit ack) fire normally instead of being dropped by a foreign parker.
-    ///
-    /// SAFETY: the calling thread parks inside [`block_on`](Self::block_on) until the future
-    /// resolves and does not touch `ctx` meanwhile, and `ctx` (owned by `execute` for the whole
-    /// JS run) outlives the call, so the `'static` reborrow neither dangles nor races a
-    /// concurrent access.
-    fn block_on_ctx<T, Fut>(
+    fn block_on_ctx<T>(
         &self,
         ctx: &mut WorkflowCtx,
-        build: impl FnOnce(&'static mut WorkflowCtx) -> Fut,
+        build: impl for<'a> FnOnce(&'a mut WorkflowCtx) -> BoxFuture<'a, T>,
     ) -> T
     where
-        Fut: Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
-        // SAFETY: see the doc comment above.
-        let ctx: &'static mut WorkflowCtx = unsafe { &mut *std::ptr::from_mut(ctx) };
-        self.block_on(build(ctx))
+        let future = build(ctx);
+        // SAFETY: block_on waits for future destruction, and the scoped builder cannot let ctx escape.
+        let future: BoxFuture<'static, T> = unsafe { std::mem::transmute(future) };
+        self.block_on(future)
     }
 }
 
@@ -357,7 +349,9 @@ fn op_obelisk_host_inner(
         "executionIdGenerate" => {
             let id = host.call(|ctx, handle| {
                 handle
-                    .block_on_ctx(ctx, move |ctx| ctx.execution_id_generate(backtrace))
+                    .block_on_ctx(ctx, move |ctx| {
+                        Box::pin(ctx.execution_id_generate(backtrace))
+                    })
                     .map_err(anyhow_to_workflow_error)
             })?;
             Ok(json!(id.to_string()))
@@ -366,7 +360,7 @@ fn op_obelisk_host_inner(
             let datetime = host.call(|ctx, handle| {
                 handle
                     .block_on_ctx(ctx, move |ctx| {
-                        ctx.sleep_named(HistoryEventScheduleAt::Now, None, backtrace)
+                        Box::pin(ctx.sleep_named(HistoryEventScheduleAt::Now, None, backtrace))
                     })
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|()| {
@@ -380,7 +374,9 @@ fn op_obelisk_host_inner(
         "createJoinSet" => {
             let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
             let id = host.call(|ctx, handle| {
-                handle.block_on_ctx(ctx, move |ctx| ctx.native_join_set_create(name, backtrace))
+                handle.block_on_ctx(ctx, move |ctx| {
+                    Box::pin(ctx.native_join_set_create(name, backtrace))
+                })
             })?;
             let index = host.join_sets.len();
             host.join_sets.push(Some(id));
@@ -402,7 +398,9 @@ fn op_obelisk_host_inner(
                 .map_err(JsErrorBox::from_err)?;
             let outcome = host.call(|ctx, handle| {
                 handle
-                    .block_on_ctx(ctx, move |ctx| ctx.call_json(target, params, backtrace))
+                    .block_on_ctx(ctx, move |ctx| {
+                        Box::pin(ctx.call_json(target, params, backtrace))
+                    })
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|err| {
                         super::workflow_ctx::WorkflowFunctionError::ConstraintViolation(
@@ -449,7 +447,7 @@ fn op_obelisk_host_inner(
             let execution_id = host.call(|ctx, handle| {
                 handle
                     .block_on_ctx(ctx, move |ctx| {
-                        ctx.submit_json(join_set_id, target, params, backtrace)
+                        Box::pin(ctx.submit_json(join_set_id, target, params, backtrace))
                     })
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|err| {
@@ -465,7 +463,7 @@ fn op_obelisk_host_inner(
             let schedule = schedule_arg(&args, "schedule")?;
             let delay_id = host.call(|ctx, handle| {
                 handle.block_on_ctx(ctx, move |ctx| {
-                    ctx.submit_delay(join_set_id, schedule, backtrace)
+                    Box::pin(ctx.submit_delay(join_set_id, schedule, backtrace))
                 })
             })?;
             Ok(json!(delay_id.id))
@@ -474,7 +472,9 @@ fn op_obelisk_host_inner(
             let join_set_id = join_set(host, &args)?;
             let outcome = host.call(|ctx, handle| {
                 let join_set_id = join_set_id.clone();
-                handle.block_on_ctx(ctx, move |ctx| ctx.join_next(join_set_id, backtrace))
+                handle.block_on_ctx(ctx, move |ctx| {
+                    Box::pin(ctx.join_next(join_set_id, backtrace))
+                })
             })?;
             Ok(match outcome {
                 Ok(outcome) => {
@@ -492,7 +492,7 @@ fn op_obelisk_host_inner(
             let outcome = host.call(|ctx, handle| {
                 let join_set_id = join_set_id.clone();
                 handle.block_on_ctx(ctx, move |ctx| {
-                    ctx.join_next_for(join_set_id, target, backtrace)
+                    Box::pin(ctx.join_next_for(join_set_id, target, backtrace))
                 })
             })?;
             Ok(match outcome {
@@ -520,7 +520,7 @@ fn op_obelisk_host_inner(
             let outcome = host.call(|ctx, handle| {
                 let join_set_id = join_set_id.clone();
                 handle.block_on_ctx(ctx, move |ctx| {
-                    ctx.native_join_next_try(join_set_id, backtrace)
+                    Box::pin(ctx.native_join_next_try(join_set_id, backtrace))
                 })
             })?;
             Ok(match outcome {
@@ -537,7 +537,9 @@ fn op_obelisk_host_inner(
             let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
             let datetime = host.call(|ctx, handle| {
                 handle
-                    .block_on_ctx(ctx, move |ctx| ctx.sleep_named(schedule, name, backtrace))
+                    .block_on_ctx(ctx, move |ctx| {
+                        Box::pin(ctx.sleep_named(schedule, name, backtrace))
+                    })
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|()| {
                         super::workflow_ctx::WorkflowFunctionError::ConstraintViolation(
@@ -554,11 +556,11 @@ fn op_obelisk_host_inner(
             let value = host.call(|ctx, handle| {
                 let result = if inclusive {
                     handle.block_on_ctx(ctx, move |ctx| {
-                        ctx.random_u64_inclusive(min, max, backtrace)
+                        Box::pin(ctx.random_u64_inclusive(min, max, backtrace))
                     })
                 } else {
                     handle.block_on_ctx(ctx, move |ctx| {
-                        ctx.random_u64_exclusive(min, max, backtrace)
+                        Box::pin(ctx.random_u64_exclusive(min, max, backtrace))
                     })
                 };
                 result.map_err(anyhow_to_workflow_error)
@@ -574,7 +576,9 @@ fn op_obelisk_host_inner(
                 .map_err(|_| JsErrorBox::range_error("max is too large"))?;
             let value = host.call(|ctx, handle| {
                 handle
-                    .block_on_ctx(ctx, move |ctx| ctx.random_string(min, max, backtrace))
+                    .block_on_ctx(ctx, move |ctx| {
+                        Box::pin(ctx.random_string(min, max, backtrace))
+                    })
                     .map_err(anyhow_to_workflow_error)
             })?;
             Ok(json!(value))
@@ -591,7 +595,13 @@ fn op_obelisk_host_inner(
             let schedule = schedule_arg(&args, "schedule")?;
             host.call(|ctx, handle| {
                 handle.block_on_ctx(ctx, move |ctx| {
-                    ctx.native_schedule_json(execution_id, target, params, schedule, backtrace)
+                    Box::pin(ctx.native_schedule_json(
+                        execution_id,
+                        target,
+                        params,
+                        schedule,
+                        backtrace,
+                    ))
                 })
             })?;
             Ok(Value::Null)
@@ -601,7 +611,7 @@ fn op_obelisk_host_inner(
             let retval = string_arg(&args, "resultJson")?.to_owned();
             host.call(|ctx, handle| {
                 handle.block_on_ctx(ctx, move |ctx| {
-                    ctx.native_stub_json(execution_id, retval, backtrace)
+                    Box::pin(ctx.native_stub_json(execution_id, retval, backtrace))
                 })
             })?;
             Ok(Value::Null)
@@ -617,8 +627,8 @@ fn op_obelisk_host_inner(
                 // `join_set_close` borrows the id, so own it inside the future (it is dropped
                 // after this call anyway).
                 handle
-                    .block_on_ctx(ctx, move |ctx| async move {
-                        ctx.join_set_close(&id, backtrace).await
+                    .block_on_ctx(ctx, move |ctx| {
+                        Box::pin(async move { ctx.join_set_close(&id, backtrace).await })
                     })
                     .map_err(anyhow_to_workflow_error)
             })?;

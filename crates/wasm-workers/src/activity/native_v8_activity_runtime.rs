@@ -140,6 +140,7 @@ async fn op_activity_fetch_inner(
             request.headers,
             request.body.unwrap_or_default().into_bytes(),
         )
+        .map_err(JsErrorBox::generic)?
         .await
         .map_err(JsErrorBox::generic)?;
     Ok(FetchResponse {

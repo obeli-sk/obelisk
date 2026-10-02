@@ -15,6 +15,7 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{Error, RequestOptions, WasiHttpHooks, default_send_request};
 
 pub type HttpClientTracesContainer = Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>;
+type NativeHttpResponse = (u16, Vec<(String, String)>, Vec<u8>);
 
 /// The TOML config section type for error messages.
 #[derive(Clone, Copy, Debug, derive_more::Display)]
@@ -350,13 +351,16 @@ pub fn is_forbidden_header(name: &str) -> bool {
 }
 
 impl HttpHooks {
-    pub(crate) async fn send_native_request(
+    pub(crate) fn send_native_request(
         &mut self,
         method: hyper::Method,
         uri: hyper::Uri,
         headers: Vec<(String, String)>,
         body: Vec<u8>,
-    ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
+    ) -> Result<
+        impl Future<Output = Result<NativeHttpResponse, String>> + Send + 'static + use<>,
+        String,
+    > {
         let body = http_body_util::Full::new(hyper::body::Bytes::from(body))
             .map_err(|never| match never {})
             .boxed_unsync();
@@ -377,32 +381,34 @@ impl HttpHooks {
             request = request.header(name, value);
         }
         let request = request.body(body).map_err(|err| err.to_string())?;
-        let (response, io) =
-            Box::into_pin(self.send_request(request, None, Box::new(async { Ok(()) })))
+        let response = self.send_request(request, None, Box::new(async { Ok(()) }));
+        Ok(async move {
+            let (response, io) = Box::into_pin(response)
                 .await
                 .map_err(|err| format!("ErrorCode::{err:?}"))?;
-        let io_task = tokio::spawn(Box::into_pin(io));
-        let status = response.status().as_u16();
-        let headers = response
-            .headers()
-            .iter()
-            .filter(|(name, _)| !is_forbidden_header(name.as_str()))
-            .map(|(name, value)| {
-                (
-                    name.as_str().to_owned(),
-                    value.to_str().unwrap_or_default().to_owned(),
-                )
-            })
-            .collect();
-        let body = response
-            .into_body()
-            .collect()
-            .await
-            .map_err(|err| err.to_string())?
-            .to_bytes()
-            .to_vec();
-        io_task.abort();
-        Ok((status, headers, body))
+            let io_task = tokio::spawn(Box::into_pin(io));
+            let status = response.status().as_u16();
+            let headers = response
+                .headers()
+                .iter()
+                .filter(|(name, _)| !is_forbidden_header(name.as_str()))
+                .map(|(name, value)| {
+                    (
+                        name.as_str().to_owned(),
+                        value.to_str().unwrap_or_default().to_owned(),
+                    )
+                })
+                .collect();
+            let body = response
+                .into_body()
+                .collect()
+                .await
+                .map_err(|err| err.to_string())?
+                .to_bytes()
+                .to_vec();
+            io_task.abort();
+            Ok((status, headers, body))
+        })
     }
 }
 

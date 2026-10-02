@@ -41,6 +41,7 @@ pub(super) struct NativeResponse {
 pub(super) enum NativeWebhookFailure {
     CannotInstantiate(String),
     Execution(String),
+    Timeout,
 }
 
 struct HostState {
@@ -55,7 +56,7 @@ struct HostState {
 
 impl HostState {
     fn ctx(&mut self) -> &mut WebhookEndpointCtx {
-        // SAFETY: `execute` owns the context until after the V8 runtime is dropped.
+        // SAFETY: the context outlives V8, and each borrow ends before the isolate resumes.
         unsafe { &mut *(self.ctx as *mut WebhookEndpointCtx) }
     }
 
@@ -118,8 +119,7 @@ fn op_webhook_log_inner(state: &mut OpState, level: String, message: String) {
     // Capture the ctx as a `usize` so the spawned future is `Send`.
     let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx()) as usize;
     let future = async move {
-        // SAFETY: host calls are serialized by the isolate, and the ctx outlives this blocking
-        // call (`execute` owns it until after the V8 runtime is dropped).
+        // SAFETY: the isolate blocks until this borrow ends, and execute owns the context through teardown.
         let ctx = unsafe { &mut *(ctx as *mut WebhookEndpointCtx) };
         match level.as_str() {
             "trace" => ctx.trace(message).await,
@@ -171,9 +171,6 @@ async fn op_webhook_fetch_inner(
     state: Rc<RefCell<OpState>>,
     request: FetchRequest,
 ) -> Result<FetchResponse, JsErrorBox> {
-    let ctx = state.borrow_mut().borrow_mut::<HostState>().ctx;
-    // SAFETY: host calls are serialized by the isolate.
-    let ctx = unsafe { &mut *(ctx as *mut WebhookEndpointCtx) };
     let method = request
         .method
         .parse()
@@ -182,16 +179,20 @@ async fn op_webhook_fetch_inner(
         .url
         .parse()
         .map_err(|err| JsErrorBox::type_error(format!("invalid URL: {err}")))?;
-    let (status, headers, body) = ctx
-        .http_hooks
-        .send_native_request(
-            method,
-            uri,
-            request.headers,
-            request.body.unwrap_or_default().into_bytes(),
-        )
-        .await
-        .map_err(JsErrorBox::generic)?;
+    let pending_request = {
+        let mut state = state.borrow_mut();
+        let host = state.borrow_mut::<HostState>();
+        host.ctx()
+            .http_hooks
+            .send_native_request(
+                method,
+                uri,
+                request.headers,
+                request.body.unwrap_or_default().into_bytes(),
+            )
+            .map_err(JsErrorBox::generic)?
+    };
+    let (status, headers, body) = pending_request.await.map_err(JsErrorBox::generic)?;
     Ok(FetchResponse {
         status,
         headers,
@@ -230,8 +231,7 @@ fn op_webhook_host_inner(
     // Capture the ctx as a `usize` so the spawned future is `Send`.
     let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx()) as usize;
     let future = async move {
-        // SAFETY: host calls are serialized by the isolate, and the ctx outlives this blocking
-        // call (`execute` owns it until after the V8 runtime is dropped).
+        // SAFETY: the isolate blocks until this borrow ends, and execute owns the context through teardown.
         let ctx = unsafe { &mut *(ctx as *mut WebhookEndpointCtx) };
         dispatch_host(ctx, &request.op, &request.args, backtrace).await
     };
@@ -307,7 +307,10 @@ pub(super) async fn execute(
     handle: tokio::runtime::Handle,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
     max_heap_size: Option<usize>,
+    request_deadline: tokio::time::Instant,
 ) -> Result<NativeResponse, NativeWebhookFailure> {
+    let mut connection_drop_watcher = ctx.connection_drop_watcher.clone();
+    let mut server_termination_watcher = ctx.server_termination_watcher.clone();
     let dispatch_policy =
         JsDispatchPolicy::new(&config.files, imports, "obelisk:webhook-dynamic@1.0.0")
             .map_err(NativeWebhookFailure::CannotInstantiate)?;
@@ -325,7 +328,7 @@ pub(super) async fn execute(
         },
         max_heap_size,
     );
-    let result = execute_inner(
+    let execution = execute_inner(
         &mut runtime,
         &loader,
         &config.entry_path,
@@ -335,8 +338,13 @@ pub(super) async fn execute(
         handle,
         isolate_tx,
         dispatch_policy,
-    )
-    .await;
+    );
+    let result = tokio::select! {
+        result = execution => result,
+        _ = connection_drop_watcher.changed() => Err(NativeWebhookFailure::Execution("connection closed".into())),
+        _ = server_termination_watcher.changed() => Err(NativeWebhookFailure::Execution("server shutdown requested".into())),
+        () = tokio::time::sleep_until(request_deadline) => Err(NativeWebhookFailure::Timeout),
+    };
     if heap.exhausted() {
         Err(NativeWebhookFailure::Execution(
             crate::v8_heap::EXHAUSTED.into(),
