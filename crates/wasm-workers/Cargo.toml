@@ -23,6 +23,7 @@ worker-common.workspace = true
 
 arbitrary.workspace = true
 boa_engine.workspace = true
+boa-common.workspace = true
 assert_matches.workspace = true
 async-trait.workspace = true
 bytes.workspace = true

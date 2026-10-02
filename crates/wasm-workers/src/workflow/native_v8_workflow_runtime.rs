@@ -3,7 +3,7 @@
 use super::workflow_ctx::{NativeJoinNextTryError, WorkflowCtx};
 use super::workflow_runtime::{RuntimePrepareError, WorkflowInvocation, WorkflowRuntime};
 use super::workflow_worker::{CallFuncResult, RunError};
-use crate::js_imports::NamedFnImport;
+use crate::js_imports::{JsDispatchPolicy, NamedFnImport};
 use crate::v8_executor::V8Executor;
 use async_trait::async_trait;
 use chrono::{TimeZone as _, Utc};
@@ -221,6 +221,7 @@ impl WorkflowInvocation for NativeV8Invocation {
 }
 
 struct HostState {
+    dispatch_policy: JsDispatchPolicy,
     workflow_ctx: usize,
     handle: MainRuntimeHandle,
     isolate: deno_core::v8::IsolateHandle,
@@ -346,6 +347,11 @@ fn op_obelisk_host_inner(
         .ok_or_else(|| JsErrorBox::type_error("host operation is missing"))?;
     let args = request.get("args").cloned().unwrap_or(Value::Null);
     let host = state.borrow_mut::<HostState>();
+    if matches!(op, "call" | "submit" | "schedule") {
+        host.dispatch_policy
+            .check(string_arg(&args, "target")?)
+            .map_err(JsErrorBox::type_error)?;
+    }
     match op {
         "executionIdCurrent" => Ok(json!(host.context().native_execution_id_current())),
         "executionIdGenerate" => {
@@ -658,7 +664,17 @@ async fn execute(
     handle: MainRuntimeHandle,
     max_heap_size: Option<usize>,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
-    let loader = Rc::new(InMemoryModuleLoader::new(args.files, args.resolved_imports));
+    let dispatch_policy = JsDispatchPolicy::new(
+        args.files,
+        args.resolved_imports,
+        "obelisk:workflow-dynamic@1.0.0",
+    )
+    .map_err(NativeV8Failure::CannotInstantiate)?;
+    let loader = Rc::new(InMemoryModuleLoader::new(
+        args.files,
+        args.resolved_imports,
+        dispatch_policy.dynamic,
+    ));
     // Declaration order keeps callback data alive through isolate teardown and queued interrupts.
     #[allow(clippy::needless_late_init)]
     let interrupt_data;
@@ -683,7 +699,15 @@ async fn execute(
         std::ptr::from_ref(interrupt_data.as_ref()).cast(),
     );
 
-    let result = execute_inner(&mut runtime, &loader, args, workflow_ctx, handle).await;
+    let result = execute_inner(
+        &mut runtime,
+        &loader,
+        args,
+        workflow_ctx,
+        handle,
+        dispatch_policy,
+    )
+    .await;
     if heap.exhausted() {
         Err(NativeV8Failure::Trap(crate::v8_heap::EXHAUSTED.into()))
     } else {
@@ -697,6 +721,7 @@ async fn execute_inner(
     args: ExecuteArgs<'_>,
     workflow_ctx: &mut WorkflowCtx,
     handle: MainRuntimeHandle,
+    dispatch_policy: JsDispatchPolicy,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
     let ExecuteArgs {
         entry_path,
@@ -708,6 +733,7 @@ async fn execute_inner(
     let isolate = runtime.v8_isolate().thread_safe_handle();
     let panic = crate::v8_panic::V8PanicState::new(isolate.clone());
     runtime.op_state().borrow_mut().put(HostState {
+        dispatch_policy,
         workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
         handle: handle.clone(),
         isolate: isolate.clone(),
@@ -808,6 +834,7 @@ impl InMemoryModuleLoader {
     fn new(
         files: &BTreeMap<String, String>,
         imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
+        dynamic_enabled: bool,
     ) -> Self {
         let mut sources = HashMap::new();
         let mut paths = HashMap::new();
@@ -817,11 +844,14 @@ impl InMemoryModuleLoader {
             sources.insert(specifier.to_string(), source.clone());
             paths.insert(path.clone(), specifier);
         }
-        sources.insert("obelisk:workflow@1.0.0".into(), WORKFLOW_MODULE.into());
-        sources.insert(
-            "obelisk:workflow-dynamic@1.0.0".into(),
-            DYNAMIC_MODULE.into(),
-        );
+        sources.insert("obelisk-internal:workflow".into(), WORKFLOW_MODULE.into());
+        sources.insert("obelisk:workflow@1.0.0".into(), BASE_MODULE.into());
+        if dynamic_enabled {
+            sources.insert(
+                "obelisk:workflow-dynamic@1.0.0".into(),
+                DYNAMIC_MODULE.into(),
+            );
+        }
         for (specifier, functions) in imports {
             sources.insert(
                 specifier.to_string(),
@@ -847,11 +877,19 @@ impl ModuleLoader for InMemoryModuleLoader {
         referrer: &str,
         _kind: ResolutionKind,
     ) -> Result<ModuleSpecifier, JsErrorBox> {
-        if self.sources.contains_key(specifier) {
+        let resolved = if self.sources.contains_key(specifier) {
             ModuleSpecifier::parse(specifier).map_err(JsErrorBox::from_err)
         } else {
             resolve_import(specifier, referrer).map_err(JsErrorBox::from_err)
+        }?;
+        if resolved.as_str() == "obelisk-internal:workflow"
+            && (referrer.starts_with("file:") || !self.sources.contains_key(referrer))
+        {
+            return Err(JsErrorBox::type_error(
+                "internal module is unavailable to user code",
+            ));
         }
+        Ok(resolved)
     }
 
     fn load(
@@ -888,7 +926,7 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
     functions
         .iter()
         .enumerate()
-        .fold(String::new(), |mut acc, (index, function)| {
+        .fold("import { host, unwrapHost, scheduleTarget, submit, joinNextFor } from 'obelisk-internal:workflow';\n".to_string(), |mut acc, (index, function)| {
             let (target, body) = if let Some(base) = &schedule_base {
                 let name = function
                     .wit_name
@@ -902,13 +940,13 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
                 if let Some(name) = function.wit_name.strip_suffix("-submit") {
                     (
                         format!("{base}.{name}"),
-                        "(joinSet, ...params) => joinSet.__submitTarget(TARGET, params)"
+                        "(joinSet, ...params) => submit(joinSet, TARGET, params)"
                             .to_string(),
                     )
                 } else if let Some(name) = function.wit_name.strip_suffix("-await-next") {
                     (
                         format!("{base}.{name}"),
-                        "(joinSet) => joinSet.__joinNextFor(TARGET, NAME)".to_string(),
+                        "(joinSet) => joinNextFor(joinSet, TARGET, NAME)".to_string(),
                     )
                 } else {
                     (
@@ -1129,7 +1167,7 @@ fn anyhow_to_workflow_error(err: wasmtime::Error) -> super::workflow_ctx::Workfl
 }
 
 const WORKFLOW_MODULE: &str = r"
-const host = (op, args = {}) => { if (args.schedule instanceof nativeDate) args = { ...args, schedule: { atMillis: args.schedule.getTime() } }; return Deno.core.ops.op_obelisk_host({ op, args }); };
+export const host = (op, args = {}) => { if (args.schedule instanceof nativeDate) args = { ...args, schedule: { atMillis: args.schedule.getTime() } }; return Deno.core.ops.op_obelisk_host({ op, args }); };
 export class ChildError extends Error { constructor(value, options = {}) { super(options.message ?? 'child execution failed'); this.name = 'ChildError'; this.value = value; this.childId = options.childId; this.delayId = options.delayId; this.failureKind = options.failureKind; this.cancelled = options.cancelled ?? false; } }
 export const ChildExecutionError = ChildError;
 export class JoinSetExhaustedError extends Error { constructor(message = 'JoinSetEmpty: all responses processed') { super(message); this.name = 'JoinSetExhaustedError'; this.code = 'OBELISK_JOIN_SET_EXHAUSTED'; } }
@@ -1154,20 +1192,22 @@ export const randomU64 = (min, max) => host('randomU64', { min, max });
 export const randomU64Inclusive = (min, max) => host('randomU64Inclusive', { min, max });
 export const randomString = (min, max) => host('randomString', { min, max });
 export const stub = (executionId, result) => host('stub', { executionId, resultJson: JSON.stringify(result) });
+const joinSets = new WeakMap();
+const joinSetIndex = joinSet => { const index = joinSets.get(joinSet); if (index === undefined) throw new TypeError('invalid join set'); return index; };
+export const submit = (joinSet, target, params = []) => host('submit', { index: joinSetIndex(joinSet), target, params });
+export const joinNextFor = (joinSet, target, name) => { const result = host('joinNextFor', { index: joinSetIndex(joinSet), target }); if (result.allProcessed) throw new JoinSetExhaustedError(); if (result.mismatch) { const actual = result.mismatch.actualTarget ? ` came from ${result.mismatch.actualTarget}` : ' was a delay'; throw new Error(`${name} failed on ${joinSet.id()}: expected a response from ${target}, but the next response ${result.mismatch.actualId}${actual}`); } return unwrapHost(result); };
 export function createJoinSet(options) {
   const index = host('createJoinSet', typeof options === 'string' ? { name: options } : options ?? {});
-  return {
-    __index: index,
+  const joinSet = {
     get lastId() { return host('lastId', { index }); },
     id() { return host('joinSetId', { index }); },
-    submit(target, params = []) { return host('submit', { index, target, params }); },
-    __submitTarget(target, params) { return host('submit', { index, target, params }); },
     submitDelay(schedule) { return host('submitDelay', { index, schedule }); },
     joinNext() { const result = host('joinNext', { index }); if (result.exhausted) throw new JoinSetExhaustedError(); return unwrapHost(result); },
-    __joinNextFor(target, name) { const result = host('joinNextFor', { index, target }); if (result.allProcessed) throw new JoinSetExhaustedError(); if (result.mismatch) { const actual = result.mismatch.actualTarget ? ` came from ${result.mismatch.actualTarget}` : ' was a delay'; throw new Error(`${name} failed on ${this.id()}: expected a response from ${target}, but the next response ${result.mismatch.actualId}${actual}`); } return unwrapHost(result); },
     joinNextTry() { const result = host('joinNextTry', { index }); if (result.pending) return undefined; if (result.exhausted) throw new JoinSetExhaustedError(); return unwrapHost(result); },
     close() { return host('close', { index }); },
   };
+  joinSets.set(joinSet, index);
+  return joinSet;
 }
 export function unwrapHost(result) {
   const options = { childId: result.childId, delayId: result.delayId, failureKind: result.failureKind, cancelled: result.failureKind === 'cancelled', message: result.message };
@@ -1175,12 +1215,13 @@ export function unwrapHost(result) {
   if (Object.hasOwn(result, 'throw')) throw new ChildError(result.throw, options);
   return result.ok;
 }
-globalThis.host = host;
-globalThis.unwrapHost = unwrapHost;
-globalThis.scheduleTarget = (target, args) => { const executionId = executionIdGenerate(); schedule(executionId, target, args.slice(1), args[0]); return executionId; };
+export const scheduleTarget = (target, args) => { const executionId = executionIdGenerate(); schedule(executionId, target, args.slice(1), args[0]); return executionId; };
+";
+
+const BASE_MODULE: &str = r"
+export { executionIdCurrent, executionIdGenerate, getResult, createJoinSet, sleep, randomU64, randomU64Inclusive, randomString, stub, JoinSetExhaustedError, ChildError } from 'obelisk-internal:workflow';
 ";
 
 const DYNAMIC_MODULE: &str = r"
-export const call = (target, params) => unwrapHost(host('call', { target, params }));
-export const schedule = (executionId, target, params, scheduleAt) => host('schedule', { executionId, target, params, schedule: scheduleAt });
+export { call, schedule, submit } from 'obelisk-internal:workflow';
 ";

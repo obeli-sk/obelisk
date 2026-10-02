@@ -1571,7 +1571,7 @@ mod tests {
 
             /* Submit fibo(10) activity call */
             const fiboFfqn = 'testing:fibo/fibo.fibo';
-            const execId = js1.submit(fiboFfqn, [10]);
+            const execId = dynamic.submit(js1, fiboFfqn, [10]);
             console.log('Submitted fibo(10), execId:', execId);
 
             /* Submit a delay */
@@ -1846,6 +1846,7 @@ mod tests {
     enum TestActivities {
         None,
         Stub,
+        StubAndFibo,
         ChildErrorProjections,
     }
 
@@ -1993,6 +1994,16 @@ mod tests {
                     )
                     .await,
                 ],
+                TestActivities::StubAndFibo => vec![
+                    compile_activity_stub(
+                        test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY,
+                    )
+                    .await,
+                    compile_activity(
+                        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+                    )
+                    .await,
+                ],
                 TestActivities::ChildErrorProjections => vec![
                     compile_activity(
                         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
@@ -2111,6 +2122,105 @@ mod tests {
 
     // ==================== Workflow tests ====================
 
+    #[rstest]
+    #[case::typed(false)]
+    #[case::dynamic(true)]
+    #[tokio::test]
+    async fn workflow_js_import_policy(
+        #[values(WorkflowJsRuntime::BoaWasm, WorkflowJsRuntime::V8)] runtime: WorkflowJsRuntime,
+        #[case] dynamic_enabled: bool,
+    ) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let declaration = if dynamic_enabled {
+            "import 'obelisk:workflow-dynamic@1.0.0';"
+        } else {
+            "import { fooSubmit } from 'testing:stub-activity-obelisk-ext/activity';"
+        };
+        let submission = if dynamic_enabled {
+            "const module = await import('obelisk:workflow-dynamic@1.0.0'); const id = module.submit(js, 'testing:stub-activity/activity.foo', ['value']);"
+        } else {
+            "const id = fooSubmit(js, 'value');"
+        };
+        let source = format!(
+            r"
+            import * as base from 'obelisk:workflow@1.0.0';
+            {declaration}
+            export default async function run() {{
+                const js = base.createJoinSet();
+                if (base.call !== undefined || base.schedule !== undefined || base.unwrapHost !== undefined ||
+                    js.submit !== undefined || js.__submitTarget !== undefined || js.__joinNextFor !== undefined ||
+                    globalThis.host !== undefined || globalThis.unwrapHost !== undefined || globalThis.scheduleTarget !== undefined)
+                    throw 'leaked dynamic API';
+                for (const specifier of ['obelisk-internal:workflow', 'OBELISK-INTERNAL:workflow']) {{
+                    let internalRejected = false;
+                    try {{ await import(specifier); }} catch (_) {{ internalRejected = true; }}
+                    if (!internalRejected) throw 'internal module accessible';
+                }}
+                if (!{dynamic_enabled}) {{
+                    let rejected = false;
+                    try {{ await import('obelisk:workflow-dynamic@1.0.0'); }} catch (_) {{ rejected = true; }}
+                    if (!rejected) throw 'undeclared dynamic module accessible';
+                    if (typeof Deno !== 'undefined') {{
+                        for (const op of ['call', 'submit', 'schedule']) {{
+                            rejected = false;
+                            try {{ Deno.core.ops.op_obelisk_host({{op, args: {{target: 'testing:fibo/fibo.fibo', params: [10], index: 0}}}}); }}
+                            catch (e) {{ rejected = String(e).includes('undeclared target'); }}
+                            if (!rejected) throw 'raw op escaped import scope: ' + op;
+                        }}
+                    }}
+                }}
+                {submission}
+                base.stub(id, {{ok: 'import-policy-ok'}});
+                const result = js.joinNext();
+                js.close();
+                return JSON.stringify({{result}});
+            }}
+        "
+        );
+        let harness = JsWorkflowTestHarness::new_with_runtime(
+            db_pool,
+            &source,
+            "import-policy",
+            TestActivities::StubAndFibo,
+            JoinNextBlockingStrategy::Interrupt,
+            default_return_type(),
+            u64::MAX,
+            match runtime {
+                WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
+                WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Executor::default()),
+            },
+        )
+        .await;
+        harness.tick().await;
+        harness.tick().await;
+        assert_eq!(
+            harness.get_result_json().await,
+            json!({"result": "import-policy-ok"})
+        );
+        let log = harness
+            .db_connection
+            .get(&harness.execution_id)
+            .await
+            .unwrap();
+        let submits = log
+            .events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.event,
+                    ExecutionRequest::HistoryEvent {
+                        event: HistoryEvent::JoinSetRequest { .. },
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(submits, 1, "rejected raw calls must not submit children");
+        drop(harness);
+        db_close.close().await;
+    }
+
     #[derive(Clone, Copy, Debug)]
     enum ThrownErrorResult {
         Message(&'static str),
@@ -2217,7 +2327,7 @@ mod tests {
                 Self::JoinNext => (
                     "",
                     format!(
-                        "const js = obelisk.createJoinSet();\njs.submit('{}', {});",
+                        "const js = obelisk.createJoinSet();\ndynamic.submit(js, '{}', {});",
                         projection.target_ffqn(),
                         projection.params_json()
                     ),
@@ -2226,7 +2336,7 @@ mod tests {
                 Self::JoinNextTry => (
                     "",
                     format!(
-                        "const js = obelisk.createJoinSet();\njs.submit('{}', {});\nobelisk.sleep({{ milliseconds: 1 }});",
+                        "const js = obelisk.createJoinSet();\ndynamic.submit(js, '{}', {});\nobelisk.sleep({{ milliseconds: 1 }});",
                         projection.target_ffqn(),
                         projection.params_json()
                     ),
@@ -2235,7 +2345,7 @@ mod tests {
                 Self::GetResult => (
                     "",
                     format!(
-                        "const js = obelisk.createJoinSet();\nconst id = js.submit('{}', {});\ntry {{ js.joinNext(); }} catch (e) {{ if (!(e instanceof obelisk.ChildError)) throw e; }}",
+                        "const js = obelisk.createJoinSet();\nconst id = dynamic.submit(js, '{}', {});\ntry {{ js.joinNext(); }} catch (e) {{ if (!(e instanceof obelisk.ChildError)) throw e; }}",
                         projection.target_ffqn(),
                         projection.params_json()
                     ),
@@ -2462,7 +2572,7 @@ mod tests {
         let js_source = r"
         export default function test_stub(params) {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'ok': 'stubbed-result-42'});
             const result = js.joinNext();
             return JSON.stringify({
@@ -2496,7 +2606,7 @@ mod tests {
         let js_source = r"
         export default function test_stub_limit(params) {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-param']);
             try {
                 obelisk.stub(execId, {'ok': 'sensitive-' + 'x'.repeat(2048)});
                 return JSON.stringify({ rejected: false });
@@ -2554,7 +2664,7 @@ mod tests {
 
         export default function typed_await(_params) {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['value']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['value']);
             obelisk.stub(execId, { ok: 'done' });
             return fooAwaitNext(js);
         }";
@@ -2600,7 +2710,7 @@ mod tests {
         let js_source = r"
         export default function generic_await(_params) {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['value']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['value']);
             obelisk.stub(execId, { ok: 'done' });
             return js.joinNext();
         }";
@@ -2642,7 +2752,7 @@ mod tests {
 
         export default function typed_mismatch(_params) {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.noret', []);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.noret', []);
             obelisk.stub(execId, { ok: null });
             let mismatch;
             try {
@@ -2687,7 +2797,7 @@ mod tests {
 
         export default function typed_exhausted(_params) {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['value']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['value']);
             obelisk.stub(execId, { ok: 'done' });
             fooAwaitNext(js);
             let exhausted = false;
@@ -3128,7 +3238,7 @@ mod tests {
         export default function session(params) {{
             const events = obelisk.createJoinSet({{ name: 'events' }});
             const valueJson = JSON.stringify({{ stdout: 'hello\n', exit_code: 0 }});
-            const executionId = events.submit('testing:stub-activity/activity.foo', ['command-1']);
+            const executionId = dynamic.submit(events, 'testing:stub-activity/activity.foo', ['command-1']);
             obelisk.stub(executionId, {{ ok: valueJson }});
             {consume}
             return JSON.stringify({{ done: true }});
@@ -3188,7 +3298,7 @@ mod tests {
             const invalid = retrievalError('invalid');
             const topLevel = retrievalError(executionIdCurrent());
             const js = createJoinSet();
-            const id = js.submit('testing:stub-activity/activity.foo', ['test']);
+            const id = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test']);
             const unprocessed = retrievalError(id);
             stub(id, {stub_result});
             const completedUnprocessed = retrievalError(id);
@@ -3264,7 +3374,7 @@ mod tests {
         let js_source = r"
         export default function test_stub_err(params) {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'err': null}); // result<string> has no error type
             let threw = false;
             let isChildErr = false;
@@ -3365,7 +3475,7 @@ mod tests {
         let js_source = r"
         export default function test_stub_twice(params) {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'ok': 'same-value'});
             obelisk.stub(execId, {'ok': 'same-value'}); // same value - should succeed
             const result = js.joinNext();
@@ -3398,7 +3508,7 @@ mod tests {
         let js_source = r"
         export default function test_stub_noret(params) {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.noret', []);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.noret', []);
             obelisk.stub(execId, {'ok': null}); // result has no payload
             const result = js.joinNext();
             return JSON.stringify({ lastId: js.lastId, result: result });
@@ -3430,7 +3540,7 @@ mod tests {
         let js_source = r"
         export default function test_stub_conflict(params) {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'ok': 'first-value'});
             try {
                 obelisk.stub(execId, {'ok': 'different-value'}); // must fail
@@ -3915,7 +4025,11 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(5), progress.wait_for_tasks())
                 .await
                 .expect("result getter must observe the workflow interrupt");
-            assert_eq!(slots.available_permits(), 1, "isolate slot leaked");
+            let permit = tokio::time::timeout(Duration::from_secs(5), slots.acquire())
+                .await
+                .expect("isolate slot leaked")
+                .unwrap();
+            drop(permit);
 
             let log = db_connection.get(&execution_id).await.unwrap();
             if normal {
@@ -3980,7 +4094,7 @@ mod tests {
         let js_source = r"
             export default function wait_forever(params) {
                 const js = obelisk.createJoinSet();
-                js.submit('testing:stub-activity/activity.foo', ['test-input']);
+                dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-input']);
                 js.joinNext();
             }
         ";
@@ -4764,7 +4878,7 @@ mod tests {
         let failing_upgrade_js_source = r"
         export default function test_auto_locking_failure(params, mode) {
             const js = obelisk.createJoinSet();
-            js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-input']);
             return 'new';
         }";
 
@@ -4936,7 +5050,7 @@ mod tests {
         let stub_upgrade_js_source = r"
         export default function test_auto_locking_stub(params) {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-input']);
             obelisk.stub(execId, { 'ok': 'stubbed-by-upgrade' });
             return js.joinNext();
         }";
@@ -5254,7 +5368,7 @@ mod tests {
         let js_source = r"
         export default function call_stub() {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-input']);
             obelisk.stub(execId, { 'ok': 'hello' });
             return js.joinNext();
         }";
@@ -5381,7 +5495,7 @@ mod tests {
         let js_source = r"
         export default function loop_forever() {
             const js = obelisk.createJoinSet();
-            js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-input']);
             for (;;) {
                 const result = js.joinNextTry();
                 if (result !== undefined) {
@@ -5483,7 +5597,7 @@ mod tests {
         let js_source = r"
         export default function loop_forever() {
             const js = obelisk.createJoinSet();
-            js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-input']);
             for (;;) {
                 js.joinNextTry();
             }
@@ -5571,7 +5685,7 @@ mod tests {
         let js_source = r"
         export default function poll_until_ready() {
             const js = obelisk.createJoinSet();
-            js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-input']);
             for (;;) {
                 if (js.joinNextTry() !== undefined) {
                     return 'refreshed';
@@ -5704,7 +5818,7 @@ mod tests {
         let js_source = r"
         export default function call_stub() {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-input']);
             obelisk.stub(execId, { 'ok': 'hello' });
             return js.joinNext();
         }";
@@ -5810,7 +5924,7 @@ mod tests {
         let js_source = r"
         export default function call_stub() {
             const js = obelisk.createJoinSet();
-            const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            const execId = dynamic.submit(js, 'testing:stub-activity/activity.foo', ['test-input']);
             obelisk.stub(execId, { 'ok': 'hello' });
             return js.joinNext();
         }";
@@ -6038,7 +6152,7 @@ function inner() {
         let js_source = r"
         export default function submit_and_return() {
             const js = obelisk.createJoinSet();
-            js.submit('testing:fibo/fibo.fibo', [10]);
+            dynamic.submit(js, 'testing:fibo/fibo.fibo', [10]);
             return 'done';
         }";
 
@@ -6491,7 +6605,7 @@ function inner() {
         let js_source = "
             export default function (_params) {
                 const js = obelisk.createJoinSet();
-                js.submit('testing:fibo/fibo.fibo', [10]);
+                dynamic.submit(js, 'testing:fibo/fibo.fibo', [10]);
                 js.joinNext();
                 return 'done';
             }
@@ -6793,11 +6907,11 @@ function inner() {
             const events = obelisk.createJoinSet({ name: 'session-events' });
             let turn = 0;
             let users = obelisk.createJoinSet({ name: 'user-' + turn });
-            let offer = users.submit('testing:stub-activity/activity.foo', ['offer']);
+            let offer = dynamic.submit(users, 'testing:stub-activity/activity.foo', ['offer']);
             while (turn < 4) {
                 obelisk.stub(offer, { ok: 'prompt ' + turn }); // self-fulfilled user prompt
                 users.joinNext();
-                const ev = events.submit('testing:stub-activity/activity.foo', ['evt']);
+                const ev = dynamic.submit(events, 'testing:stub-activity/activity.foo', ['evt']);
                 obelisk.stub(ev, { ok: 'evt' }); // self-fulfilled: flushes the cache
                 events.joinNext();
                 Date.now();       // one already-due cached sleep (the minimum that hangs)
@@ -6805,7 +6919,7 @@ function inner() {
                 users.close();
                 turn += 1;
                 users = obelisk.createJoinSet({ name: 'user-' + turn });
-                offer = users.submit('testing:stub-activity/activity.foo', ['offer']);
+                offer = dynamic.submit(users, 'testing:stub-activity/activity.foo', ['offer']);
             }
             return 'done';
         }";
@@ -7094,7 +7208,7 @@ function inner() {
         let js_source = r"
         export default function session(_params) {
             try {
-                host('testPanic');
+                Deno.core.ops.op_obelisk_host({ op: 'testPanic' });
             } catch (e) {
                 obelisk.createJoinSet({ name: 'caught' }); // must never be persisted
             }

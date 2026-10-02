@@ -9,6 +9,29 @@ use boa_engine::module::{MapModuleLoader, SyntheticModuleInitializer};
 use boa_engine::{Context, JsString, JsValue, Module, js_string, object::JsObject};
 use std::collections::HashMap;
 
+pub fn declared_modules<'a>(
+    sources: impl IntoIterator<Item = &'a str>,
+) -> Result<std::collections::HashSet<String>, String> {
+    let mut declarations = std::collections::HashSet::new();
+    for source in sources {
+        let mut interner = boa_engine::interner::Interner::new();
+        let mut parser = boa_engine::parser::Parser::new(boa_engine::Source::from_bytes(source));
+        let module = parser
+            .parse_module(&boa_engine::ast::scope::Scope::new_global(), &mut interner)
+            .map_err(|err| format!("import extraction parse error: {err}"))?;
+        for request in module.items().requests() {
+            declarations.insert(
+                interner
+                    .resolve_expect(request)
+                    .utf8()
+                    .ok_or_else(|| "import specifier is not valid UTF-8".to_string())?
+                    .to_string(),
+            );
+        }
+    }
+    Ok(declarations)
+}
+
 /// Register a runtime-native ES module backed by properties of `exports`.
 pub fn register_builtin_module(
     specifier: &str,

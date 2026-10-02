@@ -4688,6 +4688,111 @@ pub(crate) mod tests {
             }
         }
 
+        #[rstest::rstest]
+        #[case::typed(false)]
+        #[case::dynamic(true)]
+        #[tokio::test]
+        async fn webhook_js_import_policy(
+            #[values(WebhookJsRuntime::BoaWasm, WebhookJsRuntime::V8)] runtime: WebhookJsRuntime,
+            #[case] dynamic_enabled: bool,
+        ) {
+            test_utils::set_up();
+            let declaration = if dynamic_enabled {
+                "export { call as declaredCall } from 'obelisk:webhook-dynamic@1.0.0';"
+            } else {
+                "import { fibo } from 'testing:fibo/fibo'; import { fiboSchedule } from 'testing:fibo-obelisk-schedule/fibo';"
+            };
+            let dispatch = if dynamic_enabled {
+                "const module = await import('obelisk:webhook-dynamic@1.0.0'); module.schedule(base.executionIdGenerate(), 'testing:fibo/fibo.fibo', [1], {seconds: 60}); const result = module.call('testing:fibo/fibo.fibo', [10]);"
+            } else {
+                "fiboSchedule({seconds: 60}, 1); const result = fibo(10);"
+            };
+            let source = format!(
+                r"
+                import * as base from 'obelisk:webhook@1.0.0';
+                {declaration}
+                export default async function handle() {{
+                    if (base.call !== undefined || base.schedule !== undefined || globalThis.__obeliskHost !== undefined ||
+                        globalThis.__obeliskUnwrap !== undefined) throw 'leaked dynamic API';
+                    for (const specifier of ['obelisk-internal:webhook', 'OBELISK-INTERNAL:webhook']) {{
+                        let internalRejected = false;
+                        try {{ await import(specifier); }} catch (_) {{ internalRejected = true; }}
+                        if (!internalRejected) throw 'internal module accessible';
+                    }}
+                    if (!{dynamic_enabled}) {{
+                        let rejected = false;
+                        try {{ await import('obelisk:webhook-dynamic@1.0.0'); }} catch (_) {{ rejected = true; }}
+                        if (!rejected) throw 'undeclared dynamic module accessible';
+                        if (typeof Deno !== 'undefined') {{
+                            for (const op of ['call', 'schedule']) {{
+                                rejected = false;
+                                try {{ Deno.core.ops.op_webhook_host({{op, args: {{target: 'testing:http/http-get.get', params: ['http://unused']}}}}); }}
+                                catch (e) {{ rejected = String(e).includes('undeclared target'); }}
+                                if (!rejected) throw 'raw op escaped import scope: ' + op;
+                            }}
+                        }}
+                    }}
+                    {dispatch}
+                    return Response.json({{result}});
+                }}
+            "
+            );
+            let harness =
+                JsWebhookWithActivitiesHarness::new_with_runtime(&source, false, runtime).await;
+            let server_addr = harness.server_addr;
+            let fetch = tokio::spawn(async move {
+                reqwest::get(format!("http://{server_addr}/"))
+                    .await
+                    .unwrap()
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                while harness.tick_activity().await == 0 {
+                    assert!(
+                        !fetch.is_finished(),
+                        "webhook failed before calling the activity"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            let response = tokio::time::timeout(std::time::Duration::from_secs(10), fetch)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(response.status().as_u16(), 200);
+            assert_eq!(
+                response.json::<serde_json::Value>().await.unwrap(),
+                serde_json::json!({"result": 55})
+            );
+            let executions = harness
+                .db_pool
+                .external_api_conn()
+                .await
+                .unwrap()
+                .list_executions(
+                    concepts::storage::ListExecutionsFilter {
+                        show_derived: true,
+                        ..Default::default()
+                    },
+                    concepts::storage::ExecutionListPagination::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                executions.len(),
+                3,
+                "only the webhook, declared direct call, and scheduled execution may exist"
+            );
+            assert_eq!(
+                executions
+                    .iter()
+                    .filter(|execution| execution.ffqn.to_string() == "testing:fibo/fibo.fibo")
+                    .count(),
+                2
+            );
+        }
+
         #[tokio::test]
         async fn webhook_js_schedule_activity() {
             use std::str::FromStr as _;

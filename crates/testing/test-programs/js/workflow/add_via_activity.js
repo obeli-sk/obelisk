@@ -1,7 +1,8 @@
+import * as dynamic from "obelisk:workflow-dynamic@1.0.0";
 // Use createJoinSet + submit + joinNext to call an activity
 export default function add_via_activity(a, b) {
     const js = createJoinSet();
-    const execId = js.submit('testing:integration/activity.add', [a, b]);
+    const execId = dynamic.submit(js, 'testing:integration/activity.add', [a, b]);
     console.log('Submitted add activity, execId:', execId);
     const result = js.joinNext();
     if (js.lastId !== execId) {
