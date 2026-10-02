@@ -409,6 +409,7 @@ mod tests {
         let executor = V8Executor::new(config());
         let task_dropped = Arc::new(AtomicBool::new(false));
         let task_dropped_clone = task_dropped.clone();
+        let (started_tx, started_rx) = oneshot::channel();
         executor
             .admit(V8Workload::Activity)
             .await
@@ -422,9 +423,10 @@ mod tests {
                 }
                 tokio::spawn(async move {
                     let _guard = DropGuard(task_dropped_clone);
+                    started_tx.send(()).unwrap();
                     std::future::pending::<()>().await;
                 });
-                tokio::task::yield_now().await;
+                started_rx.await.unwrap();
             })
             .await
             .unwrap();

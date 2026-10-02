@@ -121,6 +121,7 @@ pub(super) async fn execute(
     traces: Arc<Mutex<Vec<HttpClientTrace>>>,
     output_sink: OutputSink,
     max_stdout_bytes: usize,
+    mut stop: tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<VmOutput> {
     let started = Instant::now();
     let guest = bundle.join("guest");
@@ -219,100 +220,101 @@ pub(super) async fn execute(
             .context("native QEMU serial output is missing")?,
         output_sink.clone(),
     );
-    let mut qmp =
-        match tokio::time::timeout(Duration::from_secs(15), wait_until_running(&qmp_socket))
+    let tail = OutputTail::spawn(queue.path().to_owned(), Vec::new(), output_sink);
+    let execution = async {
+        let mut qmp =
+            tokio::time::timeout(Duration::from_secs(15), wait_until_running(&qmp_socket))
+                .await
+                .context("native QEMU did not restore its snapshot within 15 seconds")??;
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "Native QEMU snapshot restored"
+        );
+        if plug > 0 {
+            let hotplug = machine.hotplug.as_ref().expect("checked by plug_bytes");
+            tokio::time::timeout(
+                Duration::from_secs(60),
+                qmp.plug(&format!("/machine/peripheral/{}", hotplug.device), plug),
+            )
             .await
-            .context("native QEMU did not restore its snapshot within 15 seconds")
-            .and_then(|qmp| qmp)
-        {
-            Ok(qmp) => qmp,
-            Err(error) => {
-                let _ = child.start_kill();
+            .context("native QEMU guest did not plug its memory within 60 seconds")??;
+            tracing::debug!(
+                elapsed_ms = started.elapsed().as_millis(),
+                plug_mib = plug >> 20,
+                "Native QEMU guest memory plugged"
+            );
+        }
+        if guest_cpus > 1 {
+            qmp.add_cpus(guest_cpus - 1).await?;
+            tracing::debug!(
+                elapsed_ms = started.elapsed().as_millis(),
+                guest_cpus,
+                "Native QEMU guest vCPUs added"
+            );
+        }
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+        // Above one vCPU, `init` waits for ACPI to register them all and onlines them.
+        let cpus = if guest_cpus > 1 {
+            format!(" {guest_cpus}")
+        } else {
+            String::new()
+        };
+        let clock = format!("{}.{:09}{cpus}\n", now.as_secs(), now.subsec_nanos());
+        child
+            .stdin
+            .take()
+            .context("native QEMU serial input is missing")?
+            .write_all(clock.as_bytes())
+            .await?;
+
+        let mut phases = AbortOnDrop(tokio::spawn(log_guest_phases(
+            queue.path().to_owned(),
+            started,
+        )));
+        let exit_code = tokio::select! {
+            completed = &mut phases.0 => {
+                completed.context("native QEMU phase observer failed")?;
+                child.start_kill()?;
                 child.wait().await?;
-                let stderr = stderr_reader.await?;
-                let serial = stdout_reader.await?;
-                bail!(
-                    "native QEMU snapshot restore failed: {error:#}\n{}{}",
-                    String::from_utf8_lossy(&stderr),
-                    String::from_utf8_lossy(&serial)
-                );
+                0
+            }
+            exited = child.wait() => {
+                let status = exited?;
+                bail!("native QEMU exited before activity completion: {status}");
             }
         };
-    tracing::debug!(
-        elapsed_ms = started.elapsed().as_millis(),
-        "Native QEMU snapshot restored"
-    );
-    if plug > 0 {
-        let hotplug = machine.hotplug.as_ref().expect("checked by plug_bytes");
-        tokio::time::timeout(
-            Duration::from_secs(60),
-            qmp.plug(&format!("/machine/peripheral/{}", hotplug.device), plug),
+        let output = guest_result(
+            queue.path(),
+            max_stdout_bytes,
+            VmOutput {
+                exit_code,
+                stdout: Vec::new(),
+            },
         )
-        .await
-        .context("native QEMU guest did not plug its memory within 60 seconds")??;
-        tracing::debug!(
-            elapsed_ms = started.elapsed().as_millis(),
-            plug_mib = plug >> 20,
-            "Native QEMU guest memory plugged"
-        );
-    }
-    if guest_cpus > 1 {
-        qmp.add_cpus(guest_cpus - 1).await?;
-        tracing::debug!(
-            elapsed_ms = started.elapsed().as_millis(),
-            guest_cpus,
-            "Native QEMU guest vCPUs added"
-        );
-    }
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
-    // Above one vCPU, `init` waits for ACPI to register them all and onlines them.
-    let cpus = if guest_cpus > 1 {
-        format!(" {guest_cpus}")
-    } else {
-        String::new()
-    };
-    let clock = format!("{}.{:09}{cpus}\n", now.as_secs(), now.subsec_nanos());
-    child
-        .stdin
-        .take()
-        .context("native QEMU serial input is missing")?
-        .write_all(clock.as_bytes())
         .await?;
-
-    let tail = OutputTail::spawn(queue.path().to_owned(), Vec::new(), output_sink);
-    let mut phases = AbortOnDrop(tokio::spawn(log_guest_phases(
-        queue.path().to_owned(),
-        started,
-    )));
-    let exit_code = tokio::select! {
-        completed = &mut phases.0 => {
-            completed.context("native QEMU phase observer failed")?;
-            child.start_kill()?;
-            child.wait().await?;
-            0
-        }
-        exited = child.wait() => {
-            let status = exited?;
-            bail!("native QEMU exited before activity completion: {status}");
-        }
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "Native QEMU activity complete"
+        );
+        Ok(output)
     };
-    stderr_reader.await?;
-    stdout_reader.await?;
+    let result = tokio::select! {
+        result = execution => result,
+        _ = &mut stop => Ok(VmOutput { exit_code: 0, stdout: Vec::new() }),
+    };
+    if child.id().is_some() {
+        child.kill().await.context("stopping native QEMU")?;
+    }
+    let stderr = stderr_reader.await?;
+    let serial = stdout_reader.await?;
     tail.finish().await;
-    let output = guest_result(
-        queue.path(),
-        max_stdout_bytes,
-        VmOutput {
-            exit_code,
-            stdout: Vec::new(),
-        },
-    )
-    .await?;
-    tracing::debug!(
-        elapsed_ms = started.elapsed().as_millis(),
-        "Native QEMU activity complete"
-    );
-    Ok(output)
+    result.with_context(|| {
+        format!(
+            "native QEMU execution failed\n{}{}",
+            String::from_utf8_lossy(&stderr),
+            String::from_utf8_lossy(&serial),
+        )
+    })
 }
 
 struct Qmp {

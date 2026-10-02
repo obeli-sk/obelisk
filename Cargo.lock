@@ -4274,6 +4274,7 @@ dependencies = [
  "obelisk-activity-vm-runner",
  "secrecy",
  "serde_json",
+ "test-utils",
  "tokio",
  "tracing",
  "wasmtime",

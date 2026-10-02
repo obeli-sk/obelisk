@@ -108,7 +108,7 @@ impl MapDir {
     }
 }
 
-/// Dropping the returned future stops the VM, the same way a regular activity is cancelled.
+/// Sending `stop` stops and reaps the VM before the returned future completes.
 #[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
 pub async fn execute(
     backend: &RuntimeBackend,
@@ -121,6 +121,7 @@ pub async fn execute(
     output_sink: OutputSink,
     max_stdout_bytes: usize,
     memory: Option<u64>,
+    mut stop: tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<VmOutput> {
     let (engine, module) = match backend {
         RuntimeBackend::QemuNative {
@@ -140,6 +141,7 @@ pub async fn execute(
                 http_client_traces,
                 output_sink,
                 max_stdout_bytes,
+                stop,
             )
             .await;
         }
@@ -161,6 +163,7 @@ pub async fn execute(
                 http_client_traces,
                 output_sink,
                 max_stdout_bytes,
+                stop,
             )
             .await;
         }
@@ -199,7 +202,7 @@ pub async fn execute(
         vec![stdout.clone(), stderr.clone()],
         output_sink,
     );
-    let exit_code = run_until_activity_completes(
+    let execution = run_until_activity_completes(
         engine,
         module,
         &mapdirs,
@@ -210,9 +213,13 @@ pub async fn execute(
         memory,
         queue.path(),
         started,
-    )
-    .await?;
+    );
+    let result = tokio::select! {
+        result = execution => result,
+        _ = &mut stop => Ok(0),
+    };
     tail.finish().await;
+    let exit_code = result?;
     let output = guest_result(
         queue.path(),
         max_stdout_bytes,
@@ -586,12 +593,29 @@ mod tests {
             vec![engine.weak()],
             Duration::from_millis(1),
         );
-        let module = module(&engine, "(module (func (export \"_start\") (loop br 0)))");
+        let module = module(
+            &engine,
+            r#"(module
+            (import "wasi_snapshot_preview1" "fd_write" (func $write (param i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 8) "started")
+            (func (export "_start")
+                (i32.store (i32.const 0) (i32.const 8))
+                (i32.store (i32.const 4) (i32.const 7))
+                (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 16)))
+                (loop br 0)))"#,
+        );
         let queue = tempfile::tempdir().unwrap();
         let marker = queue.path().join("phase-activity-complete");
-        // The delay only makes the guest loop likely to be running; the outcome does not depend on it.
+        let stdout = pipe::MemoryOutputPipe::new(1024);
+        let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+        let tail = OutputTail::spawn(
+            queue.path().to_owned(),
+            vec![stdout.clone()],
+            Arc::new(move |_, bytes| started_tx.send(bytes.to_vec()).unwrap()),
+        );
         let signal = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            assert_eq!(started_rx.recv().await.unwrap(), b"started");
             tokio::fs::write(marker, b"0").await.unwrap();
         });
 
@@ -603,7 +627,7 @@ mod tests {
                 &[],
                 &[],
                 &HashMap::new(),
-                pipe::MemoryOutputPipe::new(1024),
+                stdout,
                 pipe::MemoryOutputPipe::new(1024),
                 None,
                 queue.path(),
@@ -614,6 +638,7 @@ mod tests {
         .expect("VM must stop after activity completion")
         .unwrap();
         signal.await.unwrap();
+        tail.finish().await;
         assert_eq!(exit_code, 0);
     }
 
@@ -654,24 +679,19 @@ mod tests {
     #[tokio::test]
     async fn output_is_forwarded_while_the_guest_runs() {
         let queue = tempfile::tempdir().unwrap();
-        let forwarded = Arc::new(Mutex::new(Vec::new()));
-        let sink: OutputSink = {
-            let forwarded = forwarded.clone();
-            Arc::new(move |stream, bytes: &[u8]| {
-                forwarded.lock().unwrap().push((stream, bytes.to_vec()));
-            })
-        };
+        let (forwarded_tx, mut forwarded_rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink: OutputSink = Arc::new(move |stream, bytes: &[u8]| {
+            forwarded_tx.send((stream, bytes.to_vec())).unwrap();
+        });
         let console = pipe::MemoryOutputPipe::new(1024);
         let tail = OutputTail::spawn(queue.path().to_owned(), vec![console.clone()], sink);
         let stderr = queue.path().join("stderr");
         tokio::fs::write(&stderr, b"before hang\n").await.unwrap();
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while forwarded.lock().unwrap().is_empty() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .expect("stderr must be forwarded before the guest finishes");
+        let first = tokio::time::timeout(Duration::from_secs(10), forwarded_rx.recv())
+            .await
+            .expect("stderr must be forwarded before the guest finishes")
+            .unwrap();
+        assert_eq!(first, (LogStreamType::StdErr, b"before hang\n".to_vec()));
 
         // Firecracker replaces the whole file; only the appended part must be forwarded.
         let replacement = queue.path().join("stderr.tmp");
@@ -689,7 +709,10 @@ mod tests {
         .unwrap();
         tail.finish().await;
 
-        let mut forwarded = forwarded.lock().unwrap().clone();
+        let mut forwarded = vec![first];
+        while let Some(chunk) = forwarded_rx.recv().await {
+            forwarded.push(chunk);
+        }
         forwarded.sort_by_key(|(stream, bytes)| (*stream as u8, bytes.clone()));
         assert_eq!(
             forwarded,

@@ -101,6 +101,8 @@ fn main() -> Result<(), anyhow::Error> {
                     auth,
                     js_runtime,
                     activity_vm_runtime,
+                    #[cfg(test)]
+                    test_hooks: command::server::RuntimeTestHooks::default(),
                 },
                 secret_registry,
             ))

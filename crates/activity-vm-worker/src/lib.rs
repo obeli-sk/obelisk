@@ -245,6 +245,7 @@ impl Worker for ActivityVmWorker {
                 forward(config, bytes, &execution_id, run_id);
             })
         };
+        let (stop, stopped) = tokio::sync::oneshot::channel();
         let execution = activity_vm_runner::execute(
             &self.backend,
             self.mapdirs.clone(),
@@ -256,13 +257,16 @@ impl Worker for ActivityVmWorker {
             output_sink,
             max_stdout,
             self.memory,
+            stopped,
         );
-        // Dropping the execution stops the VM, like in the regular activity worker.
+        tokio::pin!(execution);
         let output = tokio::select! {
-            result = execution => {
+            result = &mut execution => {
                 result.map_err(|error| cannot_instantiate("VM execution failed", error, &version))?
             }
             () = self.sleep.sleep(deadline_duration) => {
+                let _ = stop.send(());
+                execution.await.map_err(|error| cannot_instantiate("VM cleanup failed", error, &version))?;
                 tracing::info!(duration = ?started.elapsed(), "Run timed out");
                 return Err(WorkerError::TemporaryTimeout {
                     http_client_traces: Some(take_traces(&http_client_traces)),
@@ -270,9 +274,13 @@ impl Worker for ActivityVmWorker {
                 });
             }
             _ = cancellation => {
+                let _ = stop.send(());
+                execution.await.map_err(|error| cannot_instantiate("VM cleanup failed", error, &version))?;
                 return Err(WorkerError::FatalError(FatalError::Cancelled, version));
             }
             _ = execution_interrupt_watcher.changed() => {
+                let _ = stop.send(());
+                execution.await.map_err(|error| cannot_instantiate("VM cleanup failed", error, &version))?;
                 return Err(WorkerError::ExecutionYielded {
                     version,
                     reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
@@ -408,7 +416,7 @@ mod tests {
     use concepts::component_id::COMPONENT_DIGEST_DUMMY;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId};
     use concepts::storage::{Locked, Version};
-    use concepts::time::{Now, TokioSleep};
+    use concepts::time::Now;
     use concepts::{ComponentRetryConfig, ExecutionMetadata, Params, ReturnType, StrVariant};
     use std::time::Duration;
     use wasm_workers::epoch_ticker::EpochTicker;
@@ -433,6 +441,15 @@ mod tests {
 
     #[tokio::test]
     async fn lock_expiry_stops_the_vm() {
+        interruption_stops_the_vm(false).await;
+    }
+
+    #[tokio::test]
+    async fn executor_shutdown_stops_the_vm() {
+        interruption_stops_the_vm(true).await;
+    }
+
+    async fn interruption_stops_the_vm(shutdown: bool) {
         let mut config = wasmtime::Config::new();
         config.epoch_interruption(true);
         let engine = Arc::new(Engine::new(&config).unwrap());
@@ -440,7 +457,15 @@ mod tests {
         // Stands in for the emulator: a guest that never finishes.
         let module = Module::new(
             &engine,
-            wat::parse_str("(module (func (export \"_start\") (loop br 0)))").unwrap(),
+            wat::parse_str(r#"(module
+                (import "wasi_snapshot_preview1" "fd_write" (func $write (param i32 i32 i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (data (i32.const 8) "started")
+                (func (export "_start")
+                    (i32.store (i32.const 0) (i32.const 8))
+                    (i32.store (i32.const 4) (i32.const 7))
+                    (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 16)))
+                    (loop br 0)))"#).unwrap(),
         )
         .unwrap();
         let ffqn = FunctionFqn::new_static("testing:vm/hang", "run");
@@ -461,17 +486,18 @@ mod tests {
             return_type("result<string, string>"),
             1024,
             None,
-            None,
+            Some(StdOutputConfig::Db),
             None,
             None,
         )
         .unwrap();
-        let (log_sender, _log_receiver) = tokio::sync::mpsc::channel(1);
+        let (log_sender, mut log_receiver) = tokio::sync::mpsc::channel(1);
+        let deadline = Arc::new(test_utils::manual_sleep::ManualSleep::default());
         let worker = worker.into_worker(
             CancelRegistry::new(),
             &log_sender,
             Now.clone_box(),
-            Arc::new(TokioSleep),
+            deadline.clone(),
         );
         let component_id = concepts::ComponentId::new(
             ComponentType::Activity,
@@ -479,7 +505,7 @@ mod tests {
             COMPONENT_DIGEST_DUMMY,
         )
         .unwrap();
-        let (_close_tx, execution_interrupt_watcher) = tokio::sync::watch::channel(false);
+        let (close_tx, execution_interrupt_watcher) = tokio::sync::watch::channel(false);
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: ExecutionMetadata::empty(),
@@ -497,18 +523,39 @@ mod tests {
                 executor_id: ExecutorId::generate(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 run_id: RunId::generate(),
-                lock_expires_at: Now.now() + chrono::Duration::milliseconds(100),
+                lock_expires_at: Now.now() + chrono::Duration::seconds(120),
                 retry_config: ComponentRetryConfig::ZERO,
             },
             execution_interrupt_watcher,
             instance_permit: None,
         };
 
-        let result = tokio::time::timeout(Duration::from_secs(10), worker.run(ctx))
-            .await
-            .expect("lock expiry must stop the VM");
+        let expire = async {
+            let log = log_receiver.recv().await.unwrap();
+            assert!(
+                matches!(log.log_entry, concepts::storage::LogEntry::Stream { payload, .. }
+                if payload == b"started")
+            );
+            if shutdown {
+                close_tx.send(true).unwrap();
+            } else {
+                deadline.expire();
+            }
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(worker.run(ctx), expire)
+        })
+        .await
+        .expect("interruption must stop the VM");
         assert!(
-            matches!(result, Err(WorkerError::TemporaryTimeout { .. })),
+            match &result {
+                Err(WorkerError::TemporaryTimeout { .. }) => !shutdown,
+                Err(WorkerError::ExecutionYielded {
+                    reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
+                    ..
+                }) => shutdown,
+                _ => false,
+            },
             "{result:?}"
         );
     }

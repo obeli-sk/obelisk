@@ -92,6 +92,7 @@ pub(super) async fn execute(
     traces: Arc<Mutex<Vec<HttpClientTrace>>>,
     output_sink: OutputSink,
     max_stdout_bytes: usize,
+    mut stop: tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<VmOutput> {
     let started = Instant::now();
     let bundle = Bundle::load(bundle)?;
@@ -172,73 +173,83 @@ pub(super) async fn execute(
         output_sink.clone(),
     );
 
-    let connection = tokio::select! {
-        accepted = tokio::time::timeout(Duration::from_secs(15), listener.accept()) => {
-            accepted.context("Firecracker guest did not connect its mailbox within 15 seconds")??.0
-        }
-        exited = child.wait() => {
-            let status = exited?;
-            let stderr = stderr_reader.await?;
-            let serial = stdout_reader.await?;
-            bail!(
-                "Firecracker exited before the guest connected: {status}\n{}{}",
-                String::from_utf8_lossy(&stderr),
-                String::from_utf8_lossy(&serial)
-            );
-        }
-    };
-    tracing::debug!(
-        elapsed_ms = started.elapsed().as_millis(),
-        "Firecracker guest mailbox connected"
-    );
-    let (read, write) = connection.into_split();
-    let received = Arc::new(Mutex::new(HashSet::new()));
-    let _to_host = AbortOnDrop(tokio::spawn(mirror_to_host(
-        read,
-        queue.path().to_owned(),
-        received.clone(),
-    )));
-    let _to_guest = AbortOnDrop(tokio::spawn(mirror_to_guest(
-        write,
-        queue.path().to_owned(),
-        received,
-        run_script,
-    )));
-
     let tail = OutputTail::spawn(queue.path().to_owned(), Vec::new(), output_sink);
-    let mut phases = AbortOnDrop(tokio::spawn(log_guest_phases(
-        queue.path().to_owned(),
-        started,
-    )));
-    let exit_code = tokio::select! {
-        completed = &mut phases.0 => {
-            completed.context("Firecracker phase observer failed")?;
-            child.start_kill()?;
-            child.wait().await?;
-            0
-        }
-        exited = child.wait() => {
-            let status = exited?;
-            bail!("Firecracker exited before activity completion: {status}");
-        }
+    let execution = async {
+        let connection = tokio::select! {
+            accepted = tokio::time::timeout(Duration::from_secs(15), listener.accept()) => {
+                accepted.context("Firecracker guest did not connect its mailbox within 15 seconds")??.0
+            }
+            exited = child.wait() => {
+                let status = exited?;
+                bail!("Firecracker exited before the guest connected: {status}");
+            }
+        };
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "Firecracker guest mailbox connected"
+        );
+        let (read, write) = connection.into_split();
+        let received = Arc::new(Mutex::new(HashSet::new()));
+        let _to_host = AbortOnDrop(tokio::spawn(mirror_to_host(
+            read,
+            queue.path().to_owned(),
+            received.clone(),
+        )));
+        let _to_guest = AbortOnDrop(tokio::spawn(mirror_to_guest(
+            write,
+            queue.path().to_owned(),
+            received,
+            run_script,
+        )));
+
+        let mut phases = AbortOnDrop(tokio::spawn(log_guest_phases(
+            queue.path().to_owned(),
+            started,
+        )));
+        let exit_code = tokio::select! {
+            completed = &mut phases.0 => {
+                completed.context("Firecracker phase observer failed")?;
+                child.start_kill()?;
+                child.wait().await?;
+                0
+            }
+            exited = child.wait() => {
+                let status = exited?;
+                bail!("Firecracker exited before activity completion: {status}");
+            }
+        };
+        let output = guest_result(
+            queue.path(),
+            max_stdout_bytes,
+            VmOutput {
+                exit_code,
+                stdout: Vec::new(),
+            },
+        )
+        .await?;
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "Firecracker activity complete"
+        );
+        Ok(output)
     };
-    stderr_reader.await?;
-    stdout_reader.await?;
+    let result = tokio::select! {
+        result = execution => result,
+        _ = &mut stop => Ok(VmOutput { exit_code: 0, stdout: Vec::new() }),
+    };
+    if child.id().is_some() {
+        child.kill().await.context("stopping Firecracker")?;
+    }
+    let stderr = stderr_reader.await?;
+    let serial = stdout_reader.await?;
     tail.finish().await;
-    let output = guest_result(
-        queue.path(),
-        max_stdout_bytes,
-        VmOutput {
-            exit_code,
-            stdout: Vec::new(),
-        },
-    )
-    .await?;
-    tracing::debug!(
-        elapsed_ms = started.elapsed().as_millis(),
-        "Firecracker activity complete"
-    );
-    Ok(output)
+    result.with_context(|| {
+        format!(
+            "Firecracker execution failed\n{}{}",
+            String::from_utf8_lossy(&stderr),
+            String::from_utf8_lossy(&serial),
+        )
+    })
 }
 
 struct InotifyFd(Inotify);
