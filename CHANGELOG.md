@@ -6,14 +6,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0-rc.10](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.9...v0.42.0-rc.10)
+
+This release candidate streams activity VM output to logs while the VM runs, lists the same
+imports for JS components on both JS engines, and skips fetching the JS runtime images when JS
+runs on V8. The API startup token is no longer written to logs.
+
 ### Changed
 
+- *(activity-vm)* Guest stdout and stderr, and the emulator console output, are forwarded to the
+  execution logs as they arrive instead of after the run finishes, so a timed out, cancelled, or
+  yielding VM still leaves logs. Firecracker streams with the bumped runtime bundle.
+  [#1085](https://github.com/obeli-sk/obelisk/pull/1085)
 - *(JS)* With the V8 engine, the server no longer fetches the JS runtime components from the OCI
-  registry. ([8009cd1](https://github.com/obeli-sk/obelisk/commit/8009cd1109cf8384c77787007844feab79a1d785))
+  registry. [#1083](https://github.com/obeli-sk/obelisk/pull/1083)
 - *(JS)* Imports of JS workflows and webhooks are read only from their JS code, so both JS engines
   list the same imports. The dynamic call interface is the only listed `obelisk` interface, and
   only when the code imports `obelisk:workflow-dynamic@1.0.0` or `obelisk:webhook-dynamic@1.0.0`.
   JS activities list no imports, and JS webhooks no longer expose the WIT of the JS runtime.
+  [#1084](https://github.com/obeli-sk/obelisk/pull/1084)
+
+### Fixed
+
+- *(api)* The API startup token is printed to stderr instead of being logged at INFO level and
+  repeated in every denied-request warning, keeping the full-admin credential out of log files and
+  OTLP sinks. [#1086](https://github.com/obeli-sk/obelisk/pull/1086)
 
 ## [0.42.0-rc.9](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.8...v0.42.0-rc.9)
 
