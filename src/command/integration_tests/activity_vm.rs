@@ -375,6 +375,50 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
     .await;
 }
 
+#[tokio::test]
+async fn shebang_without_newline() {
+    let deployment_toml = r##"[[activity_vm]]
+memory.mib = 512
+ffqn = "testing:vm/empty.run"
+max_retries = 0
+content = "#!/bin/sh"
+params = []
+return_type = "result"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+"##;
+    activity_vm_case(
+        test_addr!(187),
+        "",
+        deployment_toml,
+        "testing:vm/empty.run",
+        vec![],
+        json!({ "ok": null }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn invalid_shebang_completes_with_error() {
+    let deployment_toml = r#"[[activity_vm]]
+memory.mib = 512
+ffqn = "testing:vm/invalid.run"
+max_retries = 0
+content = "not a shebang\n"
+params = []
+return_type = "result"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+"#;
+    activity_vm_case(
+        test_addr!(188),
+        "",
+        deployment_toml,
+        "testing:vm/invalid.run",
+        vec![],
+        json!({ "err": null }),
+    )
+    .await;
+}
+
 async fn activity_vm_http_case(ip: String, use_host_alias: bool) {
     if parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap()
         == ActivityVmRuntimeMode::Disabled

@@ -283,6 +283,7 @@ impl OutputTail {
                     if let Some(appended) = contents.get(*offset..)
                         && !appended.is_empty()
                     {
+                        tracing::debug!(console = %String::from_utf8_lossy(appended), "Activity VM console output");
                         sink(LogStreamType::StdErr, appended);
                         *offset = contents.len();
                     }
@@ -521,9 +522,9 @@ async fn guest_result(
     max_stdout_bytes: usize,
     console: VmOutput,
 ) -> anyhow::Result<VmOutput> {
-    let Some(stdout) = read_guest_output(queue.join("stdout"), max_stdout_bytes).await? else {
-        return Ok(console);
-    };
+    let stdout = read_guest_output(queue.join("stdout"), max_stdout_bytes)
+        .await?
+        .unwrap_or(console.stdout);
     let exit_code = match tokio::fs::read_to_string(queue.join("exit-code")).await {
         Ok(exit_code) => exit_code
             .trim()

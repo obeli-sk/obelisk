@@ -14,6 +14,13 @@ mark_phase() {
   fi
 }
 
+finish_activity() {
+  printf '%s\n' "$1" > /obelisk-activity-vm-http/exit-code.tmp
+  mv /obelisk-activity-vm-http/exit-code.tmp /obelisk-activity-vm-http/exit-code
+  mark_phase activity-complete "$1"
+}
+
+trap 'finish_activity "$?"' EXIT
 mark_phase guest-launcher
 if [ ! -d /nix/store ]; then
   mark_phase store-mount-failed "/nix/store is not a directory"
@@ -54,7 +61,7 @@ case "$mode" in
   --script)
     script="$1"
     shift
-    IFS= read -r shebang < "$script"
+    shebang=$(head -n 1 "$script")
     interpreter=${shebang#\#!}
     if [ "$interpreter" = "$shebang" ] || [ -z "$interpreter" ]; then
       echo "activity VM inline script must start with a shebang" >&2
@@ -67,8 +74,7 @@ case "$mode" in
   *) echo "unknown activity VM invocation mode: $mode" >&2; exit 126 ;;
 esac
 
-resolved_command=$(command -v "$command" 2>&1 || true)
-mark_phase command-start "${resolved_command:-$command}"
+mark_phase command-start "$command"
 stdout=/obelisk-activity-vm-http/stdout
 stderr=/obelisk-activity-vm-http/stderr
 : > "$stdout"
@@ -81,8 +87,7 @@ else
 fi
 status=$?
 set -e
-printf '%s\n' "$status" > /obelisk-activity-vm-http/exit-code.tmp
-mv /obelisk-activity-vm-http/exit-code.tmp /obelisk-activity-vm-http/exit-code
-mark_phase activity-complete "$status"
+finish_activity "$status"
+trap - EXIT
 # Keep the launcher successful if the host does not interrupt before fallback shutdown.
 exit 0
