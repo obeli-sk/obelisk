@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(JS)* Boa compiled to WASM (`boa-wasm`) is the default engine again for workflows,
+  activities, and webhooks. Set `OBELISK_JS_RUNTIME=v8` to use native V8.
 - *(JS, breaking)* Submit workflow children by FFQN with
   `dynamic.submit(joinSet, ffqn, params)` from `obelisk:workflow-dynamic@1.0.0`.
   Join-set objects no longer expose `submit`; typed `fnSubmit(joinSet, ...params)` imports

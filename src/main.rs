@@ -363,8 +363,8 @@ fn prepare_server_startup(
 fn parse_js_runtime_from_env(env_vars: &StartupEnvVars) -> anyhow::Result<JsRuntimeMode> {
     let value = env_vars.lookup("OBELISK_JS_RUNTIME");
     match value.as_deref() {
-        None | Some("v8") => Ok(JsRuntimeMode::V8),
-        Some("boa-wasm") => Ok(JsRuntimeMode::BoaWasm),
+        None | Some("boa-wasm") => Ok(JsRuntimeMode::BoaWasm),
+        Some("v8") => Ok(JsRuntimeMode::V8),
         Some(other) => {
             anyhow::bail!(
                 "invalid OBELISK_JS_RUNTIME value `{other:?}`; expected `v8` or `boa-wasm`"

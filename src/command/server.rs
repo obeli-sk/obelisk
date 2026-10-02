@@ -660,8 +660,8 @@ pub(crate) struct RuntimeTestHooks {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum JsRuntimeMode {
-    BoaWasm,
     #[default]
+    BoaWasm,
     V8,
 }
 
