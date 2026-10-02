@@ -215,7 +215,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.42.0-rc.10"
+version = "0.42.0-rc.11"
 description = "Deterministic workflow engine"
 license = "AGPL-3.0-only"
 repository = "https://github.com/obeli-sk/obelisk"
