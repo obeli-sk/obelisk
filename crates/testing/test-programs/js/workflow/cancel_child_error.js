@@ -1,3 +1,4 @@
+import * as dynamic from "obelisk:workflow-dynamic@1.0.0";
 // Await a child execution that is cancelled out-of-band. The child's cancellation
 // is a platform failure (not a business err), so `joinNext` throws a
 // `ChildError` whose `.cancelled` is true, `.failureKind` is `cancelled`
@@ -5,7 +6,7 @@
 export default function cancel_child_error() {
     // A named join set gives the child a well-known id the test can reconstruct.
     const js = obelisk.createJoinSet({ name: 'cancel-set' });
-    const childId = js.submit('testing:integration/workflow-sleep.sleep-cancellable', []);
+    const childId = dynamic.submit(js, 'testing:integration/workflow-sleep.sleep-cancellable', []);
     try {
         js.joinNext();
     } catch (e) {

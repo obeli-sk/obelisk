@@ -48,18 +48,18 @@
 //! const execId = obelisk.executionIdGenerate();
 //!
 //! // Schedule immediately (scheduleAt is optional, defaults to now)
-//! obelisk.schedule(execId, "ns:pkg/ifc.func", [arg1, arg2]);
+//! dynamic.schedule(execId, "ns:pkg/ifc.func", [arg1, arg2]);
 //!
 //! // Schedule with delay
-//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { seconds: 60 });
-//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { minutes: 5 });
-//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { hours: 1 });
+//! dynamic.schedule(execId, "ns:pkg/ifc.func", [args], { seconds: 60 });
+//! dynamic.schedule(execId, "ns:pkg/ifc.func", [args], { minutes: 5 });
+//! dynamic.schedule(execId, "ns:pkg/ifc.func", [args], { hours: 1 });
 //! ```
 //!
 //! ## Call and Wait for Result
 //! ```js
 //! // Synchronous call - blocks until completion
-//! const result = obelisk.call("ns:pkg/ifc.func", [arg1, arg2]);
+//! const result = dynamic.call("ns:pkg/ifc.func", [arg1, arg2]);
 //! // Returns ok value, throws err value
 //! ```
 //!
@@ -389,7 +389,9 @@ async fn run_js_handler_inner(
     setup_crypto(&mut context).expect("crypto setup must work");
 
     // Set up the obelisk global object with webhook support APIs
-    setup_obelisk_api(&loader, &mut context).expect("obelisk API setup must work");
+    let dynamic_enabled = imports::declared_modules(files.values().map(String::as_str))?
+        .contains("obelisk:webhook-dynamic@1.0.0");
+    setup_obelisk_api(&loader, &mut context, dynamic_enabled).expect("obelisk API setup must work");
 
     // Register synthetic modules for WIT-style imports (e.g., 'ns:pkg/ifc').
     let resolved_imports = read_resolved_imports();
@@ -573,7 +575,7 @@ fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsR
     }
 }
 
-/// Build a `ChildError` for a failed direct call (`obelisk.call` / an
+/// Build a `ChildError` for a failed direct call (`dynamic.call` / an
 /// import proxy), whose child id comes from `last-direct-call-id`.
 fn call_child_error(
     child_id: Option<&str>,
@@ -597,7 +599,11 @@ fn call_child_error(
 }
 
 /// Set up the global `obelisk` object with webhook support functions.
-fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResult<()> {
+fn setup_obelisk_api(
+    loader: &MapModuleLoader,
+    context: &mut Context,
+    dynamic_enabled: bool,
+) -> JsResult<()> {
     let obelisk = new_object(context);
 
     // obelisk.executionIdGenerate()
@@ -624,7 +630,7 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
         context,
     )?;
 
-    // obelisk.schedule(executionId, ffqn, params, scheduleAt?)
+    // dynamic.schedule(executionId, ffqn, params, scheduleAt?)
     let schedule_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let exec_id_str = args
             .get_or_undefined(0)
@@ -811,7 +817,7 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
         context,
     )?;
 
-    // obelisk.call(ffqn, params) - call child execution and wait for result
+    // dynamic.call(ffqn, params) - call child execution and wait for result
     let call_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let backtrace = capture_backtrace(ctx);
 
@@ -889,13 +895,15 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
         loader,
         context,
     );
-    imports::register_builtin_module(
-        "obelisk:webhook-dynamic@1.0.0",
-        &["call", "schedule"],
-        &dynamic,
-        loader,
-        context,
-    );
+    if dynamic_enabled {
+        imports::register_builtin_module(
+            "obelisk:webhook-dynamic@1.0.0",
+            &["call", "schedule"],
+            &dynamic,
+            loader,
+            context,
+        );
+    }
 
     Ok(())
 }

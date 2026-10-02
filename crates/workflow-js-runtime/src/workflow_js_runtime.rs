@@ -31,7 +31,7 @@
 //! // Or with a name: obelisk.createJoinSet("my-join-set")
 //!
 //! // Submit a child execution
-//! const execId = js.submit("ns:pkg/ifc.func", [arg1, arg2]);
+//! const execId = dynamic.submit(js, "ns:pkg/ifc.func", [arg1, arg2]);
 //!
 //! // Wait for next result (blocks until a child or delay completes)
 //! const result = js.joinNext();
@@ -57,19 +57,19 @@
 //! const execId = obelisk.executionIdGenerate();
 //!
 //! // Schedule immediately (scheduleAt is optional, defaults to now)
-//! obelisk.schedule(execId, "ns:pkg/ifc.func", [arg1, arg2]);
+//! dynamic.schedule(execId, "ns:pkg/ifc.func", [arg1, arg2]);
 //!
 //! // Schedule with delay
-//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { seconds: 60 });
-//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { minutes: 5 });
-//! obelisk.schedule(execId, "ns:pkg/ifc.func", [args], { hours: 1 });
+//! dynamic.schedule(execId, "ns:pkg/ifc.func", [args], { seconds: 60 });
+//! dynamic.schedule(execId, "ns:pkg/ifc.func", [args], { minutes: 5 });
+//! dynamic.schedule(execId, "ns:pkg/ifc.func", [args], { hours: 1 });
 //! ```
 //!
 //! ## Stubbing (Mock Responses)
 //! ```js
 //! // A workflow submits a stub activity execution, obtaining its execution id.
 //! const js = obelisk.createJoinSet();
-//! const execId = js.submit("ns:pkg/activity.stub_fn", [args]);
+//! const execId = dynamic.submit(js, "ns:pkg/activity.stub_fn", [args]);
 //! // The same or another workflow can provide the result using an import:
 //! import { fooStub } from "ns:pkg-obelisk-stub/activity.stub_fn";
 //! fooStub(execId, result)
@@ -106,7 +106,7 @@
 //! ## Delays in Join Sets
 //! ```js
 //! const js = obelisk.createJoinSet();
-//! const execId = js.submit("ns:pkg/ifc.slow_task", []);
+//! const execId = dynamic.submit(js, "ns:pkg/ifc.slow_task", []);
 //! const delayId = js.submitDelay({ seconds: 30 }); // timeout
 //!
 //! const result = js.joinNext();
@@ -586,7 +586,7 @@ fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsR
     }
 }
 
-/// Build a `ChildError` for a failed direct call (`obelisk.call` / an
+/// Build a `ChildError` for a failed direct call (`dynamic.call` / an
 /// import proxy), whose child id comes from `last-direct-call-id`.
 fn call_child_error(
     child_id: Option<&str>,
@@ -762,7 +762,10 @@ pub fn execute(
 
     // Set up the obelisk global object with workflow APIs BEFORE module evaluation
     // so that `obelisk.*` is available during module initialization
-    setup_obelisk_api(&loader, &mut context).expect("obelisk API setup must work");
+    let dynamic_enabled = imports::declared_modules(files.values().map(String::as_str))
+        .map_err(JsRuntimeError::CannotInstantiate)?
+        .contains("obelisk:workflow-dynamic@1.0.0");
+    setup_obelisk_api(&loader, &mut context, dynamic_enabled).expect("obelisk API setup must work");
 
     // Set up console
     setup_console(&mut context, Logger).expect("console setup must work");
@@ -983,7 +986,11 @@ fn get_default_export_workflow(
 }
 
 /// Set up the global `obelisk` object with workflow support functions.
-fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResult<()> {
+fn setup_obelisk_api(
+    loader: &MapModuleLoader,
+    context: &mut Context,
+    dynamic_enabled: bool,
+) -> JsResult<()> {
     let obelisk = new_object(context);
 
     // obelisk.executionIdCurrent()
@@ -1134,7 +1141,7 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
         context,
     )?;
 
-    // obelisk.call(ffqn, params)
+    // dynamic.call(ffqn, params)
     // Convenience: createJoinSet → submit → joinNext → getResult → close, return ok value, throw err value
     let call_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let ffqn = args
@@ -1205,7 +1212,7 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
         context,
     )?;
 
-    // obelisk.schedule(executionId, ffqn, params, scheduleAt?)
+    // dynamic.schedule(executionId, ffqn, params, scheduleAt?)
     let schedule_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let exec_id_str = args
             .get_or_undefined(0)
@@ -1320,6 +1327,12 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
         false,
         context,
     )?;
+    dynamic.set(
+        js_string!("submit"),
+        NativeFunction::from_fn_ptr(dynamic_submit).to_js_function(context.realm()),
+        false,
+        context,
+    )?;
     imports::register_builtin_module(
         "obelisk:workflow@1.0.0",
         &[
@@ -1339,13 +1352,15 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
         loader,
         context,
     );
-    imports::register_builtin_module(
-        "obelisk:workflow-dynamic@1.0.0",
-        &["call", "schedule"],
-        &dynamic,
-        loader,
-        context,
-    );
+    if dynamic_enabled {
+        imports::register_builtin_module(
+            "obelisk:workflow-dynamic@1.0.0",
+            &["call", "schedule", "submit"],
+            &dynamic,
+            loader,
+            context,
+        );
+    }
     context.eval(Source::from_bytes("delete globalThis.obelisk"))?;
 
     Ok(())
@@ -1464,51 +1479,6 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
     obj.set(
         js_string!("id"),
         id_fn.to_js_function(ctx.realm()),
-        false,
-        ctx,
-    )?;
-
-    // joinSet.submit(ffqn, params)
-    let submit_fn = NativeFunction::from_fn_ptr(|this, args, ctx| {
-        let this_obj = this
-            .as_object()
-            .ok_or_else(|| JsNativeError::typ().with_message("this is not an object"))?;
-        let idx = this_obj
-            .get(js_string!(JOIN_SET_IDX_KEY), ctx)?
-            .to_u32(ctx)? as usize;
-
-        let ffqn = args
-            .get_or_undefined(0)
-            .as_string()
-            .ok_or_else(|| JsNativeError::typ().with_message("ffqn must be a string"))?
-            .to_std_string_escaped();
-
-        // Parse FFQN: "namespace:pkg/interface.function"
-        let (ifc_name, fn_name) = parse_ffqn(&ffqn)?;
-        let function = Function {
-            interface_name: ifc_name,
-            function_name: fn_name,
-        };
-
-        // Serialize params to JSON
-        let params_val = args.get_or_undefined(1);
-        let params_json = json_stringify(params_val, ctx)?;
-
-        let backtrace = capture_backtrace(ctx);
-        let result = with_join_set(idx, |js| {
-            submit_json(js, &function, &params_json, Some(&backtrace))
-        })?;
-
-        match result {
-            Ok(exec_id) => Ok(JsValue::from(js_string!(exec_id.id))),
-            Err(e) => Err(JsNativeError::error()
-                .with_message(format!("submit failed: {:?}", e))
-                .into()),
-        }
-    });
-    obj.set(
-        js_string!("submit"),
-        submit_fn.to_js_function(ctx.realm()),
         false,
         ctx,
     )?;
@@ -1637,6 +1607,36 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
     )?;
 
     Ok(obj.into())
+}
+
+fn dynamic_submit(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let join_set = args
+        .get_or_undefined(0)
+        .as_object()
+        .ok_or_else(|| JsNativeError::typ().with_message("joinSet must be an object"))?;
+    let idx = join_set
+        .get(js_string!(JOIN_SET_IDX_KEY), ctx)?
+        .to_u32(ctx)? as usize;
+    let ffqn = args
+        .get_or_undefined(1)
+        .as_string()
+        .ok_or_else(|| JsNativeError::typ().with_message("ffqn must be a string"))?
+        .to_std_string_escaped();
+    let (interface_name, function_name) = parse_ffqn(&ffqn)?;
+    let function = Function {
+        interface_name,
+        function_name,
+    };
+    let params_json = json_stringify(args.get_or_undefined(2), ctx)?;
+    let backtrace = capture_backtrace(ctx);
+    match with_join_set(idx, |js| {
+        submit_json(js, &function, &params_json, Some(&backtrace))
+    })? {
+        Ok(exec_id) => Ok(js_string!(exec_id.id).into()),
+        Err(err) => Err(JsNativeError::error()
+            .with_message(format!("submit failed: {err:?}"))
+            .into()),
+    }
 }
 
 /// Parse a schedule specification from JS value.

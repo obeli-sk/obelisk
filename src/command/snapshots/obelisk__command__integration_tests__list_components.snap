@@ -370,7 +370,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/add_via_activity.js",
           "digest": "sha256:<REDACTED>",
-          "size": 590
+          "size": 658
         },
         "role": "js_entrypoint"
       }
@@ -421,7 +421,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/call_stub.js",
           "digest": "sha256:<REDACTED>",
-          "size": 390
+          "size": 458
         },
         "role": "js_entrypoint"
       }

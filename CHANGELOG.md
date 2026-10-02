@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(JS, breaking)* Submit workflow children by FFQN with
+  `dynamic.submit(joinSet, ffqn, params)` from `obelisk:workflow-dynamic@1.0.0`.
+  Join-set objects no longer expose `submit`; typed `fnSubmit(joinSet, ...params)` imports
+  keep their API. Base modules do not export `call` or `schedule`. Dynamic modules require
+  a static import or re-export declaration, including when loaded with `import()`.
+  Side-effect imports, empty imports, and re-exports now contribute to dependency metadata.
+
 ## [0.42.0-rc.10](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.9...v0.42.0-rc.10)
 
 This release candidate streams activity VM output to logs while the VM runs, lists the same

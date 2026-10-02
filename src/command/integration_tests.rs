@@ -2262,6 +2262,135 @@ async fn list_components() {
     server.shutdown().await;
 }
 
+#[rstest::rstest]
+#[tokio::test]
+async fn js_import_policy_component_metadata(
+    #[values(JsRuntime::BoaWasm, JsRuntime::V8)] runtime: JsRuntime,
+) {
+    let deployment = r#"
+[[workflow_js]]
+name = "target"
+ffqn = "app:target/api.run"
+content = "export default () => 'ok';"
+params = []
+return_type = "result<string, string>"
+
+[[workflow_js]]
+name = "typed_workflow"
+ffqn = "app:caller/api.typed"
+content = "import {} from 'app:target/api'; export default () => 'ok';"
+params = []
+return_type = "result<string, string>"
+
+[[workflow_js]]
+name = "dynamic_workflow"
+ffqn = "app:caller/api.dynamic"
+location = "workflow.js"
+params = []
+return_type = "result<string, string>"
+
+[[workflow_js]]
+name = "mixed_workflow"
+ffqn = "app:caller/api.mixed"
+content = "import 'app:target/api'; import 'obelisk:workflow-dynamic@1.0.0'; export default () => 'ok';"
+params = []
+return_type = "result<string, string>"
+
+[[webhook_endpoint_js]]
+name = "typed_webhook"
+content = "export {run as target} from 'app:target/api'; export default () => new Response('ok');"
+routes = [{ methods = ["GET"], route = "/typed" }]
+
+[[webhook_endpoint_js]]
+name = "dynamic_webhook"
+location = "webhook.js"
+routes = [{ methods = ["GET"], route = "/dynamic" }]
+
+[[webhook_endpoint_js]]
+name = "mixed_webhook"
+content = "import 'app:target/api'; export * from 'obelisk:webhook-dynamic@1.0.0'; export default () => new Response('ok');"
+routes = [{ methods = ["GET"], route = "/mixed" }]
+"#;
+    let server = TestServer::start_inline_deployment_with_js_runtime(
+        match runtime {
+            JsRuntime::BoaWasm => test_addr!(40_156),
+            JsRuntime::V8 => test_addr!(40_157),
+        },
+        "",
+        deployment,
+        &[
+            (
+                "workflow.js",
+                "import './workflow-helper.js'; export default () => 'ok';",
+            ),
+            (
+                "workflow-helper.js",
+                "export {submit} from 'obelisk:workflow-dynamic@1.0.0';",
+            ),
+            (
+                "webhook.js",
+                "import './webhook-helper.js'; export default () => new Response('ok');",
+            ),
+            (
+                "webhook-helper.js",
+                "import {} from 'obelisk:webhook-dynamic@1.0.0';",
+            ),
+        ],
+        runtime.mode(),
+    )
+    .await;
+    let response = server
+        .client
+        .get(format!("{}/v1/components?imports=true", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let components = response.json::<Value>().await.unwrap();
+    for (name, typed, dynamic) in [
+        ("target", false, None),
+        ("typed_workflow", true, None),
+        ("dynamic_workflow", false, Some("workflow")),
+        ("mixed_workflow", true, Some("workflow")),
+        ("typed_webhook", true, None),
+        ("dynamic_webhook", false, Some("webhook")),
+        ("mixed_webhook", true, Some("webhook")),
+    ] {
+        let component = components
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|component| component["component_id"]["name"] == name)
+            .unwrap();
+        let imports = component["imports"].as_array().unwrap();
+        assert_eq!(
+            imports
+                .iter()
+                .any(|import| import["ffqn"] == "app:target/api.run"),
+            typed,
+            "{name}: {component}"
+        );
+        assert_eq!(
+            imports.iter().any(|import| import["ffqn"]
+                .as_str()
+                .unwrap()
+                .contains("-dynamic-support@")),
+            dynamic.is_some(),
+            "{name}: {component}"
+        );
+        if let Some(kind) = dynamic {
+            assert!(
+                imports.iter().any(|import| import["ffqn"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with(&format!("obelisk:{kind}/{kind}-dynamic-support@"))),
+                "{name}: {component}"
+            );
+        }
+    }
+    server.shutdown().await;
+}
+
 #[tokio::test]
 async fn list_components_webapi_by_explicit_deployment_id() {
     let server = TestServer::start(test_addr!(40_100)).await;

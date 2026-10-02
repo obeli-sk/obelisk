@@ -2,7 +2,7 @@
 
 use super::webhook_trigger::{WebhookEndpointCtx, WebhookEndpointJsConfig, types};
 use crate::component_logger::log_activities::obelisk::log::log::Host as LogHost;
-use crate::js_imports::NamedFnImport;
+use crate::js_imports::{JsDispatchPolicy, NamedFnImport};
 use concepts::IfcFqnName;
 use deno_core::{
     ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader, ModuleSource,
@@ -44,6 +44,7 @@ pub(super) enum NativeWebhookFailure {
 }
 
 struct HostState {
+    dispatch_policy: JsDispatchPolicy,
     ctx: usize,
     handle: tokio::runtime::Handle,
     env: HashMap<String, String>,
@@ -221,6 +222,11 @@ fn op_webhook_host_inner(
     backtrace: Option<concepts::storage::WasmBacktrace>,
 ) -> Result<serde_json::Value, JsErrorBox> {
     let host = state.borrow_mut::<HostState>();
+    if matches!(request.op.as_str(), "call" | "schedule") {
+        host.dispatch_policy
+            .check(string_arg(&request.args, "target")?)
+            .map_err(JsErrorBox::type_error)?;
+    }
     // Capture the ctx as a `usize` so the spawned future is `Send`.
     let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx()) as usize;
     let future = async move {
@@ -302,7 +308,14 @@ pub(super) async fn execute(
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
     max_heap_size: Option<usize>,
 ) -> Result<NativeResponse, NativeWebhookFailure> {
-    let loader = Rc::new(InMemoryModuleLoader::new(&config.files, imports));
+    let dispatch_policy =
+        JsDispatchPolicy::new(&config.files, imports, "obelisk:webhook-dynamic@1.0.0")
+            .map_err(NativeWebhookFailure::CannotInstantiate)?;
+    let loader = Rc::new(InMemoryModuleLoader::new(
+        &config.files,
+        imports,
+        dispatch_policy.dynamic,
+    ));
     let (mut runtime, heap) = crate::v8_heap::new_runtime(
         RuntimeOptions {
             module_loader: Some(loader.clone()),
@@ -321,6 +334,7 @@ pub(super) async fn execute(
         ctx,
         handle,
         isolate_tx,
+        dispatch_policy,
     )
     .await;
     if heap.exhausted() {
@@ -342,11 +356,13 @@ async fn execute_inner(
     ctx: &mut WebhookEndpointCtx,
     handle: tokio::runtime::Handle,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
+    dispatch_policy: JsDispatchPolicy,
 ) -> Result<NativeResponse, NativeWebhookFailure> {
     let isolate = runtime.v8_isolate().thread_safe_handle();
     let _ = isolate_tx.send(isolate.clone());
     let panic = crate::v8_panic::V8PanicState::new(isolate);
     runtime.op_state().borrow_mut().put(HostState {
+        dispatch_policy,
         ctx: std::ptr::from_mut(ctx) as usize,
         handle,
         env,
@@ -685,6 +701,7 @@ impl InMemoryModuleLoader {
     fn new(
         files: &BTreeMap<String, String>,
         imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
+        dynamic_enabled: bool,
     ) -> Self {
         let mut sources = HashMap::new();
         let mut paths = HashMap::new();
@@ -694,11 +711,14 @@ impl InMemoryModuleLoader {
             sources.insert(specifier.to_string(), source.clone());
             paths.insert(path.clone(), specifier);
         }
-        sources.insert("obelisk:webhook@1.0.0".into(), WEBHOOK_MODULE.into());
-        sources.insert(
-            "obelisk:webhook-dynamic@1.0.0".into(),
-            WEBHOOK_DYNAMIC_MODULE.into(),
-        );
+        sources.insert("obelisk-internal:webhook".into(), WEBHOOK_MODULE.into());
+        sources.insert("obelisk:webhook@1.0.0".into(), WEBHOOK_BASE_MODULE.into());
+        if dynamic_enabled {
+            sources.insert(
+                "obelisk:webhook-dynamic@1.0.0".into(),
+                WEBHOOK_DYNAMIC_MODULE.into(),
+            );
+        }
         for (specifier, functions) in imports {
             sources.insert(
                 specifier.to_string(),
@@ -720,11 +740,19 @@ impl ModuleLoader for InMemoryModuleLoader {
         referrer: &str,
         _kind: ResolutionKind,
     ) -> Result<ModuleSpecifier, JsErrorBox> {
-        if self.sources.contains_key(specifier) {
+        let resolved = if self.sources.contains_key(specifier) {
             ModuleSpecifier::parse(specifier).map_err(JsErrorBox::from_err)
         } else {
             resolve_import(specifier, referrer).map_err(JsErrorBox::from_err)
+        }?;
+        if resolved.as_str() == "obelisk-internal:webhook"
+            && (referrer.starts_with("file:") || !self.sources.contains_key(referrer))
+        {
+            return Err(JsErrorBox::type_error(
+                "internal module is unavailable to user code",
+            ));
         }
+        Ok(resolved)
     }
 
     fn load(
@@ -766,27 +794,27 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
         writeln!(exports, "const {binding}Target = {}; const {binding} = {}; export {{ {binding} as {} }};", serde_json::to_string(&target).unwrap(), body.replace("TARGET", &format!("{binding}Target")), function.js_name).unwrap();
         exports
     });
-    format!(
-        "import 'obelisk:webhook@1.0.0'; const host=globalThis.__obeliskHost; const unwrap=globalThis.__obeliskUnwrap;\n{exports}"
-    )
+    format!("import {{ host, unwrap }} from 'obelisk-internal:webhook';\n{exports}")
 }
 
 const WEBHOOK_MODULE: &str = r"
-const host = (op, args = {}) => { if (args.schedule instanceof Date) args = { ...args, schedule: { atMillis: args.schedule.getTime() } }; return Deno.core.ops.op_webhook_host({ op, args: { ...args, __stack: new Error().stack } }); };
+export const host = (op, args = {}) => { if (args.schedule instanceof Date) args = { ...args, schedule: { atMillis: args.schedule.getTime() } }; return Deno.core.ops.op_webhook_host({ op, args: { ...args, __stack: new Error().stack } }); };
 export class ChildError extends Error { constructor(value, options = {}) { super(options.message ?? 'child execution failed'); this.value = value; this.childId = options.childId; this.failureKind = options.failureKind; this.cancelled = options.cancelled ?? false; } }
-const unwrap = result => { if ('ok' in result) return result.ok; if (result.pending) return undefined; throw new ChildError(result.throwUndefined ? undefined : result.throw, result); };
+export const unwrap = result => { if ('ok' in result) return result.ok; if (result.pending) return undefined; throw new ChildError(result.throwUndefined ? undefined : result.throw, result); };
 export const executionIdGenerate = () => host('executionIdGenerate');
 export const executionIdCurrent = () => host('executionIdCurrent');
 export const getStatus = executionId => host('getStatus', { executionId });
 export const get = executionId => unwrap(host('get', { executionId }));
 export const tryGet = executionId => unwrap(host('tryGet', { executionId }));
-globalThis.__obeliskHost = host; globalThis.__obeliskUnwrap = unwrap; globalThis.__obeliskChildError = ChildError;
+";
+
+const WEBHOOK_BASE_MODULE: &str = r"
+export { executionIdGenerate, executionIdCurrent, getStatus, get, tryGet, ChildError } from 'obelisk-internal:webhook';
 ";
 
 const WEBHOOK_DYNAMIC_MODULE: &str = r"
-import 'obelisk:webhook@1.0.0';
-const host = globalThis.__obeliskHost;
-export const call = (target, params) => globalThis.__obeliskUnwrap(host('call', { target, params }));
+import { host, unwrap } from 'obelisk-internal:webhook';
+export const call = (target, params) => unwrap(host('call', { target, params }));
 export const schedule = (executionId, target, params, schedule) => host('schedule', { executionId, target, params, schedule });
 ";
 

@@ -5,7 +5,7 @@
 //! and expand each referenced interface into the full set of function bindings
 //! the synthetic module needs to expose.
 
-use boa_engine::ast::declaration::ImportName;
+use boa_engine::ast::declaration::{ExportEntry, ImportName, ReExportImportName};
 use concepts::{ComponentType, FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns};
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -80,7 +80,7 @@ pub const WORKFLOW_BUILTIN_MODULES: &[BuiltinModule] = &[
     },
     BuiltinModule {
         specifier: "obelisk:workflow-dynamic@1.0.0",
-        exports: &["call", "schedule"],
+        exports: &["call", "schedule", "submit"],
         listed_imports: Some(&WORKFLOW_DYNAMIC_SUPPORT),
     },
 ];
@@ -176,9 +176,36 @@ fn extract_and_verify<'a, 'm>(
     let mut referenced: HashMap<IfcFqnName, &PackageIfcFns> = HashMap::new();
     let mut used_builtin_modules = Vec::new();
 
-    for entry in module.items().import_entries() {
+    let named_imports = module
+        .items()
+        .import_entries()
+        .into_iter()
+        .filter_map(|entry| {
+            if let ImportName::Name(name) = entry.import_name() {
+                Some((entry.module_request(), name))
+            } else {
+                None
+            }
+        })
+        .chain(
+            module
+                .items()
+                .export_entries()
+                .into_iter()
+                .filter_map(|entry| {
+                    if let ExportEntry::ReExport(entry) = entry
+                        && let ReExportImportName::Name(name) = entry.import_name()
+                    {
+                        Some((entry.module_request(), name))
+                    } else {
+                        None
+                    }
+                }),
+        )
+        .collect::<Vec<_>>();
+    for request in module.items().requests() {
         let specifier = interner
-            .resolve_expect(entry.module_request())
+            .resolve_expect(request)
             .utf8()
             .ok_or_else(|| "import specifier is not valid UTF-8".to_string())?;
 
@@ -191,8 +218,11 @@ fn extract_and_verify<'a, 'm>(
                 .iter()
                 .find(|module| module.specifier == specifier)
             {
-                if let ImportName::Name(sym) = entry.import_name() {
-                    let name = interner.resolve_expect(sym).utf8().ok_or_else(|| {
+                for (_, sym) in named_imports
+                    .iter()
+                    .filter(|(module, _)| *module == request)
+                {
+                    let name = interner.resolve_expect(*sym).utf8().ok_or_else(|| {
                         format!("imported name from `{specifier}` is not valid UTF-8")
                     })?;
                     if !module.exports.contains(&name) {
@@ -220,9 +250,12 @@ fn extract_and_verify<'a, 'm>(
             .find(|pkg| pkg.ifc_fqn == ifc_fqn)
             .ok_or_else(|| format!("interface `{ifc_fqn}` not found for import"))?;
 
-        if let ImportName::Name(sym) = entry.import_name() {
+        for (_, sym) in named_imports
+            .iter()
+            .filter(|(module, _)| *module == request)
+        {
             let js_name = interner
-                .resolve_expect(sym)
+                .resolve_expect(*sym)
                 .utf8()
                 .ok_or_else(|| format!("imported name from `{specifier}` is not valid UTF-8"))?;
             verify_named_import(js_name, ifc)?;
@@ -234,6 +267,71 @@ fn extract_and_verify<'a, 'm>(
         interfaces: referenced,
         builtin_modules: used_builtin_modules,
     })
+}
+
+#[derive(Clone)]
+pub(crate) struct JsDispatchPolicy {
+    pub(crate) dynamic: bool,
+    targets: std::collections::HashSet<concepts::FunctionFqn>,
+}
+
+impl JsDispatchPolicy {
+    pub(crate) fn new(
+        files: &std::collections::BTreeMap<String, String>,
+        imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
+        dynamic_module: &str,
+    ) -> Result<Self, String> {
+        use worker_common::js_imports::{
+            EXT_SUFFIX, SCHEDULE_SUFFIX, STUB_SUFFIX, strip_specifier_suffix,
+        };
+        let dynamic = boa_common::imports::declared_modules(files.values().map(String::as_str))?
+            .contains(dynamic_module);
+        let mut targets = std::collections::HashSet::new();
+        for (specifier, functions) in imports {
+            let specifier = specifier.to_string();
+            let extension = [
+                (SCHEDULE_SUFFIX, &["-schedule"][..]),
+                (EXT_SUFFIX, &["-submit", "-await-next", "-get"][..]),
+                (STUB_SUFFIX, &["-stub"][..]),
+            ]
+            .into_iter()
+            .find_map(|(suffix, names)| {
+                strip_specifier_suffix(&specifier, suffix).map(|base| (base, names))
+            });
+            for function in functions {
+                let (interface, name) = if let Some((base, suffixes)) = &extension {
+                    let name = suffixes
+                        .iter()
+                        .find_map(|suffix| function.wit_name.strip_suffix(suffix))
+                        .ok_or_else(|| {
+                            format!("invalid extension function: {}", function.wit_name)
+                        })?;
+                    (base.as_str(), name)
+                } else {
+                    (specifier.as_str(), function.wit_name.as_str())
+                };
+                targets.insert(
+                    format!("{interface}.{name}")
+                        .parse()
+                        .map_err(|err| format!("invalid target: {err}"))?,
+                );
+            }
+        }
+        Ok(Self { dynamic, targets })
+    }
+
+    pub(crate) fn check(&self, target: &str) -> Result<(), String> {
+        let target = target
+            .parse::<concepts::FunctionFqn>()
+            .map_err(|err| format!("invalid target: {err}"))?;
+        if self.dynamic || self.targets.contains(&target) {
+            Ok(())
+        } else {
+            Err(format!(
+                "undeclared target `{target}`; import its interface or the dynamic module"
+            ))
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -376,6 +474,77 @@ mod tests {
     fn dynamic_support_is_not_empty() {
         assert!(!WORKFLOW_DYNAMIC_SUPPORT.is_empty());
         assert!(!WEBHOOK_DYNAMIC_SUPPORT.is_empty());
+    }
+
+    #[test]
+    fn import_policy_counts_all_static_module_declarations() {
+        let registry = fn_registry_dummy(&[FunctionFqn::new_static("app:act/api", "get")]);
+        for (modules, specifier, dynamic_ifc) in [
+            (
+                WORKFLOW_BUILTIN_MODULES,
+                "obelisk:workflow-dynamic@1.0.0",
+                "obelisk:workflow/workflow-dynamic-support@7.0.0",
+            ),
+            (
+                WEBHOOK_BUILTIN_MODULES,
+                "obelisk:webhook-dynamic@1.0.0",
+                "obelisk:webhook/webhook-dynamic-support@7.0.0",
+            ),
+        ] {
+            for declaration in [
+                format!("import '{specifier}';"),
+                format!("import {{}} from '{specifier}';"),
+                format!("export {{call as invoke}} from '{specifier}';"),
+                format!("export * from '{specifier}';"),
+                format!("export * as dynamic from '{specifier}';"),
+            ] {
+                let sources = [
+                    "import './helper.js'; import 'app:act/api';",
+                    declaration.as_str(),
+                ];
+                let imports =
+                    js_component_imports(sources, registry.all_exports(), modules).unwrap();
+                assert!(
+                    imports
+                        .iter()
+                        .any(|function| function.ffqn.ifc_fqn.to_string() == dynamic_ifc),
+                    "{declaration}"
+                );
+                assert!(
+                    imports
+                        .iter()
+                        .any(|function| function.ffqn.to_string() == "app:act/api.get")
+                );
+                let files = sources
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, source)| (format!("{i}.js"), source.to_string()))
+                    .collect();
+                let policy = JsDispatchPolicy::new(&files, &HashMap::new(), specifier).unwrap();
+                assert!(policy.dynamic);
+            }
+            let imports = js_component_imports(
+                [format!("export default () => import('{specifier}');").as_str()],
+                registry.all_exports(),
+                modules,
+            )
+            .unwrap();
+            assert!(imports.is_empty());
+            let err = extract_and_verify(
+                &format!("export {{unknown}} from '{specifier}';"),
+                registry.all_exports(),
+                modules,
+            )
+            .unwrap_err();
+            assert!(err.contains("export `unknown` not found"));
+        }
+        let err = extract_and_verify(
+            "export { missing } from 'app:act/api';",
+            registry.all_exports(),
+            WORKFLOW_BUILTIN_MODULES,
+        )
+        .unwrap_err();
+        assert!(err.contains("function `app:act/api.missing`"));
     }
 
     #[test]
