@@ -22,6 +22,7 @@ mod crypto;
 mod greet_activity;
 mod multifile;
 mod util;
+mod v8_heap;
 mod webhook_js;
 mod workflow_cancellation;
 

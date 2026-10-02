@@ -13,9 +13,9 @@ use concepts::{
     ResultParsingErrorFromVal, ReturnTypeExtendable, SupportedFunctionReturnValue, TrapKind,
 };
 use deno_core::{
-    JsRuntime, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
-    ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, PollEventLoopOptions,
-    ResolutionKind, RuntimeOptions, op2, resolve_import, v8,
+    ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader, ModuleSource,
+    ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, PollEventLoopOptions, ResolutionKind,
+    RuntimeOptions, op2, resolve_import, v8,
 };
 use deno_error::JsErrorBox;
 use serde_json::{Value, json};
@@ -636,29 +636,53 @@ async fn execute(
     handle: MainRuntimeHandle,
     max_heap_size: Option<usize>,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
-    let ExecuteArgs {
-        entry_path,
-        files,
-        params,
-        return_type,
-        resolved_imports,
-    } = args;
-    let loader = Rc::new(InMemoryModuleLoader::new(files, resolved_imports));
+    let loader = Rc::new(InMemoryModuleLoader::new(args.files, args.resolved_imports));
     // Declaration order keeps callback data alive through isolate teardown and queued interrupts.
     #[allow(clippy::needless_late_init)]
     let interrupt_data;
     let _interrupt_guard;
-    let mut runtime = JsRuntime::new(RuntimeOptions {
-        module_loader: Some(loader.clone()),
-        extensions: vec![obelisk_v8::init()],
-        create_params: Some(
-            max_heap_size.map_or_else(deno_core::v8::CreateParams::default, |max| {
-                deno_core::v8::CreateParams::default().heap_limits(0, max)
-            }),
-        ),
-        startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
-        ..Default::default()
+    let (mut runtime, heap) = crate::v8_heap::new_runtime(
+        RuntimeOptions {
+            module_loader: Some(loader.clone()),
+            extensions: vec![obelisk_v8::init()],
+            startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
+            ..Default::default()
+        },
+        max_heap_size,
+    );
+    let isolate = runtime.v8_isolate().thread_safe_handle();
+    interrupt_data = Box::new(V8InterruptData {
+        workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
+        handle: isolate.clone(),
     });
+    _interrupt_guard = crate::v8_interrupt_ticker::register(
+        isolate,
+        v8_interrupt_callback,
+        std::ptr::from_ref(interrupt_data.as_ref()).cast(),
+    );
+
+    let result = execute_inner(&mut runtime, &loader, args, workflow_ctx, handle).await;
+    if heap.exhausted() {
+        Err(NativeV8Failure::Trap(crate::v8_heap::EXHAUSTED.into()))
+    } else {
+        result
+    }
+}
+
+async fn execute_inner(
+    runtime: &mut deno_core::JsRuntime,
+    loader: &InMemoryModuleLoader,
+    args: ExecuteArgs<'_>,
+    workflow_ctx: &mut WorkflowCtx,
+    handle: MainRuntimeHandle,
+) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
+    let ExecuteArgs {
+        entry_path,
+        params,
+        return_type,
+        ..
+    } = args;
+
     let isolate = runtime.v8_isolate().thread_safe_handle();
     let panic = crate::v8_panic::V8PanicState::new(isolate.clone());
     runtime.op_state().borrow_mut().put(HostState {
@@ -671,15 +695,6 @@ async fn execute(
         panic_version: None,
         user_module_paths: loader.user_module_paths(),
     });
-    interrupt_data = Box::new(V8InterruptData {
-        workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
-        handle: isolate.clone(),
-    });
-    _interrupt_guard = crate::v8_interrupt_ticker::register(
-        isolate,
-        v8_interrupt_callback,
-        std::ptr::from_ref(interrupt_data.as_ref()).cast(),
-    );
 
     let params = params
         .as_json_values()

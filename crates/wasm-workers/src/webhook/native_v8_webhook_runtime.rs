@@ -5,9 +5,9 @@ use crate::component_logger::log_activities::obelisk::log::log::Host as LogHost;
 use crate::js_imports::NamedFnImport;
 use concepts::IfcFqnName;
 use deno_core::{
-    JsRuntime, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
-    ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, ResolutionKind,
-    RuntimeOptions, op2, resolve_import, v8,
+    ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader, ModuleSource,
+    ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, ResolutionKind, RuntimeOptions, op2,
+    resolve_import, v8,
 };
 use deno_error::JsErrorBox;
 use hmac::{Hmac, Mac as _};
@@ -303,17 +303,46 @@ pub(super) async fn execute(
     max_heap_size: Option<usize>,
 ) -> Result<NativeResponse, NativeWebhookFailure> {
     let loader = Rc::new(InMemoryModuleLoader::new(&config.files, imports));
-    let mut runtime = JsRuntime::new(RuntimeOptions {
-        module_loader: Some(loader.clone()),
-        extensions: vec![obelisk_webhook_v8::init()],
-        create_params: Some(
-            max_heap_size.map_or_else(deno_core::v8::CreateParams::default, |max| {
-                deno_core::v8::CreateParams::default().heap_limits(0, max)
-            }),
-        ),
-        startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
-        ..Default::default()
-    });
+    let (mut runtime, heap) = crate::v8_heap::new_runtime(
+        RuntimeOptions {
+            module_loader: Some(loader.clone()),
+            extensions: vec![obelisk_webhook_v8::init()],
+            startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
+            ..Default::default()
+        },
+        max_heap_size,
+    );
+    let result = execute_inner(
+        &mut runtime,
+        &loader,
+        &config.entry_path,
+        request,
+        env,
+        ctx,
+        handle,
+        isolate_tx,
+    )
+    .await;
+    if heap.exhausted() {
+        Err(NativeWebhookFailure::Execution(
+            crate::v8_heap::EXHAUSTED.into(),
+        ))
+    } else {
+        result
+    }
+}
+
+#[expect(clippy::too_many_arguments)]
+async fn execute_inner(
+    runtime: &mut deno_core::JsRuntime,
+    loader: &InMemoryModuleLoader,
+    entry_path: &str,
+    request: NativeRequest,
+    env: HashMap<String, String>,
+    ctx: &mut WebhookEndpointCtx,
+    handle: tokio::runtime::Handle,
+    isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
+) -> Result<NativeResponse, NativeWebhookFailure> {
     let isolate = runtime.v8_isolate().thread_safe_handle();
     let _ = isolate_tx.send(isolate.clone());
     let panic = crate::v8_panic::V8PanicState::new(isolate);
@@ -327,11 +356,9 @@ pub(super) async fn execute(
     runtime
         .execute_script("obelisk:webhook-bootstrap", WEBHOOK_BOOTSTRAP)
         .map_err(|err| NativeWebhookFailure::CannotInstantiate(err.to_string()))?;
-    let entry = loader
-        .specifier_for_path(&config.entry_path)
-        .ok_or_else(|| {
-            NativeWebhookFailure::CannotInstantiate("JavaScript entry module was not found".into())
-        })?;
+    let entry = loader.specifier_for_path(entry_path).ok_or_else(|| {
+        NativeWebhookFailure::CannotInstantiate("JavaScript entry module was not found".into())
+    })?;
     let main = ModuleSpecifier::parse("obelisk-main:webhook")
         .map_err(|err| NativeWebhookFailure::CannotInstantiate(err.to_string()))?;
     let source = format!(

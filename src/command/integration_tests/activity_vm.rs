@@ -623,7 +623,7 @@ set -eu
 while read -r key value _; do
   [[ $key == MemTotal: ]] && total=$value
 done < /proc/meminfo
-head -c 600000000 /dev/zero > /tmp/fill
+head -c 300000000 /dev/zero > /tmp/fill
 printf '%s\n' "$total"
 '''
 params = []
