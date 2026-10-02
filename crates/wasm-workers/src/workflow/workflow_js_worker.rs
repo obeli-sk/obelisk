@@ -1956,6 +1956,30 @@ mod tests {
             return_type: ReturnTypeExtendable,
             max_persisted_value_size_bytes: u64,
         ) -> Self {
+            Self::new_with_runtime(
+                db_pool,
+                js_source,
+                fn_name,
+                activities,
+                join_next_blocking_strategy,
+                return_type,
+                max_persisted_value_size_bytes,
+                WorkflowJsRuntimeExt::V8(V8Executor::default()),
+            )
+            .await
+        }
+
+        #[expect(clippy::too_many_arguments)]
+        async fn new_with_runtime(
+            db_pool: Arc<dyn DbPool>,
+            js_source: &str,
+            fn_name: &'static str,
+            activities: TestActivities,
+            join_next_blocking_strategy: JoinNextBlockingStrategy,
+            return_type: ReturnTypeExtendable,
+            max_persisted_value_size_bytes: u64,
+            runtime: WorkflowJsRuntimeExt,
+        ) -> Self {
             use crate::activity::activity_worker::test::compile_activity_stub;
 
             let sim_clock = SimClock::epoch();
@@ -1999,19 +2023,22 @@ mod tests {
             let workflow_engine =
                 Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let (worker, component_id, _runnable_component) =
-                compile_js_workflow_worker_with_deployment_id_and_return_type(
+                compile_js_workflow_worker_with_deployment_id_and_signature(
                     js_source,
                     &user_ffqn,
                     db_pool.clone(),
                     sim_clock.clone_box().as_ref(),
                     fn_registry,
+                    runtime,
                     workflow_engine,
                     DEPLOYMENT_ID_DUMMY,
                     join_next_blocking_strategy,
                     deadline_factory,
+                    &single_list_of_strings_params(),
                     return_type,
                     usize::MAX,
                     usize::MAX,
+                    None,
                 );
 
             let (workflow_exec, workflow_close_tx) =
@@ -2089,6 +2116,7 @@ mod tests {
         DirectImport,
         JoinNext,
         JoinNextTry,
+        GetResult,
     }
 
     impl ChildErrorAwaitStyle {
@@ -2113,6 +2141,15 @@ mod tests {
                         projection.params_json()
                     ),
                     "js.joinNextTry();\nthrow 'expected ChildError';".to_string(),
+                ),
+                Self::GetResult => (
+                    "",
+                    format!(
+                        "const js = obelisk.createJoinSet();\nconst id = js.submit('{}', {});\ntry {{ js.joinNext(); }} catch (e) {{ if (!(e instanceof obelisk.ChildError)) throw e; }}",
+                        projection.target_ffqn(),
+                        projection.params_json()
+                    ),
+                    "obelisk.getResult(id);".to_string(),
                 ),
             };
             let value_assertion = projection.value_assertion();
@@ -2223,7 +2260,8 @@ mod tests {
         #[values(
             ChildErrorAwaitStyle::DirectImport,
             ChildErrorAwaitStyle::JoinNext,
-            ChildErrorAwaitStyle::JoinNextTry
+            ChildErrorAwaitStyle::JoinNextTry,
+            ChildErrorAwaitStyle::GetResult
         )]
         await_style: ChildErrorAwaitStyle,
         #[values(
@@ -2232,11 +2270,12 @@ mod tests {
             ChildErrProjection::ExecutionFailedVariant
         )]
         projection: ChildErrProjection,
+        #[values(WorkflowJsRuntime::BoaWasm, WorkflowJsRuntime::V8)] runtime: WorkflowJsRuntime,
     ) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
         let js_source = await_style.js_source(projection);
-        let harness = JsWorkflowTestHarness::new_with_return_type(
+        let harness = JsWorkflowTestHarness::new_with_runtime(
             db_pool,
             &js_source,
             "test-child-error",
@@ -2244,6 +2283,10 @@ mod tests {
             JoinNextBlockingStrategy::Interrupt,
             projection.parent_return_type(),
             u64::MAX,
+            match runtime {
+                WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
+                WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Executor::default()),
+            },
         )
         .await;
 
@@ -3032,6 +3075,90 @@ mod tests {
 
         let result = harness.get_result_json().await;
         assert_eq!(json!(true), result["done"]);
+        drop(harness);
+        db_close.close().await;
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_get_result(
+        #[values(WorkflowJsRuntime::BoaWasm, WorkflowJsRuntime::V8)] runtime: WorkflowJsRuntime,
+        #[values(false, true)] child_fails: bool,
+    ) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let js_source = format!(
+            r"
+        import {{ createJoinSet, getResult, stub, executionIdCurrent, ChildError }} from 'obelisk:workflow@1.0.0';
+        export default function get_result(_params) {{
+            function retrievalError(id) {{
+                try {{ getResult(id); return null; }}
+                catch (e) {{ return {{ childError: e instanceof ChildError, message: e.message }}; }}
+            }}
+            const invalid = retrievalError('invalid');
+            const topLevel = retrievalError(executionIdCurrent());
+            const js = createJoinSet();
+            const id = js.submit('testing:stub-activity/activity.foo', ['test']);
+            const unprocessed = retrievalError(id);
+            stub(id, {stub_result});
+            const completedUnprocessed = retrievalError(id);
+            try {{ js.joinNext(); }} catch (e) {{ if (!(e instanceof ChildError)) throw e; }}
+            function retrieve() {{
+                try {{ return {{ ok: getResult(id) }}; }}
+                catch (e) {{ return {{
+                    childError: e instanceof ChildError,
+                    undefinedValue: e.value === undefined,
+                    childIdMatches: e.childId === id,
+                    cancelled: e.cancelled,
+                    failureKind: e.failureKind ?? null
+                }}; }}
+            }}
+            const first = retrieve();
+            js.close();
+            return JSON.stringify({{ invalid, topLevel, unprocessed, completedUnprocessed, first, afterClose: retrieve() }});
+        }}",
+            stub_result = if child_fails {
+                "{ err: null }"
+            } else {
+                "{ ok: 'retrieved' }"
+            },
+        );
+        let harness = JsWorkflowTestHarness::new_with_runtime(
+            db_pool,
+            &js_source,
+            "get-result",
+            TestActivities::Stub,
+            JoinNextBlockingStrategy::Interrupt,
+            default_return_type(),
+            u64::MAX,
+            match runtime {
+                WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
+                WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Executor::default()),
+            },
+        )
+        .await;
+        harness.tick().await;
+        harness.tick().await;
+        let result = harness.get_result_json().await;
+        for key in ["invalid", "topLevel", "unprocessed", "completedUnprocessed"] {
+            assert_eq!(result[key]["childError"], json!(false), "{result}");
+            let message = result[key]["message"].as_str().unwrap();
+            assert!(message.contains("Failed to get result:"), "{message}");
+            let expected = if key == "invalid" || key == "topLevel" {
+                "ExecutionIdParsingError"
+            } else {
+                "NotFoundInProcessedResponses"
+            };
+            assert!(message.contains(expected), "{message}");
+        }
+        let expected = if child_fails {
+            json!({ "childError": true, "undefinedValue": true, "childIdMatches": true,
+                "cancelled": false, "failureKind": null })
+        } else {
+            json!({ "ok": "retrieved" })
+        };
+        assert_eq!(result["first"], expected);
+        assert_eq!(result["afterClose"], expected);
         drop(harness);
         db_close.close().await;
     }

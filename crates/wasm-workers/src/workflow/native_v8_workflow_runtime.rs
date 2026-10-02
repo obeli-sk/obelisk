@@ -411,6 +411,28 @@ fn op_obelisk_host_inner(
                 host.context(),
             ))
         }
+        "getResult" => {
+            use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::GetResultJsonError;
+
+            let execution_id = string_arg(&args, "executionId")?;
+            let derived = match execution_id.parse::<concepts::ExecutionId>() {
+                Ok(concepts::ExecutionId::Derived(derived)) => Ok(derived),
+                Ok(concepts::ExecutionId::TopLevel(_)) => {
+                    Err(GetResultJsonError::ExecutionIdParsingError(
+                        "must not be a top-level execution id".to_string(),
+                    ))
+                }
+                Err(err) => Err(GetResultJsonError::ExecutionIdParsingError(err.to_string())),
+            };
+            let outcome = derived
+                .and_then(|derived| host.context().get_result_json(&derived))
+                .map_err(|err| JsErrorBox::generic(format!("Failed to get result: {err:?}")))?;
+            Ok(outcome_envelope_with_id_and_kind(
+                outcome,
+                Some(execution_id.to_owned()),
+                host.context(),
+            ))
+        }
         "submit" => {
             let join_set_id = join_set(host, &args)?;
             let target = string_arg(&args, "target")?
@@ -1113,6 +1135,7 @@ globalThis.console = Object.fromEntries(['trace', 'debug', 'info', 'log', 'warn'
 const scheduleValue = value => value instanceof nativeDate ? { atMillis: value.getTime() } : value;
 export const executionIdCurrent = () => host('executionIdCurrent');
 export const executionIdGenerate = () => host('executionIdGenerate');
+export const getResult = executionId => unwrapHost(host('getResult', { executionId }));
 export const call = (target, params) => unwrapHost(host('call', { target, params }));
 export const schedule = (executionId, target, params, schedule) => host('schedule', { executionId, target, params, schedule: scheduleValue(schedule) });
 export const sleep = (schedule, name) => new nativeDate(host('sleep', { schedule: scheduleValue(schedule), name }));
