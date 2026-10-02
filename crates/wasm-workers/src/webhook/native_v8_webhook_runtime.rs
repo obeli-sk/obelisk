@@ -635,6 +635,13 @@ fn schedule_arg(
     let Some(schedule) = schedule.filter(|value| !value.is_null()) else {
         return Ok(ScheduleAt::Now);
     };
+    if let Some(millis) = schedule.get("atMillis").and_then(Value::as_f64) {
+        let millis = millis.max(0.0) as u64;
+        return Ok(ScheduleAt::At(types::obelisk::types::time::Datetime {
+            seconds: millis / 1000,
+            nanoseconds: u32::try_from(millis % 1000).unwrap() * 1_000_000,
+        }));
+    }
     if let Some(milliseconds) = schedule.get("milliseconds").and_then(Value::as_u64) {
         return Ok(ScheduleAt::In(Duration::Milliseconds(milliseconds)));
     }
@@ -760,7 +767,7 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
 }
 
 const WEBHOOK_MODULE: &str = r"
-const host = (op, args = {}) => Deno.core.ops.op_webhook_host({ op, args: { ...args, __stack: new Error().stack } });
+const host = (op, args = {}) => { if (args.schedule instanceof Date) args = { ...args, schedule: { atMillis: args.schedule.getTime() } }; return Deno.core.ops.op_webhook_host({ op, args: { ...args, __stack: new Error().stack } }); };
 export class ChildError extends Error { constructor(value, options = {}) { super(options.message ?? 'child execution failed'); this.value = value; this.childId = options.childId; this.failureKind = options.failureKind; this.cancelled = options.cancelled ?? false; } }
 const unwrap = result => { if ('ok' in result) return result.ok; if (result.pending) return undefined; throw new ChildError(result.throwUndefined ? undefined : result.throw, result); };
 export const executionIdGenerate = () => host('executionIdGenerate');

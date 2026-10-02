@@ -4017,6 +4017,155 @@ mod tests {
         db_close.close().await;
     }
 
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_date_contract_replays(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let js_source = r"
+        export default function run() {
+            const called = Date(999);
+            const constructed = new Date();
+            const now = Date.now();
+            class DerivedDate extends Date {}
+            const derived = new DerivedDate();
+            obelisk.sleep(new Date(1042));
+            return JSON.stringify({
+                calledMatches: called === new Date(42).toString(),
+                constructed: constructed.getTime(), now,
+                derived: derived.getTime(),
+                instances: derived instanceof DerivedDate && derived instanceof Date && constructed instanceof Date,
+                constructor: constructed.constructor === Date,
+                explicit: new Date(123).getTime(),
+                utc: Date.UTC(1970, 0, 1),
+                parsed: Date.parse('1970-01-01T00:00:00.123Z'),
+                invalid: Number.isNaN(new Date(undefined).getTime()),
+            });
+        }";
+        let harness = JsWorkflowTestHarness::with_no_activities(
+            db_pool.clone(),
+            js_source,
+            "date-contract-replays",
+        )
+        .await;
+        harness.advance_time(Duration::from_millis(42)).await;
+        for _ in 0..6 {
+            harness.tick().await;
+            harness.advance_time(Duration::ZERO).await;
+        }
+        harness.advance_time(Duration::from_millis(1000)).await;
+        harness.tick().await;
+        assert_eq!(
+            harness.get_result_json().await,
+            json!({
+                "calledMatches": true, "constructed": 42, "now": 42, "derived": 42,
+                "instances": true, "constructor": true, "explicit": 123, "utc": 0, "parsed": 123, "invalid": true,
+            })
+        );
+        harness.advance_time(Duration::from_hours(24)).await;
+        let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let runnable = RunnableComponent::new(
+            workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME,
+            &engine,
+            ComponentType::Workflow,
+        )
+        .unwrap();
+        let replay_worker = build_js_replay_worker_with_signature(
+            DEPLOYMENT_ID_DUMMY,
+            harness.workflow_exec.config.component_id.clone(),
+            &runnable,
+            engine,
+            TestingFnRegistry::new_from_components(Vec::new()),
+            db_pool.clone(),
+            None,
+            harness.sim_clock.clone_box(),
+            version_obelisk_test_imports(js_source),
+            &FunctionFqn::new_static("test:pkg/ifc", "date-contract-replays"),
+            &single_list_of_strings_params(),
+            default_return_type(),
+            None,
+        );
+        let replay = replay_worker
+            .replay(harness.execution_id.clone(), BacktraceCapture::Disabled)
+            .await
+            .unwrap();
+        let replayed =
+            assert_matches!(replay.response, ReplayResponse::Finished { result } => result);
+        assert_eq!(
+            replayed,
+            harness
+                .db_connection
+                .get_finished_result(&harness.execution_id)
+                .await
+                .unwrap()
+        );
+        drop(replay_worker);
+        drop(harness);
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_date_scheduling(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let js_source = r"
+        import { fiboSchedule } from 'testing:fibo-obelisk-schedule/fibo';
+        import * as dynamic from 'obelisk:workflow-dynamic@1.0.0';
+        export default function run() {
+            const typed = fiboSchedule(new Date(2000000000123), 10);
+            const dynamicId = obelisk.executionIdGenerate();
+            dynamic.schedule(dynamicId, 'testing:fibo/fibo.fibo', [10], new Date(2000000000456));
+            const js = obelisk.createJoinSet('date-delay');
+            js.submitDelay(new Date(142));
+            js.joinNext();
+            js.close();
+            return JSON.stringify({ typed, dynamicId });
+        }";
+        let harness = JsWorkflowTestHarness::new(
+            db_pool.clone(),
+            js_source,
+            "date-scheduling",
+            TestActivities::ChildErrorProjections,
+            JoinNextBlockingStrategy::Interrupt,
+        )
+        .await;
+        harness.advance_time(Duration::from_millis(42)).await;
+        harness.tick().await;
+        let log = harness
+            .db_connection
+            .get(&harness.execution_id)
+            .await
+            .unwrap();
+        assert!(
+            log.events.iter().any(|event| matches!(&event.event,
+                ExecutionRequest::HistoryEvent { event: HistoryEvent::JoinSetRequest {
+                    request: JoinSetRequest::DelayRequest { expires_at, .. }, ..
+                }} if expires_at.timestamp_millis() == 142
+            )),
+            "{log:?}"
+        );
+        harness.advance_time(Duration::from_millis(100)).await;
+        harness.tick().await;
+        let result = harness.get_result_json().await;
+        for (key, millis) in [
+            ("typed", 2_000_000_000_123_i64),
+            ("dynamicId", 2_000_000_000_456),
+        ] {
+            let execution_id = ExecutionId::from_str(result[key].as_str().unwrap()).unwrap();
+            let request = harness
+                .db_connection
+                .get_create_request(&execution_id)
+                .await
+                .unwrap();
+            assert_eq!(request.scheduled_at.timestamp_millis(), millis);
+        }
+        drop(harness);
+        db_close.close().await;
+    }
+
     /// Test: `obelisk.sleep()` returns a `Date` object representing the wake-up time.
     /// - `advance_time(42ms)` → clock=42ms
     /// - `tick()` → workflow calls `sleep({ milliseconds: 100 })`, yields at `expires_at=142ms`

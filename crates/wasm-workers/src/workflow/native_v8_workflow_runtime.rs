@@ -1055,9 +1055,10 @@ fn schedule_arg(args: &Value, name: &str) -> Result<HistoryEventScheduleAt, JsEr
             )));
         }
     }
-    if let Some(millis) = object.get("atMillis").and_then(Value::as_i64) {
+    // serde_v8 represents epoch milliseconds outside the 32-bit range as floats.
+    if let Some(millis) = object.get("atMillis").and_then(Value::as_f64) {
         let datetime = Utc
-            .timestamp_millis_opt(millis)
+            .timestamp_millis_opt(millis as i64)
             .single()
             .ok_or_else(|| JsErrorBox::type_error("schedule Date is invalid"))?;
         return Ok(HistoryEventScheduleAt::At(datetime));
@@ -1101,21 +1102,26 @@ fn anyhow_to_workflow_error(err: wasmtime::Error) -> super::workflow_ctx::Workfl
 }
 
 const WORKFLOW_MODULE: &str = r"
-const host = (op, args = {}) => Deno.core.ops.op_obelisk_host({ op, args });
+const host = (op, args = {}) => { if (args.schedule instanceof nativeDate) args = { ...args, schedule: { atMillis: args.schedule.getTime() } }; return Deno.core.ops.op_obelisk_host({ op, args }); };
 export class ChildError extends Error { constructor(value, options = {}) { super(options.message ?? 'child execution failed'); this.name = 'ChildError'; this.value = value; this.childId = options.childId; this.delayId = options.delayId; this.failureKind = options.failureKind; this.cancelled = options.cancelled ?? false; } }
 export const ChildExecutionError = ChildError;
 export class JoinSetExhaustedError extends Error { constructor(message = 'JoinSetEmpty: all responses processed') { super(message); this.name = 'JoinSetExhaustedError'; this.code = 'OBELISK_JOIN_SET_EXHAUSTED'; } }
 const nativeDate = globalThis.Date;
-globalThis.Date = class Date extends nativeDate { constructor(...args) { super(...(args.length ? args : [host('now')])); } static now() { return host('now'); } };
+const dateNow = function now() { return host('now'); };
+Object.defineProperty(nativeDate, 'now', { value: dateNow });
+globalThis.Date = new Proxy(nativeDate, {
+  apply() { return new nativeDate(dateNow()).toString(); },
+  construct(target, args, newTarget) { return Reflect.construct(target, args.length ? args : [dateNow()], newTarget); },
+});
+Object.defineProperty(nativeDate.prototype, 'constructor', { value: globalThis.Date });
 Math.random = () => randomU64(0, 1000000) / 1000000;
 const format = value => typeof value === 'string' ? value : (() => { try { return JSON.stringify(value); } catch { return String(value); } })();
 globalThis.console = Object.fromEntries(['trace', 'debug', 'info', 'log', 'warn', 'error'].map(level => [level, (...values) => host('log', { level: level === 'log' ? 'info' : level, message: values.map(format).join(' ') })]));
-const scheduleValue = value => value instanceof nativeDate ? { atMillis: value.getTime() } : value;
 export const executionIdCurrent = () => host('executionIdCurrent');
 export const executionIdGenerate = () => host('executionIdGenerate');
 export const call = (target, params) => unwrapHost(host('call', { target, params }));
-export const schedule = (executionId, target, params, schedule) => host('schedule', { executionId, target, params, schedule: scheduleValue(schedule) });
-export const sleep = (schedule, name) => new nativeDate(host('sleep', { schedule: scheduleValue(schedule), name }));
+export const schedule = (executionId, target, params, schedule) => host('schedule', { executionId, target, params, schedule });
+export const sleep = (schedule, name) => new nativeDate(host('sleep', { schedule, name }));
 export const randomU64 = (min, max) => host('randomU64', { min, max });
 export const randomU64Inclusive = (min, max) => host('randomU64Inclusive', { min, max });
 export const randomString = (min, max) => host('randomString', { min, max });
@@ -1128,7 +1134,7 @@ export function createJoinSet(options) {
     id() { return host('joinSetId', { index }); },
     submit(target, params = []) { return host('submit', { index, target, params }); },
     __submitTarget(target, params) { return host('submit', { index, target, params }); },
-    submitDelay(schedule) { return host('submitDelay', { index, schedule: scheduleValue(schedule) }); },
+    submitDelay(schedule) { return host('submitDelay', { index, schedule }); },
     joinNext() { const result = host('joinNext', { index }); if (result.exhausted) throw new JoinSetExhaustedError(); return unwrapHost(result); },
     __joinNextFor(target, name) { const result = host('joinNextFor', { index, target }); if (result.allProcessed) throw new JoinSetExhaustedError(); if (result.mismatch) { const actual = result.mismatch.actualTarget ? ` came from ${result.mismatch.actualTarget}` : ' was a delay'; throw new Error(`${name} failed on ${this.id()}: expected a response from ${target}, but the next response ${result.mismatch.actualId}${actual}`); } return unwrapHost(result); },
     joinNextTry() { const result = host('joinNextTry', { index }); if (result.pending) return undefined; if (result.exhausted) throw new JoinSetExhaustedError(); return unwrapHost(result); },
