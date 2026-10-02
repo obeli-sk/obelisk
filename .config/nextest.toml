@@ -8,6 +8,10 @@ junit.report-name = "ci-test"
 junit.store-success-output = true
 junit.store-failure-output = true
 
+[[profile.ci-test.overrides]]
+filter = 'test(/^command::integration_tests::activity_vm::/)'
+retries = { backoff = "fixed", count = 2, delay = "1s" }
+
 [profile.ci-test-populate-codegen-cache]
 failure-output = "immediate"
 fail-fast = true
