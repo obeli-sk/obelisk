@@ -522,7 +522,8 @@ async fn vm_interruption_case(ip: String, cancel: bool) {
     let server_toml = format!(
         "[[outbound_http.allowed_host]]\npattern = \"http://{authority}\"\nmethods = [\"GET\"]\n"
     );
-    let lock_expiry = if cancel { 120 } else { 6 };
+    // The deadline includes cold VM boot and curl startup on shared CI runners.
+    let lock_expiry = if cancel { 120 } else { 30 };
     let deployment_toml = format!(
         r#"[[activity_vm]]
 memory.mib = 512
@@ -548,7 +549,7 @@ methods = ["GET"]
     let server = TestServer::start_inline_deployment(ip, &server_toml, &deployment_toml, &[]).await;
     let execution_id = server.generate_execution_id().await;
     let follow = server.submit_follow_with_id(&execution_id, "testing:vm/hang.run", vec![]);
-    let observe_and_interrupt = async {
+    let observe_ready = async {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut request = [0_u8; 2048];
         let count = stream.read(&mut request).await.unwrap();
@@ -559,13 +560,21 @@ methods = ["GET"]
             .unwrap();
         let children = vm_processes();
         assert_eq!(children.len(), 1, "expected one running VM: {children:?}");
+        children[0]
+    };
+    let (response, pid) = tokio::time::timeout(Duration::from_secs(60), async {
+        tokio::pin!(follow);
+        let pid = tokio::select! {
+            pid = observe_ready => pid,
+            response = &mut follow => panic!(
+                "VM activity finished before readiness: {}",
+                response.data,
+            ),
+        };
         if cancel {
             server.cancel_execution_with_retries(&execution_id).await;
         }
-        children[0]
-    };
-    let (response, pid) = tokio::time::timeout(Duration::from_secs(30), async {
-        tokio::join!(follow, observe_and_interrupt)
+        (follow.await, pid)
     })
     .await
     .expect("VM activity did not finish after interruption");
