@@ -137,6 +137,8 @@ async fn execute(
         .with_no_client_auth();
     let client = reqwest::Client::builder()
         .use_preconfigured_tls(tls)
+        // Redirect hops must return to the guest so each new request is policy checked.
+        .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let mut outgoing = client.request(parts.method, parts.uri.to_string());
     for (name, value) in &parts.headers {
@@ -308,5 +310,88 @@ mod tests {
         )
         .await;
         assert_eq!(response["status"], 200, "unexpected response: {response}");
+    }
+
+    #[tokio::test]
+    async fn redirects_do_not_bypass_policy() {
+        use wasm_workers::http_request_policy::{PlaceholderSecret, ReplacementLocation};
+
+        let allowed_server = MockServer::start().await;
+        let blocked_server = MockServer::start().await;
+        let destination = format!("{}/capture", blocked_server.uri());
+        let mut policy = policy_allowing(&allowed_server.uri());
+        policy.hosts[0].secrets.push(PlaceholderSecret {
+            name: "credential".to_owned(),
+            placeholder: "SECRET_PLACEHOLDER".to_owned(),
+            real_value: "private-credential".into(),
+            replace_in: [ReplacementLocation::Headers, ReplacementLocation::Body]
+                .into_iter()
+                .collect(),
+        });
+
+        for status in [301, 302, 303, 307, 308] {
+            let path = format!("/redirect-{status}");
+            Mock::given(method("POST"))
+                .and(path_matcher(&path))
+                .and(header("x-credential", "private-credential"))
+                .and(wiremock::matchers::body_string("private-credential"))
+                .respond_with(
+                    ResponseTemplate::new(status)
+                        .insert_header("location", destination.as_str())
+                        .set_body_string("redirect response"),
+                )
+                .expect(1)
+                .mount(&allowed_server)
+                .await;
+
+            let dir = tempfile::tempdir().unwrap();
+            let request_path = dir.path().join("req.working");
+            let request = json!({
+                "method": "POST",
+                "url": format!("{}{path}", allowed_server.uri()),
+                "headers": [["x-credential", "SECRET_PLACEHOLDER"], ["content-type", "text/plain"]],
+                "body": b"SECRET_PLACEHOLDER".to_vec(),
+            });
+            tokio::fs::write(&request_path, serde_json::to_vec(&request).unwrap())
+                .await
+                .unwrap();
+            let traces = Mutex::new(Vec::new());
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                process(&request_path, &policy, &traces),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let response: Value = serde_json::from_slice(
+                &tokio::fs::read(request_path.with_extension("response"))
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(response["status"], status);
+            assert_eq!(response["error"], Value::Null);
+            assert!(
+                response["headers"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(["location", destination]))
+            );
+            assert_eq!(
+                tokio::fs::read(dir.path().join("req.body-00000000"))
+                    .await
+                    .unwrap(),
+                b"redirect response"
+            );
+            assert_eq!(
+                traces.lock().unwrap()[0].resp.as_ref().unwrap().status,
+                Ok(status)
+            );
+            assert!(blocked_server.received_requests().await.unwrap().is_empty());
+        }
+        let response = run_bridge(&destination, json!([]), &policy).await;
+        assert_eq!(response["status"], 502);
+        assert!(response["error"].as_str().unwrap().contains("denied"));
+        assert!(blocked_server.received_requests().await.unwrap().is_empty());
     }
 }

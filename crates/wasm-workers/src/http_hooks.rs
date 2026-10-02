@@ -412,6 +412,112 @@ mod tests {
     use crate::http_request_policy::{AllowedHostPolicy, HostPattern, PolicyLayer};
     use hyper::Method;
 
+    #[tokio::test]
+    async fn wasi_redirects_do_not_bypass_policy() {
+        use crate::http_request_policy::{MethodsPattern, PlaceholderSecret, ReplacementLocation};
+        use concepts::{ExecutionId, prefixed_ulid::RunId, time::Now};
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{body_string, header, method, path},
+        };
+
+        let allowed_server = MockServer::start().await;
+        let blocked_server = MockServer::start().await;
+        let destination = format!("{}/capture", blocked_server.uri());
+        let mut hooks = HttpHooks {
+            clock_fn: Box::new(Now),
+            http_client_traces: Vec::new(),
+            http_policy: HttpRequestPolicy {
+                hosts: vec![AllowedHostPolicy {
+                    pattern: HostPattern::parse_with_methods(
+                        &allowed_server.uri(),
+                        MethodsPattern::AllMethods,
+                    )
+                    .unwrap(),
+                    request_url_regex: None,
+                    secrets: vec![PlaceholderSecret {
+                        name: "credential".to_owned(),
+                        placeholder: "SECRET_PLACEHOLDER".to_owned(),
+                        real_value: "private-credential".into(),
+                        replace_in: [ReplacementLocation::Headers, ReplacementLocation::Body]
+                            .into_iter()
+                            .collect(),
+                    }],
+                }],
+                ..HttpRequestPolicy::default()
+            },
+            component_logger: ComponentLogger {
+                span: tracing::Span::none(),
+                execution_id: ExecutionId::generate(),
+                run_id: RunId::generate(),
+                logs_storage_config: None,
+            },
+            config_section_hint: ConfigSectionHint::ActivityWasm,
+            component_name: "redirect-test".to_owned(),
+            deployment_id: None,
+            db_pool: None,
+        };
+
+        for status in [301, 302, 303, 307, 308] {
+            let redirect_path = format!("/redirect-{status}");
+            Mock::given(method("POST"))
+                .and(path(&redirect_path))
+                .and(header("x-credential", "private-credential"))
+                .and(body_string("private-credential"))
+                .respond_with(
+                    ResponseTemplate::new(status)
+                        .insert_header("location", destination.as_str())
+                        .set_body_string("redirect response"),
+                )
+                .expect(1)
+                .mount(&allowed_server)
+                .await;
+            let request = hyper::Request::builder()
+                .method(Method::POST)
+                .uri(format!("{}{redirect_path}", allowed_server.uri()))
+                .header(hyper::header::HOST, allowed_server.address().to_string())
+                .header("x-credential", "SECRET_PLACEHOLDER")
+                .header(hyper::header::CONTENT_TYPE, "text/plain")
+                .body(
+                    http_body_util::Full::new(hyper::body::Bytes::from_static(
+                        b"SECRET_PLACEHOLDER",
+                    ))
+                    .map_err(|never| match never {})
+                    .boxed_unsync(),
+                )
+                .unwrap();
+            let (response, io) = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                Box::into_pin(hooks.send_request(request, None, Box::new(async { Ok(()) }))),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let io_task = tokio::spawn(Box::into_pin(io));
+            assert_eq!(response.status().as_u16(), status);
+            assert_eq!(response.headers()[hyper::header::LOCATION], destination);
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            io_task.abort();
+            assert_eq!(body.as_ref(), b"redirect response");
+            let (_, trace) = hooks.http_client_traces.pop().unwrap();
+            assert_eq!(trace.await.unwrap().status, Ok(status));
+            assert!(blocked_server.received_requests().await.unwrap().is_empty());
+        }
+
+        let request = hyper::Request::builder()
+            .uri(&destination)
+            .body(
+                http_body_util::Full::new(hyper::body::Bytes::new())
+                    .map_err(|never| match never {})
+                    .boxed_unsync(),
+            )
+            .unwrap();
+        let result =
+            Box::into_pin(hooks.send_request(request, None, Box::new(async { Ok(()) }))).await;
+        assert!(matches!(result, Err(Error::HttpRequestDenied)));
+        assert!(blocked_server.received_requests().await.unwrap().is_empty());
+    }
+
     #[test]
     fn denial_guidance_includes_only_the_missing_server_entry() {
         let message = generate_toml_snippet(
