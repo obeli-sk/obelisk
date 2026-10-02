@@ -95,7 +95,8 @@ struct ExecutorInner {
     threads: Arc<IdleThreads>,
 }
 
-type Job = Box<dyn FnOnce() + Send>;
+type Completion = Box<dyn FnOnce() + Send>;
+type Job = Box<dyn FnOnce() -> Completion + Send>;
 
 /// Threads waiting for their next isolate. Only threads that finished cleanly get here, so a
 /// wedged isolate keeps its thread out of the list and shutdown still does not join it.
@@ -120,22 +121,27 @@ impl IdleThreads {
 
 fn isolate_thread(mut job: Job, threads: &Weak<IdleThreads>) {
     loop {
-        job();
-        let Some(next) = wait_for_job(threads) else {
+        let complete = job();
+        let Some(next) = wait_for_job(threads, complete) else {
             break;
         };
         job = next;
     }
 }
 
-fn wait_for_job(threads: &Weak<IdleThreads>) -> Option<Job> {
+fn wait_for_job(threads: &Weak<IdleThreads>, complete: Completion) -> Option<Job> {
     let (sender, receiver) = mpsc::channel();
     let id = {
-        let threads = threads.upgrade()?;
+        let Some(threads) = threads.upgrade() else {
+            complete();
+            return None;
+        };
         let id = threads.next_id.fetch_add(1, Ordering::Relaxed);
         threads.idle.lock().unwrap().push((id, sender));
         id
     };
+    // Publish idle capacity before waking the caller, so its next job can reuse this thread.
+    complete();
     match receiver.recv_timeout(IDLE_THREAD_TIMEOUT) {
         Ok(job) => Some(job),
         Err(mpsc::RecvTimeoutError::Disconnected) => None,
@@ -328,7 +334,8 @@ fn run_isolate<F, Fut, T>(
     execute: F,
     result_tx: oneshot::Sender<T>,
     reservation: Arc<OwnedSemaphorePermit>,
-) where
+) -> Completion
+where
     F: FnOnce() -> Fut + 'static,
     Fut: Future<Output = T> + 'static,
     T: Send + 'static,
@@ -355,7 +362,9 @@ fn run_isolate<F, Fut, T>(
     // Tasks the isolate left on the runtime still hold host state, so the permit goes last.
     drop(tokio_runtime);
     drop(reservation);
-    let _ = result_tx.send(result);
+    Box::new(move || {
+        let _ = result_tx.send(result);
+    })
 }
 
 #[cfg(test)]
@@ -540,8 +549,6 @@ mod tests {
                 .await
                 .unwrap();
             threads.push(thread);
-            // The thread idles itself only after dropping its isolate and runtime.
-            tokio::time::sleep(Duration::from_millis(50)).await;
         }
         assert_eq!(threads[0], threads[1]);
         assert_eq!(threads[1], threads[2]);
@@ -599,6 +606,7 @@ mod tests {
     async fn drain_must_report_a_wedged_isolate_instead_of_waiting() {
         let executor = V8Executor::new(config());
         let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = mpsc::channel();
         let wedged = executor.clone();
         // Blocking the isolate thread in a native call is the `workflow_js_worker.rs` hang shape:
         // `terminate_execution` cannot reach it, so shutdown must give up instead of joining.
@@ -609,7 +617,7 @@ mod tests {
                 .unwrap()
                 .run(move || async move {
                     let _ = started_tx.send(());
-                    std::thread::sleep(Duration::from_secs(60));
+                    release_rx.recv().unwrap();
                 })
                 .await
         });
@@ -618,6 +626,7 @@ mod tests {
         executor.close();
         executor.drain(Duration::from_millis(100)).await;
         assert!(started.elapsed() < Duration::from_secs(5));
-        wedged.abort();
+        release_tx.send(()).unwrap();
+        wedged.await.unwrap().unwrap();
     }
 }
