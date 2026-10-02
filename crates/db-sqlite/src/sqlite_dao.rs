@@ -5851,6 +5851,7 @@ impl DbAdmin for SqlitePool {
         &self,
         created_before: DateTime<Utc>,
         limit: u32,
+        dry_run: bool,
     ) -> Result<SystemEventRetentionResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
@@ -5860,7 +5861,11 @@ impl DbAdmin for SqlitePool {
                     .query_map(rusqlite::params![created_before, i64::from(limit) + 1], |row| row.get::<_, String>(0))?
                     .collect::<Result<Vec<_>, _>>()?;
                 let has_more = event_ids.len() > limit as usize;
-                let deleted = tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit)])? as u64;
+                let deleted = if dry_run {
+                    event_ids.len().min(limit as usize) as u64
+                } else {
+                    tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit)])? as u64
+                };
                 Ok(SystemEventRetentionResult {
                     deleted,
                     has_more,

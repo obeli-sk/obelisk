@@ -6170,6 +6170,7 @@ impl DbAdmin for PostgresConnection {
         &self,
         created_before: DateTime<Utc>,
         limit: u32,
+        dry_run: bool,
     ) -> Result<SystemEventRetentionResult, DbErrorWrite> {
         let limit = limit.clamp(1, 10_000);
         let mut client = self.client.lock().await;
@@ -6181,12 +6182,16 @@ impl DbAdmin for PostgresConnection {
             )
             .await?;
         let has_more = rows.len() > limit as usize;
-        let deleted = tx
+        let deleted = if dry_run {
+            rows.len().min(limit as usize) as u64
+        } else {
+            tx
             .execute(
                 "DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY event_id LIMIT $2)",
                 &[&created_before, &i64::from(limit)],
             )
-            .await?;
+            .await?
+        };
         tx.commit().await?;
         Ok(SystemEventRetentionResult { deleted, has_more })
     }

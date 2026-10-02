@@ -4045,6 +4045,9 @@
             "format": "int32",
             "minimum": 0
           },
+          "dry_run": {
+            "type": "boolean"
+          },
           "max_age_seconds": {
             "type": "integer",
             "format": "int64",
@@ -4062,6 +4065,7 @@
           "deleted": {
             "type": "integer",
             "format": "int64",
+            "description": "Events deleted, or that would be deleted when `dry_run` is true.",
             "minimum": 0
           },
           "has_more": {

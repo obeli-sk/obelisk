@@ -1846,6 +1846,7 @@ pub trait DbAdmin: Send + Sync {
         &self,
         created_before: DateTime<Utc>,
         limit: u32,
+        dry_run: bool,
     ) -> Result<SystemEventRetentionResult, DbErrorWrite>;
 
     async fn delete_execution_tree(

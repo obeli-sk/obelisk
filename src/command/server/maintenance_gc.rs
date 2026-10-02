@@ -355,7 +355,7 @@ where
                 db_pool
                     .admin_conn()
                     .await?
-                    .retain_system_events(cutoff, config.batch_size)
+                    .retain_system_events(cutoff, config.batch_size, false)
                     .await
             }
             .await

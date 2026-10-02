@@ -2227,7 +2227,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                     .admin_conn()
                     .await
                     .map_err(map_to_status)?
-                    .retain_system_events(created_before, request.batch_size)
+                    .retain_system_events(created_before, request.batch_size, request.dry_run)
                     .await
                     .to_status()
             })
