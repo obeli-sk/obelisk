@@ -78,9 +78,9 @@ skip = [
     { name = "wit-component", version = "0.253" },
     { name = "wit-parser", version = "0.253" },
     # wasm-compose 0.258 (wasmtime dep) uses wasm-tools 0.258, but its `wat` dep
-    # pulls in wasm-tools 0.259 (canonical is 0.258, 0.259 is skipped)
-    { name = "wasm-encoder", version = "0.259" },
-    { name = "wast", version = "259" },
+    # pulls in wasm-tools 0.261 (canonical is 0.258, 0.261 is skipped)
+    { name = "wasm-encoder", version = "0.261" },
+    { name = "wast", version = "261" },
     # oci-spec (via oci-client) requires strum 0.27 and darling 0.20
     { name = "strum", version = "0.27" },
     { name = "strum_macros", version = "0.27" },
