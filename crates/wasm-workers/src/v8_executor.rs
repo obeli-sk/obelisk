@@ -352,10 +352,10 @@ fn run_isolate<F, Fut, T>(
         .block_on(tokio_runtime.spawn(bootstrap))
         .expect("native V8 root task must not be cancelled")
         .into_inner();
-    let _ = result_tx.send(result);
     // Tasks the isolate left on the runtime still hold host state, so the permit goes last.
     drop(tokio_runtime);
     drop(reservation);
+    let _ = result_tx.send(result);
 }
 
 #[cfg(test)]
@@ -419,16 +419,13 @@ mod tests {
             })
             .await
             .unwrap();
-        // The next isolate is admitted only after this thread released its permit, which happens
-        // after the isolate's runtime and its tasks are gone.
+        assert!(task_dropped.load(Ordering::Acquire));
         executor
-            .admit(V8Workload::Activity)
-            .await
+            .try_admit(V8Workload::Activity)
             .unwrap()
             .run(|| async {})
             .await
             .unwrap();
-        assert!(task_dropped.load(Ordering::Acquire));
     }
 
     /// Holds one resident workflow, the shape that starves other cells if they share a budget
