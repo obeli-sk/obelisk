@@ -6,21 +6,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0-rc.11](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.10...v0.42.0-rc.11)
+
+This release candidate makes Boa compiled to WASM the default JavaScript engine again and requires
+JS workflows to submit children by FFQN through the dynamic interface. Native V8 behaves more
+like Boa and contains heap exhaustion. VM activity HTTP redirects are checked against the outbound
+policy on every hop, and a blocked deployment retention no longer stalls periodic garbage
+collection.
+
 ### Added
 
 - *(api)* System event retention supports `dry_run` in REST and gRPC. Preview returns
   the batch's would-delete count and `has_more` without deleting events.
+  [#1101](https://github.com/obeli-sk/obelisk/pull/1101)
+- *(web API)* `GET /v1/app-config` returns TOML when requested with `Accept: application/toml`.
+  JSON remains the default. [#1102](https://github.com/obeli-sk/obelisk/pull/1102)
 
 ### Changed
 
 - *(JS)* Boa compiled to WASM (`boa-wasm`) is the default engine again for workflows,
   activities, and webhooks. Set `OBELISK_JS_RUNTIME=v8` to use native V8.
+  [#1100](https://github.com/obeli-sk/obelisk/pull/1100)
 - *(JS, breaking)* Submit workflow children by FFQN with
   `dynamic.submit(joinSet, ffqn, params)` from `obelisk:workflow-dynamic@1.0.0`.
   Join-set objects no longer expose `submit`; typed `fnSubmit(joinSet, ...params)` imports
   keep their API. Base modules do not export `call` or `schedule`. Dynamic modules require
   a static import or re-export declaration, including when loaded with `import()`.
   Side-effect imports, empty imports, and re-exports now contribute to dependency metadata.
+  [#1095](https://github.com/obeli-sk/obelisk/pull/1095)
+- *(V8)* Native V8 matches Boa more closely for JS workflows and webhooks. Workflows support
+  `getResult`, a thrown ordinary `Error` returns its message as the error value (only
+  `obelisk.ChildError` propagates its `value`), and a `Date` is accepted as an absolute schedule
+  time. Exceeding the JS heap limit fails the execution with "JavaScript heap limit exceeded"
+  instead of aborting the server, and workflow result extraction stays interruptible.
+  [#1089](https://github.com/obeli-sk/obelisk/pull/1089),
+  [#1090](https://github.com/obeli-sk/obelisk/pull/1090),
+  [#1091](https://github.com/obeli-sk/obelisk/pull/1091),
+  [#1092](https://github.com/obeli-sk/obelisk/pull/1092),
+  [#1093](https://github.com/obeli-sk/obelisk/pull/1093)
+- *(webui)* Embedded Web UI updated to 2026-10-02.
+  [#1103](https://github.com/obeli-sk/obelisk/pull/1103)
+
+### Fixed
+
+- *(activity-vm)* The VM HTTP bridge no longer follows redirects. Each redirect is returned to the
+  guest, so the next request is checked against the outbound policy and placeholder secrets are not
+  sent to an unapproved host.
+  [#1088](https://github.com/obeli-sk/obelisk/pull/1088)
+- *(maintenance)* Periodic deployment retention stops when a batch deletes neither deployments nor
+  execution trees, so system-event retention, execution GC, and CAS cleanup still run. A
+  `maintenance.gc.blocked` warning is emitted once per blocked period.
+  [#1098](https://github.com/obeli-sk/obelisk/pull/1098)
 
 ## [0.42.0-rc.10](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.9...v0.42.0-rc.10)
 

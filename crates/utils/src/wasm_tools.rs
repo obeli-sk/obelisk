@@ -91,8 +91,13 @@ impl WasmComponent {
             })
             .inspect_err(|err| error!("{err:?}"))?;
 
-        tokio::fs::write(&output_file, component_contents)
-            .await
+        // Write to a temp file and rename, so concurrent readers never see a partial file.
+        tempfile::NamedTempFile::new_in(output_parent)
+            .and_then(|temp_file| {
+                std::fs::write(temp_file.path(), &component_contents)?;
+                temp_file.persist(&output_file).map_err(|err| err.error)?;
+                Ok(())
+            })
             .with_context(|| {
                 format!("cannot write the transformed WASM Component to {output_file:?}")
             })
