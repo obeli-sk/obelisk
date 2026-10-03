@@ -34,11 +34,6 @@ jobs:
       - name: Populate the nix store
         run: nix develop .#wasip3-components --command echo
 
-      - name: Build current obelisk
-        run: |
-          nix develop .#wasip3-components --command cargo build --bin obelisk
-          echo "$PWD/target/sandbox/debug" >> "$GITHUB_PATH"
-
       - name: Log in to Docker Hub
         run: |
           echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin

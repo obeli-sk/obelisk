@@ -51,10 +51,6 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      - name: Add latest obelisk to PATH
-        run: |
-          ./scripts/get-latest-obelisk-bin-dir.sh >> "$GITHUB_PATH"
-
       - name: Log in to Docker Hub
         run: |
           echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
