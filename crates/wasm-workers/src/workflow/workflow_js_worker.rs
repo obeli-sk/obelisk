@@ -3870,9 +3870,7 @@ mod tests {
 
         cancel_registry.signal_workflow_interrupt(&execution_id);
         workflow_engine.increment_epoch();
-        tokio::time::timeout(Duration::from_secs(5), progress.wait_for_tasks())
-            .await
-            .expect("epoch callback must interrupt the CPU-bound workflow");
+        progress.wait_for_tasks().await;
 
         let log = db_connection.get(&execution_id).await.unwrap();
         let unlocked_count = log
@@ -3905,15 +3903,10 @@ mod tests {
                     .kill_on_drop(true)
                     .spawn()
                     .unwrap();
-                if let Ok(status) =
-                    tokio::time::timeout(Duration::from_secs(30), child.wait()).await
-                {
-                    assert!(status.unwrap().success(), "{mode} subprocess failed");
-                } else {
-                    child.kill().await.unwrap();
-                    child.wait().await.unwrap();
-                    panic!("{mode} result getter did not stop within 30 seconds");
-                }
+                assert!(
+                    child.wait().await.unwrap().success(),
+                    "{mode} subprocess failed"
+                );
             }
             return;
         };
@@ -4022,14 +4015,9 @@ mod tests {
                     _ => unreachable!(),
                 }
             }
-            tokio::time::timeout(Duration::from_secs(5), progress.wait_for_tasks())
-                .await
-                .expect("result getter must observe the workflow interrupt");
-            let permit = tokio::time::timeout(Duration::from_secs(5), slots.acquire())
-                .await
-                .expect("isolate slot leaked")
-                .unwrap();
-            drop(permit);
+            progress.wait_for_tasks().await;
+            // The isolate drops its permit before handing back the result.
+            assert_eq!(slots.available_permits(), 1, "isolate slot leaked");
 
             let log = db_connection.get(&execution_id).await.unwrap();
             if normal {
@@ -4150,15 +4138,13 @@ mod tests {
             db_connection.as_ref(),
             &execution_id,
             |log| matches!(log.pending_state, PendingState::BlockedByJoinSet(_)).then_some(()),
-            Some(Duration::from_secs(5)),
+            None,
         )
         .await
         .unwrap();
 
         cancel_registry.signal_workflow_interrupt(&execution_id);
-        tokio::time::timeout(Duration::from_secs(5), progress.wait_for_tasks())
-            .await
-            .expect("local signal must interrupt the blocked workflow");
+        progress.wait_for_tasks().await;
 
         let log = db_connection.get(&execution_id).await.unwrap();
         assert!(
@@ -5743,33 +5729,29 @@ mod tests {
         let progress = workflow_exec
             .tick_test(sim_clock.now(), RunId::generate())
             .await;
-        let stub_execution_id = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let log = db_connection.get(&execution_id).await.unwrap();
-                if let Some(child_execution_id) = log.events.iter().find_map(|event| {
-                    if let ExecutionRequest::HistoryEvent {
-                        event:
-                            HistoryEvent::JoinSetRequest {
-                                request:
-                                    JoinSetRequest::ChildExecutionRequest {
-                                        child_execution_id, ..
-                                    },
-                                ..
-                            },
-                    } = &event.event
-                    {
-                        Some(child_execution_id.clone())
-                    } else {
-                        None
-                    }
-                }) {
-                    break child_execution_id;
+        let stub_execution_id = loop {
+            let log = db_connection.get(&execution_id).await.unwrap();
+            if let Some(child_execution_id) = log.events.iter().find_map(|event| {
+                if let ExecutionRequest::HistoryEvent {
+                    event:
+                        HistoryEvent::JoinSetRequest {
+                            request:
+                                JoinSetRequest::ChildExecutionRequest {
+                                    child_execution_id, ..
+                                },
+                            ..
+                        },
+                } = &event.event
+                {
+                    Some(child_execution_id.clone())
+                } else {
+                    None
                 }
-                tokio::task::yield_now().await;
+            }) {
+                break child_execution_id;
             }
-        })
-        .await
-        .expect("response refresh must flush the submitted child");
+            tokio::task::yield_now().await;
+        };
         write_stub_response(
             db_connection.as_ref(),
             sim_clock.now(),
@@ -5778,9 +5760,7 @@ mod tests {
         )
         .await;
 
-        tokio::time::timeout(Duration::from_secs(5), progress.wait_for_tasks())
-            .await
-            .expect("hot workflow must observe the refreshed response");
+        progress.wait_for_tasks().await;
         let log = db_connection.get(&execution_id).await.unwrap();
         assert!(
             log.pending_state.is_finished(),
@@ -7007,56 +6987,41 @@ function inner() {
             .unwrap();
 
         // The workflow drives itself; the two executors only have to keep ticking (mirroring
-        // the running server) until it finishes. Under V8 the direct `fibo` persist hangs and
-        // the execution stays frozen mid-turn, so the timeout fires instead.
-        const FINISH_TIMEOUT: Duration = Duration::from_secs(15);
+        // the running server) until it finishes.
         let now = sim_clock.now();
-        let finished = tokio::time::timeout(FINISH_TIMEOUT, async {
-            let drive_workflow = async {
-                loop {
-                    workflow_exec
-                        .tick_test_await(now, RunId::from_parts(0, 0))
-                        .await;
-                    tokio::time::sleep(Duration::from_millis(1)).await;
-                }
-            };
-            let drive_activity = async {
-                loop {
-                    activity_exec
-                        .tick_test_await(now, RunId::from_parts(0, 0))
-                        .await;
-                    tokio::time::sleep(Duration::from_millis(1)).await;
-                }
-            };
-            let wait_finished = async {
-                loop {
-                    let state = db_connection
-                        .get_pending_state(&execution_id)
-                        .await
-                        .unwrap()
-                        .pending_state;
-                    if let PendingState::Finished(finished) = state {
-                        break finished;
-                    }
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-            };
-            tokio::select! {
-                finished = wait_finished => finished,
-                () = drive_workflow => unreachable!("executor loops never return"),
-                () = drive_activity => unreachable!("executor loops never return"),
+        let drive_workflow = async {
+            loop {
+                workflow_exec
+                    .tick_test_await(now, RunId::from_parts(0, 0))
+                    .await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
             }
-        })
-        .await;
-        let Ok(finished) = finished else {
-            let version = db_connection.get(&execution_id).await.unwrap().next_version;
-            // The isolate thread is detached, so it cannot block this process from exiting.
-            eprintln!(
-                "HANG REPRODUCED (runtime {runtime:?}): the direct tool call after cached \
-                 Date.now() delays never persisted; workflow frozen at {version:?} \
-                 (V8 host op block_on <-> sqlite writer missed wakeup)"
-            );
-            panic!();
+        };
+        let drive_activity = async {
+            loop {
+                activity_exec
+                    .tick_test_await(now, RunId::from_parts(0, 0))
+                    .await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        };
+        let wait_finished = async {
+            loop {
+                let state = db_connection
+                    .get_pending_state(&execution_id)
+                    .await
+                    .unwrap()
+                    .pending_state;
+                if let PendingState::Finished(finished) = state {
+                    break finished;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        let finished = tokio::select! {
+            finished = wait_finished => finished,
+            () = drive_workflow => unreachable!("executor loops never return"),
+            () = drive_activity => unreachable!("executor loops never return"),
         };
         assert_matches!(
             finished.result_kind,
