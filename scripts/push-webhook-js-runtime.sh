@@ -5,11 +5,6 @@
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
-if ! command -v obelisk >/dev/null; then
-    echo "error: obelisk must be on PATH" >&2
-    exit 1
-fi
-
 if ! command -v wasm-tools >/dev/null; then
     echo "error: wasm-tools must be on PATH" >&2
     exit 1
@@ -24,15 +19,7 @@ if [ "$TAG" != "dry-run" ]; then
     CARGO_TARGET_ROOT=${CARGO_TARGET_DIR:-target}
     STRIPPED="$CARGO_TARGET_ROOT/wasm-cache/webhook_js_runtime.stripped.wasm"
     wasm-tools strip --all "$CARGO_TARGET_ROOT/wasm-cache/webhook_js_runtime.wasm" -o "$STRIPPED"
-    TMP_TOML="webhook-deployment-for-push.toml"
-    trap "rm -f $TMP_TOML" EXIT
-    cat > "$TMP_TOML" <<EOF
-[[webhook_endpoint_wasm]]
-name = "target_component"
-location = "$STRIPPED"
-routes = [""]
-EOF
-    OUTPUT=$(obelisk component push --deployment "$TMP_TOML" \
-        target_component "oci://docker.io/getobelisk/webhook-js-runtime:$TAG")
+    METADATA='{"component_type":"webhook_endpoint_wasm","env_vars":[],"allowed_hosts":[]}'
+    OUTPUT=$(scripts/push-wasm-oci.sh "$STRIPPED" "docker.io/getobelisk/webhook-js-runtime:$TAG" "$METADATA")
     printf '%s' "$OUTPUT" > "$OUTPUT_FILE"
 fi

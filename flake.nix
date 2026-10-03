@@ -304,6 +304,7 @@
                 litecli
                 nixd
                 nixpkgs-fmt
+                oras # scripts/push-wasm-oci.sh
                 pkg-config
                 postgresql
                 protobuf
@@ -321,6 +322,8 @@
                 (rust-bin.nightly."2026-09-12".default.override {
                   targets = [ "wasm32-unknown-unknown" "wasm32-wasip2" "wasm32-wasip3" ];
                 })
+                jq
+                oras
                 pkg-config
                 protobuf
                 wasm-tools
