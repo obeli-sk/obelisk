@@ -4,7 +4,7 @@
 # Usage (latest release):
 # curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash
 # Usage (specific release tag, passed as an argument or via OBELISK_VERSION):
-# curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash -s -- v0.42.0-rc.8
+# curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/download.sh | bash -s -- vX.Y.Z
 
 set -eu
 

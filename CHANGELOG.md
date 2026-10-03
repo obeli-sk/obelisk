@@ -6,414 +6,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.42.0-rc.12](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.11...v0.42.0-rc.12)
+## [0.42.0](https://github.com/obeli-sk/obelisk/compare/v0.41.5...v0.42.0)
 
-This release candidate brings Boa and V8 to one shared Web Crypto implementation, adding
-`crypto.subtle.verify` to V8 activities and `crypto.getRandomValues` to Boa. `verify --fix` now
-honors the server configuration.
+This release separates platform, app, and deployment configuration, adds experimental Linux VM
+activities (Bochs, QEMU, and Firecracker) and WASIp3 activity and webhook support, and adds native
+V8 as an opt-in JavaScript engine next to the default Boa compiled to WASM. Operators gain
+persisted system events, admin APIs for deletion and retention, and automatic garbage collection.
+Plaintext secret exposure, deployment environment access, outbound HTTP, and exec activities are
+now authorized by reviewed app policy bound to component digests. The Web API gains SSE follow
+streams and batch reads, while gRPC is deprecated. Obelisk is no longer published to crates.io.
 
-### Added
-
-- *(JS)* Boa supports `crypto.getRandomValues`, backed by WASI random. It rejects non-integer typed
-  arrays and requests over 65536 bytes, as the Web Crypto spec requires.
-  [#1114](https://github.com/obeli-sk/obelisk/pull/1114)
-
-### Changed
-
-- *(V8)* JS activities support `crypto.subtle.verify` and honor the key's HMAC hash
-  (SHA-256/384/512) instead of always signing with SHA-256. Boa and V8 share one Web Crypto
-  implementation: `verify` compares in constant time, `sign`/`verify` require the matching key
-  usage, `importKey` rejects unsupported hashes, and hash names are case-insensitive.
-  [#1114](https://github.com/obeli-sk/obelisk/pull/1114)
-
-### Fixed
-
-- *(CLI)* `server verify --fix` and `deployment verify --fix` regenerate digests using the
-  `--server-config` file and the selected JS runtime instead of the default server configuration.
-  Webhooks bound to a named `http_server` or to the external server no longer fail the fix.
-  [#1113](https://github.com/obeli-sk/obelisk/pull/1113)
-
-## [0.42.0-rc.11](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.10...v0.42.0-rc.11)
-
-This release candidate makes Boa compiled to WASM the default JavaScript engine again and requires
-JS workflows to submit children by FFQN through the dynamic interface. Native V8 behaves more
-like Boa and contains heap exhaustion. VM activity HTTP redirects are checked against the outbound
-policy on every hop, and a blocked deployment retention no longer stalls periodic garbage
-collection.
-
-### Added
-
-- *(api)* System event retention supports `dry_run` in REST and gRPC. Preview returns
-  the batch's would-delete count and `has_more` without deleting events.
-  [#1101](https://github.com/obeli-sk/obelisk/pull/1101)
-- *(web API)* `GET /v1/app-config` returns TOML when requested with `Accept: application/toml`.
-  JSON remains the default. [#1102](https://github.com/obeli-sk/obelisk/pull/1102)
-
-### Changed
-
-- *(JS)* Boa compiled to WASM (`boa-wasm`) is the default engine again for workflows,
-  activities, and webhooks. Set `OBELISK_JS_RUNTIME=v8` to use native V8.
-  [#1100](https://github.com/obeli-sk/obelisk/pull/1100)
-- *(JS, breaking)* Submit workflow children by FFQN with
-  `dynamic.submit(joinSet, ffqn, params)` from `obelisk:workflow-dynamic@1.0.0`.
-  Join-set objects no longer expose `submit`; typed `fnSubmit(joinSet, ...params)` imports
-  keep their API. Base modules do not export `call` or `schedule`. Dynamic modules require
-  a static import or re-export declaration, including when loaded with `import()`.
-  Side-effect imports, empty imports, and re-exports now contribute to dependency metadata.
-  [#1095](https://github.com/obeli-sk/obelisk/pull/1095)
-- *(V8)* Native V8 matches Boa more closely for JS workflows and webhooks. Workflows support
-  `getResult`, a thrown ordinary `Error` returns its message as the error value (only
-  `obelisk.ChildError` propagates its `value`), and a `Date` is accepted as an absolute schedule
-  time. Exceeding the JS heap limit fails the execution with "JavaScript heap limit exceeded"
-  instead of aborting the server, and workflow result extraction stays interruptible.
-  [#1089](https://github.com/obeli-sk/obelisk/pull/1089),
-  [#1090](https://github.com/obeli-sk/obelisk/pull/1090),
-  [#1091](https://github.com/obeli-sk/obelisk/pull/1091),
-  [#1092](https://github.com/obeli-sk/obelisk/pull/1092),
-  [#1093](https://github.com/obeli-sk/obelisk/pull/1093)
-- *(webui)* Embedded Web UI updated to 2026-10-02.
-  [#1103](https://github.com/obeli-sk/obelisk/pull/1103)
-
-### Fixed
-
-- *(activity-vm)* The VM HTTP bridge no longer follows redirects. Each redirect is returned to the
-  guest, so the next request is checked against the outbound policy and placeholder secrets are not
-  sent to an unapproved host.
-  [#1088](https://github.com/obeli-sk/obelisk/pull/1088)
-- *(maintenance)* Periodic deployment retention stops when a batch deletes neither deployments nor
-  execution trees, so system-event retention, execution GC, and CAS cleanup still run. A
-  `maintenance.gc.blocked` warning is emitted once per blocked period.
-  [#1098](https://github.com/obeli-sk/obelisk/pull/1098)
-- *(deployment)* The transformed WASM Component cache is written atomically. Concurrent
-  processes transforming the same Core WASM Module no longer fail with "unexpected end-of-file"
-  while reading a partially written cache file.
-  [#1107](https://github.com/obeli-sk/obelisk/pull/1107)
-
-## [0.42.0-rc.10](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.9...v0.42.0-rc.10)
-
-This release candidate streams activity VM output to logs while the VM runs, lists the same
-imports for JS components on both JS engines, and skips fetching the JS runtime images when JS
-runs on V8. The API startup token is no longer written to logs.
-
-### Changed
-
-- *(activity-vm)* Guest stdout and stderr, and the emulator console output, are forwarded to the
-  execution logs as they arrive instead of after the run finishes, so a timed out, cancelled, or
-  yielding VM still leaves logs. Firecracker streams with the bumped runtime bundle.
-  [#1085](https://github.com/obeli-sk/obelisk/pull/1085)
-- *(JS)* With the V8 engine, the server no longer fetches the JS runtime components from the OCI
-  registry. [#1083](https://github.com/obeli-sk/obelisk/pull/1083)
-- *(JS)* Imports of JS workflows and webhooks are read only from their JS code, so both JS engines
-  list the same imports. The dynamic call interface is the only listed `obelisk` interface, and
-  only when the code imports `obelisk:workflow-dynamic@1.0.0` or `obelisk:webhook-dynamic@1.0.0`.
-  JS activities list no imports, and JS webhooks no longer expose the WIT of the JS runtime.
-  [#1084](https://github.com/obeli-sk/obelisk/pull/1084)
-
-### Fixed
-
-- *(api)* The API startup token is printed to stderr instead of being logged at INFO level and
-  repeated in every denied-request warning, keeping the full-admin credential out of log files and
-  OTLP sinks. [#1086](https://github.com/obeli-sk/obelisk/pull/1086)
-
-## [0.42.0-rc.9](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.8...v0.42.0-rc.9)
-
-This release candidate mounts the native QEMU activity closure from an EROFS image, which
-requires `mkfs.erofs` on the server's `PATH`. JS components now list the imports of their JS code,
-and a workflow replay version mismatch is reported as nondeterminism instead of panicking.
-`download.sh` can install a specific release and picks the musl binary more reliably.
-
-### Added
-
-- *(download)* `download.sh` accepts a release tag as its first argument or via `OBELISK_VERSION`,
-  e.g. `curl ... download.sh | bash -s -- v0.42.0-rc.9`. Defaults to the latest release.
-  ([1abc60a](https://github.com/obeli-sk/obelisk/commit/1abc60aa988b35db070adee2a5d74cdfe9d5a8cb))
-
-### Changed
-
-- *(activity-vm)* Native QEMU mounts each activity's read-only Nix closure from an EROFS image
-  instead of a 9p share. The HTTP/result mailbox still uses 9p. `mkfs.erofs` is now required on
-  the server's `PATH`. [#1079](https://github.com/obeli-sk/obelisk/pull/1079)
-
-### Fixed
-
-- *(download)* `download.sh` selects the musl binary whenever the glibc dynamic loader is missing,
-  and on NixOS even when a stub loader is installed at the FHS path.
-  ([27b7e32](https://github.com/obeli-sk/obelisk/commit/27b7e322409ccbde8699f2472df1b4f099e15a8f),
-  [6fe3400](https://github.com/obeli-sk/obelisk/commit/6fe340006ae1db6089af86d4d510e3c5f6a9f1e3))
-- *(workflow)* An event version mismatch during replay is reported as nondeterminism instead of
-  panicking. [#1077](https://github.com/obeli-sk/obelisk/pull/1077)
-- *(JS)* Components list the interfaces their JS code imports instead of the imports of the JS
-  runtime. The dynamic call interfaces are listed only when the code imports
-  `obelisk:workflow-dynamic@1.0.0` or `obelisk:webhook-dynamic@1.0.0`. Each new deployment
-  replaces stored imports, so a deployment that is already active shows the corrected imports
-  only after the next new deployment. [#1080](https://github.com/obeli-sk/obelisk/pull/1080)
-
-## [0.42.0-rc.8](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.7...v0.42.0-rc.8)
-
-This release candidate fixes a workflow response wakeup race near lock expiry and removes V8
-activity prewarming, which could abort the server when V8 scheduled a delayed task. Reused V8
-threads still run each activity in a fresh isolate. Firecracker builds are now limited to Linux.
-
-### Changed
-
-- *(V8)* Idle isolate threads no longer prepare the next JS activity's runtime in advance; reused
-  threads still create a fresh isolate per activity. The prewarm saved about 1 ms per activity
-  and, in 0.42.0-rc.7, could abort the server when V8 scheduled a delayed task.
-  [#1071](https://github.com/obeli-sk/obelisk/pull/1071)
-- *(activity-vm)* Firecracker is built only on Linux. Selecting a Linux-only VM runtime on another
-  platform now reports an unsupported-platform error.
-  [#1069](https://github.com/obeli-sk/obelisk/pull/1069)
-
-### Fixed
-
-- *(workflow)* A workflow entering a blocking join near its lock expiry extends the lock before
-  waiting for the child response, preventing a missed response wakeup.
-  [#1074](https://github.com/obeli-sk/obelisk/pull/1074)
-
-## [0.42.0-rc.7](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.6...v0.42.0-rc.7)
-
-This release candidate adds experimental native QEMU (TCG and KVM) and Firecracker backends for
-VM activities, with configurable guest memory and vCPUs, and puts every VM backend behind an explicit opt-in.
-V8 activities start faster through reused and prewarmed isolate threads, and a batch Web API
-endpoint reads creation and completion events for many executions at once. Existing
-`[[activity_vm]]` deployments must set `memory` and `OBELISK_UNSTABLE_ACTIVITY_VM`, and
-`OBELISK_JS_RUNTIME=boawasm` must be renamed to `boa-wasm`.
-
-### Added
-
-- *(activity-vm)* Experimental native QEMU backends, selected with
-  `OBELISK_UNSTABLE_ACTIVITY_VM=qemu-tcg` or `qemu-kvm`. Each accelerator has its own pinned
-  runtime bundle, pulled from OCI and restored from a snapshot. `qemu-system-x86_64` must be on
-  `PATH` and match the QEMU version the snapshot was built with; KVM also needs `/dev/kvm`.
-  [#1038](https://github.com/obeli-sk/obelisk/pull/1038),
-  [#1040](https://github.com/obeli-sk/obelisk/pull/1040),
-  [#1045](https://github.com/obeli-sk/obelisk/pull/1045),
-  [#1052](https://github.com/obeli-sk/obelisk/pull/1052)
-- *(activity-vm)* Experimental Firecracker backend, selected with
-  `OBELISK_UNSTABLE_ACTIVITY_VM=firecracker`. Every execution cold boots a microVM from a pinned
-  runtime bundle pulled from OCI. `firecracker` and `mkfs.erofs` must be on `PATH`, and
-  `/dev/kvm` must be readable and writable.
-  [#1068](https://github.com/obeli-sk/obelisk/pull/1068)
-- *(activity-vm)* **Breaking:** Required `memory` on `[[activity_vm]]` sets the guest RAM, for
-  example `memory.gib = 4`. Native QEMU restores a 256 MiB snapshot and plugs the rest through
-  `virtio-mem`, from 256 MiB up to 16.25 GiB; plugging 8 GiB adds about 45 ms on KVM. The Bochs
-  guest has a fixed 512 MiB and accepts only that value.
-  [#1057](https://github.com/obeli-sk/obelisk/pull/1057)
-- *(activity-vm)* Optional `cpus` on `[[activity_vm]]` sets the guest vCPUs, default 1. Bochs
-  accepts only 1. [#1062](https://github.com/obeli-sk/obelisk/pull/1062)
-- *(web API)* `POST /v1/executions/events/batch` reads each requested execution's `Created` and
-  optional `Finished` event in request order using one database transaction.
-  [#1037](https://github.com/obeli-sk/obelisk/pull/1037)
-
-### Changed
-
-- *(activity-vm)* **Breaking:** `[[activity_vm]]` deployments now require
-  `OBELISK_UNSTABLE_ACTIVITY_VM=bochs-wasm`, `qemu-tcg`, `qemu-kvm`, or `firecracker` on the
-  deployment CLI and server. Without it, deployment validation rejects VM activities; existing VM
-  deployments also need it to activate. [#1035](https://github.com/obeli-sk/obelisk/pull/1035),
-  [#1039](https://github.com/obeli-sk/obelisk/pull/1039)
-- *(activity-vm)* Empty stdout and stderr chunks are no longer written to execution logs.
-  [#1047](https://github.com/obeli-sk/obelisk/pull/1047)
-- *(activity-vm)* The guest checks proxy readiness every 10 ms instead of every second, so VM
-  executions no longer start their command up to a second late.
-  [#1066](https://github.com/obeli-sk/obelisk/pull/1066)
-- *(JavaScript)* **Breaking:** The value selecting Boa compiled to WASM is renamed from
-  `OBELISK_JS_RUNTIME=boawasm` to `OBELISK_JS_RUNTIME=boa-wasm`; the old value is rejected.
-  [#1039](https://github.com/obeli-sk/obelisk/pull/1039)
-- *(V8)* Isolate threads are reused: a thread whose isolate finished runs the next one instead of
-  exiting, and idle threads exit after 60 seconds. While idle, a thread prepares the runtime for
-  the next JS activity, so the isolate is created and the activity bootstrap has run before the
-  activity arrives. Every activity still runs in a fresh isolate. 1000 sequential V8 activity
-  calls now take about 1.7 seconds, down from 2.8.
-  [#1036](https://github.com/obeli-sk/obelisk/pull/1036)
-- *(build)* The Nix package no longer pulls the Rust toolchain into its runtime closure, and
-  static musl builds are pushed to the obeli-sk Cachix cache.
-  [#1055](https://github.com/obeli-sk/obelisk/pull/1055)
-
-### Fixed
-
-- *(deployment)* `--allow-unavailable-runtime-config` now permits storing and enqueuing deployments
-  while app approval of public environment names or outbound HTTP destinations is pending. It
-  already tolerated missing values, secrets, and exec approvals. Activation still verifies
-  strictly. `server verify --fix` and `deployment verify --fix` can now scaffold uncovered
-  outbound destinations in `app.toml` for review, alongside existing public environment and
-  secret scaffolds. [#1032](https://github.com/obeli-sk/obelisk/pull/1032)
-
-## [0.42.0-rc.6](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.5...v0.42.0-rc.6)
-
-### Changed
-
-- *(build)* Release binaries now embed the Web UI in all builds, including native builds.
-  [#1029](https://github.com/obeli-sk/obelisk/pull/1029)
-- *(release)* Release verification checks every tarball directly and smoke-tests `download.sh`.
-  Prerelease jobs select prerelease artifacts by default and avoid unversioned Docker tags.
-
-## [0.42.0-rc.5](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.4...v0.42.0-rc.5)
+Review the breaking configuration, API, JavaScript and WIT changes below before upgrading from
+0.41. Existing `server.toml` files must be split with `obelisk generate split-config` and startup
+requires an app name.
 
 ### Removed
 
-- *(release)* Obelisk is no longer published to crates.io, so `cargo install obelisk` and
-  `cargo binstall obelisk` stop receiving new versions. Use the GitHub release binaries
+- **Breaking:** *(release)* Obelisk is no longer published to crates.io, so `cargo install obelisk`
+  and `cargo binstall obelisk` stop receiving new versions. Use the GitHub release binaries
   (`download.sh`), Docker images, Nix (prebuilt via the obeli-sk Cachix cache), or build from
   source with `cargo install --locked --git https://github.com/obeli-sk/obelisk --branch latest obelisk`.
   [#1026](https://github.com/obeli-sk/obelisk/pull/1026)
-
-## [0.42.0-rc.4](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.3...v0.42.0-rc.4)
-
-This release candidate separates platform, app, and deployment configuration, makes native V8
-the default JavaScript runtime, and expands the Web API. Existing `server.toml` configurations must
-be split to server and app configs before starting the server.
-Review the breaking changes below before upgrading from rc.3.
-
-### Added
-
-- *(cli)* `obelisk generate new [NAME]` creates a runnable JavaScript starter app in a new named
-  directory, or in the current directory when no name is given. [#1018](https://github.com/obeli-sk/obelisk/pull/1018)
-- *(web API)* Added SSE follow streams for execution status, result, and submit, with heartbeat
-  comments and resumable event IDs. Execution lists gain exact function and repeated state filters;
-  deployment lists gain filtering options; component source lookup and a consistent
-  events-and-responses snapshot are available. [#1016](https://github.com/obeli-sk/obelisk/pull/1016)
-- *(app policy)* Added a canonical `app_config_digest` for the authored policy. Deployments record
-  the digest used at activation, and system events carry the current digest. The running policy and
-  digest are available through `/v1/app-config` and `/v1/app-config-digest`, with digests also
-  exposed in deployment and event APIs. [#1020](https://github.com/obeli-sk/obelisk/pull/1020),
-  [#1021](https://github.com/obeli-sk/obelisk/pull/1021)
-- *(admin)* System event listings accept `created_from` and `created_to` time bounds; the CLI has
-  corresponding `--from` and `--to` options. [#1010](https://github.com/obeli-sk/obelisk/pull/1010)
-- *(JavaScript)* Added native V8 runtimes for workflows, activities, and webhooks. V8 is now the
-  default; set `OBELISK_JS_RUNTIME=boawasm` to use Boa compiled to WASM. Each V8 isolate runs on
-  its own OS thread using a build-time startup snapshot. Native V8 activities support Web Crypto.
-  [#998](https://github.com/obeli-sk/obelisk/pull/998),
-  [#999](https://github.com/obeli-sk/obelisk/pull/999),
-  [#1006](https://github.com/obeli-sk/obelisk/pull/1006),
-  [#1017](https://github.com/obeli-sk/obelisk/pull/1017)
-- *(webhook)* Added `[webhooks].request_timeout`, a common deadline for WASM and V8 handlers to
-  return an HTTP response. The default is 30 seconds; an already-returned streaming response body
-  is not limited. [#1003](https://github.com/obeli-sk/obelisk/pull/1003)
-- *(secrets)* `[secrets]` entries and component references can use `optional = true` to allow an
-  unset source variable. An absent optional secret is omitted from the component environment or
-  stdin; a required reference still fails verification. `--fix` scaffolds optional entries when
-  every reference is optional. [#1011](https://github.com/obeli-sk/obelisk/pull/1011)
-
-### Changed
-
-- *(config)* **Breaking:** `server.toml` now holds platform limits and listeners, `app.toml` holds
-  reviewed app allowances, and `deployment.toml` holds components. App-owned secret registrations,
-  public environment allowances, outbound HTTP policy, exec activity allowances, and `app_name`
-  move from the server file to the app file. Pass `--app-config` with `server run`, `server verify`,
-  or `deployment verify`; omitting it uses default app policy when `OBELISK_APP_NAME` is set.
-  Use `obelisk generate split-config --server-config server.toml` to split an existing file.
-  Registered secrets now read same-named environment variables;
-  `OBELISK__...` overrides apply only to `server.toml`. [#1015](https://github.com/obeli-sk/obelisk/pull/1015)
-- *(config)* **Breaking:** Startup requires `app_name` in `app.toml` or `OBELISK_APP_NAME`.
-  Omitting it fails before opening a database. The default SQLite directory moves from
-  `${DATA_DIR}/obelisk-sqlite` to `${DATA_DIR}/apps/${APP_NAME}/sqlite`.
-  [#1015](https://github.com/obeli-sk/obelisk/pull/1015)
-- *(config)* **Breaking:** App `[public_env]` uses named entries such as `VAR = {}` instead of
-  `[public_env].allowed`. Entries are required at startup by default; use
-  `VAR = { optional = true }` for variables previously allowed to be absent. Deployment references
-  can use `{ key = "VAR", optional = true }` or an interpolation fallback. Required deployment
-  references need a required app declaration. [#1019](https://github.com/obeli-sk/obelisk/pull/1019)
-- *(app policy)* Activation rejects outbound HTTP destinations or methods not covered by app
-  policy. App and deployment URL regexes both apply to requests.
-  [#1015](https://github.com/obeli-sk/obelisk/pull/1015)
-- *(server)* **Breaking:** Platform exec policy uses one `allowed_exec_activities` field: omitted
-  or `false` disables exec, `"*"` permits app-approved exec with a startup warning, and a
-  component/digest table limits the grant. App and server tables accept digest arrays for
-  migrations; `true` is invalid. [#1015](https://github.com/obeli-sk/obelisk/pull/1015)
-- *(server)* **Breaking:** `[wasm].global_executor_instance_limiter` and
-  `[wasm].global_webhook_instance_limiter` are replaced by per-workload, per-runtime `[limits]`
-  cells for activities (`wasm`, `v8`, `process`, `vm_bochs`), workflows (`wasm`, `v8`), and webhooks
-  (`wasm`, `v8`). Cells set concurrent `count` and, except for `process`, per-slot `memory`; both
-  accept `"unlimited"`. Old keys fail configuration loading. Defaults now cap concurrency at 500
-  WASM activities, workflows, and webhooks, 32 exec processes, and 8 VMs, with a per-slot memory
-  limit of 1 GiB for activities and 512 MiB for workflows and webhooks. Executors acquire a permit
-  before the database lease. [#1007](https://github.com/obeli-sk/obelisk/pull/1007)
-- *(server)* **Breaking:** Byte sizes in the new cells require a unit key (`memory.mib`,
-  `memory.gib`, or `memory.bytes`); bare integers are invalid. `[v8].thread_stack_size` uses a unit
-  key too, and `[v8].max_heap_size` moves to each V8 cell's `memory`.
-  [#1007](https://github.com/obeli-sk/obelisk/pull/1007)
-- *(V8)* **Breaking:** `[v8].max_threads` and `[v8].idle_timeout` are removed with the reusable
-  isolate thread pool. Use the V8 `[limits]` cells to set concurrency.
-  [#1006](https://github.com/obeli-sk/obelisk/pull/1006)
-- *(webhook)* **Breaking:** A webhook shed at runtime capacity now returns `503 Service
-  Unavailable` instead of `429 Too Many Requests`. Capacity is acquired after route matching,
-  so unmatched requests do not consume it. [#1007](https://github.com/obeli-sk/obelisk/pull/1007)
-- *(cli)* **Breaking:** Renamed `obelisk deployment get` to `obelisk deployment pull`.
-  [#1013](https://github.com/obeli-sk/obelisk/pull/1013)
-- *(API)* gRPC and gRPC-web are deprecated; gRPC remains available in this release candidate as
-  in-repo clients move to `/v1`. [#1016](https://github.com/obeli-sk/obelisk/pull/1016)
-
-### Removed
-
-- *(deployment)* **Breaking:** removed `exec.instance_limiter`. It bounded one component's
-  concurrency in one process, so it was mostly reached for as a singleton lock, which it never
-  was: a second node runs its own limiter and both admit at the same time. Use the `[limits]`
-  cells to bound a process, and the execution log for exclusivity. A deployment still carrying
-  the key fails to load. [#1007](https://github.com/obeli-sk/obelisk/pull/1007)
-
-### Fixed
-
-- *(server)* A startup that fails while resolving, verifying, compiling, linking or activating
-  its deployment now persists a `server.startup.failed` system event carrying the stage and the
-  error. [#1009](https://github.com/obeli-sk/obelisk/pull/1009)
-- *(server)* `server verify` now creates and migrates a missing SQLite database, matching
-  `server run`. [#1002](https://github.com/obeli-sk/obelisk/pull/1002)
-- *(gRPC)* Out-of-range request timestamps are rejected instead of overflowing or being
-  misinterpreted. [#1014](https://github.com/obeli-sk/obelisk/pull/1014)
-- *(activity-vm, activity-exec)* A VM stops when its lock expires or the executor shuts down. An
-  exec activity's process group is killed and reaped on those events, preventing overlap with a
-  retry. [#1022](https://github.com/obeli-sk/obelisk/pull/1022)
-- *(V8)* Host operation panics no longer escape the isolate boundary or lose workflow state;
-  host calls report JavaScript backtraces. Host operations run on the main Tokio runtime to avoid
-  a missed wakeup that could hang workflows. [#1004](https://github.com/obeli-sk/obelisk/pull/1004),
-  [#1005](https://github.com/obeli-sk/obelisk/pull/1005),
-  [#1008](https://github.com/obeli-sk/obelisk/pull/1008)
-- *(V8 webhook)* Incoming request URLs are absolute, and outbound HTTP requests apply the
-  configured host policy and secret substitutions, matching the WASM runtime.
-  [#1001](https://github.com/obeli-sk/obelisk/pull/1001)
-
-## [0.42.0-rc.3](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.2...v0.42.0-rc.3)
-
-This release candidate adds opt-in plaintext secret exposure to WASM and JavaScript activities and
-webhook endpoints, with operator grants bound to the component digest and complete secret set. It
-also surfaces workflows whose persisted history cannot be replayed within the execution lock.
-
-### Added
-
-- *(workflow)* A deduplicated warning system event identifies workflows whose execution lock
-  expires before replay reaches the persisted history tip and suggests increasing `lock_expiry` or
-  using replay/advance.
-
-- *(secrets)* WASM and JavaScript activities and webhook endpoints can declare
-  `exposed_secrets`, which are injected as environment variables at execution or request time.
-  Plaintext exposure requires an operator grant under `[secrets.<name>.exposed_to]` bound to the
-  component digest and complete secret set. `obelisk generate secret-config-digest` generates the
-  required grants.
-
-## [0.42.0-rc.2](https://github.com/obeli-sk/obelisk/compare/v0.41.6...v0.42.0-rc.2)
-
-This release candidate adds experimental Linux VM and WASIp3 activity support, operator APIs for
-retention and garbage collection, persisted system events, and workflow replay diagnostics. It
-also strengthens secret exposure and deployment environment authorization, introduces persisted
-value and transport limits, and updates the JavaScript and WIT runtime contracts. Review the
-breaking configuration, API, JavaScript and WIT changes below before upgrading from 0.41.
-
-### Removed
-
 - **Breaking:** *(config)* Removed deprecated deployment `component_digest` overrides. Component
   digests are always computed from component content and configuration.
 - **Breaking:** *(config)* Removed the deprecated server-wide
   `[workflows].lock_extension_leeway`; configure it on each workflow component.
 - **Breaking:** *(config)* Removed the `${DEPLOYMENT_DIR}/` path prefix. Deployment-owned files
   use bare paths relative to `deployment.toml`.
-- **Breaking:** *(config)* Renamed `allow_exec_activities` to `allowed_exec_activities`. Its values
-  are now secret exposure digests, which bind the executable content and complete exposed-secret
-  set, instead of executable content digests. Existing approvals must be regenerated with
-  `obelisk generate secret-config-digest`. Boolean values and unnamed digest lists are no longer
-  accepted; approvals must map activity names to one or more secret exposure digests.
-- **Breaking:** *(config)* Renamed `activity_exec.secrets` to
-  `activity_exec.exposed_secrets`.
+- **Breaking:** *(config)* Renamed `activity_exec.secrets` to `activity_exec.exposed_secrets`.
+- **Breaking:** *(deployment)* Removed `exec.instance_limiter`. It bounded one component's
+  concurrency in one process, so it was mostly reached for as a singleton lock, which it never
+  was: a second node runs its own limiter and both admit at the same time. Use the `[limits]`
+  cells to bound a process, and the execution log for exclusivity. A deployment still carrying
+  the key fails to load. [#1007](https://github.com/obeli-sk/obelisk/pull/1007)
 - **Breaking:** *(api)* Removed the `hot_redeploy` REST request alias. Use `apply` when switching
   deployments without restarting.
 - **Breaking:** *(grpc)* Removed the deprecated `function_name_prefix` execution filter. Use the
@@ -429,77 +54,221 @@ breaking configuration, API, JavaScript and WIT changes below before upgrading f
 
 ### Added
 
-- *(secrets)* Added `SecretExposureDigest` authorization for native exec and VM plaintext secret
-  exposure. Server secret entries grant reviewed component name and digest pairs through
-  `exposed_to`, and `obelisk generate secret-config-digest` produces reviewable, pasteable grants.
-  Digest identity binds executable content and the complete exposed-secret set. Exec activities
-  also require the same digest under `[allowed_exec_activities]`.
-- *(activity-vm)* Added experimental `[[activity_vm]]` deployment components for running
-  Nix-packaged Linux programs inside a container2wasm appliance hosted by Wasmtime. The
-  host fetches and verifies declared Nix closures and exposes the cache read-only through virtio-9p,
-  terminates guest HTTP(S), applies the normal outbound HTTP policy and secret-placeholder
-  rewriting, and records HTTP traces.
-  Explicitly exposed secrets are injected as guest environment variables, while stdin is
-  reserved for parameters when `params_via_stdin` is enabled.
-  This support is experimental: its configuration, guest ABI, cache layout, and runtime
-  behavior may change incompatibly or be removed.
+- *(activity-vm)* Experimental `[[activity_vm]]` deployment components run Nix-packaged Linux
+  programs inside a VM. The host fetches and verifies declared Nix closures and exposes them
+  read-only to the guest, terminates guest HTTP(S), applies the normal outbound HTTP policy and
+  secret-placeholder rewriting, and records HTTP traces. Redirects are returned to the guest, so
+  every hop is checked against the outbound policy. Explicitly exposed secrets are injected as
+  guest environment variables, while stdin is reserved for parameters when `params_via_stdin` is
+  enabled. Guest stdout, stderr, and the emulator console are forwarded to the execution logs as
+  they arrive, and a VM stops when its lock expires or the executor shuts down. VM activities
+  require `OBELISK_UNSTABLE_ACTIVITY_VM` on the deployment CLI and server to select a backend:
+  - `bochs-wasm`: a container2wasm appliance hosted by Wasmtime, with a fixed 512 MiB guest and
+    one vCPU.
+  - `qemu-tcg` or `qemu-kvm`: native QEMU restored from a snapshot of a pinned runtime bundle
+    pulled from OCI. `qemu-system-x86_64` must be on `PATH` and match the QEMU version the
+    snapshot was built with; KVM also needs `/dev/kvm`.
+  - `firecracker` (Linux only): every execution cold boots a microVM from a pinned runtime bundle
+    pulled from OCI. `firecracker` must be on `PATH`, and `/dev/kvm` must be readable and writable.
+
+  Native QEMU and Firecracker mount the Nix closure from an EROFS image, so `mkfs.erofs` must be on
+  the server's `PATH`. Required `memory` sets the guest RAM (for example `memory.gib = 4`); native
+  QEMU accepts 256 MiB up to 16.25 GiB, plugged through `virtio-mem`. Optional `cpus` sets the
+  guest vCPUs, default 1. This support is experimental: its configuration, guest ABI, cache
+  layout, and runtime behavior may change incompatibly or be removed.
+  [#1022](https://github.com/obeli-sk/obelisk/pull/1022),
+  [#1035](https://github.com/obeli-sk/obelisk/pull/1035),
+  [#1038](https://github.com/obeli-sk/obelisk/pull/1038),
+  [#1040](https://github.com/obeli-sk/obelisk/pull/1040),
+  [#1045](https://github.com/obeli-sk/obelisk/pull/1045),
+  [#1052](https://github.com/obeli-sk/obelisk/pull/1052),
+  [#1057](https://github.com/obeli-sk/obelisk/pull/1057),
+  [#1062](https://github.com/obeli-sk/obelisk/pull/1062),
+  [#1068](https://github.com/obeli-sk/obelisk/pull/1068),
+  [#1069](https://github.com/obeli-sk/obelisk/pull/1069),
+  [#1079](https://github.com/obeli-sk/obelisk/pull/1079),
+  [#1085](https://github.com/obeli-sk/obelisk/pull/1085),
+  [#1088](https://github.com/obeli-sk/obelisk/pull/1088)
+- *(wasm)* Experimental WASIp3 component support for activities and webhook endpoints.
+- *(JS)* Native V8 runtimes for workflows, activities, and webhooks, selected with
+  `OBELISK_JS_RUNTIME=v8`. Boa compiled to WASM (`boa-wasm`) remains the default. Each V8 isolate
+  runs on its own OS thread from a build-time startup snapshot; threads are reused for the next
+  isolate and exit after 60 seconds idle, while every activity still runs in a fresh isolate.
+  Exceeding the JS heap limit fails the execution with "JavaScript heap limit exceeded". With V8,
+  the server does not fetch the JS runtime components from the OCI registry.
+  [#998](https://github.com/obeli-sk/obelisk/pull/998),
+  [#999](https://github.com/obeli-sk/obelisk/pull/999),
+  [#1006](https://github.com/obeli-sk/obelisk/pull/1006),
+  [#1017](https://github.com/obeli-sk/obelisk/pull/1017),
+  [#1036](https://github.com/obeli-sk/obelisk/pull/1036),
+  [#1083](https://github.com/obeli-sk/obelisk/pull/1083),
+  [#1100](https://github.com/obeli-sk/obelisk/pull/1100)
+- *(JS)* Boa supports `crypto.getRandomValues`, backed by WASI random. It rejects non-integer typed
+  arrays and requests over 65536 bytes, as the Web Crypto spec requires.
+  [#1114](https://github.com/obeli-sk/obelisk/pull/1114)
+- *(secrets)* WASM and JavaScript activities and webhook endpoints can declare `exposed_secrets`,
+  which are injected as environment variables at execution or request time. Plaintext exposure
+  to these components, exec activities, and VM activities requires an operator grant under
+  `[secrets.<name>.exposed_to]`, bound to the component digest and the complete exposed-secret set
+  (`SecretExposureDigest`). `obelisk generate secret-config-digest` produces reviewable, pasteable
+  grants.
+- *(secrets)* `[secrets]` entries and component references can use `optional = true` to allow an
+  unset source variable. An absent optional secret is omitted from the component environment or
+  stdin; a required reference still fails verification. `--fix` scaffolds optional entries when
+  every reference is optional. [#1011](https://github.com/obeli-sk/obelisk/pull/1011)
+- *(app policy)* A canonical `app_config_digest` identifies the authored app policy. Deployments
+  record the digest used at activation, and system events carry the current digest. The running
+  policy and digest are available through `/v1/app-config` (JSON, or TOML with
+  `Accept: application/toml`) and `/v1/app-config-digest`, with digests also exposed in deployment
+  and event APIs. [#1020](https://github.com/obeli-sk/obelisk/pull/1020),
+  [#1021](https://github.com/obeli-sk/obelisk/pull/1021),
+  [#1102](https://github.com/obeli-sk/obelisk/pull/1102)
+- *(system-events)* Persisted operator-visible system events for server configuration, deployment
+  lifecycle and policy failures. Startup events record execution, deployment and CAS retention
+  configuration, and disabling automatic GC emits a warning. A startup that fails while
+  resolving, verifying, compiling, linking or activating its deployment persists a
+  `server.startup.failed` event with the stage and the error. Events can be listed, inspected and
+  retained through the admin CLI and REST/gRPC APIs, and filtered by node run, level, and
+  `created_from`/`created_to` time bounds (`--from`/`--to` in the CLI). Retention supports
+  `dry_run`. [#1009](https://github.com/obeli-sk/obelisk/pull/1009),
+  [#1010](https://github.com/obeli-sk/obelisk/pull/1010),
+  [#1101](https://github.com/obeli-sk/obelisk/pull/1101)
+- *(admin)* Operator-only gRPC and `/v1/admin` APIs, plus `obelisk admin` commands, delete one or
+  more execution trees and inactive deployments and apply bounded retention policies that clean up
+  the oldest eligible records first. Deletion tombstones execution roots synchronously, and
+  automatic maintenance removes their trees and unreferenced shared metadata and CAS blobs in
+  bounded batches. Explicit deletion and deployment retention can force removal of a non-terminal
+  tree unless its root belongs to the active deployment. Retention accepts either a count or
+  maximum age. A node run ID distinguishes events emitted by different starts of a node and is
+  exposed by `obelisk admin node-run-id` and the admin APIs.
+- *(gc)* Automatic retention and background garbage collection for execution trees, inactive
+  deployments, system events, and unreferenced metadata and CAS blobs. By default executions are
+  retained for 30 days after completion and deployments for 30 days after they become inactive.
+  CAS batches are bounded by both item count and bytes. A deployment retention batch that cannot
+  delete anything emits a `maintenance.gc.blocked` warning instead of stalling the other cleanups.
+  [#1098](https://github.com/obeli-sk/obelisk/pull/1098)
+- *(web API)* SSE follow streams for execution status, result, and submit, with heartbeat comments
+  and resumable event IDs. Execution lists gain exact function and repeated state filters;
+  deployment lists gain filtering options; component source lookup and a consistent
+  events-and-responses snapshot are available. `POST /v1/executions/events/batch` reads each
+  requested execution's `Created` and optional `Finished` event in one database transaction.
+  [#1016](https://github.com/obeli-sk/obelisk/pull/1016),
+  [#1037](https://github.com/obeli-sk/obelisk/pull/1037)
 - *(api)* REST and gRPC replay responses expose the persisted history-event count, replay duration,
-  and highest included execution-event version. Response records use a separate cursor and are not
-  represented by this version. Failed replays also include a structured, sanitized failure kind,
-  reason, and detail, preserving actionable nondeterminism diagnostics. The new response fields are
-  additive; existing gRPC field numbers and REST replay outcome tags are unchanged.
-- *(admin)* Added operator-only gRPC and `/v1/admin` APIs, plus `obelisk admin` commands, for
-  deleting one or more execution trees and inactive deployments and applying bounded retention
-  policies that clean up the oldest eligible records first. Deletion tombstones execution roots
-  synchronously, and configurable automatic maintenance removes their trees and unreferenced
-  shared metadata and CAS blobs in bounded batches. Explicit deletion and deployment retention can
-  force removal of a non-terminal tree unless its root belongs to the active deployment. Retention
-  accepts either a count or maximum age. Automatic maintenance retains executions for 30 days after
-  completion and deployments for 30 days after they become inactive by default.
+  and highest included execution-event version. Failed replays also include a structured,
+  sanitized failure kind, reason, and detail, preserving actionable nondeterminism diagnostics.
+- *(workflow)* A deduplicated warning system event identifies workflows whose execution lock
+  expires before replay reaches the persisted history tip and suggests increasing `lock_expiry` or
+  using replay/advance.
 - *(workflow)* `join-next-for` workflow-support function blocks until the next response arrives and
   requires it to belong to a given function. Its `join-next-for-error` reports `function-mismatch`
   when the next response belongs to a different function or is a delay.
-- *(system-events)* Added persisted operator-visible system events for server configuration,
-  deployment lifecycle and policy failures. Startup events record execution, deployment and CAS
-  retention configuration, and disabling automatic GC emits a warning. Events can be listed,
-  inspected and retained through the admin CLI and REST/gRPC APIs, and filtered by node run or
-  `debug`, `info`, `warning` and `error` level.
-- *(admin)* Added a node run ID to distinguish events emitted by different starts of a node.
-  `obelisk admin node-run-id` and the REST/gRPC admin APIs expose the current ID.
-- *(config)* Added `[limits].max_persisted_value_size_bytes`, defaulting to 1 MiB. Each new
-  execution tree snapshots its limit, while executions created by older releases retain their
-  previous unlimited contract.
-- *(config)* Added `[limits].max_transport_message_size_bytes`, defaulting to 512 MiB, as the
-  shared maximum for gRPC messages and equivalent REST request bodies.
-- *(history)* Persisted random values and child-execution parameters now carry fingerprints used
+- *(history)* Persisted random values and child-execution parameters carry fingerprints used
   during replay to detect incompatible history.
-- *(wasm)* Added experimental WASIp3 component support for activities and webhook endpoints.
-- *(gc)* Added automatic retention and background garbage collection for execution trees,
-  inactive deployments, system events, and unreferenced metadata and CAS blobs. CAS batches are
-  bounded by both item count and bytes.
+- *(config)* `[limits].max_persisted_value_size_bytes`, defaulting to 1 MiB. Each new execution
+  tree snapshots its limit, while executions created by older releases retain their previous
+  unlimited contract.
+- *(config)* `[limits].max_transport_message_size_bytes`, defaulting to 512 MiB, as the shared
+  maximum for gRPC messages and equivalent REST request bodies.
+- *(webhook)* `[webhooks].request_timeout` is a common deadline for WASM and V8 handlers to return
+  an HTTP response. The default is 30 seconds; an already-returned streaming response body is not
+  limited. [#1003](https://github.com/obeli-sk/obelisk/pull/1003)
+- *(cli)* `obelisk generate new [NAME]` creates a runnable JavaScript starter app in a new named
+  directory, or in the current directory when no name is given.
+  [#1018](https://github.com/obeli-sk/obelisk/pull/1018)
 - *(cli)* `obelisk execution submit --follow-logs` streams execution logs until completion and
   then prints the result. A lone `-` parameter reads the JSON parameter array from stdin.
+- *(download)* `download.sh` accepts a release tag as its first argument or via `OBELISK_VERSION`,
+  e.g. `curl ... download.sh | bash -s -- v0.42.0`. Defaults to the latest release.
+  ([1abc60a](https://github.com/obeli-sk/obelisk/commit/1abc60aa988b35db070adee2a5d74cdfe9d5a8cb))
 
 ### Changed
 
+- *(config)* **Breaking:** `server.toml` now holds platform limits and listeners, `app.toml` holds
+  reviewed app allowances, and `deployment.toml` holds components. App-owned secret registrations,
+  public environment allowances, outbound HTTP policy, exec activity allowances, and `app_name`
+  move from the server file to the app file. Pass `--app-config` with `server run`, `server verify`,
+  or `deployment verify`; omitting it uses default app policy when `OBELISK_APP_NAME` is set.
+  Use `obelisk generate split-config --server-config server.toml` to split an existing file.
+  Registered secrets read same-named environment variables;
+  `OBELISK__...` overrides apply only to `server.toml`. [#1015](https://github.com/obeli-sk/obelisk/pull/1015)
+- *(config)* **Breaking:** Startup requires `app_name` in `app.toml` or `OBELISK_APP_NAME`.
+  Omitting it fails before opening a database. The default SQLite directory moves from
+  `${DATA_DIR}/obelisk-sqlite` to `${DATA_DIR}/apps/${APP_NAME}/sqlite`.
+  [#1015](https://github.com/obeli-sk/obelisk/pull/1015)
+- *(config)* **Breaking:** Deployments can only read process environment variables declared in the
+  app `[public_env]` table, using named entries such as `VAR = {}`. This applies both to forwarded
+  variables and to `${...}` interpolation in all deployment configuration values, and keeps
+  platform-provided variables, including sensitive Kubernetes values, out of `deployment.toml`.
+  Entries are required at startup by default; use `VAR = { optional = true }` for variables
+  allowed to be absent. Deployment references can use `{ key = "VAR", optional = true }` or an
+  interpolation fallback. Variables registered as secrets remain available only through their
+  logical secret names. [#1019](https://github.com/obeli-sk/obelisk/pull/1019)
+- *(app policy)* Activation rejects outbound HTTP destinations or methods not covered by app
+  policy. App and deployment URL regexes both apply to requests.
+  [#1015](https://github.com/obeli-sk/obelisk/pull/1015)
+- *(config)* Deployment verification reports every undeclared public environment variable,
+  unregistered secret, and uncovered outbound destination together with a sorted, pasteable
+  snippet. `server verify --fix` and `deployment verify --fix` scaffold them in `app.toml` for
+  review. `--allow-unavailable-runtime-config` also permits storing and enqueuing deployments
+  while app approval of public environment names or outbound HTTP destinations is pending;
+  activation still verifies strictly. Startup, submission, and deployment-switch failure events
+  include the complete missing runtime configuration lists.
+  [#1032](https://github.com/obeli-sk/obelisk/pull/1032)
+- *(server)* **Breaking:** `allow_exec_activities` is replaced by `allowed_exec_activities`.
+  In `server.toml`, omitted or `false` disables exec, `"*"` permits app-approved exec with a
+  startup warning, and a component/digest table limits the grant. App approvals map activity names
+  to one or more secret exposure digests, which bind the executable content and complete
+  exposed-secret set; regenerate existing approvals with `obelisk generate secret-config-digest`.
+  `true` and unnamed digest lists are invalid. [#1015](https://github.com/obeli-sk/obelisk/pull/1015)
+- *(server)* **Breaking:** `[wasm].global_executor_instance_limiter` and
+  `[wasm].global_webhook_instance_limiter` are replaced by per-workload, per-runtime `[limits]`
+  cells for activities (`wasm`, `v8`, `process`, `vm_bochs`), workflows (`wasm`, `v8`), and webhooks
+  (`wasm`, `v8`). Cells set concurrent `count` and, except for `process`, per-slot `memory`; both
+  accept `"unlimited"`. Old keys fail configuration loading. Defaults cap concurrency at 500
+  WASM activities, workflows, and webhooks, 32 exec processes, and 8 VMs, with a per-slot memory
+  limit of 1 GiB for activities and 512 MiB for workflows and webhooks. Executors acquire a permit
+  before the database lease. Byte sizes require a unit key (`memory.mib`, `memory.gib`, or
+  `memory.bytes`); bare integers are invalid. [#1007](https://github.com/obeli-sk/obelisk/pull/1007)
 - **Breaking:** *(config)* `max_deployment_file_bytes` moved from the top level of `server.toml`
   to `limits.max_deployment_file_bytes`.
-- **Breaking:** *(config)* Deployments can only read process environment variables listed in the
-  server's `[public_env].allowed` allowlist. This applies both to forwarded variables and to
-  `${...}` interpolation in all deployment configuration values. Variables registered as secrets
-  remain available only through their logical secret names. This prevents platform-provided
-  variables, including sensitive Kubernetes values, from being exposed through `deployment.toml`.
-- *(config)* Deployment verification reports every undeclared public environment variable and
-  unregistered secret together with a sorted, pasteable `server.toml` snippet. `server verify
-  --fix` and its `deployment verify` alias update both `[public_env].allowed` and `[secrets]`.
-  Startup, submission, and deployment-switch failure events include the complete missing runtime
-  configuration lists.
-- **Breaking:** *(workflow-js, webhook-js)* Obelisk runtime APIs must now be imported from the
+- *(webhook)* **Breaking:** A webhook shed at runtime capacity returns `503 Service Unavailable`
+  instead of `429 Too Many Requests`. Capacity is acquired after route matching, so unmatched
+  requests do not consume it. [#1007](https://github.com/obeli-sk/obelisk/pull/1007)
+- **Breaking:** *(executor)* The default execution lock expiry is now 30 seconds instead of 1
+  second, and workflow lock extension starts 15 seconds before expiry instead of 100 milliseconds.
+  A workflow extends its lock only after persisting progress since the previous extension, avoiding
+  an ever-growing execution log when replay alone takes longer than the lock duration.
+- *(cli)* **Breaking:** Renamed `obelisk deployment get` to `obelisk deployment pull`.
+  [#1013](https://github.com/obeli-sk/obelisk/pull/1013)
+- *(API)* gRPC and gRPC-web are deprecated; gRPC remains available in this release as in-repo
+  clients move to `/v1`. [#1016](https://github.com/obeli-sk/obelisk/pull/1016)
+- **Breaking:** *(workflow-js, webhook-js)* Obelisk runtime APIs must be imported from the
   versioned `obelisk:workflow@1.0.0` or `obelisk:webhook@1.0.0` synthetic modules. Dynamic
-  `call` and `schedule` operations are available separately from the corresponding
-  `obelisk:workflow-dynamic@1.0.0` and `obelisk:webhook-dynamic@1.0.0` modules. The unversioned
-  global `obelisk` object has been removed.
-- **Breaking:** *(wit)* Runtime-selected dispatch functions now use the dedicated
+  operations are available separately from `obelisk:workflow-dynamic@1.0.0` and
+  `obelisk:webhook-dynamic@1.0.0`. The unversioned global `obelisk` object has been removed.
+- **Breaking:** *(workflow-js)* Submit workflow children by FFQN with
+  `dynamic.submit(joinSet, ffqn, params)` from `obelisk:workflow-dynamic@1.0.0`.
+  Join-set objects no longer expose `submit`; typed `fnSubmit(joinSet, ...params)` imports
+  keep their API. Base modules do not export `call` or `schedule`. Dynamic modules require
+  a static import or re-export declaration, including when loaded with `import()`.
+  Side-effect imports, empty imports, and re-exports contribute to dependency metadata.
+  [#1095](https://github.com/obeli-sk/obelisk/pull/1095)
+- **Breaking:** *(workflow-js)* Typed `*-await-next` extension imports route through
+  `join-next-for`, so JS workflows record the requested function in their event history exactly
+  as native Rust workflows do. The execution log is therefore identical across languages, allowing
+  a workflow to be replayed after switching its implementation between JS and Rust mid-execution.
+- *(JS)* Imports of JS workflows and webhooks are read from their JS code instead of the JS
+  runtime, so both JS engines list the same imports. The dynamic call interface is the only listed
+  `obelisk` interface, and only when the code imports `obelisk:workflow-dynamic@1.0.0` or
+  `obelisk:webhook-dynamic@1.0.0`. JS activities list no imports, and JS webhooks no longer expose
+  the WIT of the JS runtime. [#1080](https://github.com/obeli-sk/obelisk/pull/1080),
+  [#1084](https://github.com/obeli-sk/obelisk/pull/1084)
+- *(JS)* Boa and V8 share one Web Crypto implementation. `crypto.subtle.verify` compares in
+  constant time, `sign`/`verify` honor the key's HMAC hash (SHA-256/384/512) and require the
+  matching key usage, `importKey` rejects unsupported hashes, and hash names are
+  case-insensitive. [#1114](https://github.com/obeli-sk/obelisk/pull/1114)
+- **Breaking:** *(wit)* Runtime-selected dispatch functions use the dedicated
   `workflow-dynamic-support` and `webhook-dynamic-support` interfaces, with separate backtrace
   variants for interpreted runtimes. Workflow `submit-json` and its error type move alongside
   `call-json` and `schedule-json`, allowing dynamic dispatch to be granted independently from
@@ -508,60 +277,71 @@ breaking configuration, API, JavaScript and WIT changes below before upgrading f
   scheduling, stubbing and result contracts. The affected packages are now `obelisk:types@6.0.0`,
   `obelisk:workflow@7.0.0` and `obelisk:webhook@7.0.0`; the `function` record also moves from the
   `execution` interface to a dedicated `function` interface.
-- **Breaking:** *(executor)* The default execution lock expiry is now 30 seconds instead of 1
-  second, and workflow lock extension starts 15 seconds before expiry instead of 100 milliseconds.
-  A workflow extends its lock only after persisting progress since the previous extension, avoiding
-  an ever-growing execution log when replay alone takes longer than the lock duration.
 - *(http)* Denied outbound HTTP request warnings show the effective `deployment.toml` component
-  policy and/or `server.toml` allowlist and suggest only the missing entry, instead of always
-  suggesting both. Warnings about secrets allowed for potentially unencrypted hosts are now
-  reported once, separately from other configuration warnings -
-  ([#925](https://github.com/obeli-sk/obelisk/pull/925)).
-- **Breaking:** *(workflow-js)* Typed `*-await-next` extension imports now route through `join-next-for`, so JS
-  workflows record the requested function in their event history exactly as native Rust workflows
-  do. The execution log is therefore identical across languages, allowing a workflow to be replayed
-  after switching its implementation between JS and Rust mid-execution.
-- *(server)* Shutdown now cancels in-flight REST, gRPC and webhook requests and waits for their
+  policy and/or app allowlist and suggest only the missing entry, instead of always suggesting
+  both. Warnings about secrets allowed for potentially unencrypted hosts are reported once,
+  separately from other configuration warnings.
+  [#925](https://github.com/obeli-sk/obelisk/pull/925)
+- *(server)* Shutdown cancels in-flight REST, gRPC and webhook requests and waits for their
   cleanup before database connections are closed.
+- *(build)* Release binaries embed the Web UI in all builds, including native builds. The Nix
+  package no longer pulls the Rust toolchain into its runtime closure, and static musl builds are
+  pushed to the obeli-sk Cachix cache.
+  [#1029](https://github.com/obeli-sk/obelisk/pull/1029),
+  [#1055](https://github.com/obeli-sk/obelisk/pull/1055)
+- *(webui)* Embedded Web UI updated to 2026-10-02.
+  [#1103](https://github.com/obeli-sk/obelisk/pull/1103)
+- *(litestream)* Updated the Litestream Docker image to 0.5.17 and documented starting Obelisk with
+  automatic database restoration from a replica.
+  [#919](https://github.com/obeli-sk/obelisk/pull/919)
 
 ### Fixed
 
+- *(api)* The API startup token is printed to stderr instead of being logged at INFO level and
+  repeated in every denied-request warning, keeping the full-admin credential out of log files and
+  OTLP sinks. [#1086](https://github.com/obeli-sk/obelisk/pull/1086)
+- *(workflow)* Closing a join set cancels stubbed activities synchronously instead of waiting for
+  the cancellation driver. Replay also reliably appends cancellation requests to child workflows.
+  [#918](https://github.com/obeli-sk/obelisk/pull/918)
+- *(workflow)* A workflow entering a blocking join near its lock expiry extends the lock before
+  waiting for the child response, preventing a missed response wakeup.
+  [#1074](https://github.com/obeli-sk/obelisk/pull/1074)
+- *(workflow)* An event version mismatch during replay is reported as nondeterminism instead of
+  panicking. [#1077](https://github.com/obeli-sk/obelisk/pull/1077)
 - *(workflow-js)* Replaying a JavaScript workflow after its parameter cardinality changed no longer
   panics. The execution is correctly marked with an incompatible digest instead of staying locked
-  until auto expiry - ([#921](https://github.com/obeli-sk/obelisk/pull/921)).
+  until auto expiry. [#921](https://github.com/obeli-sk/obelisk/pull/921)
 - *(workflow-js)* A stub written from JS (`stub-json`, used by `obelisk.stub` and the typed `-stub`
-  extension imports) now hashes the type-checked return value the same way a native Rust `-stub`
-  extension does, instead of hashing the raw JSON string. The two representations previously produced
-  different `retval_hash` values, so a self-fulfilled stub recorded by one language failed the
-  determinism check when the workflow was replayed under the other, blocking mid-execution
-  JS/Rust switches for any workflow that self-fulfills a stub.
-- *(http)* REST deployment submission accepts request bodies up to the configured transport limit,
-  matching gRPC instead of failing at Axum's smaller default limit.
+  extension imports) hashes the type-checked return value the same way a native Rust `-stub`
+  extension does, instead of hashing the raw JSON string. Previously a self-fulfilled stub
+  recorded by one language failed the determinism check when the workflow was replayed under the
+  other.
+- *(exec)* Cached executables no longer receive a `.sh` suffix, allowing Node.js executables to
+  start correctly. [#920](https://github.com/obeli-sk/obelisk/pull/920)
+- *(exec)* An exec activity's process group is killed and reaped when its lock expires or the
+  executor shuts down, preventing overlap with a retry.
+  [#1022](https://github.com/obeli-sk/obelisk/pull/1022)
 - *(http-js)* JavaScript activities and webhook endpoints preserve bodyless `GET` requests instead
   of adding an empty body.
+- *(http)* REST deployment submission accepts request bodies up to the configured transport limit,
+  matching gRPC instead of failing at Axum's smaller default limit.
 - *(deployment)* Unregistered-secret submission failures are returned as structured API errors.
-
-
-## [0.41.6](https://github.com/obeli-sk/obelisk/compare/v0.41.5...v0.41.6)
-
-This patch release corrects cancellation of stubbed activities and child workflows, and restores
-support for Node.js executables in exec activities. It also updates the Litestream Docker image to
-0.5.17 and refreshes the Litestream restore example.
-
-### Changed
-
-- *(litestream)* Updated the Litestream Docker image to 0.5.17 and documented starting Obelisk with
-  automatic database restoration from a replica -
-  ([#919](https://github.com/obeli-sk/obelisk/pull/919)).
-
-### Fixed
-
-- *(workflow)* Closing a join set now cancels stubbed activities synchronously instead of waiting
-  for the cancellation driver. Replay also reliably appends cancellation requests to child
-  workflows -
-  ([#918](https://github.com/obeli-sk/obelisk/pull/918)).
-- *(exec)* Cached executables no longer receive a `.sh` suffix, allowing Node.js executables to
-  start correctly - ([#920](https://github.com/obeli-sk/obelisk/pull/920)).
+- *(deployment)* The transformed WASM Component cache is written atomically. Concurrent
+  processes transforming the same Core WASM Module no longer fail with "unexpected end-of-file"
+  while reading a partially written cache file.
+  [#1107](https://github.com/obeli-sk/obelisk/pull/1107)
+- *(CLI)* `server verify --fix` and `deployment verify --fix` regenerate digests using the
+  `--server-config` file and the selected JS runtime instead of the default server configuration.
+  Webhooks bound to a named `http_server` or to the external server no longer fail the fix.
+  [#1113](https://github.com/obeli-sk/obelisk/pull/1113)
+- *(server)* `server verify` creates and migrates a missing SQLite database, matching
+  `server run`. [#1002](https://github.com/obeli-sk/obelisk/pull/1002)
+- *(gRPC)* Out-of-range request timestamps are rejected instead of overflowing or being
+  misinterpreted. [#1014](https://github.com/obeli-sk/obelisk/pull/1014)
+- *(download)* `download.sh` selects the musl binary whenever the glibc dynamic loader is missing,
+  and on NixOS even when a stub loader is installed at the FHS path.
+  ([27b7e32](https://github.com/obeli-sk/obelisk/commit/27b7e322409ccbde8699f2472df1b4f099e15a8f),
+  [6fe3400](https://github.com/obeli-sk/obelisk/commit/6fe340006ae1db6089af86d4d510e3c5f6a9f1e3))
 
 ## [0.41.5](https://github.com/obeli-sk/obelisk/compare/v0.41.4...v0.41.5)
 
