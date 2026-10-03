@@ -6533,16 +6533,32 @@ async fn write_embedded_runtime(
     Ok(path)
 }
 
+async fn webui_location(wasm_cache_dir: &Path) -> Result<ComponentLocationToml, anyhow::Error> {
+    #[cfg(debug_assertions)]
+    if let Some(wasm) = std::env::var_os("OBELISK_WEBUI_WASM").map(std::path::PathBuf::from) {
+        warn!("Overriding web UI with {wasm:?}");
+        ensure!(wasm.is_file(), "local web UI WASM is missing");
+        return Ok(ComponentLocationToml::Path(
+            wasm.to_string_lossy().into_owned(),
+        ));
+    }
+    default_webui_location(wasm_cache_dir).await
+}
+
 #[cfg(not(feature = "embed-webui"))]
 #[expect(clippy::unused_async)]
-async fn webui_location(_wasm_cache_dir: &Path) -> Result<ComponentLocationToml, anyhow::Error> {
+async fn default_webui_location(
+    _wasm_cache_dir: &Path,
+) -> Result<ComponentLocationToml, anyhow::Error> {
     WEBUI_LOCATION
         .parse()
         .context("hard-coded webui reference must be parsed")
 }
 
 #[cfg(feature = "embed-webui")]
-async fn webui_location(wasm_cache_dir: &Path) -> Result<ComponentLocationToml, anyhow::Error> {
+async fn default_webui_location(
+    wasm_cache_dir: &Path,
+) -> Result<ComponentLocationToml, anyhow::Error> {
     let path = write_embedded_runtime(embedded_assets::WEBUI_WASM, wasm_cache_dir)
         .await
         .context("cannot materialize embedded web UI")?;
