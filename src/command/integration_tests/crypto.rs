@@ -4,20 +4,27 @@ const DEPLOYMENT: &str = r#"[[activity_js]]
 name = "test_hmac_sign_verify_activity"
 ffqn = "testing:integration/activity-hmac.hmac-sign-verify"
 content = '''
-// Test fixture: HMAC-SHA256 sign using crypto.subtle.
-// Accepts a key string and a message string, signs the message, and returns
-// the signature as a hex string for the caller to verify.
+// Test fixture: HMAC sign and verify using crypto.subtle.
+// Returns the SHA-256 and SHA-512 signatures as hex, separated by ':'.
 export default async function hmac_sign_verify(keyStr, message) {
     const enc = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-        'raw',
-        enc.encode(keyStr),
-        { name: 'HMAC', hash: 'SHA-256' },
-        false,
-        ['sign'],
-    );
-    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
-    return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('');
+    const signatures = [];
+    for (const hash of ['SHA-256', 'SHA-512']) {
+        const key = await crypto.subtle.importKey(
+            'raw',
+            enc.encode(keyStr),
+            { name: 'HMAC', hash },
+            false,
+            ['sign', 'verify'],
+        );
+        const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+        if (!await crypto.subtle.verify('HMAC', key, sig, enc.encode(message))) throw new Error(`${hash}: valid signature rejected`);
+        const tampered = new Uint8Array(sig).slice();
+        tampered[0] ^= 1;
+        if (await crypto.subtle.verify({ name: 'HMAC' }, key, tampered, enc.encode(message))) throw new Error(`${hash}: tampered signature accepted`);
+        signatures.push([...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join(''));
+    }
+    return signatures.join(':');
 }
 '''
 params = [
@@ -56,21 +63,28 @@ async fn hmac_sign_verify(#[case] runtime: JsRuntime) {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
 
-    // The JS activity returns the HMAC-SHA256 signature as a hex string.
     let js_hex = body["ok"].as_str().expect("expected ok string");
 
-    // Compute the expected HMAC-SHA256 on the Rust side and compare.
-    let mut mac = Hmac::<Sha256>::new_from_slice(KEY.as_bytes()).unwrap();
-    mac.update(MSG.as_bytes());
-    let mut expected = String::with_capacity(64);
-    for b in mac.finalize().into_bytes() {
-        write!(expected, "{b:02x}").unwrap();
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().fold(String::new(), |mut acc, b| {
+            write!(acc, "{b:02x}").unwrap();
+            acc
+        })
     }
+    let mut sha256 = Hmac::<Sha256>::new_from_slice(KEY.as_bytes()).unwrap();
+    sha256.update(MSG.as_bytes());
+    let mut sha512 = Hmac::<Sha512>::new_from_slice(KEY.as_bytes()).unwrap();
+    sha512.update(MSG.as_bytes());
+    let expected = format!(
+        "{}:{}",
+        hex(&sha256.finalize().into_bytes()),
+        hex(&sha512.finalize().into_bytes())
+    );
 
     assert_eq!(
         js_hex,
         expected,
-        "JS HMAC-SHA256 signature must match Rust using {}",
+        "JS HMAC signatures must match Rust using {}",
         runtime.name()
     );
     server.shutdown().await;

@@ -10,11 +10,9 @@ use deno_core::{
     RuntimeOptions, op2, resolve_import,
 };
 use deno_error::JsErrorBox;
-use hmac::{Hmac, Mac as _};
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::Sha256;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
@@ -163,20 +161,14 @@ fn op_activity_random(state: &mut OpState, #[smi] length: u32) -> Result<Vec<u8>
 
 #[op2]
 #[serde]
-fn op_activity_hmac_sha256(
+fn op_activity_hmac(
     state: &mut OpState,
+    #[string] hash: String,
     #[serde] key: Vec<u8>,
     #[serde] message: Vec<u8>,
 ) -> Result<Vec<u8>, JsErrorBox> {
     let panic = state.borrow::<HostState>().panic.clone();
-    panic.catch(|| op_activity_hmac_sha256_inner(key, message))
-}
-
-fn op_activity_hmac_sha256_inner(key: Vec<u8>, message: Vec<u8>) -> Result<Vec<u8>, JsErrorBox> {
-    let mut mac = Hmac::<Sha256>::new_from_slice(&key)
-        .map_err(|err| JsErrorBox::type_error(err.to_string()))?;
-    mac.update(&message);
-    Ok(mac.finalize().into_bytes().to_vec())
+    panic.catch(|| crate::v8_crypto::hmac(&hash, &key, &message))
 }
 
 deno_core::extension!(
@@ -187,7 +179,7 @@ deno_core::extension!(
         op_activity_sleep,
         op_activity_fetch,
         op_activity_random,
-        op_activity_hmac_sha256
+        op_activity_hmac
     ]
 );
 
@@ -422,11 +414,15 @@ class TextEncoder { encode(value = '') { const encoded = unescape(encodeURICompo
 class TextDecoder { decode(value = new Uint8Array()) { const bytes = value instanceof Uint8Array ? value : new Uint8Array(value); return decodeURIComponent(escape(String.fromCharCode(...bytes))); } }
 globalThis.TextEncoder = TextEncoder;
 globalThis.TextDecoder = TextDecoder;
+const hmacHash = key => typeof key.algorithm.hash === 'string' ? key.algorithm.hash : key.algorithm.hash.name;
+const hmacSign = (key, data) => Uint8Array.from(Deno.core.ops.op_activity_hmac(hmacHash(key), key.bytes, [...new Uint8Array(data)]));
+const isHmac = algorithm => String(typeof algorithm === 'string' ? algorithm : algorithm.name).toUpperCase() === 'HMAC';
 globalThis.crypto = {
   getRandomValues(array) { const bytes = Deno.core.ops.op_activity_random(array.byteLength); new Uint8Array(array.buffer, array.byteOffset, array.byteLength).set(bytes); return array; },
   subtle: {
     async importKey(format, keyData, algorithm, extractable, usages) { if (format !== 'raw' || String(algorithm.name).toUpperCase() !== 'HMAC') throw new TypeError('only raw HMAC keys are supported'); return { bytes: [...new Uint8Array(keyData)], algorithm, usages }; },
-    async sign(algorithm, key, data) { if (String(typeof algorithm === 'string' ? algorithm : algorithm.name).toUpperCase() !== 'HMAC') throw new TypeError('only HMAC signing is supported'); return Uint8Array.from(Deno.core.ops.op_activity_hmac_sha256(key.bytes, [...new Uint8Array(data)])).buffer; }
+    async sign(algorithm, key, data) { if (!isHmac(algorithm)) throw new TypeError('only HMAC signing is supported'); return hmacSign(key, data).buffer; },
+    async verify(algorithm, key, signature, data) { if (!isHmac(algorithm)) throw new TypeError('only HMAC verification is supported'); const expected = hmacSign(key, data), actual = new Uint8Array(signature); if (expected.length !== actual.length) return false; let difference = 0; for (let i = 0; i < expected.length; i++) difference |= expected[i] ^ actual[i]; return difference === 0; }
   }
 };
 class Response {
@@ -473,7 +469,7 @@ mod tests {
 
         let snapshotted = probe(Some(crate::v8_snapshot::STARTUP_SNAPSHOT));
         assert!(
-            snapshotted.contains("op_activity_hmac_sha256"),
+            snapshotted.contains("op_activity_hmac"),
             "ops must be bound in a snapshot isolate: {snapshotted}"
         );
         assert_eq!(probe(None), snapshotted);

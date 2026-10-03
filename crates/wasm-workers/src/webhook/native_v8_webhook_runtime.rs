@@ -10,13 +10,11 @@ use deno_core::{
     resolve_import, v8,
 };
 use deno_error::JsErrorBox;
-use hmac::{Hmac, Mac as _};
 use http_body_util::combinators::UnsyncBoxBody;
 use hyper::{HeaderMap, Response, StatusCode, body::Bytes};
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Sha256, Sha384, Sha512};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
@@ -282,30 +280,7 @@ fn op_webhook_hmac(
     #[serde] message: Vec<u8>,
 ) -> Result<Vec<u8>, JsErrorBox> {
     let panic = state.borrow::<HostState>().panic.clone();
-    panic.catch(|| op_webhook_hmac_inner(hash, key, message))
-}
-
-fn op_webhook_hmac_inner(
-    hash: String,
-    key: Vec<u8>,
-    message: Vec<u8>,
-) -> Result<Vec<u8>, JsErrorBox> {
-    macro_rules! sign {
-        ($digest:ty) => {{
-            let mut mac = Hmac::<$digest>::new_from_slice(&key)
-                .map_err(|err| JsErrorBox::type_error(err.to_string()))?;
-            mac.update(&message);
-            Ok(mac.finalize().into_bytes().to_vec())
-        }};
-    }
-    match hash.to_ascii_uppercase().as_str() {
-        "SHA-256" | "SHA256" => sign!(Sha256),
-        "SHA-384" | "SHA384" => sign!(Sha384),
-        "SHA-512" | "SHA512" => sign!(Sha512),
-        _ => Err(JsErrorBox::type_error(format!(
-            "unsupported HMAC hash algorithm: {hash}"
-        ))),
-    }
+    panic.catch(|| crate::v8_crypto::hmac(&hash, &key, &message))
 }
 
 deno_core::extension!(

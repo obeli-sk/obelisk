@@ -92,7 +92,7 @@ use grpc::grpc_gen::{
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::Sha256;
+use sha2::{Sha256, Sha512};
 use std::fmt::Write as _;
 use std::{
     path::{Path, PathBuf},
