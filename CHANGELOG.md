@@ -6,10 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0-rc.12](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.11...v0.42.0-rc.12)
+
+This release candidate brings Boa and V8 to one shared Web Crypto implementation, adding
+`crypto.subtle.verify` to V8 activities and `crypto.getRandomValues` to Boa. `verify --fix` now
+honors the server configuration.
+
 ### Added
 
 - *(JS)* Boa supports `crypto.getRandomValues`, backed by WASI random. It rejects non-integer typed
   arrays and requests over 65536 bytes, as the Web Crypto spec requires.
+  [#1114](https://github.com/obeli-sk/obelisk/pull/1114)
 
 ### Changed
 
@@ -17,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (SHA-256/384/512) instead of always signing with SHA-256. Boa and V8 share one Web Crypto
   implementation: `verify` compares in constant time, `sign`/`verify` require the matching key
   usage, `importKey` rejects unsupported hashes, and hash names are case-insensitive.
+  [#1114](https://github.com/obeli-sk/obelisk/pull/1114)
+
+### Fixed
+
+- *(CLI)* `server verify --fix` and `deployment verify --fix` regenerate digests using the
+  `--server-config` file and the selected JS runtime instead of the default server configuration.
+  Webhooks bound to a named `http_server` or to the external server no longer fail the fix.
+  [#1113](https://github.com/obeli-sk/obelisk/pull/1113)
 
 ## [0.42.0-rc.11](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.10...v0.42.0-rc.11)
 
