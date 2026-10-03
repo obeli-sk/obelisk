@@ -945,12 +945,15 @@ pub(crate) async fn verify(
             config_holder.app_source.as_deref(),
             deployment_path_for_fix.as_deref(),
         ) {
-        let outputs = generate_secret_config_digests(
+        let outputs = Box::pin(generate_secret_config_digests_with_server_config(
             deployment_path,
             None,
             secret_registry.clone(),
+            &config_holder,
+            config.clone(),
+            verify_params.js_runtime,
             verify_params.activity_vm_runtime,
-        )
+        ))
         .await?;
         fix_server_secret_config_digests(app_config_path, &outputs).await?;
         let ServerStartup {
@@ -4705,6 +4708,31 @@ pub(crate) async fn generate_secret_config_digests(
     secret_registry: Arc<SecretRegistry>,
     activity_vm_runtime: ActivityVmRuntimeMode,
 ) -> anyhow::Result<Vec<SecretConfigDigestOutput>> {
+    let config_holder = ConfigHolder::new(crate::project_dirs(), BaseDirs::new(), None)?;
+    let mut config = config_holder.load_config()?;
+    let env_vars = crate::config::env_var::StartupEnvVars::capture();
+    config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
+    Box::pin(generate_secret_config_digests_with_server_config(
+        deployment_path,
+        component_name,
+        secret_registry,
+        &config_holder,
+        config,
+        JsRuntimeMode::default(),
+        activity_vm_runtime,
+    ))
+    .await
+}
+
+async fn generate_secret_config_digests_with_server_config(
+    deployment_path: &Path,
+    component_name: Option<&str>,
+    secret_registry: Arc<SecretRegistry>,
+    config_holder: &ConfigHolder,
+    config: ServerConfigToml,
+    js_runtime: JsRuntimeMode,
+    activity_vm_runtime: ActivityVmRuntimeMode,
+) -> anyhow::Result<Vec<SecretConfigDigestOutput>> {
     let (deployment, cas) = resolve_deployment_offline(deployment_path).await?;
     let mut undeclared_public_env = BTreeSet::new();
     config_prepass::collect_deployment_unregistered_public_env(
@@ -4718,10 +4746,6 @@ pub(crate) async fn generate_secret_config_digests(
             .clone()
             .allow_unavailable_public_env(undeclared_public_env),
     );
-    let config_holder = ConfigHolder::new(crate::project_dirs(), BaseDirs::new(), None)?;
-    let mut config = config_holder.load_config()?;
-    let env_vars = crate::config::env_var::StartupEnvVars::capture();
-    config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
     let prepared_dirs = prepare_dirs(
         &config,
         &PrepareDirsParams {
@@ -4737,7 +4761,7 @@ pub(crate) async fn generate_secret_config_digests(
         config,
         engines,
         secret_registry,
-        JsRuntimeMode::default(),
+        js_runtime,
         activity_vm_runtime,
     ))
     .await?;
@@ -4755,7 +4779,7 @@ pub(crate) async fn generate_secret_config_digests(
             runtime_config_availability: RuntimeConfigAvailability::AllowUnavailable,
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
-            js_runtime: JsRuntimeMode::default(),
+            js_runtime,
             activity_vm_runtime,
         },
         &mut termination_watcher,
