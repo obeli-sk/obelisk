@@ -373,13 +373,16 @@ impl WorkflowJsWorkerCompiled {
             }),
             WorkflowJsRuntimeExt::V8(v8_executor) => self.inner.link_native(
                 fn_registry,
-                Arc::new(NativeV8WorkflowRuntime::new(
-                    self.js_entry_path.clone(),
-                    self.js_files.clone(),
-                    self.user_return_type.clone(),
-                    resolved_imports,
-                    v8_executor,
-                )),
+                Arc::new(
+                    NativeV8WorkflowRuntime::new(
+                        self.js_entry_path.clone(),
+                        self.js_files.clone(),
+                        self.user_return_type.clone(),
+                        resolved_imports,
+                        v8_executor,
+                    )
+                    .map_err(|e| crate::WasmFileError::linking_error("JS dispatch policy", e))?,
+                ),
             ),
         };
         Ok(WorkflowJsWorkerLinked {

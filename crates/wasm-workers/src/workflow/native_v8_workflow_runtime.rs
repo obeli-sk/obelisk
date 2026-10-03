@@ -23,6 +23,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::c_void;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub(crate) struct NativeV8WorkflowRuntime {
@@ -30,6 +31,7 @@ pub(crate) struct NativeV8WorkflowRuntime {
     files: BTreeMap<String, String>,
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
+    dispatch_policy: Arc<JsDispatchPolicy>,
     v8_executor: V8Executor,
 }
 
@@ -40,14 +42,20 @@ impl NativeV8WorkflowRuntime {
         return_type: ReturnTypeExtendable,
         resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
         v8_executor: V8Executor,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        let dispatch_policy = Arc::new(JsDispatchPolicy::new(
+            &files,
+            &resolved_imports,
+            "obelisk:workflow-dynamic@1.0.0",
+        )?);
+        Ok(Self {
             entry_path,
             files,
             return_type,
             resolved_imports,
+            dispatch_policy,
             v8_executor,
-        }
+        })
     }
 }
 
@@ -92,6 +100,7 @@ struct NativeV8Invocation {
     params: Params,
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
+    dispatch_policy: Arc<JsDispatchPolicy>,
     v8_executor: V8Executor,
     instance_permit: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
 }
@@ -114,6 +123,7 @@ impl WorkflowRuntime for NativeV8WorkflowRuntime {
             params: params.clone(),
             return_type: self.return_type.clone(),
             resolved_imports: self.resolved_imports.clone(),
+            dispatch_policy: self.dispatch_policy.clone(),
             v8_executor: self.v8_executor.clone(),
             instance_permit,
         }))
@@ -138,6 +148,7 @@ impl WorkflowInvocation for NativeV8Invocation {
             params,
             return_type,
             resolved_imports,
+            dispatch_policy,
             v8_executor,
             instance_permit,
         } = *self;
@@ -181,6 +192,7 @@ impl WorkflowInvocation for NativeV8Invocation {
                         params: &params,
                         return_type: &return_type,
                         resolved_imports: &resolved_imports,
+                        dispatch_policy: &dispatch_policy,
                     },
                     &mut workflow_ctx,
                     MainRuntimeHandle(handle),
@@ -222,7 +234,7 @@ impl WorkflowInvocation for NativeV8Invocation {
 }
 
 struct HostState {
-    dispatch_policy: JsDispatchPolicy,
+    dispatch_policy: Arc<JsDispatchPolicy>,
     workflow_ctx: usize,
     handle: MainRuntimeHandle,
     isolate: deno_core::v8::IsolateHandle,
@@ -666,6 +678,7 @@ struct ExecuteArgs<'a> {
     params: &'a Params,
     return_type: &'a ReturnTypeExtendable,
     resolved_imports: &'a HashMap<IfcFqnName, Vec<NamedFnImport>>,
+    dispatch_policy: &'a Arc<JsDispatchPolicy>,
 }
 
 async fn execute(
@@ -674,16 +687,10 @@ async fn execute(
     handle: MainRuntimeHandle,
     max_heap_size: Option<usize>,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
-    let dispatch_policy = JsDispatchPolicy::new(
-        args.files,
-        args.resolved_imports,
-        "obelisk:workflow-dynamic@1.0.0",
-    )
-    .map_err(NativeV8Failure::CannotInstantiate)?;
     let loader = Rc::new(InMemoryModuleLoader::new(
         args.files,
         args.resolved_imports,
-        dispatch_policy.dynamic,
+        args.dispatch_policy.dynamic,
     ));
     // Declaration order keeps callback data alive through isolate teardown and queued interrupts.
     #[allow(clippy::needless_late_init)]
@@ -709,15 +716,7 @@ async fn execute(
         std::ptr::from_ref(interrupt_data.as_ref()).cast(),
     );
 
-    let result = execute_inner(
-        &mut runtime,
-        &loader,
-        args,
-        workflow_ctx,
-        handle,
-        dispatch_policy,
-    )
-    .await;
+    let result = execute_inner(&mut runtime, &loader, args, workflow_ctx, handle).await;
     if heap.exhausted() {
         Err(NativeV8Failure::Trap(crate::v8_heap::EXHAUSTED.into()))
     } else {
@@ -731,19 +730,19 @@ async fn execute_inner(
     args: ExecuteArgs<'_>,
     workflow_ctx: &mut WorkflowCtx,
     handle: MainRuntimeHandle,
-    dispatch_policy: JsDispatchPolicy,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
     let ExecuteArgs {
         entry_path,
         params,
         return_type,
+        dispatch_policy,
         ..
     } = args;
 
     let isolate = runtime.v8_isolate().thread_safe_handle();
     let panic = crate::v8_panic::V8PanicState::new(isolate.clone());
     runtime.op_state().borrow_mut().put(HostState {
-        dispatch_policy,
+        dispatch_policy: dispatch_policy.clone(),
         workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
         handle: handle.clone(),
         isolate: isolate.clone(),

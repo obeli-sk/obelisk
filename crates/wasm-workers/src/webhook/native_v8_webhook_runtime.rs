@@ -21,6 +21,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
     rc::Rc,
+    sync::Arc,
 };
 use types::obelisk::webhook::webhook_support::Host as WebhookSupportHost;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
@@ -44,8 +45,31 @@ pub(super) enum NativeWebhookFailure {
     Timeout,
 }
 
+/// Import bindings and dispatch policy of a V8 JS webhook, resolved once at link time.
+pub(super) struct NativeV8Imports {
+    imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
+    dispatch_policy: Arc<JsDispatchPolicy>,
+}
+
+impl NativeV8Imports {
+    pub(super) fn new(
+        files: &BTreeMap<String, String>,
+        imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
+    ) -> Result<Self, String> {
+        let dispatch_policy = Arc::new(JsDispatchPolicy::new(
+            files,
+            &imports,
+            "obelisk:webhook-dynamic@1.0.0",
+        )?);
+        Ok(Self {
+            imports,
+            dispatch_policy,
+        })
+    }
+}
+
 struct HostState {
-    dispatch_policy: JsDispatchPolicy,
+    dispatch_policy: Arc<JsDispatchPolicy>,
     ctx: usize,
     handle: tokio::runtime::Handle,
     env: HashMap<String, String>,
@@ -300,7 +324,7 @@ deno_core::extension!(
 #[expect(clippy::too_many_arguments)]
 pub(super) async fn execute(
     config: &WebhookEndpointJsConfig,
-    imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
+    imports: &NativeV8Imports,
     request: NativeRequest,
     env: HashMap<String, String>,
     ctx: &mut WebhookEndpointCtx,
@@ -311,13 +335,10 @@ pub(super) async fn execute(
 ) -> Result<NativeResponse, NativeWebhookFailure> {
     let mut connection_drop_watcher = ctx.connection_drop_watcher.clone();
     let mut server_termination_watcher = ctx.server_termination_watcher.clone();
-    let dispatch_policy =
-        JsDispatchPolicy::new(&config.files, imports, "obelisk:webhook-dynamic@1.0.0")
-            .map_err(NativeWebhookFailure::CannotInstantiate)?;
     let loader = Rc::new(InMemoryModuleLoader::new(
         &config.files,
-        imports,
-        dispatch_policy.dynamic,
+        &imports.imports,
+        imports.dispatch_policy.dynamic,
     ));
     let (mut runtime, heap) = crate::v8_heap::new_runtime(
         RuntimeOptions {
@@ -337,7 +358,7 @@ pub(super) async fn execute(
         ctx,
         handle,
         isolate_tx,
-        dispatch_policy,
+        imports.dispatch_policy.clone(),
     );
     let result = tokio::select! {
         result = execution => result,
@@ -364,7 +385,7 @@ async fn execute_inner(
     ctx: &mut WebhookEndpointCtx,
     handle: tokio::runtime::Handle,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
-    dispatch_policy: JsDispatchPolicy,
+    dispatch_policy: Arc<JsDispatchPolicy>,
 ) -> Result<NativeResponse, NativeWebhookFailure> {
     let isolate = runtime.v8_isolate().thread_safe_handle();
     let _ = isolate_tx.send(isolate.clone());
