@@ -12,7 +12,6 @@ use deno_core::{
 use deno_error::JsErrorBox;
 use http_body_util::combinators::UnsyncBoxBody;
 use hyper::{HeaderMap, Response, StatusCode, body::Bytes};
-use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -260,29 +259,6 @@ fn op_webhook_host_inner(
     host.block_on(future)
 }
 
-#[op2]
-#[serde]
-fn op_webhook_random(state: &mut OpState, #[smi] length: u32) -> Result<Vec<u8>, JsErrorBox> {
-    let panic = state.borrow::<HostState>().panic.clone();
-    panic.catch(|| {
-        let mut bytes = vec![0; length as usize];
-        rand::rng().fill_bytes(&mut bytes);
-        Ok(bytes)
-    })
-}
-
-#[op2]
-#[serde]
-fn op_webhook_hmac(
-    state: &mut OpState,
-    #[string] hash: String,
-    #[serde] key: Vec<u8>,
-    #[serde] message: Vec<u8>,
-) -> Result<Vec<u8>, JsErrorBox> {
-    let panic = state.borrow::<HostState>().panic.clone();
-    panic.catch(|| crate::v8_crypto::hmac(&hash, &key, &message))
-}
-
 deno_core::extension!(
     obelisk_webhook_v8,
     ops = [
@@ -290,9 +266,7 @@ deno_core::extension!(
         op_webhook_env,
         op_webhook_sleep,
         op_webhook_fetch,
-        op_webhook_host,
-        op_webhook_random,
-        op_webhook_hmac
+        op_webhook_host
     ]
 );
 
@@ -318,7 +292,10 @@ pub(super) async fn execute(
     let (mut runtime, heap) = crate::v8_heap::new_runtime(
         RuntimeOptions {
             module_loader: Some(loader.clone()),
-            extensions: vec![obelisk_webhook_v8::init()],
+            extensions: vec![
+                obelisk_webhook_v8::init(),
+                crate::v8_crypto::obelisk_crypto_v8::init(),
+            ],
             startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
             ..Default::default()
         },
@@ -373,8 +350,15 @@ async fn execute_inner(
         panic: panic.clone(),
         user_module_paths: crate::v8_backtrace::user_module_paths(&loader.paths),
     });
+    runtime.op_state().borrow_mut().put(panic.clone());
     runtime
         .execute_script("obelisk:webhook-bootstrap", WEBHOOK_BOOTSTRAP)
+        .map_err(|err| NativeWebhookFailure::CannotInstantiate(err.to_string()))?;
+    runtime
+        .execute_script(
+            "obelisk:crypto-bootstrap",
+            crate::v8_crypto::CRYPTO_BOOTSTRAP,
+        )
         .map_err(|err| NativeWebhookFailure::CannotInstantiate(err.to_string()))?;
     let entry = loader.specifier_for_path(entry_path).ok_or_else(|| {
         NativeWebhookFailure::CannotInstantiate("JavaScript entry module was not found".into())
@@ -841,9 +825,6 @@ globalThis.URL = URL;
 class TextEncoder { encode(value = '') { const encoded = unescape(encodeURIComponent(String(value))); return Uint8Array.from(encoded, char => char.charCodeAt(0)); } }
 class TextDecoder { decode(value = new Uint8Array()) { const bytes = value instanceof Uint8Array ? value : new Uint8Array(value); return decodeURIComponent(escape(String.fromCharCode(...bytes))); } }
 globalThis.TextEncoder = TextEncoder; globalThis.TextDecoder = TextDecoder;
-const hmacHash = key => typeof key.algorithm.hash === 'string' ? key.algorithm.hash : key.algorithm.hash.name;
-const hmacSign = (key,data) => Uint8Array.from(Deno.core.ops.op_webhook_hmac(hmacHash(key),key.bytes,[...new Uint8Array(data)]));
-globalThis.crypto = { getRandomValues(array) { const bytes=Deno.core.ops.op_webhook_random(array.byteLength); new Uint8Array(array.buffer,array.byteOffset,array.byteLength).set(bytes); return array; }, subtle: { async importKey(format,keyData,algorithm,extractable,usages) { if(format!=='raw'||String(algorithm.name).toUpperCase()!=='HMAC') throw new TypeError('only raw HMAC keys are supported'); return {bytes:[...new Uint8Array(keyData)],algorithm,usages}; }, async sign(algorithm,key,data) { if(String(typeof algorithm==='string'?algorithm:algorithm.name).toUpperCase()!=='HMAC') throw new TypeError('only HMAC signing is supported'); return hmacSign(key,data).buffer; }, async verify(algorithm,key,signature,data) { if(String(typeof algorithm==='string'?algorithm:algorithm.name).toUpperCase()!=='HMAC') throw new TypeError('only HMAC verification is supported'); const expected=hmacSign(key,data), actual=new Uint8Array(signature); if(expected.length!==actual.length)return false; let difference=0; for(let i=0;i<expected.length;i++)difference|=expected[i]^actual[i]; return difference===0; } } };
 class Headers { constructor(init = []) { this.entries = init instanceof Headers ? [...init] : Array.isArray(init) ? init.map(([k,v]) => [String(k).toLowerCase(), String(v)]) : Object.entries(init).map(([k,v]) => [k.toLowerCase(), String(v)]); } get(name) { const values=this.entries.filter(([k]) => k === String(name).toLowerCase()).map(([,v])=>v); return values.length ? values.join(', ') : null; } has(name) { return this.get(name) !== null; } set(name,value) { const key=String(name).toLowerCase(); this.entries=this.entries.filter(([k])=>k!==key); this.entries.push([key,String(value)]); } append(name,value) { this.entries.push([String(name).toLowerCase(),String(value)]); } [Symbol.iterator]() { return this.entries[Symbol.iterator](); } }
 globalThis.Headers = Headers;
 class Request { constructor(input, options = {}) { if (typeof input === 'object' && input.__native) { Object.assign(this,input); this.headers=new Headers(input.headers); } else { this.url=String(input); this.method=options.method||'GET'; this.headers=new Headers(options.headers); this._body=options.body??''; } } async text(){return this._body??this.body??'';} async json(){return JSON.parse(await this.text());} async formData(){return Object.fromEntries(new URLSearchParams(await this.text()));} }

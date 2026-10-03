@@ -1,0 +1,17 @@
+[package]
+name = "obeli-sk-js-crypto"
+description = "Web Crypto primitives shared by the Boa and V8 JS runtimes"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+hmac.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

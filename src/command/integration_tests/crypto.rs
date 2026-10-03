@@ -32,6 +32,28 @@ params = [
   { name = "message", type = "string" },
 ]
 return_type = "result<string, string>"
+
+[[activity_js]]
+name = "test_get_random_values_activity"
+ffqn = "testing:integration/activity-random.get-random-values"
+content = '''
+export default function get_random_values() {
+    const errorName = fn => { try { fn(); return 'none'; } catch (e) { return e.message.split(':')[0]; } };
+    const bytes = new Uint8Array(64);
+    if (crypto.getRandomValues(bytes) !== bytes) throw new Error('must return the same array');
+    if (bytes.every(b => b === 0)) throw new Error('bytes were not filled');
+    const view = new Uint8Array(new ArrayBuffer(8), 2, 4);
+    crypto.getRandomValues(view);
+    if (new Uint8Array(view.buffer, 0, 2).some(b => b !== 0) || new Uint8Array(view.buffer, 6).some(b => b !== 0)) throw new Error('wrote outside the view');
+    crypto.getRandomValues(new Uint32Array(16384));
+    return [
+        errorName(() => crypto.getRandomValues(new Float64Array(1))),
+        errorName(() => crypto.getRandomValues(new Uint8Array(65537))),
+    ].join(',');
+}
+'''
+params = []
+return_type = "result<string, string>"
 "#;
 
 #[rstest::rstest]
@@ -85,6 +107,40 @@ async fn hmac_sign_verify(#[case] runtime: JsRuntime) {
         js_hex,
         expected,
         "JS HMAC signatures must match Rust using {}",
+        runtime.name()
+    );
+    server.shutdown().await;
+}
+
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
+#[tokio::test]
+async fn get_random_values(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(189),
+        JsRuntime::V8 => test_addr!(190),
+    };
+    let server = TestServer::start_inline_deployment_with_js_runtime(
+        ip,
+        "",
+        DEPLOYMENT,
+        &[],
+        runtime.mode(),
+    )
+    .await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/activity-random.get-random-values",
+            vec![],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["ok"].as_str(),
+        Some("TypeMismatchError,QuotaExceededError"),
+        "{body} using {}",
         runtime.name()
     );
     server.shutdown().await;

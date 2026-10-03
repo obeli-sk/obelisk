@@ -171,6 +171,7 @@ members = [
     "crates/embedded-assets",
     "crates/executor",
     "crates/grpc",
+    "crates/js-crypto",
     "crates/testing/component-builder",
     "crates/testing/db-macro",
     "crates/testing/db-tests",
@@ -237,6 +238,7 @@ deno_error = "=0.7.1"
 embedded-assets = { package = "obeli-sk-embedded-assets", path = "crates/embedded-assets" }
 executor = { package = "obeli-sk-executor", path = "crates/executor" }
 grpc = { package = "obeli-sk-grpc", path = "crates/grpc" }
+js-crypto = { package = "obeli-sk-js-crypto", path = "crates/js-crypto" }
 obelisk-component-builder = { path = "crates/testing/component-builder", features = [
     "genrs",
 ] }
