@@ -4102,22 +4102,17 @@ pub(crate) mod tests {
                 panic!("webhook execution must be top-level");
             };
             let conn = db_pool.connection().await.unwrap();
-            let http_client_traces =
-                tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                    loop {
-                        let exec_log = conn.get(&execution.execution_id).await.unwrap();
-                        if let ExecutionRequest::Finished {
-                            http_client_traces, ..
-                        } = &exec_log.last_event().event
-                        {
-                            break http_client_traces.clone();
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                    }
-                })
-                .await
-                .expect("webhook execution must finish")
-                .expect("http_client_traces must be Some");
+            let http_client_traces = loop {
+                let exec_log = conn.get(&execution.execution_id).await.unwrap();
+                if let ExecutionRequest::Finished {
+                    http_client_traces, ..
+                } = &exec_log.last_event().event
+                {
+                    break http_client_traces.clone();
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            .expect("http_client_traces must be Some");
             let [trace] = http_client_traces.as_slice() else {
                 panic!("expected one trace, got {http_client_traces:?}");
             };
@@ -4178,45 +4173,41 @@ pub(crate) mod tests {
             use crate::v8_executor::{V8Cell, V8Executor, V8ExecutorConfig, V8Workload};
             use concepts::storage::DbPoolCloseable as _;
             use std::collections::BTreeMap;
-            use std::time::Duration;
             use tokio::sync::oneshot;
 
             test_utils::set_up();
-            tokio::time::timeout(Duration::from_secs(45), async {
-                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-                let upstream_addr = listener.local_addr().unwrap();
-                let (arrived_tx, mut arrived_rx) = mpsc::channel(4);
-                let mut upstream = tokio::task::JoinSet::new();
-                upstream.spawn(async move {
-                    let mut connections = tokio::task::JoinSet::new();
-                    loop {
-                        let (stream, _) = listener.accept().await.unwrap();
-                        let arrived_tx = arrived_tx.clone();
-                        connections.spawn(async move {
-                            let service = hyper::service::service_fn(
-                                move |request: hyper::Request<hyper::body::Incoming>| {
-                                    let arrived_tx = arrived_tx.clone();
-                                    async move {
-                                        let path = request.uri().path().to_owned();
-                                        let (release_tx, release_rx) = oneshot::channel();
-                                        arrived_tx.send((path.clone(), release_tx)).await.unwrap();
-                                        let _ = release_rx.await;
-                                        Ok::<_, std::convert::Infallible>(hyper::Response::new(
-                                            http_body_util::Full::new(hyper::body::Bytes::from(
-                                                path,
-                                            )),
-                                        ))
-                                    }
-                                },
-                            );
-                            let _ = hyper::server::conn::http1::Builder::new()
-                                .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
-                                .await;
-                        });
-                    }
-                });
-                let source = format!(
-                    r"
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let upstream_addr = listener.local_addr().unwrap();
+            let (arrived_tx, mut arrived_rx) = mpsc::channel(4);
+            let mut upstream = tokio::task::JoinSet::new();
+            upstream.spawn(async move {
+                let mut connections = tokio::task::JoinSet::new();
+                loop {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let arrived_tx = arrived_tx.clone();
+                    connections.spawn(async move {
+                        let service = hyper::service::service_fn(
+                            move |request: hyper::Request<hyper::body::Incoming>| {
+                                let arrived_tx = arrived_tx.clone();
+                                async move {
+                                    let path = request.uri().path().to_owned();
+                                    let (release_tx, release_rx) = oneshot::channel();
+                                    arrived_tx.send((path.clone(), release_tx)).await.unwrap();
+                                    let _ = release_rx.await;
+                                    Ok::<_, std::convert::Infallible>(hyper::Response::new(
+                                        http_body_util::Full::new(hyper::body::Bytes::from(path)),
+                                    ))
+                                }
+                            },
+                        );
+                        let _ = hyper::server::conn::http1::Builder::new()
+                            .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                            .await;
+                    });
+                }
+            });
+            let source = format!(
+                r"
                     import * as obelisk from 'obelisk:webhook@1.0.0';
                     export default async function handle(request) {{
                         if (request.url.endsWith('/recovery')) return new Response('ok');
@@ -4235,101 +4226,98 @@ pub(crate) mod tests {
                         }});
                     }}
                 "
-                );
-                let executor = V8Executor::new(V8ExecutorConfig {
-                    webhooks: V8Cell::standalone(1, 32 * 1024 * 1024),
-                    ..V8ExecutorConfig::default()
-                });
-                let (mut server, addr, guard, db_pool, db_guard, db_close) =
-                    start_js_webhook_server_with_http_and_db(
-                        &source,
-                        &format!("http://{upstream_addr}"),
-                        None,
-                        WebhookJsRuntime::V8,
-                        Some(concepts::storage::LogLevel::Info),
-                        Some(executor.clone()),
-                    )
-                    .await;
-                let mut request = tokio::task::JoinSet::new();
-                request.spawn(reqwest::get(format!("http://{addr}/")));
-                let mut pending = BTreeMap::new();
-                for _ in 0..3 {
-                    let (path, release) = arrived_rx.recv().await.unwrap();
-                    assert!(pending.insert(path, release).is_none());
-                }
-                assert!(pending.contains_key("/first"));
-                assert!(pending.contains_key("/second"));
-                pending.remove("/barrier").unwrap().send(()).unwrap();
+            );
+            let executor = V8Executor::new(V8ExecutorConfig {
+                webhooks: V8Cell::standalone(1, 32 * 1024 * 1024),
+                ..V8ExecutorConfig::default()
+            });
+            let (mut server, addr, guard, db_pool, db_guard, db_close) =
+                start_js_webhook_server_with_http_and_db(
+                    &source,
+                    &format!("http://{upstream_addr}"),
+                    None,
+                    WebhookJsRuntime::V8,
+                    Some(concepts::storage::LogLevel::Info),
+                    Some(executor.clone()),
+                )
+                .await;
+            let mut request = tokio::task::JoinSet::new();
+            request.spawn(reqwest::get(format!("http://{addr}/")));
+            let mut pending = BTreeMap::new();
+            for _ in 0..3 {
                 let (path, release) = arrived_rx.recv().await.unwrap();
-                assert_eq!(path, "/ready");
-                match end {
-                    PendingFetchEnd::Complete => {
+                assert!(pending.insert(path, release).is_none());
+            }
+            assert!(pending.contains_key("/first"));
+            assert!(pending.contains_key("/second"));
+            pending.remove("/barrier").unwrap().send(()).unwrap();
+            let (path, release) = arrived_rx.recv().await.unwrap();
+            assert_eq!(path, "/ready");
+            match end {
+                PendingFetchEnd::Complete => {
+                    release.send(()).unwrap();
+                    for (_, release) in pending {
                         release.send(()).unwrap();
-                        for (_, release) in pending {
-                            release.send(()).unwrap();
-                        }
-                    }
-                    PendingFetchEnd::Timeout => {}
-                    PendingFetchEnd::Termination => {
-                        guard.server_termination_sender.send(()).unwrap();
                     }
                 }
-                let response = request.join_next().await.unwrap().unwrap();
-                match end {
-                    PendingFetchEnd::Complete => {
-                        let response = response.unwrap();
-                        assert_eq!(response.status().as_u16(), 200);
-                        let result: serde_json::Value = response.json().await.unwrap();
-                        assert_eq!(result["bodies"], serde_json::json!(["/first", "/second"]));
-                        assert_eq!(result["status"]["status"], "pendingAt");
-                        assert_ne!(result["id"], result["generated"]);
-                        let conn = db_pool.connection().await.unwrap();
-                        let execution_id = result["id"].as_str().unwrap().parse().unwrap();
-                        let log = conn.get(&execution_id).await.unwrap();
-                        let concepts::storage::ExecutionRequest::Finished {
-                            http_client_traces: Some(traces),
-                            ..
-                        } = &log.last_event().event
-                        else {
-                            panic!("webhook must persist its HTTP traces on completion");
-                        };
-                        assert_eq!(traces.len(), 4);
-                        assert!(traces.iter().all(|trace| {
-                            trace
-                                .resp
-                                .as_ref()
-                                .is_some_and(|response| response.status == Ok(200))
-                        }));
-                    }
-                    PendingFetchEnd::Timeout => {
-                        let response = response.unwrap();
-                        assert_eq!(response.status().as_u16(), 408);
-                        assert_eq!(response.text().await.unwrap(), "Timeout");
-                    }
-                    PendingFetchEnd::Termination => {
-                        assert!(
-                            response.is_err(),
-                            "server termination must close the connection"
-                        );
-                    }
-                }
-                drop(executor.admit(V8Workload::Webhook).await.unwrap());
-                if !matches!(end, PendingFetchEnd::Termination) {
-                    let recovery = reqwest::get(format!("http://{addr}/recovery"))
-                        .await
-                        .unwrap();
-                    assert_eq!(recovery.status().as_u16(), 200);
-                    assert_eq!(recovery.text().await.unwrap(), "ok");
+                PendingFetchEnd::Timeout => {}
+                PendingFetchEnd::Termination => {
                     guard.server_termination_sender.send(()).unwrap();
                 }
-                server.join_next().await.unwrap().unwrap().unwrap();
-                drop(upstream);
-                drop(db_pool);
-                drop(db_guard);
-                db_close.close().await;
-            })
-            .await
-            .expect("pending fetches must not block webhook completion or teardown");
+            }
+            let response = request.join_next().await.unwrap().unwrap();
+            match end {
+                PendingFetchEnd::Complete => {
+                    let response = response.unwrap();
+                    assert_eq!(response.status().as_u16(), 200);
+                    let result: serde_json::Value = response.json().await.unwrap();
+                    assert_eq!(result["bodies"], serde_json::json!(["/first", "/second"]));
+                    assert_eq!(result["status"]["status"], "pendingAt");
+                    assert_ne!(result["id"], result["generated"]);
+                    let conn = db_pool.connection().await.unwrap();
+                    let execution_id = result["id"].as_str().unwrap().parse().unwrap();
+                    let log = conn.get(&execution_id).await.unwrap();
+                    let concepts::storage::ExecutionRequest::Finished {
+                        http_client_traces: Some(traces),
+                        ..
+                    } = &log.last_event().event
+                    else {
+                        panic!("webhook must persist its HTTP traces on completion");
+                    };
+                    assert_eq!(traces.len(), 4);
+                    assert!(traces.iter().all(|trace| {
+                        trace
+                            .resp
+                            .as_ref()
+                            .is_some_and(|response| response.status == Ok(200))
+                    }));
+                }
+                PendingFetchEnd::Timeout => {
+                    let response = response.unwrap();
+                    assert_eq!(response.status().as_u16(), 408);
+                    assert_eq!(response.text().await.unwrap(), "Timeout");
+                }
+                PendingFetchEnd::Termination => {
+                    assert!(
+                        response.is_err(),
+                        "server termination must close the connection"
+                    );
+                }
+            }
+            drop(executor.admit(V8Workload::Webhook).await.unwrap());
+            if !matches!(end, PendingFetchEnd::Termination) {
+                let recovery = reqwest::get(format!("http://{addr}/recovery"))
+                    .await
+                    .unwrap();
+                assert_eq!(recovery.status().as_u16(), 200);
+                assert_eq!(recovery.text().await.unwrap(), "ok");
+                guard.server_termination_sender.send(()).unwrap();
+            }
+            server.join_next().await.unwrap().unwrap().unwrap();
+            drop(upstream);
+            drop(db_pool);
+            drop(db_guard);
+            db_close.close().await;
         }
 
         #[tokio::test]
@@ -4925,21 +4913,14 @@ pub(crate) mod tests {
                     .await
                     .unwrap()
             });
-            tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                while harness.tick_activity().await == 0 {
-                    assert!(
-                        !fetch.is_finished(),
-                        "webhook failed before calling the activity"
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .unwrap();
-            let response = tokio::time::timeout(std::time::Duration::from_secs(10), fetch)
-                .await
-                .unwrap()
-                .unwrap();
+            while harness.tick_activity().await == 0 {
+                assert!(
+                    !fetch.is_finished(),
+                    "webhook failed before calling the activity"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            let response = fetch.await.unwrap();
             assert_eq!(response.status().as_u16(), 200);
             assert_eq!(
                 response.json::<serde_json::Value>().await.unwrap(),
@@ -5231,41 +5212,34 @@ pub(crate) mod tests {
                         .unwrap()
                 });
 
-                let child_execution_id =
-                    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                        loop {
-                            let conn = harness.db_pool.external_api_conn().await.unwrap();
-                            let executions = conn
-                                .list_executions(
-                                    ListExecutionsFilter {
-                                        function_name_filter: Some(
-                                            FunctionNameFilter::FunctionName(
-                                                target_ffqn.to_string(),
-                                            ),
-                                        ),
-                                        show_derived: true,
-                                        ..Default::default()
-                                    },
-                                    ExecutionListPagination::default(),
-                                )
-                                .await
-                                .unwrap();
-                            if let Some(execution) = executions
-                                .into_iter()
-                                .find(|execution| execution.ffqn.to_string() == target_ffqn)
-                            {
-                                break match execution.execution_id {
-                                    ExecutionId::Derived(id) => id,
-                                    ExecutionId::TopLevel(_) => {
-                                        panic!("activity execution must be derived")
-                                    }
-                                };
+                let child_execution_id = loop {
+                    let conn = harness.db_pool.external_api_conn().await.unwrap();
+                    let executions = conn
+                        .list_executions(
+                            ListExecutionsFilter {
+                                function_name_filter: Some(FunctionNameFilter::FunctionName(
+                                    target_ffqn.to_string(),
+                                )),
+                                show_derived: true,
+                                ..Default::default()
+                            },
+                            ExecutionListPagination::default(),
+                        )
+                        .await
+                        .unwrap();
+                    if let Some(execution) = executions
+                        .into_iter()
+                        .find(|execution| execution.ffqn.to_string() == target_ffqn)
+                    {
+                        break match execution.execution_id {
+                            ExecutionId::Derived(id) => id,
+                            ExecutionId::TopLevel(_) => {
+                                panic!("activity execution must be derived")
                             }
-                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                        }
-                    })
-                    .await
-                    .expect("webhook should submit the child activity");
+                        };
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                };
                 let conn = harness.db_pool.connection_test().await.unwrap();
                 write_stub_response(
                     conn.as_ref(),

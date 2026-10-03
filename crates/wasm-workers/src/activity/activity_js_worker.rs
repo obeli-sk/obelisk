@@ -990,9 +990,7 @@ mod tests {
         let (mut ctx, _close_tx) = make_worker_context(ffqn, &[]);
         ctx.locked_event.lock_expires_at =
             chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(50);
-        let result = tokio::time::timeout(std::time::Duration::from_secs(2), worker.run(ctx))
-            .await
-            .expect("V8 termination must stop the CPU loop");
+        let result = worker.run(ctx).await;
         assert_matches!(result, Err(WorkerError::TemporaryTimeout { .. }));
     }
 

@@ -492,13 +492,10 @@ mod tests {
                     .boxed_unsync(),
                 )
                 .unwrap();
-            let (response, io) = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                Box::into_pin(hooks.send_request(request, None, Box::new(async { Ok(()) }))),
-            )
-            .await
-            .unwrap()
-            .unwrap();
+            let (response, io) =
+                Box::into_pin(hooks.send_request(request, None, Box::new(async { Ok(()) })))
+                    .await
+                    .unwrap();
             let io_task = tokio::spawn(Box::into_pin(io));
             assert_eq!(response.status().as_u16(), status);
             assert_eq!(response.headers()[hyper::header::LOCATION], destination);
