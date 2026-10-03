@@ -10,11 +10,8 @@ use deno_core::{
     RuntimeOptions, op2, resolve_import,
 };
 use deno_error::JsErrorBox;
-use hmac::{Hmac, Mac as _};
-use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::Sha256;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
@@ -150,44 +147,13 @@ async fn op_activity_fetch_inner(
     })
 }
 
-#[op2]
-#[serde]
-fn op_activity_random(state: &mut OpState, #[smi] length: u32) -> Result<Vec<u8>, JsErrorBox> {
-    let panic = state.borrow::<HostState>().panic.clone();
-    panic.catch(|| {
-        let mut bytes = vec![0; length as usize];
-        rand::rng().fill_bytes(&mut bytes);
-        Ok(bytes)
-    })
-}
-
-#[op2]
-#[serde]
-fn op_activity_hmac_sha256(
-    state: &mut OpState,
-    #[serde] key: Vec<u8>,
-    #[serde] message: Vec<u8>,
-) -> Result<Vec<u8>, JsErrorBox> {
-    let panic = state.borrow::<HostState>().panic.clone();
-    panic.catch(|| op_activity_hmac_sha256_inner(key, message))
-}
-
-fn op_activity_hmac_sha256_inner(key: Vec<u8>, message: Vec<u8>) -> Result<Vec<u8>, JsErrorBox> {
-    let mut mac = Hmac::<Sha256>::new_from_slice(&key)
-        .map_err(|err| JsErrorBox::type_error(err.to_string()))?;
-    mac.update(&message);
-    Ok(mac.finalize().into_bytes().to_vec())
-}
-
 deno_core::extension!(
     obelisk_activity_v8,
     ops = [
         op_activity_log,
         op_activity_env,
         op_activity_sleep,
-        op_activity_fetch,
-        op_activity_random,
-        op_activity_hmac_sha256
+        op_activity_fetch
     ]
 );
 
@@ -209,7 +175,10 @@ pub(crate) async fn execute(
     let (mut runtime, heap) = crate::v8_heap::new_runtime(
         RuntimeOptions {
             module_loader: Some(loader.clone()),
-            extensions: vec![obelisk_activity_v8::init()],
+            extensions: vec![
+                obelisk_activity_v8::init(),
+                crate::v8_crypto::obelisk_crypto_v8::init(),
+            ],
             startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
             ..Default::default()
         },
@@ -223,6 +192,7 @@ pub(crate) async fn execute(
         env,
         panic: panic.clone(),
     });
+    runtime.op_state().borrow_mut().put(panic.clone());
     let mut result = execute_inner(&mut runtime, &loader, entry_path, params, return_type).await;
     if let Some(reason) = panic.take_trap() {
         result = Err(NativeActivityFailure::Trap(reason));
@@ -248,6 +218,12 @@ async fn execute_inner(
 ) -> Result<SupportedFunctionReturnValue, NativeActivityFailure> {
     runtime
         .execute_script("obelisk:activity-bootstrap", ACTIVITY_BOOTSTRAP)
+        .map_err(|err| NativeActivityFailure::CannotInstantiate(err.to_string()))?;
+    runtime
+        .execute_script(
+            "obelisk:crypto-bootstrap",
+            crate::v8_crypto::CRYPTO_BOOTSTRAP,
+        )
         .map_err(|err| NativeActivityFailure::CannotInstantiate(err.to_string()))?;
     let params = params.as_json_values().ok_or_else(|| {
         NativeActivityFailure::ResultParsing("parameters are not JSON values".into())
@@ -422,13 +398,6 @@ class TextEncoder { encode(value = '') { const encoded = unescape(encodeURICompo
 class TextDecoder { decode(value = new Uint8Array()) { const bytes = value instanceof Uint8Array ? value : new Uint8Array(value); return decodeURIComponent(escape(String.fromCharCode(...bytes))); } }
 globalThis.TextEncoder = TextEncoder;
 globalThis.TextDecoder = TextDecoder;
-globalThis.crypto = {
-  getRandomValues(array) { const bytes = Deno.core.ops.op_activity_random(array.byteLength); new Uint8Array(array.buffer, array.byteOffset, array.byteLength).set(bytes); return array; },
-  subtle: {
-    async importKey(format, keyData, algorithm, extractable, usages) { if (format !== 'raw' || String(algorithm.name).toUpperCase() !== 'HMAC') throw new TypeError('only raw HMAC keys are supported'); return { bytes: [...new Uint8Array(keyData)], algorithm, usages }; },
-    async sign(algorithm, key, data) { if (String(typeof algorithm === 'string' ? algorithm : algorithm.name).toUpperCase() !== 'HMAC') throw new TypeError('only HMAC signing is supported'); return Uint8Array.from(Deno.core.ops.op_activity_hmac_sha256(key.bytes, [...new Uint8Array(data)])).buffer; }
-  }
-};
 class Response {
   constructor(data) { this.status = data.status; this.ok = data.status >= 200 && data.status < 300; this.headers = new Map(data.headers); this._body = data.body; }
   async text() { return this._body; }
@@ -453,17 +422,23 @@ mod tests {
     async fn snapshot_isolate_must_behave_like_a_pristine_one() {
         fn probe(startup_snapshot: Option<&'static [u8]>) -> String {
             let mut runtime = JsRuntime::new(RuntimeOptions {
-                extensions: vec![obelisk_activity_v8::init()],
+                extensions: vec![
+                    obelisk_activity_v8::init(),
+                    crate::v8_crypto::obelisk_crypto_v8::init(),
+                ],
                 startup_snapshot,
                 ..Default::default()
             });
             runtime
                 .execute_script("obelisk:snapshot-probe", ACTIVITY_BOOTSTRAP)
                 .expect("bootstrap must evaluate");
+            runtime
+                .execute_script("obelisk:snapshot-probe", crate::v8_crypto::CRYPTO_BOOTSTRAP)
+                .expect("crypto bootstrap must evaluate");
             let value = runtime
                 .execute_script(
                     "obelisk:snapshot-probe",
-                    "JSON.stringify([new URL('http://a/b?c=1').search, new TextDecoder().decode(new TextEncoder().encode('ř')), Object.keys(Deno.core.ops).filter(op => op.startsWith('op_activity_')).sort()])",
+                    "JSON.stringify([new URL('http://a/b?c=1').search, new TextDecoder().decode(new TextEncoder().encode('ř')), Object.keys(Deno.core.ops).filter(op => op.startsWith('op_activity_') || op.startsWith('op_crypto_')).sort()])",
                 )
                 .expect("probe must evaluate");
             deno_core::scope!(scope, runtime);
@@ -473,7 +448,7 @@ mod tests {
 
         let snapshotted = probe(Some(crate::v8_snapshot::STARTUP_SNAPSHOT));
         assert!(
-            snapshotted.contains("op_activity_hmac_sha256"),
+            snapshotted.contains("op_crypto_hmac_verify"),
             "ops must be bound in a snapshot isolate: {snapshotted}"
         );
         assert_eq!(probe(None), snapshotted);

@@ -8,39 +8,23 @@
 //! - `crypto.subtle.importKey("raw", keyData, {name:"HMAC", hash:"SHA-256"}, extractable, usages)`
 //! - `crypto.subtle.sign({name:"HMAC"}, key, data)`
 //! - `crypto.subtle.verify({name:"HMAC"}, key, signature, data)`
+//! - `crypto.getRandomValues(integerTypedArray)`
 //!
 //! All `subtle.*` methods return immediately-resolved `Promise`s (HMAC is synchronous).
 //! The Promise return is required by the spec and allows callers to use `await`.
 //!
 //! [spec]: https://www.w3.org/TR/WebCryptoAPI/
 
+use boa_engine::builtins::typed_array::TypedArrayKind;
 use boa_engine::{
     Context, JsArgs, JsNativeError, JsObject, JsResult, JsValue, NativeFunction, js_string,
     object::builtins::{AlignedVec, JsArrayBuffer, JsPromise, JsTypedArray},
     property::Attribute,
 };
 use boa_gc::{Finalize, Trace};
-use hmac::{Hmac, Mac};
-use sha2::{Sha256, Sha384, Sha512};
+use js_crypto::HmacHash;
 
 // ── Key material ──────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum HmacHash {
-    Sha256,
-    Sha384,
-    Sha512,
-}
-
-impl HmacHash {
-    fn name(&self) -> &'static str {
-        match self {
-            HmacHash::Sha256 => "SHA-256",
-            HmacHash::Sha384 => "SHA-384",
-            HmacHash::Sha512 => "SHA-512",
-        }
-    }
-}
 
 /// Rust data stored inside a `CryptoKey` JS object.
 #[derive(Debug, Trace, Finalize, boa_engine::JsData)]
@@ -112,16 +96,7 @@ fn parse_hash(val: &JsValue, context: &mut Context) -> JsResult<HmacHash> {
             .ok_or_else(|| JsNativeError::typ().with_message("hash.name must be a string"))?
             .to_std_string_escaped()
     };
-    match name.as_str() {
-        "SHA-256" => Ok(HmacHash::Sha256),
-        "SHA-384" => Ok(HmacHash::Sha384),
-        "SHA-512" => Ok(HmacHash::Sha512),
-        _ => Err(JsNativeError::error()
-            .with_message(format!(
-                "NotSupportedError: unsupported hash algorithm '{name}'"
-            ))
-            .into()),
-    }
+    HmacHash::parse(&name).map_err(|err| JsNativeError::error().with_message(err).into())
 }
 
 /// Parse an algorithm argument for `importKey` / `sign` / `verify`.
@@ -150,40 +125,6 @@ fn parse_algorithm(val: &JsValue, context: &mut Context) -> JsResult<(String, Op
         None
     };
     Ok((name, hash))
-}
-
-// ── HMAC ──────────────────────────────────────────────────────────────────────
-
-/// Compute an HMAC tag. Constant-time by construction (RustCrypto `hmac` crate).
-fn hmac_sign(hash: &HmacHash, key: &[u8], data: &[u8]) -> Vec<u8> {
-    macro_rules! sign {
-        ($D:ty) => {{
-            let mut mac = Hmac::<$D>::new_from_slice(key).expect("HMAC accepts any key length");
-            mac.update(data);
-            mac.finalize().into_bytes().to_vec()
-        }};
-    }
-    match hash {
-        HmacHash::Sha256 => sign!(Sha256),
-        HmacHash::Sha384 => sign!(Sha384),
-        HmacHash::Sha512 => sign!(Sha512),
-    }
-}
-
-/// Verify an HMAC tag in constant time.
-fn hmac_verify(hash: &HmacHash, key: &[u8], data: &[u8], signature: &[u8]) -> bool {
-    macro_rules! verify {
-        ($D:ty) => {{
-            let mut mac = Hmac::<$D>::new_from_slice(key).expect("HMAC accepts any key length");
-            mac.update(data);
-            mac.verify_slice(signature).is_ok()
-        }};
-    }
-    match hash {
-        HmacHash::Sha256 => verify!(Sha256),
-        HmacHash::Sha384 => verify!(Sha384),
-        HmacHash::Sha512 => verify!(Sha512),
-    }
 }
 
 // ── CryptoKey construction ────────────────────────────────────────────────────
@@ -329,7 +270,7 @@ fn sign(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     }
 
     let data = buffer_source_to_bytes(args.get_or_undefined(2), context)?;
-    let sig = hmac_sign(&key_data.hash, &key_data.key_bytes, &data);
+    let sig = key_data.hash.sign(&key_data.key_bytes, &data);
 
     let ab = bytes_to_array_buffer(sig, context)?;
     let promise = JsPromise::resolve(ab, context)?;
@@ -365,10 +306,62 @@ fn verify(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
 
     let signature = buffer_source_to_bytes(args.get_or_undefined(2), context)?;
     let data = buffer_source_to_bytes(args.get_or_undefined(3), context)?;
-    let result = hmac_verify(&key_data.hash, &key_data.key_bytes, &data, &signature);
+    let result = key_data.hash.verify(&key_data.key_bytes, &data, &signature);
 
     let promise = JsPromise::resolve(JsValue::from(result), context)?;
     Ok(promise.into())
+}
+
+// ── getRandomValues ───────────────────────────────────────────────────────────
+
+/// `crypto.getRandomValues(typedArray) → typedArray`
+///
+/// Spec: <https://www.w3.org/TR/WebCryptoAPI/#Crypto-method-getRandomValues>
+fn get_random_values(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let array_val = args.get_or_undefined(0);
+    let array = array_val
+        .as_object()
+        .and_then(|obj| JsTypedArray::from_object(obj.clone()).ok())
+        .ok_or_else(|| {
+            JsNativeError::typ().with_message("getRandomValues: argument must be a TypedArray")
+        })?;
+    match array.kind() {
+        Some(
+            TypedArrayKind::Int8
+            | TypedArrayKind::Uint8
+            | TypedArrayKind::Uint8Clamped
+            | TypedArrayKind::Int16
+            | TypedArrayKind::Uint16
+            | TypedArrayKind::Int32
+            | TypedArrayKind::Uint32
+            | TypedArrayKind::BigInt64
+            | TypedArrayKind::BigUint64,
+        ) => {}
+        _ => {
+            return Err(JsNativeError::error()
+                .with_message("TypeMismatchError: getRandomValues requires an integer TypedArray")
+                .into());
+        }
+    }
+    let offset = array.byte_offset(context)?;
+    let bytes = js_crypto::random_values(array.byte_length(context)?, wstd::rand::get_random_bytes)
+        .map_err(|err| JsNativeError::error().with_message(err))?;
+    let buffer_val = array.buffer(context)?;
+    let buffer = buffer_val
+        .as_object()
+        .and_then(|obj| JsArrayBuffer::from_object(obj.clone()).ok())
+        .ok_or_else(|| {
+            JsNativeError::typ().with_message("getRandomValues: unsupported backing buffer")
+        })?;
+    let mut data = buffer.data_mut().ok_or_else(|| {
+        JsNativeError::typ().with_message("getRandomValues: ArrayBuffer is detached")
+    })?;
+    data[offset..offset + bytes.len()].copy_from_slice(&bytes);
+    Ok(array_val.clone())
 }
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -407,6 +400,12 @@ pub fn setup_crypto(context: &mut Context) -> JsResult<()> {
 
     let crypto = new_object(context);
     crypto.set(js_string!("subtle"), subtle, false, context)?;
+    crypto.set(
+        js_string!("getRandomValues"),
+        NativeFunction::from_fn_ptr(get_random_values).to_js_function(context.realm()),
+        false,
+        context,
+    )?;
 
     context.register_global_property(js_string!("crypto"), crypto, Attribute::all())?;
     Ok(())
