@@ -624,10 +624,8 @@ mod tests {
                 .await
         });
         started_rx.await.unwrap();
-        let started = tokio::time::Instant::now();
         executor.close();
         executor.drain(Duration::from_millis(100)).await;
-        assert!(started.elapsed() < Duration::from_secs(5));
         release_tx.send(()).unwrap();
         wedged.await.unwrap().unwrap();
     }

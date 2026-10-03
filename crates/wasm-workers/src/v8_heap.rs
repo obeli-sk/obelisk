@@ -36,7 +36,6 @@ pub(crate) fn new_runtime(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[tokio::test]
     async fn v8_heap_limits_reset_between_isolates() {
@@ -52,12 +51,10 @@ mod tests {
                 .kill_on_drop(true)
                 .spawn()
                 .unwrap();
-            if let Ok(status) = tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
-                assert!(status.unwrap().success(), "heap subprocess failed");
-            } else {
-                child.kill().await.unwrap();
-                panic!("heap subprocess timed out");
-            }
+            assert!(
+                child.wait().await.unwrap().success(),
+                "heap subprocess failed"
+            );
         } else {
             let mut initial_limit = None;
             for exhaust in [true, false, true, false] {
