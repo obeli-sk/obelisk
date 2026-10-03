@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(JS)* Boa supports `crypto.getRandomValues`, backed by WASI random. It rejects non-integer typed
+  arrays and requests over 65536 bytes, as the Web Crypto spec requires.
+
+### Changed
+
+- *(V8)* JS activities support `crypto.subtle.verify` and honor the key's HMAC hash
+  (SHA-256/384/512) instead of always signing with SHA-256. Boa and V8 share one Web Crypto
+  implementation: `verify` compares in constant time, `sign`/`verify` require the matching key
+  usage, `importKey` rejects unsupported hashes, and hash names are case-insensitive.
+
 ## [0.42.0-rc.11](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.10...v0.42.0-rc.11)
 
 This release candidate makes Boa compiled to WASM the default JavaScript engine again and requires
