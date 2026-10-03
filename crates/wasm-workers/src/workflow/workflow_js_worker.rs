@@ -351,15 +351,12 @@ impl WorkflowJsWorkerCompiled {
         // Resolve JS imports against the function registry before linking.
         // This validates named imports and resolves namespace imports (`import *`).
         // Parse errors in JS source are caught here early rather than at runtime.
-        let mut resolved_imports = HashMap::new();
-        for source in self.js_files.values() {
-            let imports =
-                resolve_js_imports(source, fn_registry.as_ref(), WORKFLOW_BUILTIN_MODULES)
-                    .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
-            for (specifier, functions) in imports {
-                resolved_imports.entry(specifier).or_insert(functions);
-            }
-        }
+        let resolved_imports = resolve_js_imports(
+            self.js_files.values().map(String::as_str),
+            fn_registry.as_ref(),
+            WORKFLOW_BUILTIN_MODULES,
+        )
+        .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
 
         let linked = match runtime {
             WorkflowJsRuntimeExt::BoaWasm => self.inner.link(fn_registry)?.map_runtime(|inner| {

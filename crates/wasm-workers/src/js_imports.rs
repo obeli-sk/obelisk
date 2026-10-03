@@ -6,8 +6,11 @@
 //! the synthetic module needs to expose.
 
 use boa_engine::ast::declaration::{ExportEntry, ImportName, ReExportImportName};
-use concepts::{ComponentType, FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns};
-use std::collections::HashMap;
+use concepts::{
+    ComponentType, FnName, FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns,
+};
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeSet, HashMap};
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -160,7 +163,7 @@ fn kebab_to_camel(s: &str) -> String {
 /// extension entry directly — no per-flavor synthesis on this side.
 ///
 /// Named imports are checked function-by-function so typos surface at link
-/// time. Namespace imports (`import * as`) just contribute their interface.
+/// time. Namespace imports (`import * as`) and star re-exports bind the whole interface.
 fn extract_and_verify<'a, 'm>(
     js_code: &str,
     all_exports: &'a [PackageIfcFns],
@@ -173,7 +176,7 @@ fn extract_and_verify<'a, 'm>(
         .parse_module(&scope, &mut interner)
         .map_err(|e| format!("import extraction parse error: {e}"))?;
 
-    let mut referenced: HashMap<IfcFqnName, &PackageIfcFns> = HashMap::new();
+    let mut referenced: HashMap<IfcFqnName, ReferencedIfc> = HashMap::new();
     let mut used_builtin_modules = Vec::new();
 
     let named_imports = module
@@ -200,6 +203,29 @@ fn extract_and_verify<'a, 'm>(
                     } else {
                         None
                     }
+                }),
+        )
+        .collect::<Vec<_>>();
+    let namespace_requests = module
+        .items()
+        .import_entries()
+        .into_iter()
+        .filter_map(|entry| {
+            matches!(entry.import_name(), ImportName::Namespace).then(|| entry.module_request())
+        })
+        .chain(
+            module
+                .items()
+                .export_entries()
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    ExportEntry::StarReExport { module_request, .. } => Some(module_request),
+                    ExportEntry::ReExport(entry)
+                        if matches!(entry.import_name(), ReExportImportName::Star) =>
+                    {
+                        Some(entry.module_request())
+                    }
+                    _ => None,
                 }),
         )
         .collect::<Vec<_>>();
@@ -250,6 +276,7 @@ fn extract_and_verify<'a, 'm>(
             .find(|pkg| pkg.ifc_fqn == ifc_fqn)
             .ok_or_else(|| format!("interface `{ifc_fqn}` not found for import"))?;
 
+        let mut named_fns = BTreeSet::new();
         for (_, sym) in named_imports
             .iter()
             .filter(|(module, _)| *module == request)
@@ -258,10 +285,14 @@ fn extract_and_verify<'a, 'm>(
                 .resolve_expect(*sym)
                 .utf8()
                 .ok_or_else(|| format!("imported name from `{specifier}` is not valid UTF-8"))?;
-            verify_named_import(js_name, ifc)?;
+            named_fns.insert(verify_named_import(js_name, ifc)?);
         }
-
-        referenced.entry(ifc_fqn).or_insert(ifc);
+        let referenced_ifc = ReferencedIfc {
+            ifc,
+            named_fns: (!named_fns.is_empty() && !namespace_requests.contains(&request))
+                .then_some(named_fns),
+        };
+        ReferencedIfc::insert(&mut referenced, ifc_fqn, referenced_ifc);
     }
     Ok(ExtractedImports {
         interfaces: referenced,
@@ -335,15 +366,47 @@ impl JsDispatchPolicy {
 
 #[derive(Debug)]
 struct ExtractedImports<'a, 'm> {
-    interfaces: HashMap<IfcFqnName, &'a PackageIfcFns>,
+    interfaces: HashMap<IfcFqnName, ReferencedIfc<'a>>,
     builtin_modules: Vec<&'m BuiltinModule>,
+}
+
+#[derive(Debug)]
+struct ReferencedIfc<'a> {
+    ifc: &'a PackageIfcFns,
+    /// WIT names of the functions imported by name. `None` declares the whole interface:
+    /// a namespace import, a star re-export, or a declaration without bindings.
+    named_fns: Option<BTreeSet<String>>,
+}
+
+impl ReferencedIfc<'_> {
+    fn insert(map: &mut HashMap<IfcFqnName, Self>, ifc_fqn: IfcFqnName, referenced: Self) {
+        match map.entry(ifc_fqn) {
+            Entry::Occupied(mut occupied) => {
+                match (&mut occupied.get_mut().named_fns, referenced.named_fns) {
+                    (Some(ours), Some(theirs)) => ours.extend(theirs),
+                    (named_fns, _) => *named_fns = None,
+                }
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(referenced);
+            }
+        }
+    }
+
+    fn imported_functions(&self) -> impl Iterator<Item = (&FnName, &FunctionMetadata)> {
+        self.ifc.fns.iter().filter(|(fn_name, _)| {
+            self.named_fns
+                .as_ref()
+                .is_none_or(|named| named.contains::<str>(fn_name))
+        })
+    }
 }
 
 /// Verify that a JS-side named import resolves to a real function on the
 /// interface. The registry's extension entries already carry suffixed
 /// function names (e.g. `add-submit`), so we just kebab-case the JS name and
 /// look it up directly.
-fn verify_named_import(js_name: &str, ifc: &PackageIfcFns) -> Result<(), String> {
+fn verify_named_import(js_name: &str, ifc: &PackageIfcFns) -> Result<String, String> {
     let wit_name = camel_to_kebab(js_name);
     if !ifc.fns.contains_key(wit_name.as_str()) {
         return Err(format!(
@@ -351,57 +414,74 @@ fn verify_named_import(js_name: &str, ifc: &PackageIfcFns) -> Result<(), String>
             ifc_fqn = ifc.ifc_fqn,
         ));
     }
-    Ok(())
+    Ok(wit_name)
 }
 
-/// Resolve JS imports against the function registry.
+/// Extract and merge the imports of all files of a component.
+fn extract_and_verify_files<'a, 'm>(
+    js_files: impl IntoIterator<Item = &'a str>,
+    all_exports: &'m [PackageIfcFns],
+    builtin_modules: &'m [BuiltinModule],
+) -> Result<ExtractedImports<'m, 'm>, String> {
+    let mut merged = ExtractedImports {
+        interfaces: HashMap::new(),
+        builtin_modules: Vec::new(),
+    };
+    for js_code in js_files {
+        let extracted = extract_and_verify(js_code, all_exports, builtin_modules)?;
+        for (ifc_fqn, referenced) in extracted.interfaces {
+            ReferencedIfc::insert(&mut merged.interfaces, ifc_fqn, referenced);
+        }
+        for module in extracted.builtin_modules {
+            if !merged
+                .builtin_modules
+                .iter()
+                .any(|merged| merged.specifier == module.specifier)
+            {
+                merged.builtin_modules.push(module);
+            }
+        }
+    }
+    Ok(merged)
+}
+
+/// Resolve JS imports of all files of a component against the function registry.
 ///
-/// Returns one entry per referenced interface, with every function the
-/// synthetic module needs to expose so both `import { x }` and `import * as
-/// ns` from the same specifier work uniformly.
+/// Returns one entry per referenced interface with the functions its synthetic module exposes:
+/// those imported by name, or all of them when the whole interface is declared.
 ///
 /// The key preserves the original specifier (including any `-obelisk-*`
 /// package suffix) so the runtime can register the module under the same
 /// name JS uses.
-pub(crate) fn resolve_js_imports(
-    js_code: &str,
+pub(crate) fn resolve_js_imports<'a>(
+    js_files: impl IntoIterator<Item = &'a str>,
     fn_registry: &dyn FunctionRegistry,
     builtin_modules: &[BuiltinModule],
 ) -> Result<HashMap<IfcFqnName, Vec<NamedFnImport>>, String> {
-    let all_exports = fn_registry.all_exports();
-    let referenced = extract_and_verify(js_code, all_exports, builtin_modules)?;
-    Ok(referenced
+    let extracted = extract_and_verify_files(js_files, fn_registry.all_exports(), builtin_modules)?;
+    Ok(extracted
         .interfaces
         .into_iter()
-        .map(|(ifc_fqn, ifc)| (ifc_fqn, expand_interface(ifc)))
+        .map(|(ifc_fqn, referenced)| (ifc_fqn, expand_interface(&referenced)))
         .collect())
 }
 
-/// Imports of a JS component as read from its code: every function of each imported interface,
+/// Imports of a JS component as read from its code: the functions its synthetic modules expose,
 /// plus the dynamic support interface when the code uses dynamic calls.
 pub fn js_component_imports<'a>(
     js_files: impl IntoIterator<Item = &'a str>,
     all_exports: &[PackageIfcFns],
     builtin_modules: &[BuiltinModule],
 ) -> Result<Vec<FunctionMetadata>, String> {
-    let mut interfaces = HashMap::new();
-    let mut used_builtin_modules = HashMap::new();
-    for js_code in js_files {
-        let extracted = extract_and_verify(js_code, all_exports, builtin_modules)?;
-        interfaces.extend(extracted.interfaces);
-        used_builtin_modules.extend(
+    let extracted = extract_and_verify_files(js_files, all_exports, builtin_modules)?;
+    let mut imports = extracted
+        .interfaces
+        .values()
+        .flat_map(|referenced| referenced.imported_functions().map(|(_, f)| f.clone()))
+        .chain(
             extracted
                 .builtin_modules
                 .into_iter()
-                .map(|module| (module.specifier, module)),
-        );
-    }
-    let mut imports = interfaces
-        .into_values()
-        .flat_map(|ifc| ifc.fns.values().cloned())
-        .chain(
-            used_builtin_modules
-                .into_values()
                 .filter_map(|module| module.listed_imports)
                 .flat_map(|functions| functions.iter().cloned()),
         )
@@ -413,14 +493,14 @@ pub fn js_component_imports<'a>(
     Ok(imports)
 }
 
-/// Build the full list of `NamedFnImport` entries the synthetic module for
+/// Build the list of `NamedFnImport` entries the synthetic module for
 /// this interface should expose. Extension interfaces already carry their
 /// suffixed function names in `ifc.fns`, so a straight kebab→camel mapping
 /// is all that's needed.
-fn expand_interface(ifc: &PackageIfcFns) -> Vec<NamedFnImport> {
-    ifc.fns
-        .keys()
-        .map(|fn_name| {
+fn expand_interface(referenced: &ReferencedIfc) -> Vec<NamedFnImport> {
+    referenced
+        .imported_functions()
+        .map(|(fn_name, _)| {
             let wit_name = fn_name.to_string();
             let js_name = kebab_to_camel(&wit_name);
             NamedFnImport { js_name, wit_name }
@@ -435,13 +515,13 @@ mod tests {
     use concepts::FunctionFqn;
 
     #[test]
-    fn component_imports_list_imported_interfaces_and_dynamic_support() {
+    fn component_imports_list_imported_functions_and_dynamic_support() {
         let deployment_registry = fn_registry_dummy(&[
             FunctionFqn::new_static("app:act/api", "get"),
             FunctionFqn::new_static("app:act/api", "put"),
             FunctionFqn::new_static("app:other/api", "unused"),
         ]);
-        let ifcs = |js_files: &[&str]| {
+        let ffqns = |js_files: &[&str]| {
             js_component_imports(
                 js_files.iter().copied(),
                 deployment_registry.all_exports(),
@@ -449,23 +529,62 @@ mod tests {
             )
             .unwrap()
             .into_iter()
-            .map(|function| function.ffqn.ifc_fqn.to_string())
+            .map(|function| function.ffqn.to_string())
             .collect::<Vec<_>>()
         };
 
         assert_eq!(
-            ifcs(&[
+            ffqns(&[
                 "import { get } from 'app:act/api';",
                 "import { sleep } from 'obelisk:workflow@1.0.0';",
             ]),
-            ["app:act/api", "app:act/api"]
+            ["app:act/api.get"]
         );
-        let dynamic = ifcs(&["import { call } from 'obelisk:workflow-dynamic@1.0.0';"]);
+        let all = ["app:act/api.get", "app:act/api.put"];
+        assert_eq!(ffqns(&["import * as api from 'app:act/api';"]), all);
+        assert_eq!(ffqns(&["export * from 'app:act/api';"]), all);
+        assert_eq!(
+            ffqns(&[
+                "import { get } from 'app:act/api';",
+                "import * as api from 'app:act/api';",
+            ]),
+            all
+        );
+        assert_eq!(
+            ffqns(&[
+                "import { get } from 'app:act/api';",
+                "export { put } from 'app:act/api';",
+            ]),
+            all
+        );
+        assert_eq!(ffqns(&["import 'app:act/api';"]), all);
+        assert_eq!(ffqns(&["import {} from 'app:act/api';"]), all);
+        assert_eq!(
+            ffqns(&[
+                "import { get } from 'app:act/api';",
+                "import 'app:act/api';",
+            ]),
+            all
+        );
+        let resolved = resolve_js_imports(
+            ["import { get } from 'app:act/api';"],
+            deployment_registry.as_ref(),
+            WORKFLOW_BUILTIN_MODULES,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved[&IfcFqnName::from_str("app:act/api").unwrap()]
+                .iter()
+                .map(|function| function.js_name.as_str())
+                .collect::<Vec<_>>(),
+            ["get"]
+        );
+        let dynamic = ffqns(&["import { call } from 'obelisk:workflow-dynamic@1.0.0';"]);
         assert!(!dynamic.is_empty());
         assert!(
             dynamic
                 .iter()
-                .all(|ifc| ifc == "obelisk:workflow/workflow-dynamic-support@7.0.0")
+                .all(|ffqn| ffqn.starts_with("obelisk:workflow/workflow-dynamic-support@7.0.0."))
         );
     }
 

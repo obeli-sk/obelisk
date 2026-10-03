@@ -333,19 +333,12 @@ impl WebhookEndpointCompiled {
         // currently consumes pairs as `[js_name, wit_name]` tuples, so we
         // flatten `NamedFnImport` to that shape at the boundary.
         let resolved_imports = if let Some(js_config) = &self.config.js_config {
-            let mut resolved = std::collections::HashMap::new();
-            for source in js_config.files.values() {
-                let imports = crate::js_imports::resolve_js_imports(
-                    source,
-                    fn_registry,
-                    crate::js_imports::WEBHOOK_BUILTIN_MODULES,
-                )
-                .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
-                for (specifier, functions) in imports {
-                    resolved.entry(specifier).or_insert(functions);
-                }
-            }
-            resolved
+            crate::js_imports::resolve_js_imports(
+                js_config.files.values().map(String::as_str),
+                fn_registry,
+                crate::js_imports::WEBHOOK_BUILTIN_MODULES,
+            )
+            .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?
         } else {
             std::collections::HashMap::new()
         };
