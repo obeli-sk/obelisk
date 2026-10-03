@@ -2,6 +2,7 @@ use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
 use crate::http_hooks::{HttpClientTracesContainer, HttpHooks};
 use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
+use crate::webhook::native_v8_webhook_runtime::NativeV8Imports;
 use crate::webhook::webhook_registry::WebhookStateWatcher;
 use crate::webhook::webhook_trigger::types::{
     GetErrorTrappable, GetStatusErrorTrappable, ScheduleJsonErrorTrappable, TryGetErrorTrappable,
@@ -368,13 +369,20 @@ impl WebhookEndpointCompiled {
                 serde_json::to_string(&tupled).expect("resolved imports must be serializable");
             Some(Arc::from(json))
         };
+        let native_v8_imports = match &self.config.js_config {
+            Some(js_config) if self.js_runtime == WebhookJsRuntime::V8 => Some(Arc::new(
+                NativeV8Imports::new(&js_config.files, resolved_imports)
+                    .map_err(|e| crate::WasmFileError::linking_error("JS dispatch policy", e))?,
+            )),
+            _ => None,
+        };
 
         let Some(runnable_component) = &self.runnable_component else {
             return Ok(WebhookEndpointInstanceLinked {
                 config: Arc::new(self.config),
                 proxy_pre: None,
                 resolved_imports_json,
-                resolved_imports,
+                native_v8_imports,
                 js_runtime: self.js_runtime,
                 v8_executor: self.v8_executor,
             });
@@ -488,7 +496,7 @@ impl WebhookEndpointCompiled {
             config: Arc::new(self.config),
             proxy_pre,
             resolved_imports_json,
-            resolved_imports,
+            native_v8_imports,
             js_runtime: self.js_runtime,
             v8_executor: self.v8_executor,
         })
@@ -504,7 +512,9 @@ pub struct WebhookEndpointInstanceLinked {
     /// Set on JS webhooks; serialized `HashMap<String, Vec<(String, String)>>` passed
     /// to the runtime via the `__OBELISK_RESOLVED_IMPORTS__` env var.
     resolved_imports_json: Option<Arc<str>>,
-    resolved_imports: std::collections::HashMap<IfcFqnName, Vec<crate::js_imports::NamedFnImport>>,
+    /// Set on V8 JS webhooks.
+    #[debug(skip)]
+    native_v8_imports: Option<Arc<NativeV8Imports>>,
     js_runtime: WebhookJsRuntime,
     #[debug(skip)]
     v8_executor: crate::v8_executor::V8Executor,
@@ -2422,7 +2432,11 @@ impl RequestHandler {
                     req,
                     ctx,
                     found_instance.config.clone(),
-                    instance_match.handler().resolved_imports.clone(),
+                    instance_match
+                        .handler()
+                        .native_v8_imports
+                        .clone()
+                        .expect("V8 JS webhooks are linked with native imports"),
                     v8_admission.expect("admitted above for a native V8 endpoint"),
                     found_instance.v8_executor.clone(),
                     request_deadline,
@@ -2547,7 +2561,7 @@ async fn handle_native_v8_request(
     req: hyper::Request<hyper::body::Incoming>,
     mut ctx: WebhookEndpointCtx,
     config: Arc<WebhookEndpointConfig>,
-    imports: std::collections::HashMap<IfcFqnName, Vec<crate::js_imports::NamedFnImport>>,
+    imports: Arc<NativeV8Imports>,
     admission: crate::v8_executor::V8Admission,
     v8_executor: crate::v8_executor::V8Executor,
     request_deadline: tokio::time::Instant,

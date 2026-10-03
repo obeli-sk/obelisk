@@ -269,7 +269,6 @@ fn extract_and_verify<'a, 'm>(
     })
 }
 
-#[derive(Clone)]
 pub(crate) struct JsDispatchPolicy {
     pub(crate) dynamic: bool,
     targets: std::collections::HashSet<concepts::FunctionFqn>,
