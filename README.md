@@ -21,6 +21,47 @@ The [Stargazers](https://github.com/obeli-sk/demo-stargazers) app features:
 - A complete workflow for deploying Obelisk apps on fly.io
 - Cleanup / compensating actions on failure
 
+## Web UI
+
+Every release binary includes the [Web UI](https://github.com/obeli-sk/webui), served at
+`http://localhost:8080` by default. Explore deployments and component dependencies, inspect
+execution traces, replay workflows, and browse recorded events and application logs.
+
+The deployment graph below shows the
+[demo-tutorial](https://github.com/obeli-sk/demo-tutorial) app running on Obelisk 0.42.0. The other screenshots show a real
+[workflow-agent](https://github.com/obeli-sk/workflow-agent) session:
+
+![Deployment graph: the webhook calls two workflows, which share an activity](assets/images/webui/sc-deployment-graph.png)
+
+<details>
+<summary>Deployments, executions, trace, application logs, and system logs</summary>
+
+### Deployments
+
+![Deployments and their execution counts](assets/images/webui/sc-deployments.png)
+
+### Executions
+
+![Execution list with lifecycle filters and results](assets/images/webui/sc-executions.png)
+
+### Execution trace
+
+![Durable agent session trace with child activities and recorded events](assets/images/webui/sc-trace.png)
+
+### Execution log
+
+![Persisted workflow events and their parameters](assets/images/webui/sc-events.png)
+
+### Application logs
+
+![Workflow and child activity logs](assets/images/webui/sc-logs.png)
+
+### System logs
+
+![Startup, deployment, and maintenance events](assets/images/webui/sc-system-events.png)
+
+</details>
+
 ## What's Included
 - **Obelisk Runtime**: A single binary executing deterministic workflows, activities,
 and webhook endpoints, persisting steps in execution log using SQLite or PostgreSQL.
