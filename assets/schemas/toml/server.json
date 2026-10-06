@@ -600,6 +600,18 @@
             "postgres"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "libsql": {
+              "$ref": "#/$defs/LibsqlConfigToml"
+            }
+          },
+          "required": [
+            "libsql"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -753,6 +765,47 @@
           "type": "string",
           "const": "auto"
         }
+      ]
+    },
+    "LibsqlConfigToml": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "Address of the libSQL server, either `http(s)://` or `libsql://`.",
+          "type": "string"
+        },
+        "auth_token": {
+          "description": "Bearer token, may be empty if the server does not require authentication.",
+          "type": "string"
+        },
+        "queue_capacity": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 100
+        },
+        "subscription_interruption": {
+          "$ref": "#/$defs/DurationConfigOptional",
+          "default": {
+            "seconds": 1
+          }
+        },
+        "metrics_threshold": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "auth_token"
       ]
     },
     "WasmGlobalConfigToml": {

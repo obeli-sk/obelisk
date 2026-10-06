@@ -123,6 +123,12 @@
 ## Defaults are in `crates/db-sqlite/src/sqlite_dao.rs`.
 # database.sqlite.pragma = { "cache_size" = "3000" }
 
+## libSQL storage over HTTP (Hrana batches). All reads and writes use the remote database.
+# database.libsql.url = "${LIBSQL_URL}"
+# database.libsql.auth_token = "${LIBSQL_AUTH_TOKEN}"
+# database.libsql.queue_capacity = 100
+# database.libsql.subscription_interruption.seconds = 1
+
 ## Postgres configuration, keys support environment variable interpolation.
 # database.postgres.host =     "${POSTGRES_HOST}"
 # database.postgres.user =     "${POSTGRES_USER}"

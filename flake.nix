@@ -310,6 +310,7 @@
                 pkg-config
                 postgresql
                 qemu # native activity VM runtime
+                sqld # libSQL server of the database test matrix
                 sqlite
                 wasm-tools
                 yq-go # scripts/sync-branch-protection.sh

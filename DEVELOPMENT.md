@@ -10,6 +10,7 @@
 ├── crates/
 │   ├── concepts/           # Core types, traits, storage interfaces
 │   ├── db-sqlite/          # SQLite implementation
+│   ├── db-libsql/          # libSQL storage over Hrana batches, sharing the SQLite DAO and migrations
 │   ├── db-postgres/        # PostgreSQL implementation
 │   ├── wasm-workers/       # WASM execution runtime
 │   ├── executor/           # Work-stealing executor
@@ -61,6 +62,8 @@ export TEST_POSTGRES_DATABASE_PREFIX="obelisk_test"
 
 > Without `direnv` or these env vars exported, Postgres tests will fail with `connection refused` or `TEST_POSTGRES_HOST` not set.
 
+The database test matrix also runs against libSQL over Hrana. Each test starts its own `sqld`, which the development shell provides. To try it manually, start `sqld --no-welcome -d ./data --http-listen-addr 127.0.0.1:8080`, then set `database.libsql.url = "http://127.0.0.1:8080"` and an empty `auth_token`.
+
 ```sh
 # All tests except the activity VM backends
 scripts/test.sh
@@ -85,7 +88,7 @@ cargo test --package obelisk web_api_server::tests
 | Task | Files |
 |------|-------|
 | TOML | `src/config/toml.rs`, `server-help.toml`, `deployment-help.toml` — update the `*-help.toml` files when changing TOML config, then run `scripts/update-schemas.sh` to regenerate TOML-facing schemas in `assets/schemas/toml/` and the canonical deployment schema in `assets/schemas/` |
-| Database schema/queries | `crates/db-sqlite/src/sqlite_dao.rs`, `crates/db-postgres/src/postgres_dao.rs`; after adding a migration, run `scripts/update-schemas.sh` to refresh the consolidated dumps in `assets/schemas/sql/` |
+| Database schema/queries | `crates/db-sqlite/src/sqlite_dao.rs`, `crates/db-postgres/src/postgres_dao.rs`; libSQL reuses the SQLite migrations; after adding a migration, run `scripts/update-schemas.sh` to refresh the consolidated dumps in `assets/schemas/sql/` |
 | Storage traits | `crates/concepts/src/storage.rs` |
 | REST API | `src/server/web_api_server.rs` |
 | Server | `src/command/server.rs`, `crates/wasm-workers/src/registry.rs` |

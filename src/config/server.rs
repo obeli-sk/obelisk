@@ -293,6 +293,10 @@ impl ServerConfigToml {
                 .and_then(|value| value.parse::<bool>().ok())
                 .unwrap_or_default();
         }
+        if let DatabaseConfigToml::Libsql(libsql) = &mut self.database {
+            libsql.url = interpolate_startup_env_vars(&libsql.url, env_vars)?;
+            libsql.auth_token = interpolate_startup_env_vars(&libsql.auth_token, env_vars)?;
+        }
         if let DatabaseConfigToml::Postgres(postgres) = &mut self.database {
             postgres.host = interpolate_startup_env_vars(&postgres.host, env_vars)?;
             postgres.user = interpolate_startup_env_vars(&postgres.user, env_vars)?;
@@ -943,12 +947,14 @@ fn default_webui_listening_addr() -> SocketAddr {
 pub(crate) enum DatabaseConfigToml {
     Sqlite(SqliteConfigToml),
     Postgres(PostgresConfigToml),
+    Libsql(LibsqlConfigToml),
 }
 
 impl DatabaseConfigToml {
     pub fn get_subscription_interruption(&self) -> Option<Duration> {
         match self {
             DatabaseConfigToml::Sqlite(_) => None,
+            DatabaseConfigToml::Libsql(config) => config.subscription_interruption.into(),
             DatabaseConfigToml::Postgres(postgres_config_toml) => {
                 postgres_config_toml.subscription_interruption.into()
             }
@@ -1003,6 +1009,45 @@ pub enum PostgresProvisionPolicy {
     Never,
     /// Create database if it does not exist.
     Auto,
+}
+
+#[derive(Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LibsqlConfigToml {
+    /// Address of the libSQL server, either `http(s)://` or `libsql://`.
+    url: String,
+    /// Bearer token, may be empty if the server does not require authentication.
+    auth_token: String,
+    #[serde(default = "default_sqlite_queue_capacity")]
+    queue_capacity: usize,
+    #[serde(default = "default_subscription_interruption")]
+    subscription_interruption: DurationConfigOptional,
+    #[serde(default)]
+    metrics_threshold: Option<DurationConfig>,
+}
+impl std::fmt::Debug for LibsqlConfigToml {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LibsqlConfigToml")
+            .field("url", &self.url)
+            .field("auth_token", &"[REDACTED]")
+            .field("queue_capacity", &self.queue_capacity)
+            .field("subscription_interruption", &self.subscription_interruption)
+            .finish_non_exhaustive()
+    }
+}
+impl LibsqlConfigToml {
+    pub(crate) fn as_config(
+        &self,
+        secret_registry: &SecretRegistry,
+    ) -> Result<db_libsql::LibsqlConfig, anyhow::Error> {
+        Ok(db_libsql::LibsqlConfig {
+            url: interpolate_env_vars_plaintext(&self.url, secret_registry)?,
+            auth_token: interpolate_env_vars_secret(&self.auth_token, secret_registry)?,
+            queue_capacity: self.queue_capacity,
+            request_timeout: Duration::from_secs(30),
+            metrics_threshold: self.metrics_threshold.map(Duration::from),
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]

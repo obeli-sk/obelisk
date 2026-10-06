@@ -296,7 +296,11 @@ mod tests {
     #[rstest::rstest]
     #[tokio::test]
     async fn cron_advance_rolls_back_and_rejects_stale_tracker(
-        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        #[values(
+            db_tests::Database::Sqlite,
+            db_tests::Database::Postgres,
+            db_tests::Database::Libsql
+        )]
         database: db_tests::Database,
     ) {
         use concepts::storage::DbPoolCloseable as _;
@@ -351,7 +355,11 @@ mod tests {
     #[rstest::rstest]
     #[tokio::test]
     async fn cron_registration_is_atomic(
-        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        #[values(
+            db_tests::Database::Sqlite,
+            db_tests::Database::Postgres,
+            db_tests::Database::Libsql
+        )]
         database: db_tests::Database,
     ) {
         use concepts::storage::DbPoolCloseable as _;
@@ -393,7 +401,11 @@ mod tests {
     #[rstest::rstest]
     #[tokio::test]
     async fn once_stays_submitted_after_gc_and_registration(
-        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        #[values(
+            db_tests::Database::Sqlite,
+            db_tests::Database::Postgres,
+            db_tests::Database::Libsql
+        )]
         database: db_tests::Database,
     ) {
         use concepts::storage::{DbPoolCloseable as _, DeleteExecutionTreeResult};
@@ -448,7 +460,11 @@ mod tests {
     #[rstest::rstest]
     #[tokio::test]
     async fn cron_adopts_legacy_tracker_on_later_registration(
-        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        #[values(
+            db_tests::Database::Sqlite,
+            db_tests::Database::Postgres,
+            db_tests::Database::Libsql
+        )]
         database: db_tests::Database,
         #[values(false, true)] once: bool,
         #[values(false, true)] submitted: bool,
@@ -608,7 +624,11 @@ mod tests {
     #[rstest::rstest]
     #[tokio::test]
     async fn cron_rollover_preserves_overlap_after_gc(
-        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        #[values(
+            db_tests::Database::Sqlite,
+            db_tests::Database::Postgres,
+            db_tests::Database::Libsql
+        )]
         database: db_tests::Database,
         #[values(CronOverlap::Skip, CronOverlap::Allow)] overlap: CronOverlap,
     ) {

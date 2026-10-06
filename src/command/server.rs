@@ -1284,6 +1284,18 @@ async fn verify_db_schema(
             });
             Ok((db_pool, db_close))
         }
+        DatabaseConfigToml::Libsql(config) => {
+            let pool = Arc::new(
+                db_libsql::connect(config.as_config(secret_registry)?)
+                    .await
+                    .context("cannot initialize remote SQL backend")?,
+            );
+            let close = Box::pin({
+                let pool = pool.clone();
+                async move { pool.close().await }
+            });
+            Ok((pool, close))
+        }
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
             let db_pool = Arc::new(
                 PostgresPool::new(
@@ -2374,6 +2386,18 @@ pub(crate) async fn run_internal(
             });
             idle_db = Some(db_pool.as_ref().clone());
             (db_pool, db_close)
+        }
+        DatabaseConfigToml::Libsql(config) => {
+            let pool = Arc::new(
+                db_libsql::connect(config.as_config(&secret_registry)?)
+                    .await
+                    .context("cannot initialize remote SQL backend")?,
+            );
+            let close = Box::pin({
+                let pool = pool.clone();
+                async move { pool.close().await }
+            });
+            (pool, close)
         }
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
             let db_pool = Arc::new(
@@ -8424,7 +8448,11 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn new_cron_tracker_waits_for_first_occurrence(
-        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        #[values(
+            db_tests::Database::Sqlite,
+            db_tests::Database::Postgres,
+            db_tests::Database::Libsql
+        )]
         database: db_tests::Database,
     ) {
         use concepts::storage::{DbPoolCloseable as _, PendingState, PendingStatePendingAt};

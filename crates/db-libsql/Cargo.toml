@@ -1,0 +1,28 @@
+[package]
+name = "obeli-sk-db-libsql"
+description = "Internal package of obelisk"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+base64.workspace = true
+db-sqlite.workspace = true
+refinery.workspace = true
+refinery-core.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+rustls.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

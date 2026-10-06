@@ -721,7 +721,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn blocked_deployment_gc_continues_and_deduplicates_warning(
-        #[values(Database::Sqlite, Database::Postgres)] database: Database,
+        #[values(Database::Sqlite, Database::Postgres, Database::Libsql)] database: Database,
         #[values(false, true)] has_newer_deployment: bool,
     ) {
         test_utils::set_up();
@@ -852,7 +852,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn execution_retention_skips_non_terminal_roots(
-        #[values(Database::Sqlite, Database::Postgres)] database: Database,
+        #[values(Database::Sqlite, Database::Postgres, Database::Libsql)] database: Database,
     ) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
@@ -891,7 +891,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn deployment_gc_execution_batches_count_as_progress(
-        #[values(Database::Sqlite, Database::Postgres)] database: Database,
+        #[values(Database::Sqlite, Database::Postgres, Database::Libsql)] database: Database,
     ) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
@@ -929,7 +929,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn execution_count_retention_keeps_newest_finished(
-        #[values(Database::Sqlite, Database::Postgres)] database: Database,
+        #[values(Database::Sqlite, Database::Postgres, Database::Libsql)] database: Database,
     ) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
