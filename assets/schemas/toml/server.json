@@ -376,6 +376,18 @@
             "postgres"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turso": {
+              "$ref": "#/$defs/TursoConfigToml"
+            }
+          },
+          "required": [
+            "turso"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -589,6 +601,49 @@
           "type": "string",
           "const": "auto"
         }
+      ]
+    },
+    "TursoConfigToml": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "auth_token": {
+          "type": "string"
+        },
+        "queue_capacity": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 100
+        },
+        "transaction_mode": {
+          "type": "string",
+          "default": "immediate"
+        },
+        "subscription_interruption": {
+          "$ref": "#/$defs/DurationConfigOptional",
+          "default": {
+            "seconds": 1
+          }
+        },
+        "metrics_threshold": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "auth_token"
       ]
     },
     "WebUIConfig": {

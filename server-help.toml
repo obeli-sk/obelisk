@@ -42,6 +42,13 @@
 ## Defaults are in `crates/db-sqlite/src/sqlite_dao.rs`.
 # database.sqlite.pragma = { "cache_size" = "3000" }
 
+## Direct TursoDB storage over HTTP. All reads and writes use the remote database.
+# database.turso.url = "${TURSO_DATABASE_URL}"
+# database.turso.auth_token = "${TURSO_AUTH_TOKEN}"
+# database.turso.queue_capacity = 100
+# database.turso.transaction_mode = "${TURSO_TRANSACTION_MODE:-immediate}" # "concurrent" enables MVCC writes across nodes.
+# database.turso.subscription_interruption.seconds = 1
+
 ## Postgres configuration, keys support environment variable interpolation.
 # database.postgres.host =     "${POSTGRES_HOST}"
 # database.postgres.user =     "${POSTGRES_USER}"

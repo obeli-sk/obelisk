@@ -1,0 +1,22 @@
+[package]
+name = "obeli-db-test-server"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+base64.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+turso = { version = "=0.8.0", default-features = false }
+
+[lints]
+workspace = true

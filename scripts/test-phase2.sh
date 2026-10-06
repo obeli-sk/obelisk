@@ -7,6 +7,11 @@ export RUST_BACKTRACE=1
 export RUST_LOG="${RUST_LOG:-info,obeli=debug,app=trace}"
 export NEXTEST_NO_OUTPUT_INDENT=1
 
+profile=ci-test
+if [[ -n "${TEST_TURSO_URL:-}${TEST_TURSO_PLATFORM_TOKEN_FILE:-}" ]]; then
+  profile=cloud-test
+fi
+
 args=("$@")
 
 has_double_dash=false
@@ -21,13 +26,13 @@ if [ "${CARGO_INSTA_TEST:-}" = "true" ]; then
   cmd=(
     cargo insta test --test-runner nextest --check --disable-nextest-doctest
     --workspace
-    --nextest-profile ci-test
+    --nextest-profile "$profile"
   )
 else
   cmd=(
     cargo nextest run
     --workspace
-    --profile ci-test
+    --profile "$profile"
   )
 fi
 

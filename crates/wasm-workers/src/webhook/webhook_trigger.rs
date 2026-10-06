@@ -3004,7 +3004,7 @@ pub(crate) mod tests {
                     router: Arc::new(router),
                     fn_registry,
                     max_persisted_value_size_bytes: MAX_PERSISTED_VALUE_SIZE_BYTES,
-                    request_timeout: std::time::Duration::from_secs(30),
+                    request_timeout: db.wall_clock_timeout(std::time::Duration::from_secs(30)),
                 });
                 let (wh_server_state_sender, wh_server_state_watcher) =
                     watch::channel(initial_state);

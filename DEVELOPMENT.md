@@ -10,6 +10,7 @@
 ├── crates/
 │   ├── concepts/           # Core types, traits, storage interfaces
 │   ├── db-sqlite/          # SQLite implementation
+│   ├── db-turso/           # Direct HTTP storage, sharing the SQLite DAO and worker
 │   ├── db-postgres/        # PostgreSQL implementation
 │   ├── grpc/               # gRPC codegen and mappings
 │   ├── wasm-workers/       # WASM execution runtime
@@ -64,6 +65,34 @@ export TEST_POSTGRES_DATABASE_PREFIX="obelisk_test"
 
 > Without `direnv` or these env vars exported, Postgres tests will fail with `connection refused` or `TEST_POSTGRES_HOST` not set.
 
+The database test matrix also exercises both immediate and concurrent TursoDB transactions through `turso_serverless` over
+HTTP. Tests start an isolated loopback server backed by the native TursoDB engine
+automatically. No Cloud credentials or separately installed server are needed.
+To run the server manually, use `cargo run -p obeli-db-test-server`; its first
+output line is the base URL. Append a database name such as `/development` when
+setting `database.turso.url`, and use an empty `auth_token` locally. For `transaction_mode = "concurrent"`, use a
+name beginning with `mvcc_`, such as `/mvcc_development`; the testing server enables
+native MVCC for those database files.
+
+For Cloud verification with a separate database per test, set
+`TEST_TURSO_PLATFORM_TOKEN_FILE`, `TEST_TURSO_ORGANIZATION` and `TEST_TURSO_GROUP`.
+The Platform token needs database creation, SQL-token minting and deletion rights
+in the group. Tests create native TursoDB databases and delete them when closed.
+HA tests keep all of their workers in the same database. This prevents unrelated
+tests from competing for the global writer lock. Cloud runs select an extended
+Nextest timeout profile for network latency, retaining all behavior assertions.
+
+```sh
+TEST_TURSO_PLATFORM_TOKEN_FILE=/path/to/platform-token \
+TEST_TURSO_ORGANIZATION=example TEST_TURSO_GROUP=development \
+scripts/test.sh -E 'test(Turso) | test(turso_)' --test-threads 4
+```
+
+Alternatively, set `TEST_TURSO_URL` and `TEST_TURSO_TOKEN_FILE` (a database SQL
+token file) to share one disposable database with distinct table prefixes. That
+mode removes each test's tables on close and serializes immediate transactions
+across all tests, so prefer one test thread for that mode.
+
 ```sh
 # All tests except the activity VM backends
 scripts/test.sh
@@ -88,7 +117,7 @@ cargo test --package obelisk grpc_server::tests
 | Task | Files |
 |------|-------|
 | TOML | `src/config/toml.rs`, `server-help.toml`, `deployment-help.toml` — update the `*-help.toml` files when changing TOML config, then run `scripts/update-schemas.sh` to regenerate TOML-facing schemas in `assets/schemas/toml/` and the canonical deployment schema in `assets/schemas/` |
-| Database schema/queries | `crates/db-sqlite/src/sqlite_dao.rs`, `crates/db-postgres/src/postgres_dao.rs`; after adding a migration, run `scripts/update-schemas.sh` to refresh the consolidated dumps in `assets/schemas/sql/` |
+| Database schema/queries | `crates/db-sqlite/src/sqlite_dao.rs`, `crates/db-postgres/src/postgres_dao.rs`; Turso owns its migrations in `crates/db-turso/migrations`; after adding a migration, run `scripts/update-schemas.sh` to refresh the consolidated dumps in `assets/schemas/sql/` |
 | Storage traits | `crates/concepts/src/storage.rs` |
 | gRPC API | `proto/obelisk.proto`, `src/server/grpc_server.rs`,`crates/grpc/src/grpc_mapping.rs` |
 | REST API | `src/server/web_api_server.rs` |

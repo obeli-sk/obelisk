@@ -2300,6 +2300,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock,
             join_next_blocking_strategy,
+            db.wall_clock_timeout(Duration::from_secs(30)),
         )
         .await;
         db_close.close().await;
@@ -2309,6 +2310,7 @@ pub(crate) mod tests {
         db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
+        lock_expiry: Duration,
     ) {
         const INPUT_ITERATIONS: u32 = 1;
         test_utils::set_up();
@@ -2319,7 +2321,7 @@ pub(crate) mod tests {
                 .await,
         ]);
         let cancel_registry = CancelRegistry::new();
-        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
+        let (mut workflow_exec, _workflow_close_tx) = new_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             join_next_blocking_strategy,
@@ -2328,6 +2330,7 @@ pub(crate) mod tests {
             LockingStrategy::ByComponentDigest,
         )
         .await;
+        workflow_exec.config.lock_expiry = lock_expiry;
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -2431,8 +2434,13 @@ pub(crate) mod tests {
     ) {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = db.set_up().await;
-        fiboa_submit_json_workflow_inner(db_pool.clone(), sim_clock, join_next_blocking_strategy)
-            .await;
+        fiboa_submit_json_workflow_inner(
+            db_pool.clone(),
+            sim_clock,
+            join_next_blocking_strategy,
+            db.wall_clock_timeout(Duration::from_secs(30)),
+        )
+        .await;
         db_close.close().await;
     }
 
@@ -2440,6 +2448,7 @@ pub(crate) mod tests {
         db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
+        lock_expiry: Duration,
     ) {
         test_utils::set_up();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
@@ -2449,7 +2458,7 @@ pub(crate) mod tests {
                 .await,
         ]);
         let cancel_registry = CancelRegistry::new();
-        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
+        let (mut workflow_exec, _workflow_close_tx) = new_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             join_next_blocking_strategy,
@@ -2458,6 +2467,7 @@ pub(crate) mod tests {
             LockingStrategy::ByComponentDigest,
         )
         .await;
+        workflow_exec.config.lock_expiry = lock_expiry;
         // Create an execution with fiboa_submit_json workflow function
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();

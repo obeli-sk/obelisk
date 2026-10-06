@@ -438,7 +438,7 @@ mod tests {
             batch_delay: Duration::ZERO,
             executions: None,
             deployments: Some(Duration::from_secs(60)),
-            system_events: Some(Duration::from_secs(60)),
+            system_events: Some(Duration::from_secs(3600)),
         }
     }
 
@@ -516,7 +516,13 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn blocked_deployment_gc_continues_and_deduplicates_warning(
-        #[values(Database::Sqlite, Database::Postgres)] database: Database,
+        #[values(
+            Database::Sqlite,
+            Database::Postgres,
+            Database::Turso,
+            Database::TursoConcurrent
+        )]
+        database: Database,
         #[values(false, true)] has_newer_deployment: bool,
     ) {
         test_utils::set_up();
@@ -542,9 +548,10 @@ mod tests {
         let cas = db_pool.cas_conn().await.unwrap();
         let orphan = cas.write_blob(b"orphan").await.unwrap();
         let mut warned = false;
+        let sweep_timeout = database.wall_clock_timeout(Duration::from_secs(10));
         for sweep in 0..2 {
             let stats = tokio::time::timeout(
-                Duration::from_secs(10),
+                sweep_timeout,
                 run_sweep(&db_pool, sweep_config(), &mut warned, || async {
                     Ok(db_pool.cas_gc_conn().await?.gc_cas(false, 1).await?)
                 }),
@@ -617,7 +624,13 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn deployment_gc_execution_batches_count_as_progress(
-        #[values(Database::Sqlite, Database::Postgres)] database: Database,
+        #[values(
+            Database::Sqlite,
+            Database::Postgres,
+            Database::Turso,
+            Database::TursoConcurrent
+        )]
+        database: Database,
     ) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;

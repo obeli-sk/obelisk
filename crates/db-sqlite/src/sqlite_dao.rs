@@ -1,3 +1,4 @@
+use crate::sql_connection::{CachedStatement, Connection, Row, Transaction};
 use crate::{histograms::Histograms, sqlite_dao::conversions::to_generic_error};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -42,8 +43,7 @@ use db_common::{
 };
 use hashbrown::HashMap;
 use rusqlite::{
-    CachedStatement, Connection, OpenFlags, OptionalExtension, Row, ToSql, Transaction,
-    TransactionBehavior, named_params,
+    OpenFlags, OptionalExtension, ToSql, named_params,
     types::{ToSqlOutput, Value},
 };
 use sha2::{Digest as _, Sha256};
@@ -350,6 +350,7 @@ type ExecutionFinishedSubscribers = Mutex<
 
 #[derive(Clone)]
 struct SqlitePoolInner {
+    remote: bool,
     shutdown_requested: Arc<AtomicBool>,
     shutdown_finished: Arc<AtomicBool>,
     command_tx: tokio::sync::mpsc::Sender<ThreadCommand>,
@@ -611,7 +612,7 @@ impl SqlitePool {
         mut pragma_override: HashMap<String, String>,
     ) -> Result<Connection, InitializationError> {
         fn pragma_update(
-            conn: &Connection,
+            conn: &rusqlite::Connection,
             name: &str,
             value: &str,
         ) -> Result<(), InitializationError> {
@@ -634,10 +635,11 @@ impl SqlitePool {
             }
         }
 
-        let mut conn = Connection::open_with_flags(path, OpenFlags::default()).map_err(|err| {
-            error!("cannot open the connection - {err:?}");
-            InitializationError
-        })?;
+        let mut conn =
+            rusqlite::Connection::open_with_flags(path, OpenFlags::default()).map_err(|err| {
+                error!("cannot open the connection - {err:?}");
+                InitializationError
+            })?;
 
         for [pragma_name, default_value] in PRAGMA {
             let pragma_value = pragma_override
@@ -656,7 +658,7 @@ impl SqlitePool {
                 error!("Cannot run migrations - {err:?}");
                 InitializationError
             })?;
-        Ok(conn)
+        Ok(Connection::Local(conn))
     }
 
     fn connection_rpc(
@@ -728,9 +730,15 @@ impl SqlitePool {
                 ThreadCommand::LogicalTx(ltx) => ltx,
             };
             ltx_list.push((ltx, ApplyOrSkip::Apply));
+            if conn.is_remote() && ltx_list.len() >= 8 {
+                break;
+            }
         }
 
-        struct NeedsRestart;
+        enum NeedsRestart {
+            BusinessError,
+            RetryableAbort,
+        }
         type CommitResult = Result<(), CommitError>;
         fn try_apply_all(
             mut ptx: Transaction<'_>,
@@ -742,17 +750,44 @@ impl SqlitePool {
                 .iter_mut()
                 .filter(|(_, former_res)| *former_res == ApplyOrSkip::Apply)
             {
-                if let Ok(()) = SqlitePool::ltx_apply_to_phytx(ltx, &mut ptx, histograms) {
-                } else {
-                    *former_res = ApplyOrSkip::Skip; // the problematic ltx will be skipped in the next iteration.
-                    // ptx rollbacks on drop
-                    return Err(NeedsRestart);
+                let result = SqlitePool::ltx_apply_to_phytx(ltx, &mut ptx, histograms);
+                if ptx.transport_failed() {
+                    return Ok(Err(CommitError(
+                        consistency_rusqlite(
+                            "remote SQL session failed before commit; no commit was attempted",
+                        )
+                        .into(),
+                    )));
+                }
+                if ptx.aborted() {
+                    if let Err(error) = ptx.rollback_for_retry() {
+                        return Ok(Err(CommitError(error.into())));
+                    }
+                    return Err(NeedsRestart::RetryableAbort);
+                }
+                if result.is_err() {
+                    *former_res = ApplyOrSkip::Skip;
+                    if ptx.concurrent()
+                        && let Err(error) = ptx.rollback_for_retry()
+                    {
+                        return Ok(Err(CommitError(error.into())));
+                    }
+                    return Err(NeedsRestart::BusinessError);
                 }
             }
             // All LTXes were applied or skipped.
             histograms.record_all_fns(all_fns_start.elapsed());
             let now = std::time::Instant::now();
-            let commit_result = ptx.commit().map_err(|err| {
+            let remote = ptx.is_remote();
+            let committed = ptx.commit();
+            if remote
+                && committed
+                    .as_ref()
+                    .is_err_and(Connection::retryable_abort_error)
+            {
+                return Err(NeedsRestart::RetryableAbort);
+            }
+            let commit_result = committed.map_err(|err| {
                 warn!("Cannot commit transaction - {err:?}");
                 CommitError(RusqliteError::from(err))
             });
@@ -781,17 +816,36 @@ impl SqlitePool {
             shutdown_requested: &AtomicBool,
         ) -> Result<CommitResult, ShutdownRequested> {
             // TODO: Investigate SAVEPOINT + RELEASE SAVEPOINT, ROLLBACK savepoint instead.
+            let remote = conn.is_remote();
+            let mut aborts = 0;
             loop {
-                match conn.transaction_with_behavior(TransactionBehavior::Immediate) {
-                    Ok(ptx) => {
-                        if let Ok(commit_res) =
-                            try_apply_all(ptx, ltx_list, histograms, all_fns_start)
-                        {
-                            return Ok(commit_res);
+                if shutdown_requested.load(Ordering::Acquire) {
+                    return Err(ShutdownRequested);
+                }
+                match conn.worker_transaction() {
+                    Ok(ptx) => match try_apply_all(ptx, ltx_list, histograms, all_fns_start) {
+                        Ok(commit_res) => return Ok(commit_res),
+                        Err(NeedsRestart::BusinessError) => {}
+                        Err(NeedsRestart::RetryableAbort) => {
+                            aborts += 1;
+                            if aborts >= 25 {
+                                return Ok(Err(CommitError(
+                                    consistency_rusqlite("remote transaction retry limit exceeded")
+                                        .into(),
+                                )));
+                            }
+                            debug!(
+                                aborts,
+                                "retrying remote physical transaction after confirmed abort"
+                            );
+                            std::thread::sleep(Duration::from_millis(20 + (aborts * 17) % 100));
                         }
-                    }
+                    },
                     Err(begin_err) => {
                         error!("Cannot open transaction - {begin_err:?}");
+                        if !Connection::retryable_begin_error(remote, &begin_err) {
+                            return Ok(Err(CommitError(RusqliteError::from(begin_err))));
+                        }
                         std::thread::sleep(Duration::from_millis(100));
                         if shutdown_requested.load(Ordering::Acquire) {
                             return Err(ShutdownRequested);
@@ -859,6 +913,60 @@ impl SqlitePool {
         res
     }
 
+    /// Initializes an external transport and its migrations on the dedicated SQL worker thread.
+    pub async fn with_transport(
+        queue_capacity: usize,
+        metrics_threshold: Option<Duration>,
+        initialize: impl FnOnce() -> Result<
+            Box<dyn crate::sql_connection::SqlTransport>,
+            InitializationError,
+        > + Send
+        + 'static,
+    ) -> Result<Self, InitializationError> {
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
+        let shutdown_finished = Arc::new(AtomicBool::new(false));
+        let (command_tx, command_rx) = mpsc::channel(queue_capacity);
+        let (initialized, ready) = oneshot::channel();
+        let join_handle = {
+            let shutdown_requested = shutdown_requested.clone();
+            let shutdown_finished = shutdown_finished.clone();
+            std::thread::spawn(move || {
+                let result = initialize().map(Connection::External);
+                match result {
+                    Ok(conn) => {
+                        if initialized.send(Ok(())).is_ok() {
+                            Self::connection_rpc(
+                                conn,
+                                &shutdown_requested,
+                                &shutdown_finished,
+                                command_rx,
+                                metrics_threshold,
+                            );
+                        } else {
+                            shutdown_finished.store(true, Ordering::Release);
+                        }
+                    }
+                    Err(err) => {
+                        error!(%err,"cannot initialize remote SQL backend");
+                        let _ = initialized.send(Err(InitializationError));
+                        shutdown_finished.store(true, Ordering::Release);
+                    }
+                }
+            })
+        };
+        ready.await.map_err(|_| InitializationError)??;
+        Ok(Self(SqlitePoolInner {
+            remote: true,
+            shutdown_requested,
+            shutdown_finished,
+            command_tx,
+            response_subscribers: Arc::default(),
+            pending_subscribers: Arc::default(),
+            execution_finished_subscribers: Arc::default(),
+            join_handle: Some(Arc::new(join_handle)),
+        }))
+    }
+
     #[instrument(skip_all, name = "sqlite_new")]
     pub async fn new<P: AsRef<Path>>(
         path: P,
@@ -900,6 +1008,7 @@ impl SqlitePool {
             })
         };
         Ok(SqlitePool(SqlitePoolInner {
+            remote: false,
             shutdown_requested,
             shutdown_finished,
             command_tx,
@@ -910,7 +1019,7 @@ impl SqlitePool {
         }))
     }
 
-    /// Invokes the provided function wrapping a new [`rusqlite::Transaction`] that is committed automatically.
+    /// Invokes the provided function wrapping a new [`Transaction`] that is committed automatically.
     async fn transaction<F, T, E>(
         &self,
         mut func: F,
@@ -918,7 +1027,7 @@ impl SqlitePool {
         func_name: &'static str,
     ) -> Result<T, E>
     where
-        F: FnMut(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
+        F: FnMut(&mut Transaction) -> Result<T, E> + Send + 'static,
         T: Send + 'static,
         E: From<RusqliteError> + Send + 'static,
     {
@@ -966,10 +1075,10 @@ impl SqlitePool {
         }
     }
 
-    /// Invokes the provided function wrapping a new [`rusqlite::Transaction`] that is committed automatically.
+    /// Invokes the provided function wrapping a new [`Transaction`] that is committed automatically.
     async fn transaction_fire_forget<F, T, E>(&self, mut func: F, func_name: &'static str)
     where
-        F: FnMut(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
+        F: FnMut(&mut Transaction) -> Result<T, E> + Send + 'static,
         T: Send + 'static + Default,
         E: From<RusqliteError> + Send + 'static,
     {
@@ -2025,9 +2134,7 @@ impl SqlitePool {
             .map_err(DbErrorRead::from)
     }
 
-    fn parse_response_with_cursor(
-        row: &rusqlite::Row<'_>,
-    ) -> Result<ResponseWithCursor, rusqlite::Error> {
+    fn parse_response_with_cursor(row: &Row<'_>) -> Result<ResponseWithCursor, rusqlite::Error> {
         let id: i64 = row.get("id")?;
         let seq: u32 = row.get("seq")?;
         let created_at: DateTime<Utc> = row.get("created_at")?;
@@ -2723,12 +2830,19 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         event: JoinSetResponseEventOuter,
     ) -> Result<AppendNotifier, DbErrorWrite> {
-        // SQLite has a single global writer, so the read-modify-write of MAX(seq)+1
-        // is serialized without extra locking; `seq` is contiguous and 1-based per execution.
+        // Updating the parent row orders remote response commits and cursor visibility.
+        let allocated_sequence = if tx.is_remote() {
+            Some(tx.query_row(
+                "UPDATE t_state SET response_sequence = response_sequence + 1 WHERE execution_id = ?1 RETURNING response_sequence",
+                [execution_id.to_string()], |row| row.get::<_, u32>(0),
+            )?)
+        } else {
+            None
+        };
         let mut stmt = tx.prepare(
             "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, delay_success, child_execution_id, finished_version, seq) \
                     VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :delay_success, :child_execution_id, :finished_version, \
-                    (SELECT COALESCE(MAX(seq), 0) + 1 FROM t_join_set_response WHERE execution_id = :execution_id)) \
+                    COALESCE(:allocated_sequence, (SELECT COALESCE(MAX(seq), 0) + 1 FROM t_join_set_response WHERE execution_id = :execution_id))) \
                     RETURNING seq",
         )?;
         let join_set_id = &event.event.join_set_id;
@@ -2759,6 +2873,7 @@ impl SqlitePool {
                 ":delay_success": delay_success,
                 ":child_execution_id": child_execution_id,
                 ":finished_version": finished_version,
+                ":allocated_sequence": allocated_sequence,
             },
             |row| row.get::<_, u32>(0),
         )?;
@@ -3303,7 +3418,7 @@ impl SqlitePool {
                         Ok((execution_id, next_version))
                     },
                 )
-                .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+                .and_then(std::iter::Iterator::collect::<Result<Vec<_>, _>>)
             {
                 execution_ids_versions.extend(execs_and_versions);
                 if execution_ids_versions.len() == batch_size {
@@ -4328,6 +4443,42 @@ impl DbExecutor for SqlitePool {
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
+        if self.0.remote {
+            // Candidate selection and claiming must share the global writer lock across VMs.
+            return self
+                .transaction(
+                    move |tx| {
+                        let candidates = Self::get_pending_by_ffqns(
+                            tx,
+                            batch_size,
+                            pending_at_or_sooner,
+                            &ffqns,
+                        )
+                        .map_err(to_generic_error)?;
+                        candidates
+                            .iter()
+                            .map(|(execution_id, version)| {
+                                Self::lock_single_execution(
+                                    tx,
+                                    created_at,
+                                    &component_id,
+                                    true,
+                                    deployment_id,
+                                    execution_id,
+                                    run_id,
+                                    version,
+                                    executor_id,
+                                    lock_expires_at,
+                                    retry_config,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, DbErrorWrite>>()
+                    },
+                    TxType::MultipleWrites,
+                    "lock_pending_by_ffqns_atomic",
+                )
+                .await;
+        }
         let execution_ids_versions = self
             .transaction(
                 move |conn| {
@@ -4384,6 +4535,43 @@ impl DbExecutor for SqlitePool {
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
+        if self.0.remote {
+            // Candidate selection and claiming must share the global writer lock across VMs.
+            return self
+                .transaction(
+                    move |tx| {
+                        let candidates = Self::get_pending_by_ffqns_auto(
+                            tx,
+                            batch_size,
+                            pending_at_or_sooner,
+                            &ffqns,
+                            &component_id.component_digest,
+                        )
+                        .map_err(to_generic_error)?;
+                        candidates
+                            .iter()
+                            .map(|(execution_id, version)| {
+                                Self::lock_single_execution(
+                                    tx,
+                                    created_at,
+                                    &component_id,
+                                    false,
+                                    deployment_id,
+                                    execution_id,
+                                    run_id,
+                                    version,
+                                    executor_id,
+                                    lock_expires_at,
+                                    retry_config,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, DbErrorWrite>>()
+                    },
+                    TxType::MultipleWrites,
+                    "lock_pending_by_ffqns_auto_atomic",
+                )
+                .await;
+        }
         let current_digest = component_id.component_digest.clone();
         let execution_ids_versions = self
             .transaction(
@@ -4446,6 +4634,42 @@ impl DbExecutor for SqlitePool {
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
         let component_id = component_id.clone();
+        if self.0.remote {
+            // Candidate selection and claiming must share the global writer lock across VMs.
+            return self
+                .transaction(
+                    move |tx| {
+                        let candidates = Self::get_pending_by_component_input_digest(
+                            tx,
+                            batch_size,
+                            pending_at_or_sooner,
+                            &component_id.component_digest,
+                        )
+                        .map_err(to_generic_error)?;
+                        candidates
+                            .iter()
+                            .map(|(execution_id, version)| {
+                                Self::lock_single_execution(
+                                    tx,
+                                    created_at,
+                                    &component_id,
+                                    true,
+                                    deployment_id,
+                                    execution_id,
+                                    run_id,
+                                    version,
+                                    executor_id,
+                                    lock_expires_at,
+                                    retry_config,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, DbErrorWrite>>()
+                    },
+                    TxType::MultipleWrites,
+                    "lock_pending_by_component_digest_atomic",
+                )
+                .await;
+        }
         let execution_ids_versions = self
             .transaction(
                 {
@@ -4704,6 +4928,7 @@ impl DbExecutor for SqlitePool {
                 }
                 () = timeout_fut => {
                 }
+                () = tokio::time::sleep(Duration::from_secs(1)), if self.0.remote => {}
             }
         }.await;
         // Clean up ffqn_to_pending_subscription in any case
@@ -4770,6 +4995,7 @@ impl DbExecutor for SqlitePool {
                 }
                 () = timeout_fut => {
                 }
+                () = tokio::time::sleep(Duration::from_secs(1)), if self.0.remote => {}
             }
         }.await;
         // Clean up ffqn_to_pending_subscription in any case
@@ -6180,7 +6406,7 @@ impl DbAdmin for SqlitePool {
                     }
                 }
                 let remaining = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_join_set_response WHERE execution_id = ?2 OR execution_id LIKE ?1 OR child_execution_id = ?2 OR child_execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_delay WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_execution_backtrace WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_log WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_execution_log WHERE execution_id = ?2 OR execution_id LIKE ?1)",
+                    "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id LIKE ?1) OR EXISTS(SELECT 1 FROM t_join_set_response WHERE execution_id = ?2 OR execution_id LIKE ?1 OR child_execution_id = ?2 OR child_execution_id LIKE ?1) OR EXISTS(SELECT 1 FROM t_delay WHERE execution_id = ?2 OR execution_id LIKE ?1) OR EXISTS(SELECT 1 FROM t_execution_backtrace WHERE execution_id = ?2 OR execution_id LIKE ?1) OR EXISTS(SELECT 1 FROM t_log WHERE execution_id = ?2 OR execution_id LIKE ?1) OR EXISTS(SELECT 1 FROM t_execution_log WHERE execution_id = ?2 OR execution_id LIKE ?1)",
                     rusqlite::params![pattern, root],
                     |row| row.get::<_, bool>(0),
                 )?;
@@ -6583,6 +6809,7 @@ impl DbConnection for SqlitePool {
                         Err(_) => Err(SubscribeToResponsesError::from(DbErrorGeneric::Close)),
                     },
                     reason = subscription_end_fut => Err(SubscribeToResponsesError::SubscriptionEnded(reason)),
+                    () = tokio::time::sleep(Duration::from_secs(1)), if self.0.remote => Err(SubscribeToResponsesError::SubscriptionEnded(ResponseSubscriptionEnd::PollIntervalElapsed)),
                 };
                 cleanup();
                 woken?;
@@ -6608,6 +6835,72 @@ impl DbConnection for SqlitePool {
         execution_id: &ExecutionId,
         timeout_fut: Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>>,
     ) -> Result<SupportedFunctionReturnValue, DbErrorReadWithTimeout> {
+        if self.0.remote {
+            struct SubscriptionGuard {
+                id: ExecutionId,
+                tag: u64,
+                subscribers: Arc<ExecutionFinishedSubscribers>,
+            }
+            impl Drop for SubscriptionGuard {
+                fn drop(&mut self) {
+                    let mut subscribers = self.subscribers.lock().unwrap();
+                    if let Some(entries) = subscribers.get_mut(&self.id) {
+                        entries.remove(&self.tag);
+                        if entries.is_empty() {
+                            subscribers.remove(&self.id);
+                        }
+                    }
+                }
+            }
+            let tag = rand::random();
+            let (sender, mut receiver) = oneshot::channel();
+            self.0
+                .execution_finished_subscribers
+                .lock()
+                .unwrap()
+                .entry(execution_id.clone())
+                .or_default()
+                .insert(tag, sender);
+            let _subscription = SubscriptionGuard {
+                id: execution_id.clone(),
+                tag,
+                subscribers: self.0.execution_finished_subscribers.clone(),
+            };
+            let mut deadline = timeout_fut.unwrap_or_else(|| Box::pin(std::future::pending()));
+            loop {
+                let id = execution_id.clone();
+                let result = self.transaction(
+                    move |tx| {
+                        let state = Self::get_combined_state(tx, &id)?
+                            .execution_with_state
+                            .pending_state;
+                        if let PendingState::Finished(finished) = state {
+                            let event = Self::get_execution_event(tx, &id, finished.version)?;
+                            if let ExecutionRequest::Finished { retval, .. } = event.event {
+                                Ok(Some(retval))
+                            } else {
+                                Err(DbErrorReadWithTimeout::from(consistency_db_err(
+                                    "invalid finished event",
+                                )))
+                            }
+                        } else {
+                            Ok(None)
+                        }
+                    },
+                    TxType::Other,
+                    "poll_finished_result",
+                );
+                let result = result.await?;
+                if let Some(result) = result {
+                    return Ok(result);
+                }
+                tokio::select! {
+                    outcome=&mut deadline=>return Err(DbErrorReadWithTimeout::Timeout(outcome)),
+                    result=&mut receiver=>return result.map_err(|_|DbErrorReadWithTimeout::from(DbErrorGeneric::Close)),
+                    ()=tokio::time::sleep(Duration::from_secs(1))=>{}
+                }
+            }
+        }
         let unique_tag: u64 = rand::random();
         let execution_id = execution_id.clone();
         let execution_finished_subscription = self.0.execution_finished_subscribers.clone();
@@ -7020,7 +7313,7 @@ impl concepts::storage::DbConnectionTest for SqlitePool {
         let notifier = self
             .transaction(
                 move |tx| Self::append_response(tx, &execution_id, event.clone()),
-                TxType::Other, // read only
+                TxType::MultipleWrites,
                 "append_response",
             )
             .await?;

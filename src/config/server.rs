@@ -130,6 +130,12 @@ impl ServerConfigToml {
                 .and_then(|value| value.parse::<bool>().ok())
                 .unwrap_or_default();
         }
+        if let DatabaseConfigToml::Turso(turso) = &mut self.database {
+            turso.url = interpolate_startup_env_vars(&turso.url, env_vars)?;
+            turso.auth_token = interpolate_startup_env_vars(&turso.auth_token, env_vars)?;
+            turso.transaction_mode =
+                interpolate_startup_env_vars(&turso.transaction_mode, env_vars)?;
+        }
         if let DatabaseConfigToml::Postgres(postgres) = &mut self.database {
             postgres.host = interpolate_startup_env_vars(&postgres.host, env_vars)?;
             postgres.user = interpolate_startup_env_vars(&postgres.user, env_vars)?;
@@ -608,12 +614,14 @@ fn default_api_listening_addr() -> SocketAddr {
 pub(crate) enum DatabaseConfigToml {
     Sqlite(SqliteConfigToml),
     Postgres(PostgresConfigToml),
+    Turso(TursoConfigToml),
 }
 
 impl DatabaseConfigToml {
     pub fn get_subscription_interruption(&self) -> Option<Duration> {
         match self {
             DatabaseConfigToml::Sqlite(_) => None,
+            DatabaseConfigToml::Turso(config) => config.subscription_interruption.into(),
             DatabaseConfigToml::Postgres(postgres_config_toml) => {
                 postgres_config_toml.subscription_interruption.into()
             }
@@ -668,6 +676,63 @@ pub enum PostgresProvisionPolicy {
     Never,
     /// Create database if it does not exist.
     Auto,
+}
+
+fn default_turso_transaction_mode() -> String {
+    "immediate".to_owned()
+}
+
+#[derive(Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TursoConfigToml {
+    url: String,
+    auth_token: String,
+    #[serde(default = "default_sqlite_queue_capacity")]
+    queue_capacity: usize,
+    #[serde(default = "default_turso_transaction_mode")]
+    transaction_mode: String,
+    #[serde(default = "default_subscription_interruption")]
+    subscription_interruption: DurationConfigOptional,
+    #[serde(default)]
+    metrics_threshold: Option<DurationConfig>,
+}
+impl std::fmt::Debug for TursoConfigToml {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TursoConfigToml")
+            .field("url", &self.url)
+            .field("auth_token", &"[REDACTED]")
+            .field("queue_capacity", &self.queue_capacity)
+            .field("transaction_mode", &self.transaction_mode)
+            .field("subscription_interruption", &self.subscription_interruption)
+            .finish_non_exhaustive()
+    }
+}
+impl TursoConfigToml {
+    pub(crate) fn as_config(
+        &self,
+        secret_registry: &SecretRegistry,
+    ) -> Result<db_turso::TursoConfig, anyhow::Error> {
+        Ok(db_turso::TursoConfig {
+            url: interpolate_env_vars_plaintext(&self.url, secret_registry)?,
+            auth_token: interpolate_env_vars_secret(&self.auth_token, secret_registry)?,
+            queue_capacity: self.queue_capacity,
+            transaction_mode: match interpolate_env_vars_plaintext(
+                &self.transaction_mode,
+                secret_registry,
+            )?
+            .as_str()
+            {
+                "immediate" => db_turso::TransactionMode::Immediate,
+                "concurrent" => db_turso::TransactionMode::Concurrent,
+                value => anyhow::bail!(
+                    "invalid database.turso.transaction_mode `{value}`: expected `immediate` or `concurrent`"
+                ),
+            },
+            request_timeout: Duration::from_secs(30),
+            metrics_threshold: self.metrics_threshold.map(Duration::from),
+            namespace: String::new(),
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -1356,6 +1421,74 @@ pub(crate) const MAX_DEPLOYMENT_FILE_BYTES: u32 = 20 * 1024 * 1024; // 20MiB
 mod tests {
     use super::*;
     use crate::config::deployment::{MethodsInput, ReplaceIn};
+
+    #[test]
+    fn turso_transaction_mode_supports_interpolation() {
+        let registry = SecretRegistry::empty();
+        let paths = PathPrefixes {
+            server_config_dir: None,
+            app_name: "test".to_owned(),
+            project_dirs: None,
+            base_dirs: None,
+        };
+        for (setting, expected) in [
+            ("", db_turso::TransactionMode::Immediate),
+            (
+                "transaction_mode = 'immediate'",
+                db_turso::TransactionMode::Immediate,
+            ),
+            (
+                "transaction_mode = 'concurrent'",
+                db_turso::TransactionMode::Concurrent,
+            ),
+            (
+                "transaction_mode = '${UNSET_TEST_TURSO_TRANSACTION_MODE:-immediate}'",
+                db_turso::TransactionMode::Immediate,
+            ),
+            (
+                "transaction_mode = '${UNSET_TEST_TURSO_TRANSACTION_MODE:-concurrent}'",
+                db_turso::TransactionMode::Concurrent,
+            ),
+        ] {
+            let mut config: ServerConfigToml = toml::from_str(&format!(
+                "[database.turso]\nurl = 'http://localhost'\nauth_token = ''\n{setting}"
+            ))
+            .unwrap();
+            config
+                .resolve_env_vars(&paths, &StartupEnvVars::capture())
+                .unwrap();
+            let DatabaseConfigToml::Turso(turso) = config.database else {
+                panic!("expected Turso configuration");
+            };
+            assert_eq!(
+                expected,
+                turso.as_config(&registry).unwrap().transaction_mode
+            );
+        }
+    }
+
+    #[test]
+    fn turso_transaction_mode_rejects_invalid_interpolated_values() {
+        let config: TursoConfigToml = toml::from_str(
+            "url = 'http://localhost'\nauth_token = ''\ntransaction_mode = '${UNSET_TEST_TURSO_TRANSACTION_MODE:-invalid}'",
+        )
+        .unwrap();
+        let error = config
+            .as_config(&SecretRegistry::empty_with_public_env([
+                "UNSET_TEST_TURSO_TRANSACTION_MODE".to_owned(),
+            ]))
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("database.turso.transaction_mode")
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("expected `immediate` or `concurrent`")
+        );
+    }
 
     mod limits {
         use super::*;

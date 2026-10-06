@@ -1111,6 +1111,18 @@ async fn verify_db_schema(
             });
             Ok((db_pool, db_close))
         }
+        DatabaseConfigToml::Turso(config) => {
+            let pool = Arc::new(
+                db_turso::connect(config.as_config(secret_registry)?)
+                    .await
+                    .context("cannot initialize remote SQL backend")?,
+            );
+            let close = Box::pin({
+                let pool = pool.clone();
+                async move { pool.close().await }
+            });
+            Ok((pool, close))
+        }
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
             let db_pool = Arc::new(
                 PostgresPool::new(
@@ -2048,6 +2060,18 @@ pub(crate) async fn run_internal(
                 async move { db_pool.close().await }
             });
             (db_pool, db_close)
+        }
+        DatabaseConfigToml::Turso(config) => {
+            let pool = Arc::new(
+                db_turso::connect(config.as_config(&secret_registry)?)
+                    .await
+                    .context("cannot initialize remote SQL backend")?,
+            );
+            let close = Box::pin({
+                let pool = pool.clone();
+                async move { pool.close().await }
+            });
+            (pool, close)
         }
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
             let db_pool = Arc::new(

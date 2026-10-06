@@ -15,6 +15,7 @@ version.workspace = true
 concepts.workspace = true
 db-postgres.workspace = true
 db-sqlite.workspace = true
+db-turso.workspace = true
 executor.workspace = true
 grpc.workspace = true
 utils.workspace = true
@@ -168,6 +169,8 @@ members = [
     "crates/db-common",
     "crates/db-postgres",
     "crates/db-sqlite",
+    "crates/db-turso",
+    "crates/testing/turso-server",
     "crates/embedded-assets",
     "crates/executor",
     "crates/grpc",
@@ -231,7 +234,9 @@ webhook-js-runtime-builder = { path = "crates/webhook-js-runtime/builder" }
 concepts = { package = "obeli-sk-concepts", path = "crates/concepts" }
 db-common = { package = "obeli-sk-db-common", path = "crates/db-common" }
 db-postgres = { package = "obeli-sk-db-postgres", path = "crates/db-postgres" }
+db-test-server = { package = "obeli-db-test-server", path = "crates/testing/turso-server" }
 db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite" }
+db-turso = { package = "obeli-sk-db-turso", path = "crates/db-turso" }
 db-tests = { package = "obeli-db-tests", path = "crates/testing/db-tests" }
 deno_core = "0.412.0"
 deno_error = "=0.7.1"
@@ -333,6 +338,7 @@ quote = "1"
 rand = "0.9" # postgres-protocol pulls rand 0.10; obelisk stays on 0.9 (0.10 reorganized the Rng traits)
 rcgen = "0.14"
 regex = "1.13"
+refinery-core = { version = "0.10.0", default-features = false }
 refinery = { version = "0.10.0", default-features = false, features = ["rusqlite", "tokio-postgres-rustls"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
@@ -369,6 +375,7 @@ syn = { version = "3", features = ["full"] }
 tempfile = "3.27"
 thiserror = "2.0"
 tokio-postgres = { version = "0.7.18", features = ["with-chrono-0_4", "with-serde_json-1"] }
+time = { version = "0.3", features = ["parsing"] }
 tokio = { version = "1", features = [
     "fs",
     "io-util",
@@ -395,6 +402,7 @@ tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.5"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+turso_serverless = { git = "https://github.com/tomasol/turso.git", rev = "03cf6cf7f305c476fe957ceebd66ea3800a567cb", default-features = false, features = ["tls-ring"] }
 ulid = { version = "3.0", features = ["serde"] }
 url = "2.5.8"
 utoipa = { version = "5.5.0", features = ["chrono"] }

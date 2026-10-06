@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 mkdir -p assets/schemas/toml
 
 cargo test --bin obelisk command::generate::tests::update_ -- --ignored
+cargo test -p obeli-sk-db-turso migrations::tests::update_turso_schema -- --ignored
 
 # SQL schema: we only check in migrations, so a whole-schema view is otherwise hard to review.
 cargo build --bin obelisk

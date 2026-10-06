@@ -12,6 +12,10 @@ junit.store-failure-output = true
 filter = 'test(/^command::integration_tests::activity_vm::/)'
 retries = { backoff = "fixed", count = 2, delay = "1s" }
 
+[profile.cloud-test]
+inherits = "ci-test"
+slow-timeout = { period = "30s", terminate-after = 20 }
+
 [profile.ci-test-populate-codegen-cache]
 failure-output = "immediate"
 fail-fast = true

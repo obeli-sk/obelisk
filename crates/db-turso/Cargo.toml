@@ -1,0 +1,29 @@
+[package]
+name = "obeli-sk-db-turso"
+description = "Internal package of obelisk"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+db-sqlite.workspace = true
+refinery.workspace = true
+refinery-core.workspace = true
+regex.workspace = true
+rusqlite.workspace = true
+secrecy.workspace = true
+time.workspace = true
+tokio.workspace = true
+turso_serverless.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+db-test-server.workspace = true
+rustls.workspace = true
+
+[lints]
+workspace = true
