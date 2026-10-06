@@ -46,6 +46,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     type CommandFuture = Pin<Box<dyn Future<Output = Result<(), anyhow::Error>>>>;
     let future: CommandFuture = match command {
+        Subcommand::StorageServe(args) => Box::pin(command::storage::serve(args)),
         Subcommand::Server(Server::Run {
             server_config,
             app_config,

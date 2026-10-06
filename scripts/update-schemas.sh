@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 
-# Regenerates everything under `assets/schemas/`: TOML/deployment JSON schemas and the
-# consolidated SQL schema dumps of the embedded migrations. Run inside `nix develop`.
+# Regenerates JSON, OpenAPI and SQL schemas under `assets/schemas/`. Run inside `nix develop`.
 
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
 mkdir -p assets/schemas/toml
+cargo run -p obeli-sk-db-http --example generate-openapi > assets/schemas/storage-openapi.json
 
 cargo test --bin obelisk command::generate::tests::update_ -- --ignored
 

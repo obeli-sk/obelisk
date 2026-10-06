@@ -1111,6 +1111,14 @@ async fn verify_db_schema(
             });
             Ok((db_pool, db_close))
         }
+        DatabaseConfigToml::Http(http) => {
+            let db_pool = Arc::new(http.open(secret_registry).await?);
+            let db_close = Box::pin({
+                let db_pool = db_pool.clone();
+                async move { db_pool.close().await }
+            });
+            Ok((db_pool, db_close))
+        }
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
             let db_pool = Arc::new(
                 PostgresPool::new(
@@ -2043,6 +2051,14 @@ pub(crate) async fn run_internal(
                     .await
                     .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
             );
+            let db_close = Box::pin({
+                let db_pool = db_pool.clone();
+                async move { db_pool.close().await }
+            });
+            (db_pool, db_close)
+        }
+        DatabaseConfigToml::Http(http) => {
+            let db_pool = Arc::new(http.open(&secret_registry).await?);
             let db_close = Box::pin({
                 let db_pool = db_pool.clone();
                 async move { db_pool.close().await }

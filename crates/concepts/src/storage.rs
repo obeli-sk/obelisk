@@ -82,7 +82,7 @@ pub const RESULT_KIND_JSON_OK: &str = r#""ok""#;
 pub const RESULT_KIND_JSON_ERROR: &str = r#"{"err":"error"}"#;
 pub const HISTORY_EVENT_TYPE_JOIN_NEXT: &str = "join_next"; // Serialization tag of `HistoryEvent::JoinNext`
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExecutionLog {
     pub execution_id: ExecutionId,
     pub events: Vec<ExecutionEvent>,
@@ -309,20 +309,20 @@ pub struct ResponseWithCursor {
     pub cursor: ResponseCursor,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ListExecutionEventsResponse {
     pub events: Vec<ExecutionEvent>,
     pub max_version: Version,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExecutionEventBounds {
     pub execution_id: ExecutionId,
     pub created: ExecutionEvent,
     pub finished: Option<ExecutionEvent>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ListResponsesResponse {
     pub responses: Vec<ResponseWithCursor>,
     pub max_cursor: ResponseCursor,
@@ -1294,7 +1294,7 @@ pub enum DbErrorReadWithTimeout {
     DbErrorRead(#[from] DbErrorRead),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ResponseSubscriptionEnd {
     PollIntervalElapsed,
     /// Execution run should return without writing any more events, execution remains blocked waiting for response
@@ -1316,7 +1316,7 @@ pub enum SubscribeToResponsesError {
 pub type AppendResponse = Version;
 pub type PendingExecution = (ExecutionId, Version, Params, Option<DateTime<Utc>>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LockedExecution {
     pub execution_id: ExecutionId,
     pub next_version: Version,
@@ -1335,7 +1335,9 @@ pub struct LockedExecution {
 pub type LockPendingResponse = Vec<LockedExecution>;
 pub type AppendBatchResponse = Version;
 
-#[derive(Debug, Clone, PartialEq, derive_more::Display, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[display("{event}")]
 pub struct AppendRequest {
     pub created_at: DateTime<Utc>,
@@ -1352,8 +1354,7 @@ impl AppendRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "test", derive(Serialize))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CreateRequest {
     pub created_at: DateTime<Utc>,
     pub execution_id: ExecutionId,
@@ -1433,7 +1434,9 @@ pub trait DbPool: Send + Sync {
     async fn connection_test(&self) -> Result<Box<dyn DbConnectionTest>, DbErrorGeneric>;
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct CleanupResult {
     pub deleted_execution_trees: u64,
     pub deleted_deployments: u64,
@@ -1443,13 +1446,13 @@ pub struct CleanupResult {
     pub has_more: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum RetentionPolicy {
     Count(u32),
     CreatedAtOrAfter(DateTime<Utc>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum DeleteExecutionTreeResult {
     Deleted,
     AlreadyDeleted,
@@ -1457,7 +1460,7 @@ pub enum DeleteExecutionTreeResult {
     ActiveDeployment,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum DeleteDeploymentResult {
     Deleted { deleted_execution_trees: u64 },
     AlreadyDeleted,
@@ -1468,7 +1471,9 @@ pub enum DeleteDeploymentResult {
     ReferencedByActiveDeployment { execution_trees: u64 },
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct CasGcResult {
     pub orphan_blobs: u64,
     pub deleted_blobs: u64,
@@ -1476,20 +1481,24 @@ pub struct CasGcResult {
     pub has_more: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct SystemEventRetentionResult {
     pub deleted: u64,
     pub has_more: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct ExecutionGcResult {
     pub tombstoned_roots: u64,
     pub deleted_rows: u64,
     pub has_more: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemEventLevel {
     Debug,
@@ -1510,7 +1519,7 @@ impl SystemEventLevel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SystemEvent {
     pub event_id: SystemEventId,
     pub node_run_id: NodeRunId,
@@ -1520,7 +1529,8 @@ pub struct SystemEvent {
     pub level: SystemEventLevel,
     pub code: String,
     pub dedupe_key: Option<String>,
-    #[serde(skip)]
+    // backcompat: 0.42.0 stored events omit the attached CAS digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cas_digest: Option<ContentDigest>,
     pub execution_id: Option<ExecutionId>,
     pub deployment_id: Option<DeploymentId>,
@@ -1766,7 +1776,7 @@ impl SystemEvent {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SystemEventFilter {
     pub event_id: Option<SystemEventId>,
     pub node_run_id: Option<NodeRunId>,
@@ -1781,13 +1791,13 @@ pub struct SystemEventFilter {
     pub limit: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HttpPolicyEventIds {
     pub server_configuration_event_id: SystemEventId,
     pub component_policy_event_id: SystemEventId,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StorageStatus {
     pub database_bytes: Option<u64>,
     pub execution_count: u64,
@@ -1887,16 +1897,14 @@ pub trait DbPoolCloseable {
     async fn close(&self);
 }
 
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "test", derive(Serialize))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AppendEventsToExecution {
     pub execution_id: ExecutionId,
     pub version: Version,
     pub batch: Vec<AppendRequest>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "test", derive(Serialize))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AppendResponseToExecution {
     pub parent_execution_id: ExecutionId,
     pub created_at: DateTime<Utc>,
@@ -2142,13 +2150,14 @@ pub trait DbExecutor: Send + Sync {
     ) -> Result<CancelOutcome, DbErrorWrite>;
 }
 
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 pub enum AppendDelayResponseOutcome {
     Success,
     AlreadyFinished,
     AlreadyCancelled,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ListExecutionsFilter {
     pub function_name_filter: Option<FunctionNameFilter>,
     pub show_derived: bool,
@@ -2163,7 +2172,7 @@ pub struct ListExecutionsFilter {
 }
 
 /// Filter executions by their current state, using the same buckets as the deployment summary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ExecutionStateFilter {
     Locked,
     /// [`PendingState::PendingAt`] with the scheduled time at or before `now`.
@@ -2189,7 +2198,7 @@ pub enum ExecutionStateFilter {
     FinishedExecutionFailure,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum FunctionNameFilter {
     Prefix(String),
     PackageName(String),
@@ -2456,6 +2465,7 @@ pub const LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION: Pagination<Option<Deploymen
         including_cursor: false,
     };
 
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeploymentState {
     pub deployment_id: DeploymentId,
     pub description: Option<String>,
@@ -2484,7 +2494,7 @@ pub struct DeploymentState {
     pub status: DeploymentStatus,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum DeploymentExecutionCounts {
     /// Skip the aggregate queries; every bucket is reported as zero.
     Skip,
@@ -2492,7 +2502,7 @@ pub enum DeploymentExecutionCounts {
     Count { include_derived: bool },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum DeploymentStatus {
     Inactive,
     /// Queued to become Active on the next server restart.
@@ -2501,7 +2511,7 @@ pub enum DeploymentStatus {
 }
 
 /// Outcome of [`DbExternalApi::enqueue_deployment`], reflecting what the transaction did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum EnqueueOutcome {
     /// The target was inactive and is now Enqueued for the next restart.
     Enqueued,
@@ -2533,7 +2543,7 @@ impl std::str::FromStr for DeploymentStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeploymentRecord {
     pub deployment_id: DeploymentId,
     pub description: Option<String>,
@@ -2561,7 +2571,7 @@ impl DeploymentRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeploymentFileRecord {
     pub path: String,
     pub digest: ContentDigest,
@@ -2578,6 +2588,7 @@ pub struct DeploymentFileRecord {
     serde::Deserialize,
     strum::Display,
     strum::EnumString,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
@@ -2590,21 +2601,33 @@ pub enum ComponentFileRole {
     WitSource,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeploymentComponentFileRecord {
     pub component_name: StrVariant,
     pub path: String,
     pub role: ComponentFileRole,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeploymentComponentFileDetail {
     pub file: DeploymentFileRecord,
     pub role: ComponentFileRole,
 }
 
 /// Origin of a component's WIT: parsed from WASM or synthesized from type wrappers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, derive_more::TryFrom)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    derive_more::TryFrom,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[try_from(repr)]
 #[repr(i16)]
 pub enum WitOrigin {
@@ -2616,7 +2639,7 @@ pub enum WitOrigin {
     Authored = 3,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ComponentMetadataRecord {
     pub component_digest: ComponentDigest,
     pub imports: Vec<PersistedFunctionMetadata>,
@@ -2626,7 +2649,7 @@ pub struct ComponentMetadataRecord {
 }
 
 /// Relation between a deployment and its components
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeploymentComponentRecord {
     pub deployment_id: DeploymentId,
     pub component_name: StrVariant,
@@ -2634,7 +2657,7 @@ pub struct DeploymentComponentRecord {
     pub component_type: ComponentType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeploymentComponentDetail {
     pub component_id: ComponentId,
     pub imports: Vec<PersistedFunctionMetadata>,
@@ -2682,14 +2705,14 @@ impl From<FunctionMetadata> for PersistedFunctionMetadata {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ListLogsResponse {
     pub items: Vec<LogEntryRow>,
     pub next_page: Pagination<LogCursor>, // Newer logs can always arrive e.g. via replay
     pub prev_page: Option<Pagination<LogCursor>>, // None if we are already at the beginning
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LogFilter {
     show_logs: bool,
     show_streams: bool,
@@ -2772,7 +2795,7 @@ impl LogFilter {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExecutionWithStateRequestsResponses {
     pub execution_with_state: ExecutionWithState,
     pub events: Vec<ExecutionEvent>,
@@ -2938,14 +2961,14 @@ pub trait DbConnection: DbExecutor {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LogInfoAppendRow {
     pub execution_id: ExecutionId,
     pub run_id: RunId,
     pub log_entry: LogEntry,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LogEntryRow {
     pub cursor: LogCursor,
     pub run_id: RunId,
@@ -2953,10 +2976,10 @@ pub struct LogEntryRow {
     pub execution_id: ExecutionId,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LogCursor(pub i64);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum LogEntry {
     Log {
         created_at: DateTime<Utc>,
@@ -2979,7 +3002,18 @@ impl LogEntry {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::TryFrom, strum::EnumIter,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    derive_more::TryFrom,
+    strum::EnumIter,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[try_from(repr)]
 #[repr(u8)]
@@ -2990,7 +3024,18 @@ pub enum LogLevel {
     Warn,
     Error,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom, strum::EnumIter)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::TryFrom,
+    strum::EnumIter,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[try_from(repr)]
 #[repr(u8)]
 pub enum LogStreamType {
@@ -2998,7 +3043,7 @@ pub enum LogStreamType {
     StdErr,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum TimeoutOutcome {
     Timeout,
     Cancel,
@@ -3015,7 +3060,7 @@ pub trait DbConnectionTest: DbConnection {
     ) -> Result<(), DbErrorWrite>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum CancelOutcome {
     CancelRequested,
     AlreadyFinished,
@@ -3137,15 +3182,14 @@ pub async fn cancel_delay(
         })
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum BacktraceFilter {
     First,
     Last,
     Specific(Version),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "test", derive(Serialize))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BacktraceInfo {
     pub execution_id: ExecutionId,
     pub component_id: ComponentId,
@@ -3229,7 +3273,7 @@ mod wasm_backtrace {
         }
     }
 }
-#[derive(Debug, Clone, derive_more::Display)]
+#[derive(Debug, Clone, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema)]
 #[display("{execution_id} {pending_state} {component_digest}")]
 pub struct ExecutionWithState {
     pub execution_id: ExecutionId,
@@ -3242,7 +3286,7 @@ pub struct ExecutionWithState {
     pub deployment_id: DeploymentId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ExecutionListPagination {
     CreatedBy(Pagination<Option<DateTime<Utc>>>),
     ExecutionId(Pagination<Option<ExecutionId>>),
@@ -3266,7 +3310,7 @@ impl ExecutionListPagination {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum Pagination<T> {
     NewerThan {
         length: NonZeroU16,
@@ -3387,13 +3431,13 @@ pub async fn wait_for_pending_state_fn<T: Debug>(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ExpiredTimer {
     Lock(ExpiredLock),
     Delay(ExpiredDelay),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExpiredLock {
     pub execution_id: ExecutionId,
     // Version of last `Locked` event, used to detect whether the execution made progress.
@@ -3406,7 +3450,7 @@ pub struct ExpiredLock {
     pub locked_by: LockedBy,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExpiredDelay {
     pub execution_id: ExecutionId,
     pub join_set_id: JoinSetId,

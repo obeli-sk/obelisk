@@ -13,6 +13,8 @@ version.workspace = true
 
 [dependencies]
 concepts.workspace = true
+db-http.workspace = true
+db-http-server.workspace = true
 db-postgres.workspace = true
 db-sqlite.workspace = true
 executor.workspace = true
@@ -166,6 +168,8 @@ members = [
     "crates/bench",
     "crates/concepts",
     "crates/db-common",
+    "crates/db-http",
+    "crates/db-http-server",
     "crates/db-postgres",
     "crates/db-sqlite",
     "crates/embedded-assets",
@@ -229,6 +233,8 @@ activity-js-runtime-builder = { path = "crates/activity-js-runtime/builder" }
 boa-common = { path = "crates/boa-common" }
 webhook-js-runtime-builder = { path = "crates/webhook-js-runtime/builder" }
 concepts = { package = "obeli-sk-concepts", path = "crates/concepts" }
+db-http = { package = "obeli-sk-db-http", path = "crates/db-http" }
+db-http-server = { package = "obeli-sk-db-http-server", path = "crates/db-http-server" }
 db-common = { package = "obeli-sk-db-common", path = "crates/db-common" }
 db-postgres = { package = "obeli-sk-db-postgres", path = "crates/db-postgres" }
 db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite" }

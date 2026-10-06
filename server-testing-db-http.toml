@@ -1,0 +1,3 @@
+[database.http]
+url = "${DB_HTTP_URL}"
+token = "${DB_HTTP_TOKEN}"

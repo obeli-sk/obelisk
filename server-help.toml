@@ -42,6 +42,10 @@
 ## Defaults are in `crates/db-sqlite/src/sqlite_dao.rs`.
 # database.sqlite.pragma = { "cache_size" = "3000" }
 
+## Remote SQLite storage, served by `obelisk storage-serve --database <file>`.
+# database.http.url = "http://127.0.0.1:4321"
+# database.http.token = "${STORAGE_TOKEN}"
+
 ## Postgres configuration, keys support environment variable interpolation.
 # database.postgres.host =     "${POSTGRES_HOST}"
 # database.postgres.user =     "${POSTGRES_USER}"

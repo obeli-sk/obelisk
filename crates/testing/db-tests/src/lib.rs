@@ -20,14 +20,16 @@ pub const CANCELLABLE_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", 
 pub enum Database {
     Sqlite,
     Postgres,
+    Http,
 }
 impl Database {
-    pub const ALL: [Database; 2] = [Database::Sqlite, Database::Postgres];
+    pub const ALL: [Database; 3] = [Database::Sqlite, Database::Postgres, Database::Http];
 }
 
 pub enum DbGuard {
     Sqlite(Option<NamedTempFile>),
     Postgres,
+    Http(Option<NamedTempFile>),
 }
 
 impl Database {
@@ -38,6 +40,36 @@ impl Database {
                 let (sqlite, guard) = sqlite_pool().await;
                 let closeable = DbPoolCloseableWrapper::Sqlite(sqlite.clone());
                 (DbGuard::Sqlite(guard), Arc::new(sqlite.clone()), closeable)
+            }
+            Database::Http => {
+                test_utils::set_up();
+                let file = NamedTempFile::new().unwrap();
+                let sqlite =
+                    SqlitePool::new(file.path(), db_sqlite::sqlite_dao::SqliteConfig::default())
+                        .await
+                        .unwrap();
+                let guard = Some(file);
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let address = listener.local_addr().unwrap();
+                let token = SecretString::from("test-storage-token");
+                let server = db_http_server::StorageServer::start(
+                    listener,
+                    Arc::new(sqlite.clone()),
+                    &token,
+                )
+                .unwrap();
+                let client = db_http::HttpPool::new(
+                    &format!("http://{address}"),
+                    token,
+                    db_http::client().unwrap(),
+                )
+                .unwrap();
+                let closeable = DbPoolCloseableWrapper::Http {
+                    client: client.clone(),
+                    server: Box::new(server),
+                    sqlite,
+                };
+                (DbGuard::Http(guard), Arc::new(client), closeable)
             }
             Database::Postgres => {
                 let pool = initialize_fresh_postgres_db().await;
@@ -83,6 +115,11 @@ fn get_env_val(name: &'static str) -> String {
 pub enum DbPoolCloseableWrapper {
     Sqlite(SqlitePool),
     Postgres(Arc<PostgresPool>),
+    Http {
+        client: db_http::HttpPool,
+        server: Box<db_http_server::StorageServer>,
+        sqlite: SqlitePool,
+    },
 }
 
 #[async_trait]
@@ -90,6 +127,15 @@ impl DbPoolCloseable for DbPoolCloseableWrapper {
     async fn close(&self) {
         match self {
             DbPoolCloseableWrapper::Sqlite(db) => db.close().await,
+            DbPoolCloseableWrapper::Http {
+                client,
+                server,
+                sqlite,
+            } => {
+                client.close().await;
+                server.close().await.unwrap();
+                sqlite.close().await;
+            }
             DbPoolCloseableWrapper::Postgres(db) => {
                 db.close().await; // Close the target db.
                 std::cfg_select! {

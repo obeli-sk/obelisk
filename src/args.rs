@@ -102,6 +102,8 @@ pub(crate) enum Subcommand {
     /// Run or verify the Obelisk server.
     #[command(subcommand)]
     Server(Server),
+    /// Serve a SQLite database to Obelisk nodes over HTTP.
+    StorageServe(StorageServeArgs),
     /// Submit, inspect, stub, cancel, pause, replay, persist backtraces, or upgrade executions.
     Execution(ExecutionArgs),
     /// Inspect components or add/push them to an OCI registry.
@@ -113,6 +115,16 @@ pub(crate) enum Subcommand {
     /// Generate configuration files and WIT artifacts.
     #[command(subcommand)]
     Generate(Generate),
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct StorageServeArgs {
+    #[arg(long, default_value = "127.0.0.1:4321")]
+    pub(crate) listen: std::net::SocketAddr,
+    #[arg(long)]
+    pub(crate) database: PathBuf,
+    #[arg(long, value_parser = parse_secret_string)]
+    pub(crate) token: SecretString,
 }
 
 #[derive(Debug, clap::Args)]

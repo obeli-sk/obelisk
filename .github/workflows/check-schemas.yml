@@ -30,6 +30,9 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
+      - name: Check published storage OpenAPI schema
+        run: nix develop --command cargo run -p obeli-sk-db-http --example generate-openapi -- --check assets/schemas/storage-openapi.json
+
       - name: Run `update-schemas.sh`
         run: |
           nix develop --command scripts/update-schemas.sh

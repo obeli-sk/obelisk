@@ -10,10 +10,12 @@ version.workspace = true
 
 [features]
 default = ["test"]
-test = ["concepts/test", "db-sqlite/test", "db-postgres/test"]
+test = ["concepts/test", "db-sqlite/test", "db-postgres/test", "db-http/test", "db-http-server/test"]
 
 [dependencies]
 concepts.workspace = true
+db-http.workspace = true
+db-http-server.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
 db-postgres.workspace = true
 test-utils.workspace = true

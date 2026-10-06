@@ -136,6 +136,10 @@ impl ServerConfigToml {
             postgres.password = interpolate_startup_env_vars(&postgres.password, env_vars)?;
             postgres.db_name = interpolate_startup_env_vars(&postgres.db_name, env_vars)?;
         }
+        if let DatabaseConfigToml::Http(http) = &mut self.database {
+            http.url = interpolate_startup_env_vars(&http.url, env_vars)?;
+            http.token = interpolate_startup_env_vars(&http.token, env_vars)?;
+        }
         if let DatabaseConfigToml::Sqlite(sqlite) = &mut self.database
             && let Some(directory) = &mut sqlite.directory
         {
@@ -608,12 +612,13 @@ fn default_api_listening_addr() -> SocketAddr {
 pub(crate) enum DatabaseConfigToml {
     Sqlite(SqliteConfigToml),
     Postgres(PostgresConfigToml),
+    Http(HttpConfigToml),
 }
 
 impl DatabaseConfigToml {
     pub fn get_subscription_interruption(&self) -> Option<Duration> {
         match self {
-            DatabaseConfigToml::Sqlite(_) => None,
+            DatabaseConfigToml::Sqlite(_) | DatabaseConfigToml::Http(_) => None,
             DatabaseConfigToml::Postgres(postgres_config_toml) => {
                 postgres_config_toml.subscription_interruption.into()
             }
@@ -624,6 +629,26 @@ impl DatabaseConfigToml {
 impl Default for DatabaseConfigToml {
     fn default() -> DatabaseConfigToml {
         DatabaseConfigToml::Sqlite(SqliteConfigToml::default())
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HttpConfigToml {
+    url: String,
+    token: String,
+}
+
+impl HttpConfigToml {
+    pub async fn open(
+        &self,
+        secret_registry: &SecretRegistry,
+    ) -> Result<db_http::HttpPool, anyhow::Error> {
+        let url = interpolate_env_vars_plaintext(&self.url, secret_registry)?;
+        let token = interpolate_env_vars_secret(&self.token, secret_registry)?;
+        let pool = db_http::HttpPool::new(&url, token, db_http::client()?)?;
+        pool.verify().await?;
+        Ok(pool)
     }
 }
 

@@ -376,6 +376,18 @@
             "postgres"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "http": {
+              "$ref": "#/$defs/HttpConfigToml"
+            }
+          },
+          "required": [
+            "http"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -589,6 +601,22 @@
           "type": "string",
           "const": "auto"
         }
+      ]
+    },
+    "HttpConfigToml": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "token"
       ]
     },
     "WebUIConfig": {

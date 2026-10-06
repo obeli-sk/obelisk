@@ -132,6 +132,26 @@
       ]
     },
     {
+      "name": "storage-serve",
+      "about": "Serve a SQLite database to Obelisk nodes over HTTP",
+      "options": [
+        {
+          "name": "--listen"
+        },
+        {
+          "name": "--database",
+          "required": true,
+          "accepts": {
+            "path": true
+          }
+        },
+        {
+          "name": "--token",
+          "required": true
+        }
+      ]
+    },
+    {
       "name": "execution",
       "about": "Submit, inspect, stub, cancel, pause, replay, persist backtraces, or upgrade executions",
       "options": [

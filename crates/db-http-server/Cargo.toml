@@ -1,0 +1,35 @@
+[package]
+name = "obeli-sk-db-http-server"
+description = "HTTP storage service for Obelisk"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+db-http.workspace = true
+concepts.workspace = true
+axum.workspace = true
+chrono.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+db-http = { workspace = true, features = ["test"] }
+db-sqlite = { workspace = true, features = ["test", "tempfile"] }
+reqwest.workspace = true
+tempfile.workspace = true
+rustls.workspace = true
+
+[features]
+test = ["concepts/test", "db-http/test"]
+
+[lints]
+workspace = true
