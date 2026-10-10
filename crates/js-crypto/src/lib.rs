@@ -1,6 +1,6 @@
 //! Web Crypto primitives shared by the Boa and V8 JS runtimes; JS glue lives in each runtime.
 
-use hmac::{Hmac, Mac as _};
+use hmac::{Hmac, KeyInit as _, Mac as _};
 use sha2::{Sha256, Sha384, Sha512};
 
 /// `getRandomValues` throws `QuotaExceededError` above this many bytes.

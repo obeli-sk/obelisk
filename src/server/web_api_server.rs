@@ -2365,7 +2365,14 @@ async fn execution_status_get(
             loop {
                 let data = serde_json::to_string(&ExecutionWithStateSer::from(current.clone()))
                     .expect("status serializes");
-                let id = format!("{:x}", Sha256::digest(data.as_bytes()));
+                let id = Sha256::digest(data.as_bytes()).iter().fold(
+                    String::with_capacity(64),
+                    |mut out, byte| {
+                        use std::fmt::Write as _;
+                        write!(out, "{byte:02x}").expect("writing to string");
+                        out
+                    },
+                );
                 let finished_id = format!("{id}:finished");
                 if last_sent_id.as_deref() != Some(&id)
                     && last_sent_id.as_deref() != Some(&finished_id)

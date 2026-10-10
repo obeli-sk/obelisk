@@ -302,7 +302,7 @@ derive_more = { version = "2.1.1", features = [
 ] }
 derive-where = "1.7.0"
 directories = "6.0"
-ed25519-dalek = "2"
+ed25519-dalek = "3"
 divan = { version = "4.7", package = "codspeed-divan-compat" }
 docker_credential = "1.4.0"
 futures = { version = "0.3.34", default-features = false }
@@ -345,7 +345,7 @@ rustls = { version = "0.23", default-features = false, features = [
     "std",
     "tls12",
 ] }
-ruzstd = "0.8"
+ruzstd = "0.9"
 webpki-roots = "1"
 route-recognizer = "0.3.1"
 rstest = "0.27"
@@ -360,8 +360,8 @@ semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 serde_with = "3.24.0"
-hmac = "0.12.1" # keep on the 0.10 digest suite; postgres-protocol pulls sha2/hmac 0.11
-sha2 = "0.10.9" # 0.11 switched output to hybrid-array::Array which breaks {:x} hashing
+hmac = "0.13.0"
+sha2 = "0.11.0"
 subtle = "2.6.1"
 tar = "0.4"
 strum = { version = "0.28.0", features = ["derive"] }
@@ -397,8 +397,8 @@ tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 ulid = { version = "3.0", features = ["serde"] }
 url = "2.5.8"
-utoipa = { version = "5.5.0", features = ["chrono"] }
-utoipa-axum = "0.2.0"
+utoipa = { version = "6.0.0", features = ["chrono"] }
+utoipa-axum = "0.3.0"
 wiremock = "0.6"
 
 # wasmtime
@@ -435,19 +435,19 @@ wit-bindgen-rust = "0.62.0"
 wstd = "0.6.8"
 
 # otlp
-opentelemetry = "0.32.0"
-opentelemetry-http = "0.32.0"
-opentelemetry_sdk = { version = "0.32.1", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.32.0", default-features = false, features = [
-    "tls",
+opentelemetry = "0.33.1"
+opentelemetry-http = "0.33.1"
+opentelemetry_sdk = { version = "0.33.1", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.33.1", default-features = false, features = [
+    "tls-ring",
     "tls-roots",
     "grpc-tonic",
     "trace",
     "logs",
     "metrics",
 ] }
-opentelemetry-semantic-conventions = "0.32.1"
-tracing-opentelemetry = "0.33"
+opentelemetry-semantic-conventions = "0.33.1"
+tracing-opentelemetry = "0.34"
 
 [workspace.lints]
 # lower the priority to allow overriding later
