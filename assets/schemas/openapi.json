@@ -31,7 +31,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -69,7 +68,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -99,7 +97,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -129,7 +126,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -149,7 +145,6 @@
         "operationId": "node_run_id",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "text/plain": {
                 "schema": {
@@ -174,7 +169,6 @@
         "operationId": "storage_status",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -266,7 +260,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -296,7 +289,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -316,7 +308,6 @@
         "operationId": "get_system_event",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -325,9 +316,7 @@
               }
             }
           },
-          "404": {
-            "description": ""
-          }
+          "404": {}
         }
       }
     },
@@ -339,7 +328,6 @@
         "operationId": "get",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -364,7 +352,6 @@
         "operationId": "digest",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "text/plain": {
                 "schema": {
@@ -514,7 +501,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "text/plain": {
                 "schema": {
@@ -523,9 +509,7 @@
               }
             }
           },
-          "404": {
-            "description": ""
-          }
+          "404": {}
         }
       }
     },
@@ -1214,7 +1198,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1698,7 +1681,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3069,11 +3051,11 @@
           "component_summary": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/DeploymentComponentSummary",
                 "description": "Component counts by manifest section type. Absent when not requested or unavailable."
+              },
+              {
+                "type": "null"
               }
             ]
           },
