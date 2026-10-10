@@ -268,7 +268,7 @@ wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers"
 workflow-js-runtime-builder = { path = "crates/workflow-js-runtime/builder" }
 
 anyhow = { version = "1.0", features = ["backtrace"] }
-arbitrary = { version = "1.4.2", features = ["derive"] }
+arbitrary = { version = "1.5.0", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"
 axum = { version = "0.8.9", features = ["http2", "multipart"] }
@@ -314,11 +314,11 @@ hashbrown = { version = "0.17.1", features = ["serde"] }
 hdrhistogram = { version = "7.6.0", default-features = false }
 http = "1.5.0"
 http-body-util = "0.1"
-hyper = "1.11.1"
+hyper = "1.12.0"
 hyper-util = { version = "0.1", features = ["tokio"] }
 id-arena = "2.3.0"
 indexmap = { version = "2.14", features = ["serde"] }
-insta = { version = "1.48.0", features = ["json"] }
+insta = { version = "1.49.0", features = ["json"] }
 itertools = "0.15"
 jsonwebtoken = { version = "10", default-features = false } # keep in sync with oci-client's jsonwebtoken
 lazy_static = "1.5"
@@ -382,8 +382,8 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.19"
-toml = { version = "1.1.6", features = ["preserve_order"] }
-toml_edit = "0.25.15"
+toml = { version = "1.1.8", features = ["preserve_order"] }
+toml_edit = "0.25.17"
 tonic = { version = "0.14.6", default-features = false }
 tonic-prost = "0.14.6"
 tonic-prost-build = "0.14.6"
