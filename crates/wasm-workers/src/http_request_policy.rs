@@ -413,8 +413,8 @@ pub fn audit_http_policy(hosts: &[AllowedHostConfig]) -> (String, Value) {
         "policy": hosts.iter().map(entry).collect::<Vec<_>>(),
     });
     let encoded = serde_json::to_vec(&details).expect("policy audit representation must encode");
-    let hash = Sha256::digest(encoded);
-    (format!("sha256:{hash:x}"), details)
+    let hash = concepts::component_id::Digest(Sha256::digest(encoded).into());
+    (hash.to_string(), details)
 }
 
 /// Collect the entries in `hosts` that match the request target.

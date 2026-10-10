@@ -89,7 +89,7 @@ use grpc::grpc_gen::{
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit as _, Mac};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Sha256, Sha512};

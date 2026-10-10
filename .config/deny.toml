@@ -71,6 +71,8 @@ skip = [
     { name = "block-buffer", version = "0.10" },
     { name = "crypto-common", version = "0.1" },
     { name = "cpufeatures", version = "0.2" },
+    # jsonwebtoken 10 (required by oci-client 0.17) uses signature 2; ed25519-dalek 3 uses signature 3
+    { name = "signature", version = "2" },
     # oci-wasm uses wit-component 0.253 (older wasm-tools suite)
     { name = "wasmparser", version = "0.253" },
     { name = "wasm-encoder", version = "0.253" },
@@ -91,7 +93,6 @@ skip = [
     # Deno and V8 retain older versions of dependencies used elsewhere in the workspace
     { name = "fastrand", version = "1" },
     { name = "futures-lite", version = "1" },
-    { name = "hmac", version = "0.12" },
     { name = "linux-raw-sys", version = "0.4" },
     { name = "miniz_oxide", version = "0.8" },
     { name = "num-bigint", version = "0.4" },
