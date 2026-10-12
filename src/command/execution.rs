@@ -23,9 +23,9 @@ use tracing::instrument;
 
 impl args::Execution {
     pub(crate) async fn run(self, client_startup: ClientStartup) -> Result<(), anyhow::Error> {
+        let api_url = client_startup.api_url();
         match self {
             args::Execution::List {
-                api_url,
                 ffqn_prefix: ffqn,
                 execution_id_prefix,
                 show_derived,
@@ -35,7 +35,7 @@ impl args::Execution {
             } => {
                 execution_list(
                     &client_startup,
-                    &api_url,
+                    api_url,
                     ffqn,
                     execution_id_prefix,
                     show_derived,
@@ -46,7 +46,6 @@ impl args::Execution {
                 .await
             }
             args::Execution::Logs {
-                api_url,
                 execution_id,
                 show_derived,
                 level,
@@ -60,34 +59,31 @@ impl args::Execution {
                 let opts =
                     LogsOpts::from_args(level, stream_type, show_derived, show_run_id, limit)?;
                 if follow {
-                    follow_logs(&client_startup, &api_url, &execution_id, &opts, after, json).await
+                    follow_logs(&client_startup, api_url, &execution_id, &opts, after, json).await
                 } else {
-                    execution_logs_cmd(&client_startup, &api_url, execution_id, &opts, after, json)
+                    execution_logs_cmd(&client_startup, api_url, execution_id, &opts, after, json)
                         .await
                 }
             }
             args::Execution::Events {
-                api_url,
                 execution_id,
                 from,
                 limit,
                 json,
             } => {
-                execution_events_cmd(&client_startup, &api_url, execution_id, from, limit, json)
+                execution_events_cmd(&client_startup, api_url, execution_id, from, limit, json)
                     .await
             }
             args::Execution::Responses {
-                api_url,
                 execution_id,
                 from,
                 limit,
                 json,
             } => {
-                execution_responses_cmd(&client_startup, &api_url, execution_id, from, limit, json)
+                execution_responses_cmd(&client_startup, api_url, execution_id, from, limit, json)
                     .await
             }
             args::Execution::Submit {
-                api_url,
                 execution_id,
                 ffqn,
                 params,
@@ -113,7 +109,7 @@ impl args::Execution {
                 };
                 submit(
                     &client_startup,
-                    &api_url,
+                    api_url,
                     execution_id,
                     ffqn,
                     parse_params(params)?,
@@ -123,12 +119,10 @@ impl args::Execution {
                 .await
             }
             args::Execution::Stub(args::Stub {
-                api_url,
                 execution_id,
                 return_value,
-            }) => stub(&client_startup, &api_url, execution_id, return_value).await,
+            }) => stub(&client_startup, api_url, execution_id, return_value).await,
             args::Execution::Status {
-                api_url,
                 execution_id,
                 follow,
                 no_reconnect,
@@ -136,7 +130,7 @@ impl args::Execution {
             } => {
                 get_execution_status_rest(
                     &client_startup,
-                    &api_url,
+                    api_url,
                     execution_id,
                     follow,
                     no_reconnect,
@@ -146,7 +140,6 @@ impl args::Execution {
                 .await
             }
             args::Execution::Result {
-                api_url,
                 execution_id,
                 follow,
                 no_reconnect,
@@ -154,7 +147,7 @@ impl args::Execution {
             } => {
                 get_execution_result_rest(
                     &client_startup,
-                    &api_url,
+                    api_url,
                     execution_id,
                     follow,
                     no_reconnect,
@@ -165,27 +158,23 @@ impl args::Execution {
             args::Execution::Cancel(cancel_request) => {
                 cancel_request.execute(&client_startup).await
             }
-            args::Execution::Pause { api_url, id } => {
-                execution_pause_change(&client_startup, &api_url, id, "pause").await?;
+            args::Execution::Pause { id } => {
+                execution_pause_change(&client_startup, api_url, id, "pause").await?;
                 println!("Paused");
                 Ok(())
             }
-            args::Execution::Unpause { api_url, id } => {
-                execution_pause_change(&client_startup, &api_url, id, "unpause").await?;
+            args::Execution::Unpause { id } => {
+                execution_pause_change(&client_startup, api_url, id, "unpause").await?;
                 println!("Unpaused");
                 Ok(())
             }
-            args::Execution::Replay {
-                api_url,
-                execution_id,
-                json,
-            } => replay(&client_startup, &api_url, execution_id, json).await,
-            args::Execution::PersistBacktraces {
-                api_url,
-                execution_id,
-            } => persist_backtraces(&client_startup, &api_url, execution_id).await,
+            args::Execution::Replay { execution_id, json } => {
+                replay(&client_startup, api_url, execution_id, json).await
+            }
+            args::Execution::PersistBacktraces { execution_id } => {
+                persist_backtraces(&client_startup, api_url, execution_id).await
+            }
             args::Execution::Advance {
-                api_url,
                 execution_id,
                 json,
                 trim,
@@ -198,7 +187,7 @@ impl args::Execution {
                 let pause_delays = pause_all || pause_delays;
                 advance(
                     &client_startup,
-                    &api_url,
+                    api_url,
                     execution_id,
                     AdvanceOpts {
                         json,
@@ -211,13 +200,12 @@ impl args::Execution {
                 .await
             }
             args::Execution::Upgrade {
-                api_url,
                 execution_id,
                 skip_determinism_check,
             } => {
                 upgrade(
                     &client_startup,
-                    &api_url,
+                    api_url,
                     execution_id,
                     skip_determinism_check,
                 )
@@ -1431,10 +1419,10 @@ impl CancelCommand {
         let client = client_startup.web_api_client()?;
         let url = match self.id {
             args::ExecutionIdOrDelayId::Execution(id) => {
-                format!("{}/v1/executions/{id}/cancel", self.api_url)
+                format!("{}/v1/executions/{id}/cancel", client_startup.api_url())
             }
             args::ExecutionIdOrDelayId::Delay(id) => {
-                format!("{}/v1/delays/{id}/cancel", self.api_url)
+                format!("{}/v1/delays/{id}/cancel", client_startup.api_url())
             }
         };
         let response = client

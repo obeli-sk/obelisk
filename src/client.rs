@@ -6,6 +6,8 @@ use serde::de::DeserializeOwned;
 #[derive(Clone, Default)]
 pub(crate) struct ClientStartup {
     api_token: Option<SecretString>,
+    api_url: String,
+    cloud: bool,
 }
 
 pub(crate) async fn send_json<T: DeserializeOwned>(
@@ -43,7 +45,7 @@ pub(crate) async fn send_bytes(
 }
 
 impl ClientStartup {
-    pub(crate) fn new(flag: Option<SecretString>) -> Self {
+    pub(crate) fn new(api_url: String, flag: Option<SecretString>) -> Self {
         // backcompat: remove the OBELISK__API__TOKEN fallback after 0.43.
         let legacy_token = (flag.is_none())
             .then(|| std::env::var(API_TOKEN_LEGACY).ok())
@@ -59,7 +61,23 @@ impl ClientStartup {
             .or(legacy_token)
             .filter(|token| !token.expose_secret().is_empty());
 
-        Self { api_token }
+        Self {
+            api_token,
+            api_url,
+            cloud: false,
+        }
+    }
+
+    pub(crate) fn cloud(api_url: String, api_token: Option<SecretString>) -> Self {
+        Self {
+            api_token,
+            api_url,
+            cloud: true,
+        }
+    }
+
+    pub(crate) fn api_url(&self) -> &str {
+        &self.api_url
     }
 
     /// HTTP client for web-API calls, presenting the API token as a default header.
@@ -78,6 +96,11 @@ impl ClientStartup {
             value.set_sensitive(true);
             headers.insert(reqwest::header::AUTHORIZATION, value);
         }
-        Ok(reqwest::Client::builder().default_headers(headers))
+        let builder = reqwest::Client::builder().default_headers(headers);
+        Ok(if self.cloud {
+            builder.redirect(reqwest::redirect::Policy::none())
+        } else {
+            builder
+        })
     }
 }

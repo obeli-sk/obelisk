@@ -16,6 +16,7 @@ use std::path::PathBuf;
 
 impl args::Deployment {
     pub(crate) async fn run(self, client_startup: ClientStartup) -> Result<(), anyhow::Error> {
+        let api_url = client_startup.api_url();
         match self {
             args::Deployment::Submit {
                 file,
@@ -23,11 +24,10 @@ impl args::Deployment {
                 allow_unavailable_runtime_config,
                 description,
                 deployment_id,
-                api_url,
             } => {
                 let id = submit_deployment(
                     &client_startup,
-                    &api_url,
+                    api_url,
                     file.map(DeploymentSource::File),
                     empty,
                     allow_unavailable_runtime_config,
@@ -45,11 +45,10 @@ impl args::Deployment {
                 allow_unavailable_runtime_config,
                 description,
                 deployment_id,
-                api_url,
             } => {
                 let id = submit_deployment(
                     &client_startup,
-                    &api_url,
+                    api_url,
                     source,
                     empty,
                     allow_unavailable_runtime_config,
@@ -59,7 +58,7 @@ impl args::Deployment {
                 .await?;
                 switch_deployment(
                     &client_startup,
-                    &api_url,
+                    api_url,
                     id,
                     allow_unavailable_runtime_config,
                     SwitchCommand::Enqueue,
@@ -72,11 +71,10 @@ impl args::Deployment {
                 empty,
                 description,
                 deployment_id,
-                api_url,
             } => {
                 let id = submit_deployment(
                     &client_startup,
-                    &api_url,
+                    api_url,
                     source,
                     empty,
                     false,
@@ -84,10 +82,10 @@ impl args::Deployment {
                     deployment_id,
                 )
                 .await?;
-                switch_deployment(&client_startup, &api_url, id, false, SwitchCommand::Apply).await
+                switch_deployment(&client_startup, api_url, id, false, SwitchCommand::Apply).await
             }
 
-            args::Deployment::List { api_url } => {
+            args::Deployment::List {} => {
                 let client = client_startup.web_api_client()?;
                 let deployments: Vec<DeploymentStateSer> = send_json(
                     client
@@ -121,7 +119,7 @@ impl args::Deployment {
                 Ok(())
             }
 
-            args::Deployment::Active { api_url, json } => {
+            args::Deployment::Active { json } => {
                 let client = client_startup.web_api_client()?;
                 let id: DeploymentId = send_json(
                     client
@@ -137,12 +135,7 @@ impl args::Deployment {
                 Ok(())
             }
 
-            args::Deployment::Show {
-                id,
-                file,
-                json,
-                api_url,
-            } => {
+            args::Deployment::Show { id, file, json } => {
                 let client = client_startup.web_api_client()?;
                 let dep: DeploymentRecordSer = send_json(
                     client
@@ -161,7 +154,7 @@ impl args::Deployment {
                     let file_ref = dep.files.iter().find(|f| f.path == rel).with_context(|| {
                         format!("deployment {id} has no deployment-owned source file `{rel}`")
                     })?;
-                    let bytes = fetch_file(&client, &api_url, &file_ref.digest).await?;
+                    let bytes = fetch_file(&client, api_url, &file_ref.digest).await?;
                     print!("{}", String::from_utf8_lossy(&bytes));
                     return Ok(());
                 }
@@ -183,7 +176,6 @@ impl args::Deployment {
                 output,
                 force,
                 include_generated_metadata,
-                api_url,
             } => {
                 let client = client_startup.web_api_client()?;
                 let dep: DeploymentRecordSer = send_json(
@@ -219,7 +211,7 @@ impl args::Deployment {
                             format!("cannot create source directory {parent:?}")
                         })?;
                     }
-                    let bytes = fetch_file(&client, &api_url, &file_ref.digest).await?;
+                    let bytes = fetch_file(&client, api_url, &file_ref.digest).await?;
                     write_new_file(&path, &bytes, force).await?;
                 }
                 eprintln!(

@@ -42,10 +42,22 @@ fn main() -> Result<(), anyhow::Error> {
         .install_default()
         .expect("default tls provider must be installed");
     let args = Args::parse();
-    let command = args.command;
+    let future = command_future(args.command, None)?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("cannot build tokio runtime");
+    runtime.block_on(future)
+}
 
-    type CommandFuture = Pin<Box<dyn Future<Output = Result<(), anyhow::Error>>>>;
+type CommandFuture = Pin<Box<dyn Future<Output = Result<(), anyhow::Error>>>>;
+
+fn command_future(
+    command: Subcommand,
+    client_override: Option<ClientStartup>,
+) -> anyhow::Result<CommandFuture> {
     let future: CommandFuture = match command {
+        Subcommand::Cloud(command) => Box::pin(command.run()),
         Subcommand::Server(Server::Run {
             server_config,
             app_config,
@@ -164,6 +176,7 @@ fn main() -> Result<(), anyhow::Error> {
             token: _,
         }) => {
             let DeploymentVerifyArgs {
+                api_url: _,
                 clean_cache,
                 clean_codegen_cache,
                 server_config,
@@ -212,13 +225,13 @@ fn main() -> Result<(), anyhow::Error> {
             ))
         }
 
-        Subcommand::Deployment(DeploymentArgs { command, token }) => {
-            Box::pin(command.run(ClientStartup::new(token.api_token)))
-        }
+        Subcommand::Deployment(DeploymentArgs { command, token }) => Box::pin(command.run(
+            client_override.unwrap_or_else(|| ClientStartup::new(token.api_url, token.api_token)),
+        )),
 
-        Subcommand::Admin(AdminArgs { command, token }) => {
-            Box::pin(command.run(ClientStartup::new(token.api_token)))
-        }
+        Subcommand::Admin(AdminArgs { command, token }) => Box::pin(command.run(
+            client_override.unwrap_or_else(|| ClientStartup::new(token.api_url, token.api_token)),
+        )),
 
         Subcommand::Generate(generate) => {
             let env_vars = StartupEnvVars::capture();
@@ -234,7 +247,8 @@ fn main() -> Result<(), anyhow::Error> {
         }
 
         Subcommand::Component(ComponentArgs { command, token }) => {
-            let client_startup = ClientStartup::new(token.api_token);
+            let client_startup = client_override
+                .unwrap_or_else(|| ClientStartup::new(token.api_url, token.api_token));
             let env_vars = StartupEnvVars::capture();
             let secret_registry = Arc::new(SecretRegistry::resolve(
                 SecretsToml::new(),
@@ -247,16 +261,12 @@ fn main() -> Result<(), anyhow::Error> {
             Box::pin(command.run(client_startup, secret_registry))
         }
 
-        Subcommand::Execution(ExecutionArgs { command, token }) => {
-            Box::pin(command.run(ClientStartup::new(token.api_token)))
-        }
+        Subcommand::Execution(ExecutionArgs { command, token }) => Box::pin(command.run(
+            client_override.unwrap_or_else(|| ClientStartup::new(token.api_url, token.api_token)),
+        )),
     };
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("cannot build tokio runtime");
-    runtime.block_on(future)
+    Ok(future)
 }
 
 #[derive(Debug)]
