@@ -635,12 +635,7 @@ pub(crate) enum Server {
         #[arg(long)]
         suppress_type_checking_errors: bool,
         /// Accept unauthenticated requests on the API port. Dev/recovery override.
-        // backcompat: remove the `allow-unauthenticated-api` alias after 0.43.
-        #[arg(
-            long,
-            visible_alias = "allow-unauthenticated-api",
-            conflicts_with = "api_token"
-        )]
+        #[arg(long, conflicts_with = "api_token")]
         no_auth: bool,
 
         /// API token required to access the API server as `Authorization: Bearer <token>`.

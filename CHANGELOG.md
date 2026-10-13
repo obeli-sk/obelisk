@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Breaking:** *(cli)* Removed `server run --allow-unauthenticated-api`. Use `--no-auth`.
 - **Breaking:** *(auth)* Removed the `OBELISK__API__TOKEN` fallback. Use `OBELISK_API_TOKEN`,
   `--api-token`, or server `api.token_hashes`.
 

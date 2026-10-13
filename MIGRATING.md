@@ -12,3 +12,9 @@ supported. The old variable name remains reserved as sensitive.
 
 This removes compatibility earlier than the previously announced after-0.43
 timeline. Update startup environments before upgrading.
+
+## Unauthenticated server startup
+
+Replace `server run --allow-unauthenticated-api` with `server run --no-auth`.
+The old alias is no longer accepted, bringing its removal forward from the
+previously announced after-0.43 timeline.
