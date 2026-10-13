@@ -3725,6 +3725,8 @@
         "type": "object",
         "required": [
           "error",
+          "optional_public_env",
+          "required_public_env",
           "secrets"
         ],
         "properties": {
@@ -3911,6 +3913,11 @@
           },
           {
             "type": "object",
+            "required": [
+              "replayed_event_count",
+              "replay_duration_ms",
+              "replay_version"
+            ],
             "properties": {
               "replay_duration_ms": {
                 "type": "integer",

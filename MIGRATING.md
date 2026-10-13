@@ -18,3 +18,10 @@ timeline. Update startup environments before upgrading.
 Replace `server run --allow-unauthenticated-api` with `server run --no-auth`.
 The old alias is no longer accepted, bringing its removal forward from the
 previously announced after-0.43 timeline.
+
+## Minimum server version for CLI response decoding
+
+Use the next CLI with Obelisk servers version 0.42 or newer. Replay responses must
+include `replayed_event_count`, `replay_duration_ms`, and `replay_version`; structured
+missing-runtime-config responses must include `optional_public_env` and
+`required_public_env`. The optional replay failure detail remains optional.

@@ -3102,17 +3102,11 @@ pub(crate) struct ReplayResponseSer {
     #[serde(flatten)]
     pub(crate) outcome: ReplayOutcomeSer,
     /// Number of persisted history events supplied to the workflow replay.
-    // backcompat: Accept replay responses from servers older than 0.42.
-    #[serde(default)]
     pub(crate) replayed_event_count: u64,
     /// Time spent executing the workflow replay after loading its execution log.
-    // backcompat: Accept replay responses from servers older than 0.42.
-    #[serde(default)]
     pub(crate) replay_duration_ms: u64,
     /// Highest persisted execution-event version included in the replay log. Response records use
     /// a separate cursor and are not represented by this version.
-    // backcompat: Accept replay responses from servers older than 0.42.
-    #[serde(default)]
     pub(crate) replay_version: u32,
 }
 
@@ -3129,7 +3123,6 @@ pub(crate) enum ReplayOutcomeSer {
     ReplayFailed {
         error: String,
         /// Structured, sanitized reason for the replay failure.
-        // backcompat: This is absent in replay responses from servers older than 0.42.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schema(value_type = Option<Object>)]
         failure: Option<FinishedExecutionFailure>,
@@ -4970,11 +4963,7 @@ pub(crate) mod deployment {
         pub error: String,
         #[serde(default)]
         pub public_env: Vec<String>,
-        // backcompat: 0.41 responses omit this field.
-        #[serde(default)]
         pub optional_public_env: Vec<String>,
-        // backcompat: 0.41 responses omit this field.
-        #[serde(default)]
         pub required_public_env: Vec<String>,
         pub secrets: Vec<String>,
         /// Subset of `secrets` whose every reference is optional.
