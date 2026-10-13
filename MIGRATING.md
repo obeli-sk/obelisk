@@ -31,3 +31,9 @@ missing-runtime-config responses must include `optional_public_env` and
 REST requests to `POST /v1/admin/system-events/retain` must include `dry_run`:
 use `true` to preview and `false` to delete. Omitted values return HTTP 422 and
 leave events unchanged. The CLI already supplies the field. gRPC is unchanged.
+
+## JavaScript webhook source environment variables
+
+Webhooks no longer receive `__OBELISK_JS_SOURCE__` or `__OBELISK_JS_FILE_NAME__`
+automatically. Pass application metadata through deployment `env_vars` when
+needed. Module loading continues to use the module graph in both Boa and V8.

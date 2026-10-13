@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Breaking:** *(webhook-js)* Removed automatic `__OBELISK_JS_SOURCE__` and
+  `__OBELISK_JS_FILE_NAME__` environment variables from Boa and V8 webhooks.
+
 - **Breaking:** *(api)* System-event retention requests must explicitly supply `dry_run`.
   Omitting it is rejected without deleting events. gRPC behavior is unchanged.
 
