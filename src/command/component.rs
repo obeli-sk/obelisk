@@ -33,15 +33,15 @@ impl args::Component {
         client_startup: ClientStartup,
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<(), anyhow::Error> {
+        let api_url = client_startup.api_url();
         match self {
             args::Component::List {
-                api_url,
                 imports,
                 extensions,
             } => {
                 list_components(
                     &client_startup,
-                    &api_url,
+                    api_url,
                     if imports {
                         FunctionMetadataVerbosity::ExportsAndImports
                     } else {

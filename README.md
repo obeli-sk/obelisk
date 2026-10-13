@@ -217,6 +217,27 @@ obelisk component list
 obelisk execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]' --follow
 ```
 
+Manage apps through an Obelisk cloud provisioner using `obelisk cloud`.
+
+```sh
+export OBELISK_CLOUD_API_URL=...
+export OBELISK_CLOUD_API_TOKEN=...
+obelisk generate new
+obelisk cloud app new
+obelisk cloud app apply
+obelisk cloud app status
+obelisk cloud app endpoint
+obelisk cloud deployment apply deployment.toml
+obelisk cloud execution list
+obelisk cloud component list
+```
+
+`cloud deployment`, `cloud execution`, `cloud component`, and `cloud admin`
+share the direct API commands and output formats. They use
+`OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_API_TOKEN`, with the app selected by
+`--app`, `OBELISK_APP_NAME`, or `app_name` in `./app.toml`, in that order.
+Requests go through the provisioner's `/proxy/<app>` facade.
+
 ### Web UI
 Visit [localhost:8080](http://127.0.0.1:8080) to manage components, functions and execution history.
 

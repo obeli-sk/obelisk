@@ -27,12 +27,9 @@ struct DeploymentDeleteResult {
 impl args::Admin {
     pub(crate) async fn run(self, client_startup: ClientStartup) -> anyhow::Result<()> {
         let client = client_startup.web_api_client()?;
+        let api_url = client_startup.api_url();
         match self {
-            Self::Events(args::AdminEvents::Get {
-                event_id,
-                json,
-                api_url,
-            }) => {
+            Self::Events(args::AdminEvents::Get { event_id, json }) => {
                 let event: crate::server::web_api_server::admin::SystemEventResponse = send_json(
                     client
                         .get(format!("{api_url}/v1/admin/system-events/{event_id}"))
@@ -56,7 +53,6 @@ impl args::Admin {
                 execution_ids,
                 force,
                 json,
-                api_url,
             }) => {
                 if force {
                     eprintln!(
@@ -100,7 +96,6 @@ impl args::Admin {
                 force,
                 dry_run,
                 json,
-                api_url,
             }) => {
                 if force {
                     eprintln!(
@@ -137,7 +132,6 @@ impl args::Admin {
                 delete_executions,
                 force,
                 json,
-                api_url,
             }) => {
                 if force {
                     eprintln!(
@@ -186,7 +180,6 @@ impl args::Admin {
                 batch_size,
                 dry_run,
                 json,
-                api_url,
             }) => {
                 if force {
                     eprintln!(
@@ -228,7 +221,6 @@ impl args::Admin {
                 to,
                 limit,
                 json,
-                api_url,
             }) => {
                 let response: SystemEventsResponse = send_json(
                     client
@@ -263,7 +255,6 @@ impl args::Admin {
                 max_age,
                 batch_size,
                 json,
-                api_url,
             }) => {
                 let response: RetainSystemEventsResponse = send_json(
                     client
@@ -282,7 +273,7 @@ impl args::Admin {
                 );
                 print_result(json, &response, &message)
             }
-            Self::Storage(args::AdminStorage::Show { json, api_url }) => {
+            Self::Storage(args::AdminStorage::Show { json }) => {
                 let response: StorageStatusResponse = send_json(
                     client
                         .get(format!("{api_url}/v1/admin/storage"))
@@ -300,7 +291,7 @@ impl args::Admin {
                 );
                 print_result(json, &response, &message)
             }
-            Self::NodeRunId { json, api_url } => {
+            Self::NodeRunId { json } => {
                 let id: concepts::prefixed_ulid::NodeRunId = send_json(
                     client
                         .get(format!("{api_url}/v1/admin/node-run-id"))
