@@ -617,7 +617,7 @@ pub(crate) enum Server {
         /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
         #[arg(short, long)]
         server_config: Option<PathBuf>,
-        /// Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`.
+        /// App policy path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`).
         #[arg(short, long)]
         app_config: Option<PathBuf>,
         /// Path to the deployment TOML file. If provided, the deployment is inserted and activated on startup,
@@ -670,7 +670,7 @@ pub(crate) struct VerifyArgs {
     /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
     #[arg(short, long)]
     pub(crate) server_config: Option<PathBuf>,
-    /// Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`.
+    /// App policy path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`).
     #[arg(short, long)]
     pub(crate) app_config: Option<PathBuf>,
     /// Path to the deployment TOML file. If omitted, the database's Enqueued deployment is used,
@@ -695,19 +695,19 @@ pub(crate) struct VerifyArgs {
 #[expect(clippy::struct_excessive_bools)]
 pub(crate) struct VerifyFixArgs {
     /// Apply all app repairs, including exec approvals and secret exposure grants. Does not change server permissions.
-    #[arg(long, requires_all = ["deployment", "app_config"])]
+    #[arg(long, requires = "deployment")]
     pub(crate) fix: bool,
     /// Add missing app environment and secret declarations without supplying values.
-    #[arg(long, requires_all = ["deployment", "app_config"])]
+    #[arg(long, requires = "deployment")]
     pub(crate) fix_app_declarations: bool,
     /// Add app outbound HTTP destinations and secret replacement permissions.
-    #[arg(long, requires_all = ["deployment", "app_config"])]
+    #[arg(long, requires = "deployment")]
     pub(crate) fix_app_http_permissions: bool,
     /// Add app exec approval digests for the selected deployment.
-    #[arg(long, requires_all = ["deployment", "app_config"])]
+    #[arg(long, requires = "deployment")]
     pub(crate) fix_app_exec_permissions: bool,
     /// Add app secret exposure grants for the selected deployment.
-    #[arg(long, requires_all = ["deployment", "app_config"])]
+    #[arg(long, requires = "deployment")]
     pub(crate) fix_app_secret_exposure: bool,
     /// Authorize app exec approvals and the selected deployment in the explicit server configuration.
     #[arg(long, requires_all = ["deployment", "server_config"])]
@@ -1551,6 +1551,7 @@ pub(crate) enum CloudApp {
     New {
         /// App name; falls back to --app, the policy file's `app_name`, then ./app.toml.
         name: Option<String>,
+        /// App policy path; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
     },
@@ -1560,7 +1561,8 @@ pub(crate) enum CloudApp {
     Status,
     /// Stage the app policy without restarting the VM.
     Update {
-        #[arg(short = 'a', long, default_value = "obelisk-app.toml")]
+        /// App policy path; defaults to ./app.toml.
+        #[arg(short = 'a', long, default_value = "app.toml")]
         app_config: PathBuf,
     },
     /// Apply staged policy, env and secrets; start a stopped VM.

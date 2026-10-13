@@ -186,7 +186,7 @@ impl CloudArgs {
                     .await
             }
             Cloud::App(CloudApp::New { name, app_config }) => {
-                let config = match app_config {
+                let config = match crate::config::app::resolve_app_config(app_config)? {
                     Some(path) => Some(policy(&path).await?),
                     None => None,
                 };

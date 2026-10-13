@@ -131,6 +131,15 @@ fn command_future(
             skip_db,
             fixes,
         })) => {
+            let app_config = config::app::resolve_app_config(app_config)?;
+            anyhow::ensure!(
+                !(fixes.app_declarations()
+                    || fixes.app_http_permissions()
+                    || fixes.app_exec_permissions()
+                    || fixes.app_secret_exposure())
+                    || app_config.is_some(),
+                "app repairs require --app-config or ./app.toml"
+            );
             let runtime_config_availability = if allow_unavailable_runtime_config {
                 RuntimeConfigAvailability::AllowMissingValues
             } else {
@@ -288,7 +297,7 @@ fn prepare_server_startup_with_exec_policy(
         );
     }
     let mut config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?
-        .with_app_source(app_config)?;
+        .with_app_source(config::app::resolve_app_config(app_config)?)?;
     // backcompat: 0.41 exposed OBELISK__API__TOKEN as api.token; remove after 0.43.
     let legacy_env = std::env::var(API_TOKEN_LEGACY).ok();
     if legacy_env.is_some() {

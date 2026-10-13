@@ -160,8 +160,6 @@ replace_in = ["headers"]
                 "--skip-db",
                 "-s",
                 "server.toml",
-                "-a",
-                "app.toml",
                 "-d",
                 "deployment.toml",
                 "--allow-unavailable-runtime-config",
@@ -171,6 +169,7 @@ replace_in = ["headers"]
             .env("OBELISK_JS_RUNTIME", "v8")
             .env_remove("OBELISK_VERIFY_REPAIR_MISSING")
             .env_remove("TOKEN")
+            .env_remove("OBELISK_APP_NAME")
             .env_remove("OBELISK_UNSTABLE_ACTIVITY_VM")
             .output()
             .unwrap()

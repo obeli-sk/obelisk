@@ -9,6 +9,20 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+pub(crate) fn resolve_app_config(
+    explicit: Option<std::path::PathBuf>,
+) -> anyhow::Result<Option<std::path::PathBuf>> {
+    if explicit.is_some() {
+        return Ok(explicit);
+    }
+    let path = std::path::PathBuf::from("app.toml");
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => Ok(Some(path)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).context("cannot inspect ./app.toml"),
+    }
+}
+
 #[derive(Debug, Default, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AppConfigToml {
