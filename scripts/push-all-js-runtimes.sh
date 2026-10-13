@@ -38,4 +38,4 @@ git add \
     crates/embedded-assets/workflow-js-runtime-version.txt \
     flake.nix
 
-git commit -m "chore: Push JS runtimes"
+git commit -m "chore: Push JS runtimes to $TAG"
