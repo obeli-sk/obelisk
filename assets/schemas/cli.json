@@ -47,6 +47,7 @@
                 {
                   "name": "--app-config",
                   "short": "a",
+                  "help": "App policy path; defaults to ./app.toml if present",
                   "accepts": {
                     "path": true
                   }
@@ -74,6 +75,7 @@
                 {
                   "name": "--app-config",
                   "short": "a",
+                  "help": "App policy path; defaults to ./app.toml",
                   "accepts": {
                     "path": true
                   }
@@ -1113,7 +1115,7 @@
             {
               "name": "--app-config",
               "short": "a",
-              "help": "Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`",
+              "help": "App policy path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`)",
               "accepts": {
                 "path": true
               }
@@ -1171,7 +1173,7 @@
             {
               "name": "--app-config",
               "short": "a",
-              "help": "Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`",
+              "help": "App policy path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`)",
               "accepts": {
                 "path": true
               }
