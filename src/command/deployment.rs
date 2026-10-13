@@ -25,11 +25,11 @@ impl args::Deployment {
                 deployment_id,
                 api_url,
             } => {
-                let prepared = prepare_manifest_from_file_or_empty(file, empty).await?;
-                let id = upload_and_submit_manifest(
+                let id = submit_deployment(
                     &client_startup,
                     &api_url,
-                    prepared,
+                    file.map(DeploymentSource::File),
+                    empty,
                     allow_unavailable_runtime_config,
                     description,
                     deployment_id,
@@ -97,7 +97,7 @@ impl args::Deployment {
                 .await?;
 
                 if deployments.is_empty() {
-                    println!("No deployments found.");
+                    eprintln!("No deployments found.");
                     return Ok(());
                 }
 
@@ -222,7 +222,7 @@ impl args::Deployment {
                     let bytes = fetch_file(&client, &api_url, &file_ref.digest).await?;
                     write_new_file(&path, &bytes, force).await?;
                 }
-                println!(
+                eprintln!(
                     "Wrote {} ({file_count} source file{}) for deployment {id}",
                     toml_path.display(),
                     if file_count == 1 { "" } else { "s" }
@@ -262,8 +262,7 @@ async fn write_new_file(
     Ok(())
 }
 
-/// If the source is a file, submit it and return the new ID. If it's an ID, return it directly.
-/// If `empty`, submit an empty deployment and return the new ID.
+/// Return an existing source ID, reuse matching active content, or submit a new deployment.
 async fn submit_deployment(
     client_startup: &ClientStartup,
     api_url: &str,
@@ -287,6 +286,28 @@ async fn submit_deployment(
         Some(DeploymentSource::File(path)) => prepare_deployment_manifest_from_disk(&path).await?,
         None => prepare_manifest_from_file_or_empty(None, empty).await?,
     };
+    if deployment_id.is_none() {
+        let client = client_startup.web_api_client()?;
+        let active_id: DeploymentId = send_json(
+            client
+                .get(format!("{api_url}/v1/deployment-id"))
+                .header(ACCEPT, "application/json"),
+        )
+        .await?;
+        let active: DeploymentRecordSer = send_json(
+            client
+                .get(format!("{api_url}/v1/deployments/{active_id}"))
+                .header(ACCEPT, "application/json"),
+        )
+        .await?;
+        if active.description == description
+            && toml::from_str::<toml::Value>(&active.deployment_toml)?
+                == toml::from_str::<toml::Value>(&prepared.deployment_toml)?
+        {
+            eprintln!("Deployment content unchanged; using {active_id}");
+            return Ok(active_id);
+        }
+    }
     let id = upload_and_submit_manifest(
         client_startup,
         api_url,
@@ -296,7 +317,7 @@ async fn submit_deployment(
         deployment_id,
     )
     .await?;
-    println!("Submitted as {id}");
+    eprintln!("Submitted as {id}");
     Ok(id)
 }
 
@@ -514,16 +535,16 @@ async fn switch_deployment(
 
     match (command, response.ok.as_str()) {
         (SwitchCommand::Apply, "switched") => {
-            println!("Applied successfully.");
+            eprintln!("Applied successfully.");
         }
         (SwitchCommand::Apply, "restart_required") => {
             bail!("Could not apply immediately; deployment enqueued. Restart the server to apply.");
         }
         (SwitchCommand::Enqueue, "switched") => {
-            println!("Deployment already active; it will remain active after restart.");
+            eprintln!("Deployment already active; it will remain active after restart.");
         }
         (SwitchCommand::Enqueue, "restart_required") => {
-            println!("Deployment enqueued. Restart the server to apply.");
+            eprintln!("Deployment enqueued. Restart the server to apply.");
         }
         (_, outcome) => bail!("unexpected outcome from server: {outcome}"),
     }

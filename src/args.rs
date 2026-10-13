@@ -365,7 +365,8 @@ fn parse_retention_age(value: &str) -> Result<std::time::Duration, String> {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Deployment {
-    /// Upload a deployment TOML as a new deployment; print the new deployment ID.
+    /// Submit a deployment TOML; print the deployment ID.
+    /// Reuses matching active content and description unless a deployment ID is supplied.
     Submit {
         /// Path to the deployment TOML file.
         #[arg(
@@ -401,6 +402,7 @@ pub(crate) enum Deployment {
         api_url: String,
     },
     /// Submit (if a file is given) and enqueue for next server restart.
+    /// Reuses matching active content and description unless a deployment ID is supplied.
     Enqueue {
         /// Path to a deployment TOML file, or an existing deployment ID.
         #[arg(
@@ -436,6 +438,7 @@ pub(crate) enum Deployment {
         api_url: String,
     },
     /// Submit (if a file is given) and apply immediately. Fails if not possible.
+    /// Reuses matching active content and description unless a deployment ID is supplied.
     Apply {
         /// Path to a deployment TOML file, or an existing deployment ID.
         #[arg(
