@@ -39,7 +39,7 @@ impl args::Admin {
                 if json {
                     println!("{}", serde_json::to_string_pretty(&event)?);
                 } else {
-                    println!(
+                    eprintln!(
                         "{} {} {}: {}",
                         event.created_at.to_rfc3339(),
                         event.level,
@@ -70,7 +70,7 @@ impl args::Admin {
                     )
                     .await?;
                     if !json {
-                        println!(
+                        eprintln!(
                             "{execution_id}: {}",
                             if response.deleted {
                                 "deleted"
@@ -152,7 +152,7 @@ impl args::Admin {
                     )
                     .await?;
                     if !json {
-                        println!(
+                        eprintln!(
                             "{deployment_id}: {} ({} execution tree(s) deleted)",
                             if response.deleted {
                                 "deleted"
@@ -240,7 +240,7 @@ impl args::Admin {
                     println!("{}", serde_json::to_string_pretty(&response)?);
                 } else {
                     for event in response.events {
-                        println!(
+                        eprintln!(
                             "{} {} {}: {}",
                             event.created_at.to_rfc3339(),
                             event.level,
@@ -313,7 +313,7 @@ fn print_result<T: serde::Serialize>(json: bool, value: &T, message: &str) -> an
     if json {
         println!("{}", serde_json::to_string_pretty(value)?);
     } else {
-        println!("{message}");
+        eprintln!("{message}");
     }
     Ok(())
 }

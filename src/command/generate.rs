@@ -86,16 +86,16 @@ impl Generate {
                     println!("{}", serde_json::to_string_pretty(&outputs)?);
                 } else {
                     for output in outputs {
-                        println!(
+                        eprintln!(
                             "{} `{}`\n  secret exposure digest: {}",
                             output.component_kind,
                             output.component_name,
                             output.secret_exposure_digest
                         );
                         if output.exposed_secrets.is_empty() {
-                            println!("  exposed secrets: none");
+                            eprintln!("  exposed secrets: none");
                         } else {
-                            println!("  exposed secrets: {}", output.exposed_secrets.join(", "));
+                            eprintln!("  exposed secrets: {}", output.exposed_secrets.join(", "));
                         }
                         if output.component_kind == "activity_exec" {
                             println!(
@@ -109,7 +109,7 @@ impl Generate {
                                 output.component_name, output.secret_exposure_digest
                             );
                         }
-                        println!();
+                        eprintln!();
                     }
                 }
                 Ok(())
@@ -433,7 +433,7 @@ async fn split_config(server_path: &Path, app_path: Option<&Path>) -> anyhow::Re
     tokio::fs::write(server_path, server_text)
         .await
         .with_context(|| format!("cannot write {}", server_path.display()))?;
-    println!(
+    eprintln!(
         "Split {} into {} and {}",
         server_path.display(),
         server_path.display(),
@@ -524,11 +524,11 @@ fn print_generated_path_statuses(
     } else {
         for result in results {
             match result.status {
-                "generated" => println!("Generated {:?}", result.path),
-                "created_or_updated" => println!("{:?} created or updated", result.path),
-                "up_to_date" => println!("{:?} is up to date", result.path),
-                "written" => println!("{:?} written", result.path),
-                status => println!("{:?} {status}", result.path),
+                "generated" => eprintln!("Generated {:?}", result.path),
+                "created_or_updated" => eprintln!("{:?} created or updated", result.path),
+                "up_to_date" => eprintln!("{:?} is up to date", result.path),
+                "written" => eprintln!("{:?} written", result.path),
+                status => eprintln!("{:?} {status}", result.path),
             }
         }
     }

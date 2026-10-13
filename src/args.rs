@@ -339,6 +339,9 @@ pub(crate) enum Deployment {
         /// Generate one with `obelisk generate deployment-id`.
         #[arg(long)]
         deployment_id: Option<DeploymentId>,
+        /// Print the deployment ID as a JSON string.
+        #[arg(long)]
+        json: bool,
     },
     /// Submit (if a file is given) and enqueue for next server restart.
     /// Reuses matching active content and description unless a deployment ID is supplied.
@@ -367,6 +370,9 @@ pub(crate) enum Deployment {
         /// `obelisk generate deployment-id`.
         #[arg(long)]
         deployment_id: Option<DeploymentId>,
+        /// Print the deployment ID as a JSON string.
+        #[arg(long)]
+        json: bool,
     },
     /// Submit (if a file is given) and apply immediately. Fails if not possible.
     /// Reuses matching active content and description unless a deployment ID is supplied.
@@ -391,9 +397,16 @@ pub(crate) enum Deployment {
         /// `obelisk generate deployment-id`.
         #[arg(long)]
         deployment_id: Option<DeploymentId>,
+        /// Print the deployment ID as a JSON string.
+        #[arg(long)]
+        json: bool,
     },
     /// List recent deployments.
-    List {},
+    List {
+        /// Output as JSON instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print the ID of the currently active deployment.
     Active {
         /// Output as JSON instead of plain text.
@@ -718,6 +731,9 @@ pub(crate) enum Component {
         /// Show component imports
         #[arg(short, long)]
         imports: bool,
+        /// Output as JSON instead of human-readable text.
+        #[arg(long)]
+        json: bool,
         /// Show auto-generated export extensions
         #[arg(short, long)]
         extensions: bool,
@@ -866,7 +882,7 @@ pub(crate) enum Execution {
         /// Number of log entries to return per request (default: 20, max: 200).
         #[arg(long, default_value = "20")]
         limit: u16,
-        /// Output as JSON instead of human-readable text.
+        /// Output one JSON log record per line (NDJSON).
         #[arg(short, long)]
         json: bool,
     },
@@ -921,7 +937,7 @@ pub(crate) enum Execution {
         /// Create the execution in paused state so it won't run until explicitly unpaused or advanced.
         #[arg(long)]
         paused: bool,
-        /// Output events as JSON in Web API format instead of human-readable text.
+        /// Output Web API JSON, using NDJSON when following.
         #[arg(short, long)]
         json: bool,
         /// Accepted Parameter Formats:
@@ -952,7 +968,7 @@ pub(crate) enum Execution {
         /// Do not attempt to reconnect on connection error while following the status stream.
         #[arg(long, requires = "follow")]
         no_reconnect: bool,
-        /// Output as JSON instead of human-readable text.
+        /// Output JSON, using NDJSON when following.
         #[arg(short, long)]
         json: bool,
     },
@@ -966,7 +982,7 @@ pub(crate) enum Execution {
         /// Do not attempt to reconnect on connection error while following the execution.
         #[arg(long, requires = "follow")]
         no_reconnect: bool,
-        /// Output as JSON instead of human-readable text.
+        /// Output JSON, using NDJSON when following.
         #[arg(short, long)]
         json: bool,
     },
@@ -977,12 +993,18 @@ pub(crate) enum Execution {
         /// Execution ID (`E_01`...) or delay ID (`Delay_01`...) to pause.
         #[arg(value_name = "ID")]
         id: ExecutionIdOrDelayId,
+        /// Output the outcome as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Resume a previously paused workflow execution or delay.
     Unpause {
         /// Execution ID (`E_01`...) or delay ID (`Delay_01`...) to unpause.
         #[arg(value_name = "ID")]
         id: ExecutionIdOrDelayId,
+        /// Output the outcome as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Replay a workflow execution from its execution log, checking for non-determinism.
     Replay {
@@ -1030,6 +1052,9 @@ pub(crate) enum Execution {
         /// Skip the determinism check during upgrade.
         #[arg(long)]
         skip_determinism_check: bool,
+        /// Output the outcome as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1169,6 +1194,9 @@ pub(crate) struct CancelCommand {
     /// Execution id of an activity (E_01...) or a delay request (Delay_01...)
     #[arg(value_name = "ID")]
     pub(crate) id: ExecutionIdOrDelayId,
+    /// Output the outcome as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[cfg(test)]
@@ -1501,7 +1529,11 @@ pub(crate) enum CloudApp {
     #[command(subcommand)]
     Secrets(CloudSecrets),
     /// Print the selected app's API endpoint URL.
-    Endpoint,
+    Endpoint {
+        /// Print the endpoint as a JSON string.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]

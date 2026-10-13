@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** *(cli)* Human-readable listings, progress, and confirmations now go to stderr.
+  Stdout carries IDs, JSON, generated configuration, source content, and execution logs.
+  Scripts that capture human-readable output must read stderr or use `--json` for structured
+  results. This also applies to commands under `cloud`.
+- *(cli)* Execution JSON follow modes emit flushed NDJSON, one compact JSON object per line,
+  including submission responses, log records, and final results.
+
+### Fixed
+
+- *(cli)* Deployment `apply` and `enqueue` now print the deployment ID to stdout on success.
+  Added `--json` to deployment `submit`, `apply`, `enqueue`, and `list`, component `list`,
+  execution `pause`, `unpause`, `cancel`, and `upgrade`, and `cloud app endpoint`.
+
 ## [0.42.0](https://github.com/obeli-sk/obelisk/compare/v0.41.5...v0.42.0)
 
 This release separates platform, app, and deployment configuration, adds experimental Linux VM

@@ -1,3 +1,4 @@
+use super::output::print_value;
 use crate::args::{
     AdminArgs, ClientConnection, Cloud, CloudApp, CloudApps, CloudArgs, CloudEnv, CloudSecrets,
     ComponentArgs, DeploymentArgs, ExecutionArgs, Subcommand,
@@ -137,11 +138,10 @@ async fn policy(path: &Path) -> anyhow::Result<AppConfigToml> {
 }
 impl CloudArgs {
     pub(crate) async fn run(self) -> anyhow::Result<()> {
-        if matches!(self.command, Cloud::App(CloudApp::Endpoint)) {
+        if let Cloud::App(CloudApp::Endpoint { json }) = &self.command {
             let client = Client::new(&self)?;
             let name = app_name(self.app.as_deref()).await?;
-            println!("{}", client.url(&["proxy", &name])?);
-            return Ok(());
+            return print_value(&client.url(&["proxy", &name])?.to_string(), *json);
         }
         if matches!(
             self.command,
@@ -317,7 +317,7 @@ impl CloudArgs {
                             .await?;
                         Ok(json!({"deleted_secret":key}))
                     }
-                    CloudApp::Endpoint => unreachable!("endpoint is printed in run"),
+                    CloudApp::Endpoint { .. } => unreachable!("endpoint is printed in run"),
                     CloudApp::New { .. } => unreachable!(),
                 }
             }

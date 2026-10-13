@@ -1,3 +1,4 @@
+use super::output::{print_json, print_ndjson};
 use crate::args;
 use crate::args::CancelCommand;
 use crate::args::FunctionFqnOrShort;
@@ -158,15 +159,13 @@ impl args::Execution {
             args::Execution::Cancel(cancel_request) => {
                 cancel_request.execute(&client_startup).await
             }
-            args::Execution::Pause { id } => {
+            args::Execution::Pause { id, json } => {
                 execution_pause_change(&client_startup, api_url, id, "pause").await?;
-                println!("Paused");
-                Ok(())
+                print_outcome(json, "paused", "Paused")
             }
-            args::Execution::Unpause { id } => {
+            args::Execution::Unpause { id, json } => {
                 execution_pause_change(&client_startup, api_url, id, "unpause").await?;
-                println!("Unpaused");
-                Ok(())
+                print_outcome(json, "unpaused", "Unpaused")
             }
             args::Execution::Replay { execution_id, json } => {
                 replay(&client_startup, api_url, execution_id, json).await
@@ -202,12 +201,14 @@ impl args::Execution {
             args::Execution::Upgrade {
                 execution_id,
                 skip_determinism_check,
+                json,
             } => {
                 upgrade(
                     &client_startup,
                     api_url,
                     execution_id,
                     skip_determinism_check,
+                    json,
                 )
                 .await
             }
@@ -270,7 +271,7 @@ pub(crate) async fn submit(
                 _ => bail!("more than one matching function found: {matched:?}"),
             };
             if matches!(opts, SubmitOutputOpts::Plain { .. }) {
-                println!("Matched {ffqn}");
+                eprintln!("Matched {ffqn}");
             }
             ffqn
         }
@@ -305,7 +306,11 @@ pub(crate) async fn submit(
             Ok(response) if response.status().is_success() => {
                 let response: ApiOk = response.json().await?;
                 if json {
-                    print_json(&response)?;
+                    if follow {
+                        print_ndjson(&response)?;
+                    } else {
+                        print_json(&response)?;
+                    }
                 } else {
                     println!("{}", response.ok);
                 }
@@ -321,15 +326,9 @@ pub(crate) async fn submit(
                         json,
                     )
                     .await?;
-                    get_execution_result_rest(
-                        client_startup,
-                        api_url,
-                        execution_id,
-                        false,
-                        no_reconnect,
-                        json,
-                    )
-                    .await
+                    let result =
+                        fetch_execution_result_json(&client, api_url, &execution_id, false).await?;
+                    print_retval(&result, json, true)
                 } else if follow {
                     get_execution_result_rest(
                         client_startup,
@@ -418,14 +417,6 @@ fn execution_status_is_finished(status: &ExecutionWithStateSer) -> bool {
     )
 }
 
-fn print_json(value: &impl serde::Serialize) -> anyhow::Result<()> {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).context("failed to format JSON output")?
-    );
-    Ok(())
-}
-
 async fn fetch_execution_result_json(
     client: &reqwest::Client,
     api_url: &str,
@@ -492,9 +483,9 @@ async fn get_execution_status_rest(
                                 let status: ExecutionWithStateSer = serde_json::from_str(data)?;
                                 if emit {
                                     if json {
-                                        print_json(&status)?;
+                                        print_ndjson(&status)?;
                                     } else {
-                                        println!(
+                                        eprintln!(
                                             "{}",
                                             format_execution_status_text(&status.pending_state)
                                         );
@@ -537,7 +528,7 @@ async fn get_execution_status_rest(
             if json {
                 print_json(&status)?;
             } else {
-                println!("{}", format_execution_status_text(&status.pending_state));
+                eprintln!("{}", format_execution_status_text(&status.pending_state));
             }
         }
 
@@ -579,7 +570,7 @@ async fn get_execution_result_rest(
     loop {
         match fetch_execution_result_json(&client, api_url, &execution_id, false).await {
             Ok(result) => {
-                return print_retval(&result, json);
+                return print_retval(&result, json, follow);
             }
             Err(err) => {
                 if reconnect {
@@ -593,12 +584,16 @@ async fn get_execution_result_rest(
     }
 }
 
-fn print_retval(result: &RetValWire, json: bool) -> anyhow::Result<()> {
+fn print_retval(result: &RetValWire, json: bool, streaming: bool) -> anyhow::Result<()> {
     if json {
-        print_json(result)?;
+        if streaming {
+            print_ndjson(result)?;
+        } else {
+            print_json(result)?;
+        }
     } else {
         match result {
-            RetValWire::Ok(value) => println!(
+            RetValWire::Ok(value) => eprintln!(
                 "Execution finished: OK: {}",
                 value.as_ref().map_or_else(
                     || "(no return value)".to_string(),
@@ -606,7 +601,7 @@ fn print_retval(result: &RetValWire, json: bool) -> anyhow::Result<()> {
                 )
             ),
             RetValWire::Err(value) => {
-                println!(
+                eprintln!(
                     "Execution finished: Error: {}",
                     value.as_ref().map_or_else(
                         || "(no return value)".to_string(),
@@ -617,7 +612,7 @@ fn print_retval(result: &RetValWire, json: bool) -> anyhow::Result<()> {
             }
             RetValWire::ExecutionFailed(failure) => {
                 let message = format_execution_failure(failure);
-                println!("Execution finished: {message}");
+                eprintln!("Execution finished: {message}");
                 return Err(AlreadyPrintedError.into());
             }
         }
@@ -646,29 +641,29 @@ async fn replay(
     if json {
         return print_json(&response);
     }
-    println!(
+    eprintln!(
         "replayed_event_count: {}\nreplay_duration_ms: {}\nreplay_version: {}",
         response.replayed_event_count, response.replay_duration_ms, response.replay_version
     );
     match response.outcome {
         crate::server::web_api_server::ReplayOutcomeSer::Advanceable { captured_writes } => {
-            println!("outcome: advanceable, {} writes", captured_writes.len());
+            eprintln!("outcome: advanceable, {} writes", captured_writes.len());
         }
         crate::server::web_api_server::ReplayOutcomeSer::Finished { retval } => {
-            println!("outcome: finished\nresult: {retval}");
+            eprintln!("outcome: finished\nresult: {retval}");
         }
-        crate::server::web_api_server::ReplayOutcomeSer::Blocked => println!("outcome: blocked"),
+        crate::server::web_api_server::ReplayOutcomeSer::Blocked => eprintln!("outcome: blocked"),
         crate::server::web_api_server::ReplayOutcomeSer::ReplayFailed {
             error,
             failure,
             captured_writes,
         } => {
-            println!(
+            eprintln!(
                 "outcome: replay_failed, error: {error}, {} writes",
                 captured_writes.len()
             );
             if let Some(failure) = failure {
-                println!("{}", format_execution_failure(&failure));
+                eprintln!("{}", format_execution_failure(&failure));
             }
         }
     }
@@ -689,7 +684,7 @@ async fn persist_backtraces(
             .header(ACCEPT, "application/json"),
     )
     .await?;
-    println!(
+    eprintln!(
         "Persisted {} backtraces",
         response.persisted_backtrace_count
     );
@@ -869,11 +864,11 @@ async fn advance(
     } else {
         match response {
             AdvanceResponseWire::Finished { value } => {
-                println!("success:\n{}", serde_json::to_string_pretty(&value)?);
+                eprintln!("success:\n{}", serde_json::to_string_pretty(&value)?);
                 Ok(())
             }
             AdvanceResponseWire::InProgress { pending_state } => {
-                println!("success, current state: {pending_state}");
+                eprintln!("success, current state: {pending_state}");
                 Ok(())
             }
         }
@@ -1093,7 +1088,7 @@ async fn execution_list(
         print_json(&executions)
     } else {
         for execution in executions {
-            println!(
+            eprintln!(
                 "{} `{}` {} `{}`",
                 execution.execution_id,
                 execution.pending_state,
@@ -1206,10 +1201,7 @@ fn print_log_items(
     }
     if json {
         for item in items {
-            println!(
-                "{}",
-                serde_json::to_string(item).context("failed to serialize log item")?
-            );
+            print_ndjson(item)?;
         }
     } else {
         let mut output = String::new();
@@ -1369,7 +1361,7 @@ async fn execution_events_cmd(
         print_json(&response)
     } else {
         for event in response.events {
-            println!("{} `{}` {}", event.version, event.created_at, event.event);
+            eprintln!("{} `{}` {}", event.version, event.created_at, event.event);
         }
         Ok(())
     }
@@ -1401,7 +1393,7 @@ async fn execution_responses_cmd(
         print_json(&response)
     } else {
         for response in response.responses {
-            println!(
+            eprintln!(
                 "{} `{}` {} {}",
                 response.cursor,
                 response.event.created_at,
@@ -1433,13 +1425,11 @@ impl CancelCommand {
         let status = response.status();
         if status.is_success() {
             let body: ApiOk = response.json().await?;
-            println!("{}", capitalize(&body.ok));
-            return Ok(());
+            return print_outcome(self.json, &body.ok, &capitalize(&body.ok));
         }
         let body: ApiError = response.json().await?;
         if status == reqwest::StatusCode::CONFLICT {
-            println!("{}", capitalize(&body.err));
-            return Ok(());
+            return print_outcome(self.json, &body.err, &capitalize(&body.err));
         }
         bail!("server returned {status}: {}", body.err)
     }
@@ -1463,6 +1453,15 @@ async fn execution_pause_change(
     send_empty(client.put(url).header(ACCEPT, "application/json")).await
 }
 
+fn print_outcome(json: bool, outcome: &str, message: &str) -> anyhow::Result<()> {
+    if json {
+        print_json(&serde_json::json!({ "ok": outcome }))
+    } else {
+        eprintln!("{message}");
+        Ok(())
+    }
+}
+
 fn capitalize(value: &str) -> String {
     let mut chars = value.chars();
     chars.next().map_or_else(String::new, |first| {
@@ -1475,6 +1474,7 @@ async fn upgrade(
     api_url: &str,
     execution_id: ExecutionId,
     skip_determinism_check: bool,
+    json: bool,
 ) -> anyhow::Result<()> {
     let client = client_startup.web_api_client()?;
     let summary = fetch_execution_status_json(&client, api_url, &execution_id).await?;
@@ -1504,11 +1504,14 @@ async fn upgrade(
     };
 
     if old_digest == new_digest {
-        println!("Already up to date ({old_digest})");
-        return Ok(());
+        return print_outcome(
+            json,
+            "already_up_to_date",
+            &format!("Already up to date ({old_digest})"),
+        );
     }
 
-    println!("Upgrading from {old_digest} to {new_digest}");
+    eprintln!("Upgrading from {old_digest} to {new_digest}");
 
     send_empty(
         client
@@ -1523,6 +1526,5 @@ async fn upgrade(
     .await
     .context("upgrade failed")?;
 
-    println!("Upgraded");
-    Ok(())
+    print_outcome(json, "upgraded", "Upgraded")
 }

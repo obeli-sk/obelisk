@@ -1,3 +1,4 @@
+use super::output::print_json;
 use crate::FunctionMetadataVerbosity;
 use crate::args;
 use crate::args::TomlComponentType;
@@ -38,6 +39,7 @@ impl args::Component {
             args::Component::List {
                 imports,
                 extensions,
+                json,
             } => {
                 list_components(
                     &client_startup,
@@ -48,6 +50,7 @@ impl args::Component {
                         FunctionMetadataVerbosity::ExportsOnly
                     },
                     extensions,
+                    json,
                 )
                 .await
             }
@@ -744,6 +747,7 @@ pub(crate) async fn list_components(
     api_url: &str,
     verbosity: FunctionMetadataVerbosity,
     extensions: bool,
+    json: bool,
 ) -> anyhow::Result<()> {
     let client = client_startup.web_api_client()?;
     let components: Vec<ComponentConfig> = send_json(
@@ -764,28 +768,31 @@ pub(crate) async fn list_components(
             ]),
     )
     .await?;
+    if json {
+        return print_json(&components);
+    }
     for component in components {
         let component_id = component.component_id;
-        println!(
+        eprintln!(
             "{name}\t{ty}\t{sha}",
             name = component_id.name,
             ty = component_id.component_type,
             sha = component_id.component_digest,
         );
-        println!("Exports:");
+        eprintln!("Exports:");
         print_fn_details(component.exports.unwrap_or_default());
         if verbosity > FunctionMetadataVerbosity::ExportsOnly {
-            println!("Imports:");
+            eprintln!("Imports:");
             print_fn_details(component.imports.unwrap_or_default());
         }
-        println!();
+        eprintln!();
     }
     Ok(())
 }
 
 fn print_fn_details(functions: Vec<FunctionMetadataLite>) {
     for function in functions {
-        println!("\t{function}");
+        eprintln!("\t{function}");
     }
 }
 

@@ -217,6 +217,20 @@ obelisk component list
 obelisk execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]' --follow
 ```
 
+CLI result payloads (IDs, JSON, generated configuration, source files, and execution
+logs) go to stdout. Human-readable tables, progress, and confirmations go to
+stderr. Use `--json` for structured results. Deployment `submit`, `apply`, and
+`enqueue` print the deployment ID on success, or a JSON string with `--json`.
+Execution pause, unpause, cancel, and upgrade return an `{"ok": "outcome"}` object
+with `--json`.
+
+Execution `--json` follow modes emit NDJSON: one complete, compact JSON object per
+line, flushed as it arrives. `submit --follow` emits the submission response then
+the final result; `submit --follow-logs` includes log records between them.
+`status --follow` emits status records, while `result --follow` emits only the
+final result. Finite queries retain their JSON objects or arrays; execution logs
+use NDJSON with or without `--follow`.
+
 Manage apps through an Obelisk cloud provisioner using `obelisk cloud`.
 
 ```sh
