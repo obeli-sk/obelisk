@@ -734,6 +734,7 @@ pub(crate) async fn run(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeConfigAvailability {
     Strict,
+    AllowMissingValues,
     AllowUnavailable,
 }
 impl RuntimeConfigAvailability {
@@ -771,14 +772,79 @@ pub(crate) struct VerifyParams {
     pub(crate) activity_vm_runtime: ActivityVmRuntimeMode,
 }
 
-/// Called from `server verify [-d deployment.toml]` or `deployment verify -d deployment.toml`
+pub(crate) async fn verify_deployment(path: PathBuf, params: VerifyParams) -> anyhow::Result<()> {
+    let (deployment, cas) = resolve_deployment_offline(&path).await?;
+    let mut config_holder = ConfigHolder::new(crate::project_dirs(), BaseDirs::new(), None)?;
+    config_holder.path_prefixes.app_name = "deployment-verify".to_string();
+    let mut config = ServerConfigToml::default();
+    config.webui.enabled = false;
+    config.api.enabled = false;
+    config.external.enabled = false;
+    let names: BTreeSet<_> = deployment
+        .webhooks_wasm
+        .iter()
+        .map(|webhook| webhook.http_server.to_string())
+        .chain(
+            deployment
+                .webhooks_js
+                .iter()
+                .map(|webhook| webhook.http_server.to_string()),
+        )
+        .collect();
+    config.http_servers = names
+        .into_iter()
+        .map(|name| HttpServer {
+            name: ConfigName::new(name.into()).unwrap(),
+            listening_addr: "127.0.0.1:0".parse().unwrap(),
+        })
+        .collect();
+    let _guard = init::init(&config)?;
+    let registry = Arc::new(SecretRegistry::resolve(
+        crate::config::secret_registry::SecretsToml::default(),
+        crate::config::secret_registry::PublicEnvToml::default(),
+        EnvVarSecretsCleanup::Noop,
+        RuntimeConfigAvailability::AllowUnavailable,
+        None,
+        &crate::config::env_var::StartupEnvVars::capture(),
+    )?);
+    let prepared_dirs = prepare_dirs(
+        &config,
+        &params.dir_params,
+        &config_holder.path_prefixes,
+        &registry,
+    )
+    .await?;
+    let engines = create_engines(&config, &prepared_dirs)?;
+    let server = Box::pin(server_verify(
+        config,
+        engines,
+        registry,
+        params.js_runtime,
+        params.activity_vm_runtime,
+    ))
+    .await?;
+    let (_sender, mut watcher) = watch::channel(());
+    deployment_verify_config_compile_link(
+        server,
+        &prepared_dirs,
+        deployment,
+        cas,
+        DeploymentId::generate(),
+        params,
+        &mut watcher,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Verify server and app configuration against a deployment.
 pub(crate) async fn verify(
     config_holder: ConfigHolder,
     config: ServerConfigToml,
     deployment: Option<PathBuf>, // None if `server verify` contains no explicit `deployment.toml` - verify current active deployment.
     verify_params: VerifyParams,
-    skip_db: bool, // always true for `deployment verify`
-    fix: bool,
+    skip_db: bool,
+    fixes: crate::args::VerifyFixArgs,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<(), anyhow::Error> {
     let deployment_path_for_fix = deployment.clone();
@@ -800,7 +866,7 @@ pub(crate) async fn verify(
             None => (None, None),
         };
 
-    let (config_holder, config, secret_registry) = if fix
+    let (config_holder, config, secret_registry) = if fixes.app_declarations()
         && let Some(app_config_path) = config_holder.app_source.as_deref()
     {
         let mut unregistered_secrets = config_prepass::SecretFindings::default();
@@ -841,7 +907,7 @@ pub(crate) async fn verify(
                 .difference(&required_public_env)
                 .cloned()
                 .collect();
-            config_prepass::fix_server_runtime_config_scaffolds(
+            config_prepass::fix_app_runtime_config_scaffolds(
                 app_config_path,
                 &undeclared_public_env,
                 &optional_public_env,
@@ -862,11 +928,12 @@ pub(crate) async fn verify(
                 secret_registry,
                 js_runtime: _,
                 activity_vm_runtime: _,
-            } = prepare_server_startup(
+            } = crate::prepare_server_startup_with_exec_policy(
                 config_holder.config_source,
                 config_holder.app_source,
                 EnvVarSecretsCleanup::Noop,
-                verify_params.runtime_config_availability,
+                RuntimeConfigAvailability::AllowMissingValues,
+                false,
             )?;
             (config_holder, config, secret_registry)
         } else {
@@ -876,7 +943,7 @@ pub(crate) async fn verify(
         (config_holder, config, secret_registry)
     };
 
-    let (config_holder, config, secret_registry) = if fix
+    let (config_holder, config, secret_registry) = if fixes.app_http_permissions()
         && let (Some(app_config_path), Some(deployment)) =
             (config_holder.app_source.as_deref(), deployment_opt.as_ref())
     {
@@ -895,22 +962,21 @@ pub(crate) async fn verify(
             secret_registry,
             js_runtime: _,
             activity_vm_runtime: _,
-        } = prepare_server_startup(
+        } = crate::prepare_server_startup_with_exec_policy(
             config_holder.config_source,
             config_holder.app_source,
             EnvVarSecretsCleanup::Noop,
-            verify_params.runtime_config_availability,
+            RuntimeConfigAvailability::AllowMissingValues,
+            false,
         )?;
         (config_holder, config, secret_registry)
     } else {
         (config_holder, config, secret_registry)
     };
 
-    let (config_holder, config, secret_registry) = if fix
-        && let (Some(app_config_path), Some(deployment_path)) = (
-            config_holder.app_source.as_deref(),
-            deployment_path_for_fix.as_deref(),
-        ) {
+    if fixes.digest_repairs()
+        && let Some(deployment_path) = deployment_path_for_fix.as_deref()
+    {
         let outputs = Box::pin(generate_secret_config_digests_with_server_config(
             deployment_path,
             None,
@@ -921,21 +987,42 @@ pub(crate) async fn verify(
             verify_params.activity_vm_runtime,
         ))
         .await?;
-        fix_server_secret_config_digests(app_config_path, &outputs).await?;
-        let ServerStartup {
-            config_holder,
-            config,
-            legacy_api_token: _,
-            secret_registry,
-            js_runtime: _,
-            activity_vm_runtime: _,
-        } = prepare_server_startup(
+        if fixes.app_exec_permissions() || fixes.app_secret_exposure() {
+            fix_app_digest_permissions(
+                config_holder
+                    .app_source
+                    .as_deref()
+                    .context("app repairs require --app-config")?,
+                &outputs,
+                fixes.app_exec_permissions(),
+                fixes.app_secret_exposure(),
+            )
+            .await?;
+        }
+        if fixes.fix_server_exec_permissions {
+            fix_platform_exec_permissions(
+                config_holder
+                    .config_source
+                    .as_deref()
+                    .context("platform repairs require --server-config")?,
+                &outputs,
+                &config.allowed_exec_activities,
+            )
+            .await?;
+        }
+    }
+    let (config_holder, config, secret_registry) = if fixes.any() {
+        let startup = prepare_server_startup(
             config_holder.config_source,
             config_holder.app_source,
             EnvVarSecretsCleanup::Noop,
             verify_params.runtime_config_availability,
         )?;
-        (config_holder, config, secret_registry)
+        (
+            startup.config_holder,
+            startup.config,
+            startup.secret_registry,
+        )
     } else {
         (config_holder, config, secret_registry)
     };
@@ -965,7 +1052,7 @@ pub(crate) async fn verify(
     } else {
         None
     };
-    let can_suggest_fix = !fix
+    let can_suggest_fix = !fixes.any()
         && config_holder.app_source.is_some()
         && deployment_opt
             .as_ref()
@@ -1298,11 +1385,38 @@ pub(crate) async fn deployment_verify_config(
         server_verified.global_http_config.clone(),
     ))
     .await?;
-    if params.runtime_config_availability == RuntimeConfigAvailability::Strict {
+    if params.runtime_config_availability != RuntimeConfigAvailability::AllowUnavailable {
+        verify_exec_authorization(server_verified, &deployment_verified)?;
         verify_secret_exposure_authorization(server_verified, &deployment_verified)?;
     }
     trace!("Verified deployment: {deployment_verified:#?}");
     Ok(deployment_verified)
+}
+
+fn verify_exec_authorization(
+    server: &ServerVerified,
+    deployment: &DeploymentVerified,
+) -> anyhow::Result<()> {
+    let mut rejected = Vec::new();
+    for exec in &deployment.activities_exec {
+        let name = exec.component_id.name.as_ref();
+        let digest = &exec.secret_exposure_digest;
+        if !server
+            .allowed_exec_activities
+            .get(name)
+            .is_some_and(|digests| digests.contains(digest))
+        {
+            rejected.push(format!(
+                "exec activity `{name}` is not authorized:\n[allowed_exec_activities]\n\"{name}\" = \"{digest}\""
+            ));
+        }
+    }
+    ensure!(
+        rejected.is_empty(),
+        "deployment requests unauthorized native execution:\n\n{}",
+        rejected.join("\n\n")
+    );
+    Ok(())
 }
 
 fn verify_secret_exposure_authorization(
@@ -1331,15 +1445,6 @@ fn verify_secret_exposure_authorization(
     for exec in &deployment.activities_exec {
         let name = exec.component_id.name.as_ref();
         let digest = &exec.secret_exposure_digest;
-        let exec_allowed = server
-            .allowed_exec_activities
-            .get(name)
-            .is_some_and(|digests| digests.contains(digest));
-        if !exec_allowed {
-            rejected.push(format!(
-                "exec activity `{name}` is not authorized:\n[allowed_exec_activities]\n\"{name}\" = \"{digest}\""
-            ));
-        }
         collect_rejected_secret_exposures(
             &server.secret_registry,
             name,
@@ -1425,38 +1530,48 @@ fn append_digest_value(item: &mut Item, digest: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) async fn fix_server_secret_config_digests(
-    server_config_path: &Path,
+pub(crate) async fn fix_app_digest_permissions(
+    app_config_path: &Path,
     outputs: &[SecretConfigDigestOutput],
+    exec_permissions: bool,
+    secret_exposure: bool,
 ) -> anyhow::Result<()> {
-    let server_toml = tokio::fs::read_to_string(server_config_path)
+    let source = tokio::fs::read_to_string(app_config_path)
         .await
-        .with_context(|| format!("cannot read server config {server_config_path:?}"))?;
-    let mut doc = server_toml
+        .with_context(|| format!("cannot read app config {app_config_path:?}"))?;
+    let mut doc = source
         .parse::<DocumentMut>()
-        .context("cannot parse server config as TOML")?;
+        .context("cannot parse app config as TOML")?;
     for output in outputs {
         let name = &output.component_name;
         let digest = output.secret_exposure_digest.to_string();
-        if output.component_kind == "activity_exec" {
+        if exec_permissions && output.component_kind == "activity_exec" {
             if doc.get("allowed_exec_activities").is_none() {
                 doc.insert("allowed_exec_activities", Item::Table(Table::new()));
             }
             let table = doc["allowed_exec_activities"]
-                .as_table_mut()
+                .as_table_like_mut()
                 .context("allowed_exec_activities must be a table")?;
+            let before = table.get(name).map(ToString::to_string);
             if let Some(item) = table.get_mut(name) {
                 append_digest_value(item, &digest)?;
             } else {
                 table.insert(name, value(&digest));
             }
+            if before != table.get(name).map(ToString::to_string) {
+                warn!(
+                    "Added app exec approval for `{name}` ({digest}) in {}",
+                    app_config_path.display()
+                );
+            }
         }
-        for secret in &output.exposed_secrets {
+        for secret in output.exposed_secrets.iter().filter(|_| secret_exposure) {
             let secret_item = doc
                 .get_mut("secrets")
                 .and_then(Item::as_table_mut)
                 .and_then(|secrets| secrets.get_mut(secret))
                 .with_context(|| format!("secret `{secret}` is not registered"))?;
+            let before = secret_item.to_string();
             if let Some(inline) = secret_item.as_inline_table_mut() {
                 if !inline.contains_key("exposed_to") {
                     inline.insert(
@@ -1491,11 +1606,75 @@ pub(crate) async fn fix_server_secret_config_digests(
                     exposed_to.insert(name, value(&digest));
                 }
             }
+            if secret_item.to_string() != before {
+                warn!(
+                    "Added exposure of secret `{secret}` to `{name}` ({digest}) in {}",
+                    app_config_path.display()
+                );
+            }
         }
     }
-    tokio::fs::write(server_config_path, doc.to_string())
+    tokio::fs::write(app_config_path, doc.to_string())
         .await
-        .with_context(|| format!("cannot write server config {server_config_path:?}"))?;
+        .with_context(|| format!("cannot write app config {app_config_path:?}"))?;
+    Ok(())
+}
+
+async fn fix_platform_exec_permissions(
+    path: &Path,
+    outputs: &[SecretConfigDigestOutput],
+    app_permissions: &AllowExecActivities,
+) -> anyhow::Result<()> {
+    let source = tokio::fs::read_to_string(path).await?;
+    let mut doc = source.parse::<DocumentMut>()?;
+    if doc.get("allowed_exec_activities").and_then(Item::as_str) == Some("*") {
+        return Ok(());
+    }
+    let mut required: std::collections::BTreeMap<_, Vec<_>> = app_permissions
+        .iter()
+        .map(|(name, digests)| (name.clone(), digests.iter().cloned().collect()))
+        .collect();
+    for output in outputs
+        .iter()
+        .filter(|output| output.component_kind == "activity_exec")
+    {
+        required
+            .entry(output.component_name.clone())
+            .or_default()
+            .push(output.secret_exposure_digest.clone());
+    }
+    if !required.is_empty() {
+        if doc
+            .get("allowed_exec_activities")
+            .is_none_or(|item| item.as_table_like().is_none())
+        {
+            doc["allowed_exec_activities"] = Item::Table(Table::new());
+        }
+        let table = doc["allowed_exec_activities"]
+            .as_table_like_mut()
+            .expect("table initialized");
+        for (name, digests) in required {
+            for digest in &digests {
+                let before = table.get(&name).map(ToString::to_string);
+                if let Some(item) = table.get_mut(&name) {
+                    append_digest_value(item, &digest.to_string())?;
+                } else {
+                    table.insert(&name, value(digest.to_string()));
+                }
+                if before != table.get(&name).map(ToString::to_string) {
+                    warn!(
+                        "Added platform exec approval for `{name}` ({digest}) in {}",
+                        path.display()
+                    );
+                }
+            }
+        }
+        let updated = doc.to_string();
+        if updated != source {
+            tokio::fs::write(path, updated).await?;
+            warn!("Added platform exec permissions in {}", path.display());
+        }
+    }
     Ok(())
 }
 
@@ -4983,7 +5162,7 @@ impl DeploymentVerified {
         global_http_config: GlobalHttpConfig,
     ) -> Result<DeploymentVerified, anyhow::Error> {
         let ignore_missing_env_vars =
-            runtime_config_availability == RuntimeConfigAvailability::AllowUnavailable;
+            runtime_config_availability != RuntimeConfigAvailability::Strict;
         let mut deployment = deployment.into_resolved();
         trace!("Using deployment toml: {deployment:#?}");
         let activity_vm_runtime = if deployment.activities_vm.is_empty() {
@@ -7143,8 +7322,8 @@ mod tests {
                 global_secret_replacements, host_allowlist_snippet,
                 report_missing_outbound_http_secret_replacements,
             },
-            create_engines, deployment_verify_config, fix_server_secret_config_digests,
-            prepare_dirs, resolve_deployment_offline, webhook_global_http_allowlist,
+            create_engines, deployment_verify_config, fix_app_digest_permissions, prepare_dirs,
+            resolve_deployment_offline, webhook_global_http_allowlist,
         },
         config::{
             config_holder::ConfigHolder,
@@ -7303,9 +7482,9 @@ mod tests {
     /// `--fix` appends sorted public environment and secret scaffolds, marking a secret
     /// optional only when every reference to it is optional.
     #[tokio::test]
-    async fn fix_server_runtime_config_scaffolds_appends_missing_sorted() {
+    async fn fix_app_runtime_config_scaffolds_appends_missing_sorted() {
         use crate::command::server::config_prepass::{
-            SecretFindings, fix_server_runtime_config_scaffolds,
+            SecretFindings, fix_app_runtime_config_scaffolds,
         };
         use crate::config::deployment::SecretRef;
         use std::io::Write as _;
@@ -7325,7 +7504,7 @@ mod tests {
         secrets.record(&optional("SECRET_A"), &registry);
         secrets.record(&"SECRET_A".into(), &registry);
         let optional_public_env = std::collections::BTreeSet::from(["PUBLIC_B".to_string()]);
-        fix_server_runtime_config_scaffolds(path, &public_env, &optional_public_env, &secrets)
+        fix_app_runtime_config_scaffolds(path, &public_env, &optional_public_env, &secrets)
             .await
             .unwrap();
 
@@ -7701,7 +7880,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deployment_verify_rejects_exec_activities_on_any_runtime_config_availability()
+    async fn deployment_verify_allows_missing_exec_approvals_only_when_unavailable_allowed()
     -> Result<(), anyhow::Error> {
         test_utils::set_up();
 
@@ -7797,8 +7976,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fix_server_secret_config_digests_appends_authorizations() -> Result<(), anyhow::Error>
-    {
+    async fn fix_app_digest_permissions_preserve_authorizations() -> Result<(), anyhow::Error> {
         let dir = tempfile::tempdir()?;
         let server_config_path = dir.path().join("server.toml");
         let old = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -7808,7 +7986,7 @@ mod tests {
             "[allowed_exec_activities]\nworker = \"{old}\"\n[secrets]\nTOKEN = {{ exposed_to = {{ worker = \"{old}\" }} }}\n"
         );
         tokio::fs::write(&server_config_path, server_toml).await?;
-        fix_server_secret_config_digests(
+        fix_app_digest_permissions(
             &server_config_path,
             &[SecretConfigDigestOutput {
                 component_name: "worker".to_owned(),
@@ -7816,6 +7994,8 @@ mod tests {
                 secret_exposure_digest: new.clone(),
                 exposed_secrets: vec!["TOKEN".to_owned()],
             }],
+            true,
+            true,
         )
         .await?;
         let fixed = tokio::fs::read_to_string(&server_config_path).await?;
@@ -7948,6 +8128,22 @@ mod tests {
             .zip(&digests)
             .map(|(activity, digest)| (activity.name.to_string(), digest.clone()))
             .collect::<Vec<_>>();
+        let mut stale_config = config.clone();
+        stale_config.allowed_exec_activities.insert(
+            deployment.activities_exec[0].name.to_string(),
+            crate::config::secret_registry::SecretExposureDigests::new(vec![digests[1].clone()]),
+        );
+        let generated = Box::pin(super::generate_secret_config_digests_with_server_config(
+            &workspace.join("deployment-testing-exec.toml"),
+            None,
+            test_secret_registry(),
+            &config_holder,
+            stale_config,
+            JsRuntimeMode::BoaWasm,
+            ActivityVmRuntimeMode::Disabled,
+        ))
+        .await?;
+        assert_eq!(generated[0].secret_exposure_digest, digests[0]);
         let server_verified = Box::pin(ServerVerified::new(
             engines,
             config,
@@ -7959,12 +8155,45 @@ mod tests {
         deployment_verify_config(
             &server_verified,
             &prepared_dirs,
-            deployment,
-            cas,
-            verify_params,
+            deployment.clone(),
+            cas.clone(),
+            verify_params.clone(),
             &mut termination_watcher,
         )
         .await?;
+        let mut changed_deployment = deployment;
+        let changed_activity = &mut changed_deployment.activities_exec[0];
+        let ScriptLocationResolved::Content { content, .. } = &mut changed_activity.location else {
+            unreachable!("fixture uses an inline script")
+        };
+        content.push_str("\necho changed >&2\n");
+        let content_digest = compute_content_digest(content.as_bytes());
+        let changed_digest = crate::config::deployment::exec_secret_exposure_digest(
+            &content_digest,
+            &crate::config::deployment::secret_names(&changed_activity.exposed_secrets),
+        )?;
+        changed_activity.content_digest = Some(content_digest);
+        for availability in [
+            RuntimeConfigAvailability::Strict,
+            RuntimeConfigAvailability::AllowMissingValues,
+        ] {
+            let err = deployment_verify_config(
+                &server_verified,
+                &prepared_dirs,
+                changed_deployment.clone(),
+                cas.clone(),
+                VerifyParams {
+                    runtime_config_availability: availability,
+                    ..verify_params.clone()
+                },
+                &mut termination_watcher,
+            )
+            .await
+            .expect_err("a changed script must not retain its old exec approval");
+            let message = err.to_string();
+            assert!(message.contains("allowed_exec_activities"), "{message}");
+            assert!(message.contains(&changed_digest.to_string()), "{message}");
+        }
         Ok(())
     }
 

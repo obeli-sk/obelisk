@@ -378,22 +378,6 @@
                   "help": "Delete only the codegen cache before verifying; OCI image cache is kept"
                 },
                 {
-                  "name": "--server-config",
-                  "short": "s",
-                  "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
-                  "accepts": {
-                    "path": true
-                  }
-                },
-                {
-                  "name": "--app-config",
-                  "short": "a",
-                  "help": "Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`",
-                  "accepts": {
-                    "path": true
-                  }
-                },
-                {
                   "name": "--deployment",
                   "short": "d",
                   "help": "Path to the local deployment TOML file",
@@ -403,16 +387,8 @@
                   }
                 },
                 {
-                  "name": "--allow-unavailable-runtime-config",
-                  "help": "Tolerate missing values and pending app or platform approvals while verifying"
-                },
-                {
                   "name": "--suppress-type-checking-errors",
                   "help": "Do not fail when a component's imports/exports fail type checking against the deployment"
-                },
-                {
-                  "name": "--fix",
-                  "help": "Scaffold app env, secrets, outbound hosts, and exec grants"
                 }
               ]
             }
@@ -1210,7 +1186,7 @@
             },
             {
               "name": "--allow-unavailable-runtime-config",
-              "help": "Tolerate missing values and pending app or platform approvals while verifying"
+              "help": "Tolerate missing environment and secret values; declarations and permissions are still checked"
             },
             {
               "name": "--suppress-type-checking-errors",
@@ -1222,7 +1198,27 @@
             },
             {
               "name": "--fix",
-              "help": "Scaffold app env, secrets, outbound hosts, and exec grants"
+              "help": "Apply all app repairs, including exec approvals and secret exposure grants. Does not change server permissions"
+            },
+            {
+              "name": "--fix-app-declarations",
+              "help": "Add missing app environment and secret declarations without supplying values"
+            },
+            {
+              "name": "--fix-app-http-permissions",
+              "help": "Add app outbound HTTP destinations and secret replacement permissions"
+            },
+            {
+              "name": "--fix-app-exec-permissions",
+              "help": "Add app exec approval digests for the selected deployment"
+            },
+            {
+              "name": "--fix-app-secret-exposure",
+              "help": "Add app secret exposure grants for the selected deployment"
+            },
+            {
+              "name": "--fix-server-exec-permissions",
+              "help": "Authorize app exec approvals and the selected deployment in the explicit server configuration"
             }
           ]
         }
@@ -1925,22 +1921,6 @@
               "help": "Delete only the codegen cache before verifying; OCI image cache is kept"
             },
             {
-              "name": "--server-config",
-              "short": "s",
-              "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
-              "accepts": {
-                "path": true
-              }
-            },
-            {
-              "name": "--app-config",
-              "short": "a",
-              "help": "Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`",
-              "accepts": {
-                "path": true
-              }
-            },
-            {
               "name": "--deployment",
               "short": "d",
               "help": "Path to the local deployment TOML file",
@@ -1950,16 +1930,8 @@
               }
             },
             {
-              "name": "--allow-unavailable-runtime-config",
-              "help": "Tolerate missing values and pending app or platform approvals while verifying"
-            },
-            {
               "name": "--suppress-type-checking-errors",
               "help": "Do not fail when a component's imports/exports fail type checking against the deployment"
-            },
-            {
-              "name": "--fix",
-              "help": "Scaffold app env, secrets, outbound hosts, and exec grants"
             }
           ]
         }

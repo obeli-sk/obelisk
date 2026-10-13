@@ -339,7 +339,7 @@ pub(super) fn preflight(
 ) -> Result<(), PreflightError> {
     let secret_registry = &*server_verified.secret_registry;
     let global_http_config = &server_verified.global_http_config;
-    let ignore_missing_env_vars = availability == RuntimeConfigAvailability::AllowUnavailable;
+    let ignore_missing_env_vars = availability != RuntimeConfigAvailability::Strict;
 
     // Index source files so advisories can be located, then lint the server's own allowlist.
     let mut warnings = LocatedWarnings::default();
@@ -1054,10 +1054,11 @@ pub(super) async fn fix_app_outbound_hosts(
     let registry = secret_registry
         .clone()
         .allow_unavailable_public_env(undeclared_public_env);
-    let ignore_missing_env_vars = availability == RuntimeConfigAvailability::AllowUnavailable;
+    let ignore_missing_env_vars = availability != RuntimeConfigAvailability::Strict;
     let (resolved_app_hosts, _) =
         resolve_allowed_hosts(app_hosts.to_vec(), ignore_missing_env_vars, &registry)?;
     let global_http_config = GlobalHttpConfig::from(resolved_app_hosts);
+    let replacements = global_secret_replacements(&global_http_config);
     let mut snippets = BTreeSet::new();
     for entry in deployment_allowed_host_lists(deployment)
         .into_iter()
@@ -1073,11 +1074,34 @@ pub(super) async fn fix_app_outbound_hosts(
         }) {
             snippets.insert(host_allowlist_snippet("outbound_http", entry));
         }
+        if entry.methods.is_some()
+            && !matches!(&entry.methods, Some(MethodsInput::List(methods)) if methods.is_empty())
+        {
+            for secret in &entry.secrets {
+                for replace_in in &entry.replace_in {
+                    if !replacements
+                        .contains(&(secret.name.as_str(), replacement_target(*replace_in)))
+                    {
+                        snippets.insert(allowed_host_snippet(
+                            "outbound_http",
+                            entry,
+                            secret,
+                            *replace_in,
+                        ));
+                    }
+                }
+            }
+        }
     }
     if !snippets.is_empty() {
         let mut source = tokio::fs::read_to_string(app_config_path).await?;
         source.push('\n');
-        source.push_str(&snippets.into_iter().collect::<Vec<_>>().join("\n"));
+        let additions = snippets.into_iter().collect::<Vec<_>>().join("\n");
+        warn!(
+            "Adding app HTTP permissions in {}:\n{additions}",
+            app_config_path.display()
+        );
+        source.push_str(&additions);
         tokio::fs::write(app_config_path, source).await?;
     }
     Ok(())
@@ -1085,7 +1109,7 @@ pub(super) async fn fix_app_outbound_hosts(
 
 /// Append a `[secrets]` scaffold entry for each unregistered secret, `optional` when every
 /// reference is. Existing entries are never modified.
-pub(super) async fn fix_server_runtime_config_scaffolds(
+pub(super) async fn fix_app_runtime_config_scaffolds(
     server_config_path: &Path,
     public_env: &BTreeSet<String>,
     optional_public_env: &BTreeSet<String>,

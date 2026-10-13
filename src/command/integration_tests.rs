@@ -614,9 +614,11 @@ async fn authorize_test_deployment(
     )
     .await
     .unwrap();
-    crate::command::server::fix_server_secret_config_digests(
+    crate::command::server::fix_app_digest_permissions(
         &server_path.with_file_name("app.toml"),
         &outputs,
+        true,
+        true,
     )
     .await
     .unwrap();
