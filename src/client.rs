@@ -1,4 +1,3 @@
-use crate::config::secret_registry::API_TOKEN_LEGACY;
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::de::DeserializeOwned;
 
@@ -46,20 +45,7 @@ pub(crate) async fn send_bytes(
 
 impl ClientStartup {
     pub(crate) fn new(api_url: String, flag: Option<SecretString>) -> Self {
-        // backcompat: remove the OBELISK__API__TOKEN fallback after 0.43.
-        let legacy_token = (flag.is_none())
-            .then(|| std::env::var(API_TOKEN_LEGACY).ok())
-            .flatten()
-            .filter(|token| !token.is_empty())
-            .map(|token| {
-                eprintln!(
-                    "warning: {API_TOKEN_LEGACY} is deprecated; use OBELISK_API_TOKEN instead"
-                );
-                SecretString::from(token)
-            });
-        let api_token = flag
-            .or(legacy_token)
-            .filter(|token| !token.expose_secret().is_empty());
+        let api_token = flag.filter(|token| !token.expose_secret().is_empty());
 
         Self {
             api_token,

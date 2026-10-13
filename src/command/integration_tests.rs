@@ -828,7 +828,7 @@ impl TestServer {
     async fn start_empty_with_auth(
         ip: String,
         server_toml_api_lines: &str,
-        legacy_api_token: Option<&str>,
+        api_token: Option<&str>,
     ) -> Self {
         let (tmp_dir, server_path, _deployment_path) =
             write_test_configs(&ip, server_toml_api_lines);
@@ -838,7 +838,7 @@ impl TestServer {
             server_path,
             LocalDeployment::empty(),
             false,
-            legacy_api_token.map(secrecy::SecretString::from),
+            api_token.map(secrecy::SecretString::from),
             JsRuntimeMode::BoaWasm,
         )
         .await
@@ -1504,14 +1504,14 @@ async fn api_auth_should_deny_unauthenticated_requests() {
     }
 
     let hashed_token = "hashed-secret-token";
-    let legacy_token = "legacy-secret-token";
+    let explicit_token = "explicit-secret-token";
     let server = TestServer::start_empty_with_auth(
         test_addr!(89),
         &format!(
             "api.token_hashes = [\"{hash}\"]",
             hash = crate::api::token_hash(hashed_token)
         ),
-        Some(legacy_token),
+        Some(explicit_token),
     )
     .await;
 
@@ -1538,7 +1538,7 @@ async fn api_auth_should_deny_unauthenticated_requests() {
     let resp = server
         .client
         .get(&url)
-        .bearer_auth(legacy_token)
+        .bearer_auth(explicit_token)
         .send()
         .await
         .unwrap();

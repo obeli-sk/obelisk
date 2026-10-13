@@ -209,6 +209,10 @@ impl ConfigHolder {
     /// exact config value that defines `[secrets]` is passed into the runtime after
     /// its env-backed sources have been wiped.
     pub(crate) fn load_config(&self) -> Result<ServerConfigToml, anyhow::Error> {
+        anyhow::ensure!(
+            std::env::var_os(super::secret_registry::API_TOKEN_LEGACY).is_none(),
+            "OBELISK__API__TOKEN is no longer supported; use OBELISK_API_TOKEN, --api-token, or api.token_hashes"
+        );
         let mut builder = Config::builder();
         if let Some(path) = &self.config_source {
             let contents = std::fs::read_to_string(path)?;

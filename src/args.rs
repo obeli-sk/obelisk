@@ -93,7 +93,7 @@ pub(crate) struct ClientConnection {
     )]
     pub(crate) api_url: String,
     /// API token presented to the server as `Authorization: Bearer <token>`.
-    /// Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated.
+    /// Falls back to `$OBELISK_API_TOKEN`.
     #[arg(
         long,
         global = true,
@@ -644,7 +644,7 @@ pub(crate) enum Server {
         no_auth: bool,
 
         /// API token required to access the API server as `Authorization: Bearer <token>`.
-        /// Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated.
+        /// Falls back to `$OBELISK_API_TOKEN`.
         #[arg(long,
             env = API_TOKEN,
             hide_env_values = true,

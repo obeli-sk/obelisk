@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** *(auth)* Removed the `OBELISK__API__TOKEN` fallback. Use `OBELISK_API_TOKEN`,
+  `--api-token`, or server `api.token_hashes`.
+
 ### Changed
 
 - **Breaking:** *(cli)* `deployment verify` validates deployment components without loading app/server

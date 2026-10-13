@@ -1196,7 +1196,6 @@ mod tests {
             PublicEnvToml::from([(VAR.to_string(), PublicEnvConfigToml { optional: true })]),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
-            None,
             &StartupEnvVars::capture(),
         )
         .unwrap();
@@ -1253,7 +1252,6 @@ mod tests {
             PublicEnvToml::default(),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
-            None,
             &StartupEnvVars::capture(),
         )
         .expect("an unset optional source does not fail startup");
