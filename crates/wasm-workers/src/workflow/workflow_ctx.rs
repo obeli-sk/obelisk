@@ -1080,12 +1080,12 @@ impl WasiView for WorkflowCtx {
     }
 }
 
-const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@7.0.0";
+const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@7.1.0";
 const IFC_FQN_WORKFLOW_SUPPORT_BACKTRACE: &str =
-    "obelisk:workflow/workflow-support-backtrace@7.0.0";
-const IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT: &str = "obelisk:workflow/workflow-dynamic-support@7.0.0";
+    "obelisk:workflow/workflow-support-backtrace@7.1.0";
+const IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT: &str = "obelisk:workflow/workflow-dynamic-support@7.1.0";
 const IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT_BACKTRACE: &str =
-    "obelisk:workflow/workflow-dynamic-support-backtrace@7.0.0";
+    "obelisk:workflow/workflow-dynamic-support-backtrace@7.1.0";
 
 #[derive(Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub(crate) enum ReplayKind {
@@ -1410,7 +1410,7 @@ impl WorkflowCtx {
         })
     }
 
-    /// Register the plain `workflow-support` functions for 6.0.0. Native components
+    /// Register the plain `workflow-support` functions for 7.1.0. Native components
     /// import these; they carry no `backtrace` param. Any host-side backtrace is still
     /// captured when `backtrace_capture` is enabled (`get_host_maybe_capture_backtrace`
     /// with `None`). The backtrace-carrying variants live on
@@ -1894,7 +1894,7 @@ impl WorkflowCtx {
     }
 
     /// Register the backtrace-carrying `workflow-support-backtrace` functions for
-    /// 6.0.0. Only interpreted runtimes (the JS runtime) import these; they supply a
+    /// 7.1.0. Only interpreted runtimes (the JS runtime) import these; they supply a
     /// source-level `backtrace`. The event-persisting subset only (getters and id
     /// accessors live solely on the plain `workflow-support` interface).
     fn add_to_linker_workflow_support_backtrace(

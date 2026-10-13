@@ -12,7 +12,7 @@ world root {
     import testing:stub-activity-obelisk-stub/activity;
     import testing:stub-activity/activity;
     import obelisk:types/time@6.1.0;
-    import obelisk:workflow/workflow-support@7.0.0;
+    import obelisk:workflow/workflow-support@7.1.0;
     import obelisk:log/log@1.0.0;
 
     export testing:stub-workflow/workflow;
@@ -213,7 +213,7 @@ package obelisk:types@6.1.0 {
 }
 
 
-package obelisk:workflow@7.0.0 {
+package obelisk:workflow@7.1.0 {
     interface workflow-support {
         use obelisk:types/join-set@6.1.0.{join-set};
         use obelisk:types/time@6.1.0.{schedule-at};

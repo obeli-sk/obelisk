@@ -9,8 +9,8 @@ world root {
     import obelisk:types/function@6.1.0;
     import obelisk:types/execution@6.1.0;
     import obelisk:types/join-set@6.1.0;
-    import obelisk:workflow/workflow-support@7.0.0;
-    import obelisk:workflow/workflow-dynamic-support@7.0.0;
+    import obelisk:workflow/workflow-support@7.1.0;
+    import obelisk:workflow/workflow-dynamic-support@7.1.0;
     import testing:sleep/sleep;
     import testing:sleep-obelisk-ext/sleep;
     import testing:sleep-obelisk-schedule/sleep;
@@ -214,7 +214,7 @@ package obelisk:types@6.1.0 {
 }
 
 
-package obelisk:workflow@7.0.0 {
+package obelisk:workflow@7.1.0 {
     interface workflow-support {
         use obelisk:types/join-set@6.1.0.{join-set};
         use obelisk:types/time@6.1.0.{schedule-at};

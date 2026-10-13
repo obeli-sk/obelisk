@@ -78,9 +78,9 @@ pub(crate) mod types {
                     import obelisk:types/execution@6.1.0;
                     import obelisk:types/backtrace@6.1.0;
                     import obelisk:types/join-set@6.1.0;
-                    import obelisk:webhook/webhook-support@7.0.0;
-                    import obelisk:webhook/webhook-dynamic-support@7.0.0;
-                    import obelisk:webhook/webhook-dynamic-support-backtrace@7.0.0;
+                    import obelisk:webhook/webhook-support@7.1.0;
+                    import obelisk:webhook/webhook-dynamic-support@7.1.0;
+                    import obelisk:webhook/webhook-dynamic-support-backtrace@7.1.0;
                 }",
         world: "any:any/bindings",
         imports: {

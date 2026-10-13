@@ -1,4 +1,4 @@
-package obelisk:webhook@7.0.0;
+package obelisk:webhook@7.1.0;
 
 @since(version = 5.0.0)
 interface webhook-support {

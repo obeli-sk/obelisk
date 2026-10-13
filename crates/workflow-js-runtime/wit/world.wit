@@ -3,9 +3,9 @@ package any:any;
 world any {
     export obelisk-workflow:workflow-js-runtime/execute;
 
-    import obelisk:workflow/workflow-support@7.0.0;
-    import obelisk:workflow/workflow-support-backtrace@7.0.0;
-    import obelisk:workflow/workflow-dynamic-support@7.0.0;
-    import obelisk:workflow/workflow-dynamic-support-backtrace@7.0.0;
+    import obelisk:workflow/workflow-support@7.1.0;
+    import obelisk:workflow/workflow-support-backtrace@7.1.0;
+    import obelisk:workflow/workflow-dynamic-support@7.1.0;
+    import obelisk:workflow/workflow-dynamic-support-backtrace@7.1.0;
     import obelisk:log/log@1.0.0;
 }

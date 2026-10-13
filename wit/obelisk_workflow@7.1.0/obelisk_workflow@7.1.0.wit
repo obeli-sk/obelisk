@@ -1,4 +1,4 @@
-package obelisk:workflow@7.0.0;
+package obelisk:workflow@7.1.0;
 
 @since(version = 4.0.0)
 interface workflow-support {
