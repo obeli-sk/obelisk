@@ -697,7 +697,7 @@
       "subcommands": [
         {
           "name": "submit",
-          "about": "Upload a deployment TOML as a new deployment; print the new deployment ID",
+          "about": "Submit a deployment TOML; print the deployment ID. Reuses matching active content and description unless a deployment ID is supplied",
           "options": [
             {
               "name": "--empty",
@@ -733,7 +733,7 @@
         },
         {
           "name": "enqueue",
-          "about": "Submit (if a file is given) and enqueue for next server restart",
+          "about": "Submit (if a file is given) and enqueue for next server restart. Reuses matching active content and description unless a deployment ID is supplied",
           "options": [
             {
               "name": "--empty",
@@ -766,7 +766,7 @@
         },
         {
           "name": "apply",
-          "about": "Submit (if a file is given) and apply immediately. Fails if not possible",
+          "about": "Submit (if a file is given) and apply immediately. Fails if not possible. Reuses matching active content and description unless a deployment ID is supplied",
           "options": [
             {
               "name": "--empty",
