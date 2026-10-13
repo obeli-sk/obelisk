@@ -15,7 +15,7 @@ use crate::command::server::{
     ActivityVmRuntimeMode, JsRuntimeMode, PrepareDirsParams, RunParams, RuntimeConfigAvailability,
     ServerAuth, VerifyParams, run, verify,
 };
-use crate::config::secret_registry::{API_TOKEN, API_TOKEN_LEGACY, EnvVarSecretsCleanup};
+use crate::config::secret_registry::{API_TOKEN, EnvVarSecretsCleanup};
 use anyhow::ensure;
 use args::{
     AdminArgs, Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs,
@@ -74,7 +74,6 @@ fn command_future(
             let ServerStartup {
                 config_holder,
                 config,
-                legacy_api_token,
                 secret_registry,
                 js_runtime,
                 activity_vm_runtime,
@@ -86,15 +85,9 @@ fn command_future(
             )?;
             let auth = if no_auth {
                 assert!(api_token.is_none(), "{API_TOKEN} conflicts with --no-auth");
-                // Remove ambiguity
-                ensure!(
-                    legacy_api_token.is_none(),
-                    "unset {API_TOKEN_LEGACY} when using --no-auth"
-                );
                 ServerAuth::NoAuth
             } else {
                 ensure!(!no_auth, "guarded by conflicts_with");
-                let api_token = api_token.or(legacy_api_token);
                 ServerAuth::Auth { api_token }
             };
             Box::pin(run(
@@ -148,7 +141,6 @@ fn command_future(
             let ServerStartup {
                 config_holder,
                 config,
-                legacy_api_token: _,
                 secret_registry,
                 js_runtime,
                 activity_vm_runtime,
@@ -227,7 +219,6 @@ fn command_future(
                 PublicEnvToml::default(),
                 EnvVarSecretsCleanup::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
-                None,
                 &env_vars,
             )?);
             Box::pin(generate.run(secret_registry))
@@ -242,7 +233,6 @@ fn command_future(
                 PublicEnvToml::default(),
                 EnvVarSecretsCleanup::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
-                None,
                 &env_vars,
             )?);
             Box::pin(command.run(client_startup, secret_registry))
@@ -260,7 +250,6 @@ fn command_future(
 struct ServerStartup {
     config_holder: ConfigHolder,
     config: ServerConfigToml,
-    legacy_api_token: Option<secrecy::SecretString>,
     secret_registry: Arc<SecretRegistry>,
     js_runtime: crate::command::server::JsRuntimeMode,
     activity_vm_runtime: crate::command::server::ActivityVmRuntimeMode,
@@ -298,13 +287,6 @@ fn prepare_server_startup_with_exec_policy(
     }
     let mut config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?
         .with_app_source(config::app::resolve_app_config(app_config)?)?;
-    // backcompat: 0.41 exposed OBELISK__API__TOKEN as api.token; remove after 0.43.
-    let legacy_env = std::env::var(API_TOKEN_LEGACY).ok();
-    if legacy_env.is_some() {
-        // SAFETY: server configuration is loaded before the runtime and its threads start.
-        // Wipe it so that server config can be loaded.
-        unsafe { std::env::remove_var(API_TOKEN_LEGACY) };
-    }
     let mut config = config_holder.load_config()?;
     let mut app = config_holder.load_app_config()?;
     config_holder.path_prefixes.app_name = app.effective_name()?;
@@ -349,24 +331,16 @@ fn prepare_server_startup_with_exec_policy(
         .clone_from(&config_holder.path_prefixes.app_name);
     config.app_policy = app_policy;
 
-    let legacy_api_token = legacy_env.filter(|token| !token.is_empty()).map(|token| {
-        warn!(
-            "{API_TOKEN_LEGACY} is deprecated; use {API_TOKEN} or configure api.token_hashes in server.toml for server authentication"
-        );
-        secrecy::SecretString::from(token)
-    });
     let secret_registry = Arc::new(SecretRegistry::resolve(
         config.secrets.clone(),
         config.public_env.clone(),
         env_var_cleanup,
         runtime_config_availability,
-        legacy_api_token.as_ref(),
         &env_vars,
     )?);
     Ok(ServerStartup {
         config_holder,
         config,
-        legacy_api_token,
         secret_registry,
         js_runtime,
         activity_vm_runtime,

@@ -346,7 +346,6 @@ impl SecretRegistry {
         public_env: PublicEnvToml,
         env_var_cleanup: EnvVarSecretsCleanup,
         runtime_config_availability: RuntimeConfigAvailability,
-        was_legacy_token_wiped: Option<&SecretString>,
         env_vars: &StartupEnvVars,
     ) -> anyhow::Result<Self> {
         let mut values = HashMap::new();
@@ -369,8 +368,7 @@ impl SecretRegistry {
             } else {
                 env
             };
-            let present = env_vars.lookup(&env).is_some()
-                || was_legacy_token_wiped.is_some_and(|_| env == API_TOKEN_LEGACY);
+            let present = env_vars.lookup(&env).is_some();
             secret_audit.insert(
                 logical_name.clone(),
                 serde_json::json!({
@@ -381,11 +379,6 @@ impl SecretRegistry {
             );
             if let Some(value) = env_vars.lookup(&env) {
                 values.insert(logical_name.clone(), SecretString::from(value));
-            } else if let Some(value) = was_legacy_token_wiped
-                && env == API_TOKEN_LEGACY
-            {
-                // backcompat: avoid failing here if [[secrets]] contains the token and it was wiped already.
-                values.insert(logical_name.clone(), value.clone());
             } else if optional {
                 absent.insert(logical_name.clone());
             } else {
@@ -513,7 +506,6 @@ mod tests {
             PublicEnvToml::default(),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
-            None,
             &env_vars,
         )
         .unwrap();
@@ -547,7 +539,6 @@ mod tests {
             PublicEnvToml::default(),
             EnvVarSecretsCleanup::Wipe,
             RuntimeConfigAvailability::Strict,
-            None,
             &env_vars,
         )
         .unwrap();
@@ -599,7 +590,6 @@ mod tests {
             PublicEnvToml::default(),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
-            None,
             &env_vars,
         )
         .unwrap_err()
@@ -634,7 +624,6 @@ mod tests {
             PublicEnvToml::default(),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
-            None,
             &env_vars,
         )
         .unwrap();
@@ -663,7 +652,6 @@ mod tests {
             PublicEnvToml::from([(ALLOWED.to_string(), PublicEnvConfigToml { optional: true })]),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
-            None,
             &env_vars,
         )
         .unwrap();
@@ -681,7 +669,6 @@ mod tests {
             PublicEnvToml::from([(REQUIRED.to_string(), PublicEnvConfigToml::default())]),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
-            None,
             &StartupEnvVars::capture(),
         )
         .unwrap_err();
@@ -699,7 +686,6 @@ mod tests {
             PublicEnvToml::from([(ALLOWED.to_string(), PublicEnvConfigToml::default())]),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
-            None,
             &env_vars,
         )
         .unwrap();

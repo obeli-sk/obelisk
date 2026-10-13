@@ -43,7 +43,7 @@ use sha2::{Digest as _, Sha256};
 use std::convert::Infallible;
 use std::num::NonZeroU16;
 use std::sync::Arc;
-use std::{fmt::Write as _, time::Duration};
+use std::time::Duration;
 use tokio::{
     select,
     sync::{mpsc, watch},
@@ -89,7 +89,7 @@ async fn until_terminated<T>(
 #[openapi(
     info(
         title = "Obelisk REST API",
-        description = "REST API for the Obelisk deterministic workflow engine. JSON is the stable representation for structured resources and actions. Text responses are stable only for WIT documents, backtrace source files, and the execution and deployment ID endpoints; all other text/plain representations are deprecated.",
+        description = "REST API for the Obelisk deterministic workflow engine. Structured resources and actions use JSON. Text remains available for WIT documents, source files, IDs, and app-config digests. Execution logs include raw stdout/stderr payloads in JSON.",
         version = "1.0.0"
     ),
     tags(
@@ -218,19 +218,6 @@ fn pretty_json_response<T: Serialize>(status: StatusCode, value: &T) -> Response
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         header::HeaderValue::from_static("application/json"),
-    );
-    response
-}
-
-fn deprecated_text_response(response: impl IntoResponse) -> Response {
-    let mut response = response.into_response();
-    response.headers_mut().insert(
-        header::HeaderName::from_static("deprecation"),
-        header::HeaderValue::from_static("@1787443200"),
-    );
-    response.headers_mut().append(
-        header::LINK,
-        header::HeaderValue::from_static("</openapi.json>; rel=\"deprecation\""),
     );
     response
 }
@@ -482,8 +469,6 @@ pub(crate) mod admin {
     pub(crate) struct RetainSystemEventsRequest {
         pub(crate) max_age_seconds: u64,
         pub(crate) batch_size: u32,
-        // backcompat: 0.42.0-rc.10 requests omit dry_run.
-        #[serde(default)]
         pub(crate) dry_run: bool,
     }
 
@@ -1449,29 +1434,12 @@ async fn executions_list(
         .list_executions(filter, pagination)
         .await
         .map_err(|err| ErrorWrapper(err, accept))?;
-    Ok(match accept {
-        AcceptHeader::Text => {
-            let mut output = String::new();
-            for execution in executions {
-                writeln!(
-                    &mut output,
-                    "{id} `{pending_state}` {ffqn} `{first_scheduled_at}`",
-                    id = execution.execution_id,
-                    ffqn = execution.ffqn,
-                    pending_state = execution.pending_state,
-                    first_scheduled_at = execution.first_scheduled_at,
-                )
-                .expect("writing to string");
-            }
-            deprecated_text_response(output)
-        }
-        AcceptHeader::Json => {
-            let executions: Vec<_> = executions
-                .into_iter()
-                .map(ExecutionWithStateSer::from)
-                .collect();
-            pretty_json_response(StatusCode::OK, &executions)
-        }
+    Ok({
+        let executions: Vec<_> = executions
+            .into_iter()
+            .map(ExecutionWithStateSer::from)
+            .collect();
+        pretty_json_response(StatusCode::OK, &executions)
     })
 }
 
@@ -1816,29 +1784,13 @@ async fn execution_events(
         .list_execution_events(&execution_id, pagination, params.include_backtrace_id)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
-    Ok(match accept {
-        AcceptHeader::Json => pretty_json_response(
-            StatusCode::OK,
-            &ExecutionEventsResponse {
-                events: result.events,
-                max_version: result.max_version,
-            },
-        ),
-        AcceptHeader::Text => {
-            let mut output = String::new();
-            for event in result.events {
-                writeln!(
-                    &mut output,
-                    "{version} `{created_at}` {event}",
-                    version = event.version,
-                    created_at = event.created_at,
-                    event = event.event,
-                )
-                .expect("writing to string");
-            }
-            deprecated_text_response(output)
-        }
-    })
+    Ok(pretty_json_response(
+        StatusCode::OK,
+        &ExecutionEventsResponse {
+            events: result.events,
+            max_version: result.max_version,
+        },
+    ))
 }
 
 pub(crate) mod logs {
@@ -1872,9 +1824,6 @@ pub(crate) mod logs {
         /// Include logs from all derived executions
         #[serde(default)]
         show_derived: bool,
-        /// Include the run ID in text output
-        #[serde(default)]
-        show_run_id: bool,
 
         // pagination
         /// Opaque cursor for pagination
@@ -2149,61 +2098,10 @@ pub(crate) mod logs {
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
 
-        Ok(match accept {
-            AcceptHeader::Json => {
-                let items: Vec<LogEntryRowSer> =
-                    result.items.into_iter().map(LogEntryRowSer::from).collect();
-                pretty_json_response(StatusCode::OK, &items)
-            }
-            AcceptHeader::Text => {
-                let mut output = String::new();
-                struct PrefixId<'a>(bool, &'a dyn Display);
-                impl Display for PrefixId<'_> {
-                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                        if self.0 {
-                            write!(f, "{} ", self.1)
-                        } else {
-                            Ok(())
-                        }
-                    }
-                }
-                for log in result.items {
-                    match log.log_entry {
-                        LogEntry::Log {
-                            created_at,
-                            level,
-                            message,
-                        } => {
-                            let level = LogLevelSer::from(level);
-                            writeln!(
-                                &mut output,
-                                "{created_at} [{level:<6}] {run_id}{exec_id}{message}",
-                                created_at = created_at.format("%Y-%m-%dT%H:%M:%S%.9fZ"),
-                                run_id = PrefixId(params.show_run_id, &log.run_id),
-                                exec_id = PrefixId(params.show_derived, &log.execution_id),
-                            )
-                            .expect("writing to string");
-                        }
-                        LogEntry::Stream {
-                            created_at,
-                            payload,
-                            stream_type,
-                        } => {
-                            let stream_type = LogStreamTypeSer::from(stream_type);
-                            let payload_utf8 = String::from_utf8_lossy(&payload);
-                            writeln!(
-                                &mut output,
-                                "{created_at} [{stream_type:<6}] {run_id}{exec_id}{payload_utf8}",
-                                created_at = created_at.format("%Y-%m-%dT%H:%M:%S%.9fZ"),
-                                run_id = PrefixId(params.show_run_id, &log.run_id),
-                                exec_id = PrefixId(params.show_derived, &log.execution_id),
-                            )
-                            .expect("writing to string");
-                        }
-                    }
-                }
-                deprecated_text_response(output)
-            }
+        Ok({
+            let items: Vec<LogEntryRowSer> =
+                result.items.into_iter().map(LogEntryRowSer::from).collect();
+            pretty_json_response(StatusCode::OK, &items)
         })
     }
 }
@@ -2295,31 +2193,14 @@ async fn execution_responses(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
 
-    Ok(match accept {
-        AcceptHeader::Json => pretty_json_response(
-            StatusCode::OK,
-            &ExecutionResponsesResponse {
-                responses: result.responses,
-                max_cursor: result.max_cursor,
-                scan_cursor: result.scan_cursor,
-            },
-        ),
-        AcceptHeader::Text => {
-            let mut output = String::new();
-            for response in result.responses {
-                writeln!(
-                    &mut output,
-                    "{cursor} `{created_at}` {join_set_id} {resp}",
-                    cursor = response.cursor,
-                    created_at = response.event.created_at,
-                    join_set_id = response.event.event.join_set_id,
-                    resp = response.event.event.event,
-                )
-                .expect("writing to string");
-            }
-            deprecated_text_response(output)
-        }
-    })
+    Ok(pretty_json_response(
+        StatusCode::OK,
+        &ExecutionResponsesResponse {
+            responses: result.responses,
+            max_cursor: result.max_cursor,
+            scan_cursor: result.scan_cursor,
+        },
+    ))
 }
 
 /// Get execution status
@@ -2342,7 +2223,7 @@ async fn execution_status_get(
     Query(params): Query<StatusFollowParams>,
     headers: HeaderMap,
 ) -> Result<Response, HttpResponse> {
-    let accept = streaming_accept(&headers);
+    let accept = streaming_accept(&headers, params.follow)?;
     let execution_with_state = state
         .db_pool
         .external_api_conn()
@@ -2441,15 +2322,10 @@ async fn execution_status_get(
             )
             .into_response());
     }
-    Ok(match accept {
-        AcceptHeader::Json => pretty_json_response(
-            StatusCode::OK,
-            &ExecutionWithStateSer::from(execution_with_state),
-        ),
-        AcceptHeader::Text => deprecated_text_response(format_execution_status_text(
-            &execution_with_state.pending_state,
-        )),
-    })
+    Ok(pretty_json_response(
+        StatusCode::OK,
+        &ExecutionWithStateSer::from(execution_with_state),
+    ))
 }
 
 pub(crate) fn format_execution_status_text(pending_state: &PendingState) -> String {
@@ -3102,17 +2978,11 @@ pub(crate) struct ReplayResponseSer {
     #[serde(flatten)]
     pub(crate) outcome: ReplayOutcomeSer,
     /// Number of persisted history events supplied to the workflow replay.
-    // backcompat: Accept replay responses from servers older than 0.42.
-    #[serde(default)]
     pub(crate) replayed_event_count: u64,
     /// Time spent executing the workflow replay after loading its execution log.
-    // backcompat: Accept replay responses from servers older than 0.42.
-    #[serde(default)]
     pub(crate) replay_duration_ms: u64,
     /// Highest persisted execution-event version included in the replay log. Response records use
     /// a separate cursor and are not represented by this version.
-    // backcompat: Accept replay responses from servers older than 0.42.
-    #[serde(default)]
     pub(crate) replay_version: u32,
 }
 
@@ -3129,7 +2999,6 @@ pub(crate) enum ReplayOutcomeSer {
     ReplayFailed {
         error: String,
         /// Structured, sanitized reason for the replay failure.
-        // backcompat: This is absent in replay responses from servers older than 0.42.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schema(value_type = Option<Object>)]
         failure: Option<FinishedExecutionFailure>,
@@ -3231,14 +3100,15 @@ async fn execution_get_retval(
     state: State<Arc<WebApiState>>,
     headers: HeaderMap,
 ) -> Result<http::Response<Body>, HttpResponse> {
+    let accept = streaming_accept(&headers, params.follow)?;
     let last_event = state
         .db_pool
         .external_api_conn()
         .await
-        .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?
+        .map_err(|e| ErrorWrapper(e, accept))?
         .get_last_execution_event(&execution_id)
         .await
-        .map_err(|e| ErrorWrapper(e, AcceptHeader::Json))?;
+        .map_err(|e| ErrorWrapper(e, accept))?;
 
     if params.follow {
         Ok(stream_execution_response(
@@ -3258,7 +3128,7 @@ async fn execution_get_retval(
         Ok(HttpResponse {
             status: StatusCode::TOO_EARLY,
             message: "not finished yet".to_string(),
-            accept: AcceptHeader::Json,
+            accept,
         }
         .into_response())
     }
@@ -3316,7 +3186,7 @@ async fn execution_submit_put(
     headers: HeaderMap,
     Json(payload): Json<ExecutionSubmitPayload>,
 ) -> Result<http::Response<Body>, HttpResponse> {
-    let accept = streaming_accept(&headers);
+    let accept = streaming_accept(&headers, params.follow)?;
     let last_event_id = headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
@@ -3349,7 +3219,7 @@ async fn execution_submit_post(
     Query(params): Query<ExecutionFollowParam>,
     Json(payload): Json<ExecutionSubmitPayload>,
 ) -> Result<http::Response<Body>, HttpResponse> {
-    let accept = streaming_accept(&headers);
+    let accept = streaming_accept(&headers, params.follow)?;
     let execution_id = ExecutionId::generate();
     let last_event_id = headers
         .get("last-event-id")
@@ -3366,15 +3236,34 @@ async fn execution_submit_post(
     .await
 }
 
-fn streaming_accept(headers: &HeaderMap) -> AcceptHeader {
-    if headers
-        .get(header::ACCEPT)
-        .and_then(|value| value.to_str().ok())
-        == Some("text/plain")
+fn streaming_accept(headers: &HeaderMap, follow: bool) -> Result<AcceptHeader, HttpResponse> {
+    let mediatypes = axum_accept::parse_mediatypes(headers).map_err(|error| {
+        let (status, message) = error.status_and_message();
+        HttpResponse {
+            status,
+            message,
+            accept: AcceptHeader::Json,
+        }
+    })?;
+    if mediatypes.is_empty()
+        || mediatypes.iter().any(|mt| {
+            matches!(
+                (mt.ty.as_str(), mt.subty.as_str()),
+                ("*", "*") | ("application", "json" | "*")
+            ) || (follow
+                && matches!(
+                    (mt.ty.as_str(), mt.subty.as_str()),
+                    ("text", "event-stream" | "*")
+                ))
+        })
     {
-        AcceptHeader::Text
+        Ok(AcceptHeader::Json)
     } else {
-        AcceptHeader::Json
+        Err(HttpResponse {
+            status: StatusCode::NOT_ACCEPTABLE,
+            message: "Accept header must allow application/json or text/event-stream".to_string(),
+            accept: AcceptHeader::Json,
+        })
     }
 }
 
@@ -3576,45 +3465,7 @@ async fn execution_replay(
     } else {
         StatusCode::OK
     };
-    Ok(match accept {
-        AcceptHeader::Json => pretty_json_response(status, &ser),
-        AcceptHeader::Text => {
-            let measurements = format!(
-                "\nreplayed_event_count: {}\nreplay_duration_ms: {}\nreplay_version: {}",
-                ser.replayed_event_count, ser.replay_duration_ms, ser.replay_version
-            );
-            let body = match ser.outcome {
-                ReplayOutcomeSer::Advanceable { captured_writes } => {
-                    format!("outcome: advanceable, {} writes", captured_writes.len())
-                }
-                ReplayOutcomeSer::Finished { retval } => {
-                    format!("outcome: finished\nresult: {retval}")
-                }
-                ReplayOutcomeSer::Blocked => "outcome: blocked".to_string(),
-                ReplayOutcomeSer::ReplayFailed {
-                    error,
-                    failure,
-                    captured_writes,
-                } => {
-                    let mut output = format!(
-                        "outcome: replay_failed, error: {error}, {} writes",
-                        captured_writes.len()
-                    );
-                    if let Some(failure) = failure {
-                        write!(&mut output, "\nfailure: {failure}").expect("writing to string");
-                        if let Some(reason) = failure.reason {
-                            write!(&mut output, "\nreason: {reason}").expect("writing to string");
-                        }
-                        if let Some(detail) = failure.detail {
-                            write!(&mut output, "\ndetail: {detail}").expect("writing to string");
-                        }
-                    }
-                    output
-                }
-            } + &measurements;
-            deprecated_text_response((status, body))
-        }
-    })
+    Ok(pretty_json_response(status, &ser))
 }
 
 /// Advance a paused execution by applying captured writes from a prior replay; set `persist_backtrace` to persist fresh backtraces.
@@ -3692,21 +3543,7 @@ async fn execution_advance(
                     AdvanceErrorSer::Transient(err.to_string())
                 }
             };
-            let response = match accept {
-                AcceptHeader::Json => {
-                    pretty_json_response(StatusCode::UNPROCESSABLE_ENTITY, &error)
-                }
-                AcceptHeader::Text => {
-                    let text = match error {
-                        AdvanceErrorSer::VersionMismatch { expected } => {
-                            format!("error: version_mismatch\nexpected: {expected}")
-                        }
-                        AdvanceErrorSer::ReplayMismatch => "error: replay_mismatch".to_string(),
-                        AdvanceErrorSer::Transient(err) => format!("transient error: {err}"),
-                    };
-                    deprecated_text_response((StatusCode::UNPROCESSABLE_ENTITY, text))
-                }
-            };
+            let response = pretty_json_response(StatusCode::UNPROCESSABLE_ENTITY, &error);
             return Ok(response);
         }
     };
@@ -3729,21 +3566,7 @@ async fn execution_advance(
             pending_state: execution_with_state.pending_state,
         }
     };
-    match &response {
-        AdvanceResponseSer::Finished { value } => Ok(match accept {
-            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &response),
-            AcceptHeader::Text => deprecated_text_response(format!(
-                "success:\n{}",
-                serde_json::to_string_pretty(&value).expect("retval must be JSON serializable")
-            )),
-        }),
-        AdvanceResponseSer::InProgress { pending_state } => Ok(match accept {
-            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &response),
-            AcceptHeader::Text => {
-                deprecated_text_response(format!("success, current state: {pending_state}"))
-            }
-        }),
-    }
+    Ok(pretty_json_response(StatusCode::OK, &response))
 }
 
 /// Replay an execution and persist its call-site backtraces (idempotent).
@@ -3787,12 +3610,7 @@ async fn execution_persist_backtraces(
     let ser = PersistBacktracesResponseSer {
         persisted_backtrace_count,
     };
-    Ok(match accept {
-        AcceptHeader::Json => pretty_json_response(StatusCode::OK, &ser),
-        AcceptHeader::Text => {
-            deprecated_text_response(format!("persisted {persisted_backtrace_count} backtraces"))
-        }
-    })
+    Ok(pretty_json_response(StatusCode::OK, &ser))
 }
 
 async fn get_replay_target(
@@ -3975,9 +3793,7 @@ async fn execution_upgrade(
 }
 
 pub(crate) mod components {
-    use crate::server::web_api_server::{
-        HttpResponse, deprecated_text_response, pretty_json_response,
-    };
+    use crate::server::web_api_server::{HttpResponse, pretty_json_response};
 
     use super::{
         AcceptHeader, Arc, Deserialize, FunctionFqn, IntoParams, IntoResponse, Query, Response,
@@ -3994,7 +3810,7 @@ pub(crate) mod components {
         },
     };
     use itertools::Itertools;
-    use std::fmt::{Debug, Write as _};
+    use std::fmt::Debug;
 
     #[derive(Deserialize, Debug, IntoParams)]
     #[into_params(parameter_in = Query)]
@@ -4185,44 +4001,7 @@ pub(crate) mod components {
             })
             .collect();
 
-        match accept {
-            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &components),
-            AcceptHeader::Text => {
-                let mut output = String::new();
-                for component in components {
-                    writeln!(
-                        output,
-                        "{} {}",
-                        component.component_id, component.component_id.component_digest
-                    )
-                    .expect("writing to string");
-                    if let Some(fns) = component.exports {
-                        writeln!(output, " exports:").expect("writing to string");
-                        for func in fns {
-                            writeln!(output, "  {func}").expect("writing to string");
-                        }
-                    }
-                    if let Some(fns) = component.imports {
-                        writeln!(output, " imports:").expect("writing to string");
-                        for func in fns {
-                            writeln!(output, "  {func}").expect("writing to string");
-                        }
-                    }
-                    if !component.files.is_empty() {
-                        writeln!(output, " files:").expect("writing to string");
-                        for entry in component.files {
-                            writeln!(
-                                output,
-                                "  {} {} {} {}",
-                                entry.file.path, entry.file.digest, entry.file.size, entry.role
-                            )
-                            .expect("writing to string");
-                        }
-                    }
-                }
-                deprecated_text_response(output)
-            }
-        }
+        pretty_json_response(StatusCode::OK, &components)
     }
 
     /// Component configuration with optional imports/exports
@@ -4360,10 +4139,9 @@ pub(crate) mod components {
 mod functions {
     use super::{
         AcceptHeader, Arc, Deserialize, IntoParams, IntoResponse, Query, Response, State,
-        StatusCode, ToSchema, WebApiState, deprecated_text_response, pretty_json_response,
+        StatusCode, ToSchema, WebApiState, pretty_json_response,
     };
     use concepts::{FunctionExtension, FunctionFqn, FunctionRegistry};
-    use std::fmt::Write as _;
 
     #[derive(Deserialize, Debug, IntoParams)]
     #[into_params(parameter_in = Query)]
@@ -4386,7 +4164,7 @@ mod functions {
     pub(crate) async fn functions_list(
         state: State<Arc<WebApiState>>,
         Query(params): Query<FunctionsListParams>,
-        accept: AcceptHeader,
+        _accept: AcceptHeader,
     ) -> Response {
         let component_registry_ro = state
             .deployment_ctx
@@ -4406,16 +4184,7 @@ mod functions {
             })
             .collect();
 
-        match accept {
-            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &functions),
-            AcceptHeader::Text => {
-                let mut output = String::new();
-                for func in functions {
-                    writeln!(output, "{}", func.ffqn).expect("writing to string");
-                }
-                deprecated_text_response(output)
-            }
-        }
+        pretty_json_response(StatusCode::OK, &functions)
     }
 
     /// Function output information
@@ -4496,8 +4265,7 @@ pub(crate) mod deployment {
             deployment_summary,
             web_api_server::{
                 AcceptHeader, ErrorWrapper, HttpResponse, PaginationDirectionSortedFromLatest,
-                TextDefaultAcceptHeader, WebApiState, deprecated_text_response,
-                nonzero_page_length, pretty_json_response,
+                TextDefaultAcceptHeader, WebApiState, nonzero_page_length, pretty_json_response,
             },
         },
     };
@@ -4525,7 +4293,6 @@ pub(crate) mod deployment {
     };
     use http::StatusCode;
     use serde::{Deserialize, Serialize};
-    use std::fmt::Write as _;
     use std::sync::Arc;
     use tracing::{info, instrument};
     use utoipa::{IntoParams, ToSchema};
@@ -4727,31 +4494,7 @@ pub(crate) mod deployment {
             })
             .collect();
 
-        Ok(match accept {
-            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &states),
-            AcceptHeader::Text => {
-                let mut output = String::new();
-                for s in states {
-                    writeln!(
-                        &mut output,
-                        "{} locked={} pending={} scheduled={} blocked={} paused={} cancelling={} \
-                        finished_ok={} finished_error={} finished_execution_failure={}",
-                        s.deployment_id,
-                        s.locked,
-                        s.pending,
-                        s.scheduled,
-                        s.blocked,
-                        s.paused,
-                        s.cancelling,
-                        s.finished_ok,
-                        s.finished_error,
-                        s.finished_execution_failure,
-                    )
-                    .expect("writing to string");
-                }
-                deprecated_text_response(output)
-            }
-        })
+        Ok(pretty_json_response(StatusCode::OK, &states))
     }
 
     /// Get current deployment ID
@@ -4881,39 +4624,7 @@ pub(crate) mod deployment {
         }
 
         let ser = DeploymentRecordSer::from(&record);
-        Ok(match accept {
-            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &ser),
-            AcceptHeader::Text => {
-                let mut output = String::new();
-                writeln!(
-                    &mut output,
-                    "{} status={} created={} last_active={} description={} digest={} manifest={}",
-                    ser.deployment_id,
-                    match ser.status {
-                        DeploymentStatusSer::Inactive => "inactive",
-                        DeploymentStatusSer::Enqueued => "enqueued",
-                        DeploymentStatusSer::Active => "active",
-                    },
-                    ser.created_at.to_rfc3339(),
-                    ser.last_active_at
-                        .map(|t| t.to_rfc3339())
-                        .unwrap_or_default(),
-                    ser.description.unwrap_or_default(),
-                    ser.digest,
-                    ser.deployment_toml,
-                )
-                .expect("writing to string");
-                for file in &ser.files {
-                    writeln!(
-                        &mut output,
-                        "file path={} digest={} size={}",
-                        file.path, file.digest, file.size,
-                    )
-                    .expect("writing to string");
-                }
-                deprecated_text_response(output)
-            }
-        })
+        Ok(pretty_json_response(StatusCode::OK, &ser))
     }
 
     /// Request payload for submitting a new deployment
@@ -4970,11 +4681,7 @@ pub(crate) mod deployment {
         pub error: String,
         #[serde(default)]
         pub public_env: Vec<String>,
-        // backcompat: 0.41 responses omit this field.
-        #[serde(default)]
         pub optional_public_env: Vec<String>,
-        // backcompat: 0.41 responses omit this field.
-        #[serde(default)]
         pub required_public_env: Vec<String>,
         pub secrets: Vec<String>,
         /// Subset of `secrets` whose every reference is optional.
@@ -5235,26 +4942,18 @@ pub(crate) mod deployment {
                 });
             }
             Err(server::SubmitDeploymentError::MissingRuntimeConfig(missing)) => {
-                return Ok(match accept {
-                    AcceptHeader::Json => pretty_json_response(
-                        StatusCode::BAD_REQUEST,
-                        &MissingRuntimeConfigErrorBody {
-                            error: "missing_runtime_config".to_string(),
-                            public_env: missing.public_env.into_iter().collect(),
-                            optional_public_env: missing.optional_public_env.into_iter().collect(),
-                            required_public_env: missing.required_public_env.into_iter().collect(),
-                            secrets: missing.secrets.into_iter().collect(),
-                            optional_secrets: missing.optional_secrets.into_iter().collect(),
-                            unset_secrets: missing.unset_secrets.into_iter().collect(),
-                        },
-                    ),
-                    AcceptHeader::Text => HttpResponse {
-                        status: StatusCode::BAD_REQUEST,
-                        message: missing.to_string(),
-                        accept,
-                    }
-                    .into_response(),
-                });
+                return Ok(pretty_json_response(
+                    StatusCode::BAD_REQUEST,
+                    &MissingRuntimeConfigErrorBody {
+                        error: "missing_runtime_config".to_string(),
+                        public_env: missing.public_env.into_iter().collect(),
+                        optional_public_env: missing.optional_public_env.into_iter().collect(),
+                        required_public_env: missing.required_public_env.into_iter().collect(),
+                        secrets: missing.secrets.into_iter().collect(),
+                        optional_secrets: missing.optional_secrets.into_iter().collect(),
+                        unset_secrets: missing.unset_secrets.into_iter().collect(),
+                    },
+                ));
             }
             Err(server::SubmitDeploymentError::Other(err)) => {
                 return Err(HttpResponse {
@@ -5265,32 +4964,16 @@ pub(crate) mod deployment {
             }
             Err(server::SubmitDeploymentError::Package(pkg)) => {
                 let body = SubmitPackageErrorBody::from(&pkg);
-                return Ok(match accept {
-                    AcceptHeader::Json => pretty_json_response(StatusCode::CONFLICT, &body),
-                    AcceptHeader::Text => HttpResponse {
-                        status: StatusCode::CONFLICT,
-                        message: format!("{pkg:?}"),
-                        accept,
-                    }
-                    .into_response(),
-                });
+                return Ok(pretty_json_response(StatusCode::CONFLICT, &body));
             }
         }
         if return_id {
-            let mut response = match accept {
-                AcceptHeader::Json => pretty_json_response(
-                    StatusCode::CREATED,
-                    &DeploymentSubmitResponse {
-                        deployment_id: deployment_id.to_string(),
-                    },
-                ),
-                AcceptHeader::Text => HttpResponse {
-                    status: StatusCode::CREATED,
-                    message: deployment_id.to_string(),
-                    accept,
-                }
-                .into_response(),
-            };
+            let mut response = pretty_json_response(
+                StatusCode::CREATED,
+                &DeploymentSubmitResponse {
+                    deployment_id: deployment_id.to_string(),
+                },
+            );
             response.headers_mut().insert(
                 header::LOCATION,
                 format!("/v1/deployments/{deployment_id}")
@@ -5567,43 +5250,7 @@ mod backtrace {
             .map_err(|e| ErrorWrapper(e, accept))?;
 
         let info_ser = BacktraceInfoSer::from(info);
-        Ok(match accept {
-            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &info_ser),
-            AcceptHeader::Text => {
-                let mut output = String::new();
-                writeln!(&mut output, "execution_id: {}", info_ser.execution_id)
-                    .expect("writing to string");
-                writeln!(&mut output, "component_id: {}", info_ser.component_id)
-                    .expect("writing to string");
-                writeln!(
-                    &mut output,
-                    "version: {}..{}",
-                    info_ser.version_min_including, info_ser.version_max_excluding
-                )
-                .expect("writing to string");
-                for frame in &info_ser.wasm_backtrace.frames {
-                    writeln!(&mut output, "  {}:{}", frame.module, frame.func_name)
-                        .expect("writing to string");
-                    for sym in &frame.symbols {
-                        if let (Some(file), Some(line), Some(col)) = (&sym.file, sym.line, sym.col)
-                        {
-                            writeln!(
-                                &mut output,
-                                "    {} ({}:{}:{})",
-                                sym.func_name.as_deref().unwrap_or("??"),
-                                file,
-                                line,
-                                col
-                            )
-                            .expect("writing to string");
-                        } else if let Some(func) = &sym.func_name {
-                            writeln!(&mut output, "    {func}").expect("writing to string");
-                        }
-                    }
-                }
-                deprecated_text_response(output)
-            }
-        })
+        Ok(pretty_json_response(StatusCode::OK, &info_ser))
     }
 
     #[derive(Deserialize, Debug, IntoParams)]
@@ -5741,16 +5388,31 @@ mod backtrace {
     }
 }
 
-#[derive(AcceptExtractor, Clone, Copy, Default)]
+#[derive(Clone, Copy, Default)]
 pub(crate) enum AcceptHeader {
-    #[accept(mediatype = "application/json")]
     #[default]
     Json,
-    #[accept(mediatype = "text/plain")]
     Text,
 }
 
-// backcompat: 0.41 exposed structured text; after 0.43 remove it for resources and actions but retain WIT, backtrace sources, and generated IDs.
+#[derive(AcceptExtractor, Default)]
+enum JsonAcceptHeader {
+    #[accept(mediatype = "application/json")]
+    #[default]
+    Json,
+}
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for AcceptHeader {
+    type Rejection = axum_accept::AcceptRejection;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        JsonAcceptHeader::from_request_parts(parts, state).await?;
+        Ok(Self::Json)
+    }
+}
 
 #[derive(AcceptExtractor, Clone, Copy, Default)]
 pub(crate) enum TextDefaultAcceptHeader {
@@ -5845,7 +5507,7 @@ impl IntoResponse for HttpResponse {
                     json!({ "err": self.message })
                 },
             ),
-            AcceptHeader::Text => deprecated_text_response((self.status, self.message)),
+            AcceptHeader::Text => (self.status, self.message).into_response(),
         }
     }
 }

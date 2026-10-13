@@ -1146,7 +1146,7 @@
             },
             {
               "name": "--api-token",
-              "help": "API token required to access the API server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated"
+              "help": "API token required to access the API server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`"
             }
           ]
         },
@@ -1237,7 +1237,7 @@
         },
         {
           "name": "--api-token",
-          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated"
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`"
         }
       ],
       "subcommands": [
@@ -1642,7 +1642,7 @@
         },
         {
           "name": "--api-token",
-          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated"
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`"
         }
       ],
       "subcommands": [
@@ -1737,7 +1737,7 @@
         },
         {
           "name": "--api-token",
-          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated"
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`"
         }
       ],
       "subcommands": [
@@ -1950,7 +1950,7 @@
         },
         {
           "name": "--api-token",
-          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated"
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`"
         }
       ],
       "subcommands": [

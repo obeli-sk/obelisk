@@ -2057,14 +2057,6 @@ impl WebhookEndpointCtx {
             }
         }
         if let Some(js_config) = &config.js_config {
-            let entry_source = js_config
-                .files
-                .get(&js_config.entry_path)
-                .expect("JS module graph must contain its entry");
-            // Keep the legacy variables available to user code for single-file
-            // compatibility. The runtime itself consumes the graph variables below.
-            wasi_ctx.env("__OBELISK_JS_SOURCE__", entry_source);
-            wasi_ctx.env("__OBELISK_JS_FILE_NAME__", &js_config.entry_path);
             wasi_ctx.env("__OBELISK_JS_ENTRY_PATH__", &js_config.entry_path);
             let files = serde_json::to_string(&js_config.files.iter().collect::<Vec<_>>())
                 .expect("JS module graph must be serializable");
@@ -2620,13 +2612,6 @@ async fn handle_native_v8_request(
     );
     ctx.http_hooks.http_policy = http_policy;
     env.extend(placeholders);
-    if let Some(entry_source) = js_config.files.get(&js_config.entry_path) {
-        env.insert("__OBELISK_JS_SOURCE__".into(), entry_source.clone());
-        env.insert(
-            "__OBELISK_JS_FILE_NAME__".into(),
-            js_config.entry_path.clone(),
-        );
-    }
     let mut connection_drop_watcher = ctx.connection_drop_watcher.clone();
     let mut server_termination_watcher = ctx.server_termination_watcher.clone();
     let handle = tokio::runtime::Handle::current();
@@ -3629,6 +3614,18 @@ pub(crate) mod tests {
             SocketAddr,
             WatchGuard,
         ) {
+            start_js_webhook_server_with_runtime_and_env(source, runtime, Arc::from([])).await
+        }
+
+        async fn start_js_webhook_server_with_runtime_and_env(
+            source: &str,
+            runtime: WebhookJsRuntime,
+            env_vars: Arc<[crate::envvar::EnvVar]>,
+        ) -> (
+            tokio::task::JoinSet<Result<(), WebhookServerError>>,
+            SocketAddr,
+            WatchGuard,
+        ) {
             let sim_clock = SimClock::default();
             let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
             let fn_registry = TestingFnRegistry::new_from_components(vec![]);
@@ -3650,7 +3647,7 @@ pub(crate) mod tests {
                         .unwrap(),
                         forward_stdout: Some(StdOutputConfig::Stdout),
                         forward_stderr: Some(StdOutputConfig::Stdout),
-                        env_vars: Arc::from([]),
+                        env_vars,
                         exposed_secrets: Arc::from([]),
                         fuel: None,
                         backtrace_persist: false,
@@ -4480,23 +4477,37 @@ pub(crate) mod tests {
             test_utils::set_up();
             let js_source = r#"
                 export default function handle(request) {
-                    const jsSource = process.env["__OBELISK_JS_SOURCE__"];
-                    const missing = process.env["MISSING_VAR"];
                     return Response.json({
-                        hasJsSource: jsSource !== undefined,
-                        missingIsUndefined: missing === undefined,
+                        configured: process.env["WEBHOOK_TEST_ENV"],
+                        missingIsUndefined: process.env["MISSING_VAR"] === undefined,
+                        legacySourceIsUndefined: process.env["__OBELISK_JS_SOURCE__"] === undefined,
+                        legacyFileNameIsUndefined: process.env["__OBELISK_JS_FILE_NAME__"] === undefined,
                     });
                 }
             "#;
-            let (_server, server_addr, _termination_sender) =
-                start_js_webhook_server(js_source).await;
-            let resp = reqwest::get(format!("http://{server_addr}/"))
-                .await
-                .unwrap();
-            assert_eq!(resp.status().as_u16(), 200);
-            let body: serde_json::Value = resp.json().await.unwrap();
-            assert_eq!(body["hasJsSource"], serde_json::json!(true));
-            assert_eq!(body["missingIsUndefined"], serde_json::json!(true));
+            for runtime in [WebhookJsRuntime::BoaWasm, WebhookJsRuntime::V8] {
+                let env_vars = Arc::from([crate::envvar::EnvVar {
+                    key: "WEBHOOK_TEST_ENV".to_string(),
+                    val: "configured-value".to_string(),
+                }]);
+                let (_server, server_addr, _termination_sender) =
+                    start_js_webhook_server_with_runtime_and_env(js_source, runtime, env_vars)
+                        .await;
+                let resp = reqwest::get(format!("http://{server_addr}/"))
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status().as_u16(), 200);
+                let body: serde_json::Value = resp.json().await.unwrap();
+                assert_eq!(
+                    body,
+                    serde_json::json!({
+                        "configured": "configured-value",
+                        "missingIsUndefined": true,
+                        "legacySourceIsUndefined": true,
+                        "legacyFileNameIsUndefined": true,
+                    })
+                );
+            }
         }
 
         #[tokio::test]

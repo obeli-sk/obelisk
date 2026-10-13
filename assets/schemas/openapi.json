@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Obelisk REST API",
-    "description": "REST API for the Obelisk deterministic workflow engine. JSON is the stable representation for structured resources and actions. Text responses are stable only for WIT documents, backtrace source files, and the execution and deployment ID endpoints; all other text/plain representations are deprecated.",
+    "description": "REST API for the Obelisk deterministic workflow engine. Structured resources and actions use JSON. Text remains available for WIT documents, source files, IDs, and app-config digests. Execution logs include raw stdout/stderr payloads in JSON.",
     "contact": {
       "name": "Project Developers"
     },
@@ -1755,15 +1755,6 @@
             "name": "show_derived",
             "in": "query",
             "description": "Include logs from all derived executions",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "show_run_id",
-            "in": "query",
-            "description": "Include the run ID in text output",
             "required": false,
             "schema": {
               "type": "boolean"
@@ -3725,6 +3716,8 @@
         "type": "object",
         "required": [
           "error",
+          "optional_public_env",
+          "required_public_env",
           "secrets"
         ],
         "properties": {
@@ -3911,6 +3904,11 @@
           },
           {
             "type": "object",
+            "required": [
+              "replayed_event_count",
+              "replay_duration_ms",
+              "replay_version"
+            ],
             "properties": {
               "replay_duration_ms": {
                 "type": "integer",
@@ -4026,7 +4024,8 @@
         "type": "object",
         "required": [
           "max_age_seconds",
-          "batch_size"
+          "batch_size",
+          "dry_run"
         ],
         "properties": {
           "batch_size": {

@@ -804,7 +804,6 @@ pub(crate) async fn verify_deployment(path: PathBuf, params: VerifyParams) -> an
         crate::config::secret_registry::PublicEnvToml::default(),
         EnvVarSecretsCleanup::Noop,
         RuntimeConfigAvailability::AllowUnavailable,
-        None,
         &crate::config::env_var::StartupEnvVars::capture(),
     )?);
     let prepared_dirs = prepare_dirs(
@@ -924,7 +923,6 @@ pub(crate) async fn verify(
             let ServerStartup {
                 config_holder,
                 config,
-                legacy_api_token: _,
                 secret_registry,
                 js_runtime: _,
                 activity_vm_runtime: _,
@@ -958,7 +956,6 @@ pub(crate) async fn verify(
         let ServerStartup {
             config_holder,
             config,
-            legacy_api_token: _,
             secret_registry,
             js_runtime: _,
             activity_vm_runtime: _,

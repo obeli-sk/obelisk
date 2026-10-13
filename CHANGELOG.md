@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** *(api)* Removed structured REST `text/plain` representations earlier than the
+  previously announced after-0.43 timeline. Use JSON for resources and actions. WIT, source
+  files, IDs, scalar app-config digests, execution-log streams, and SSE remain supported.
+
+- **Breaking:** *(webhook-js)* Removed automatic `__OBELISK_JS_SOURCE__` and
+  `__OBELISK_JS_FILE_NAME__` environment variables from Boa and V8 webhooks.
+
+- **Breaking:** *(api)* System-event retention requests must explicitly supply `dry_run`.
+  Omitting it is rejected without deleting events. gRPC behavior is unchanged.
+
+- **Breaking:** *(cli)* Removed compatibility defaults for replay measurements and public
+  environment classifications in responses from servers older than 0.42.
+
+- **Breaking:** *(cli)* Removed `server run --allow-unauthenticated-api`. Use `--no-auth`.
+- **Breaking:** *(auth)* Removed the `OBELISK__API__TOKEN` fallback. Use `OBELISK_API_TOKEN`,
+  `--api-token`, or server `api.token_hashes`.
+
 ### Changed
 
 - **Breaking:** *(cli)* `deployment verify` validates deployment components without loading app/server
