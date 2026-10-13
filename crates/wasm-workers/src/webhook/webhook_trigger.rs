@@ -73,14 +73,14 @@ pub(crate) mod types {
         path: "host-wit-webhook/",
         inline: "package any:any;
                 world bindings {
-                    import obelisk:types/time@6.0.0;
-                    import obelisk:types/function@6.0.0;
-                    import obelisk:types/execution@6.0.0;
-                    import obelisk:types/backtrace@6.0.0;
-                    import obelisk:types/join-set@6.0.0;
-                    import obelisk:webhook/webhook-support@7.0.0;
-                    import obelisk:webhook/webhook-dynamic-support@7.0.0;
-                    import obelisk:webhook/webhook-dynamic-support-backtrace@7.0.0;
+                    import obelisk:types/time@6.1.0;
+                    import obelisk:types/function@6.1.0;
+                    import obelisk:types/execution@6.1.0;
+                    import obelisk:types/backtrace@6.1.0;
+                    import obelisk:types/join-set@6.1.0;
+                    import obelisk:webhook/webhook-support@7.1.0;
+                    import obelisk:webhook/webhook-dynamic-support@7.1.0;
+                    import obelisk:webhook/webhook-dynamic-support-backtrace@7.1.0;
                 }",
         world: "any:any/bindings",
         imports: {
@@ -1190,19 +1190,18 @@ impl WebhookEndpointCtx {
             .collect();
 
         match db_connection
-            .append_batch_create_new_execution(
-                created_at,
-                vec![append_req],
+            .append_schedule(
                 ExecutionId::TopLevel(self.execution_id),
                 version.clone(),
-                vec![create_req],
+                append_req,
+                create_req,
                 backtrace_infos,
             )
             .await
         {
-            Ok(new_version) => {
+            Ok((new_version, result)) => {
                 self.version = Some(new_version);
-                Ok(())
+                result.map_err(|err| ScheduleJsonError::TypeCheckError(err.to_string()).into())
             }
             Err(err) => Err(wasmtime::Error::msg(format!("database write error: {err:?}")).into()),
         }
@@ -1664,10 +1663,37 @@ impl WebhookEndpointCtx {
                 ffqn.ifc_fqn.ifc_name(),
                 ffqn.ifc_fqn.version(),
             );
-            if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE) {
+            let explicit_id = ffqn
+                .function_name
+                .ends_with(concepts::SUFFIX_FN_SCHEDULE_WITH_ID);
+            if let Some(function_name) = ffqn
+                .function_name
+                .strip_suffix(concepts::SUFFIX_FN_SCHEDULE_WITH_ID)
+                .or_else(|| ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE))
+            {
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 debug!("Got `-schedule` extension for {ffqn}");
+                let (new_execution_id, params) = if explicit_id {
+                    let (id, params) = params
+                        .split_first()
+                        .expect("typed schedule-with-id requires an ID");
+                    let Val::Record(fields) = id else {
+                        unreachable!("execution ID must be a record")
+                    };
+                    let Val::String(id) = &fields[0].1 else {
+                        unreachable!("execution ID must contain a string")
+                    };
+                    match ExecutionId::from_str(id) {
+                        Ok(id) => (id, params),
+                        Err(err) => {
+                            results[0] = Val::Result(Err(Some(Box::new(crate::workflow::workflow_ctx::schedule_with_id_error_to_wast_val(concepts::storage::ScheduleRequestError::ExecutionIdParsingError(err.to_string())).as_val()))));
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    (ExecutionId::generate(), params)
+                };
                 let Some((schedule_at, params)) = params.split_first() else {
                     error!(
                         "Error running `-schedule` extension function: exepcted at least one parameter of type `schedule-at`, got empty parameter list"
@@ -1698,7 +1724,6 @@ impl WebhookEndpointCtx {
                 let version = self.get_version_or_create().await?;
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
-                let new_execution_id = ExecutionId::generate();
                 let (_function_metadata, child_component_id) = self
                     .fn_registry
                     .get_by_exported_function(&ffqn)
@@ -1771,25 +1796,44 @@ impl WebhookEndpointCtx {
                     version_max_excluding: expected_next_version.clone(),
                     wasm_backtrace,
                 });
-                let version = db_connection
-                    .append_batch_create_new_execution(
-                        created_at,
-                        vec![child_exec_req],
-                        ExecutionId::TopLevel(self.execution_id),
-                        version.clone(),
-                        create_child_requests,
-                        backtrace_info.into_iter().collect(),
-                    )
-                    .await?;
+                let (version, result) = if explicit_id && result.is_ok() {
+                    db_connection
+                        .append_schedule(
+                            ExecutionId::TopLevel(self.execution_id),
+                            version.clone(),
+                            child_exec_req,
+                            create_child_requests
+                                .into_iter()
+                                .next()
+                                .expect("successful schedule has a create request"),
+                            backtrace_info.into_iter().collect(),
+                        )
+                        .await?
+                } else {
+                    let version = db_connection
+                        .append_batch_create_new_execution(
+                            created_at,
+                            vec![child_exec_req],
+                            ExecutionId::TopLevel(self.execution_id),
+                            version.clone(),
+                            create_child_requests,
+                            backtrace_info.into_iter().collect(),
+                        )
+                        .await?;
+                    (version, result)
+                };
                 assert_eq!(version, expected_next_version); // Expected for backtrace's version_max_excluding
                 self.version = Some(version.clone());
                 results[0] = match result {
                     Ok(()) => {
                         Val::Result(Ok(Some(Box::new(execution_id_into_val(&new_execution_id)))))
                     }
-                    Err(err) => Val::Result(Err(Some(Box::new(
-                        schedule_request_error_to_wast_val(err).as_val(),
-                    )))),
+                    Err(err) => Val::Result(Err(Some(Box::new(if explicit_id {
+                        crate::workflow::workflow_ctx::schedule_with_id_error_to_wast_val(err)
+                            .as_val()
+                    } else {
+                        schedule_request_error_to_wast_val(err).as_val()
+                    })))),
                 };
             } else {
                 error!("unrecognized `{SUFFIX_PKG_SCHEDULE}` extension function {ffqn}");
@@ -1975,9 +2019,9 @@ impl WebhookEndpointCtx {
             .map_err(|err| WasmFileError::linking_error("cannot link log activities", err))?;
         // Link type-only interfaces imported by webhook components.
         types::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx>(linker, |x| x)
-            .map_err(|err| WasmFileError::linking_error("obelisk:types/execution@6.0.0", err))?;
+            .map_err(|err| WasmFileError::linking_error("obelisk:types/execution@6.1.0", err))?;
         types::obelisk::types::function::add_to_linker::<_, WebhookEndpointCtx>(linker, |x| x)
-            .map_err(|err| WasmFileError::linking_error("obelisk:types/function@6.0.0", err))?;
+            .map_err(|err| WasmFileError::linking_error("obelisk:types/function@6.1.0", err))?;
         // link obelisk:webhook/webhook-support (native, no backtrace)
         types::obelisk::webhook::webhook_support::add_to_linker::<_, WebhookEndpointCtx>(
             linker,
@@ -3101,6 +3145,57 @@ pub(crate) mod tests {
             );
             let res = fetch_task.await.unwrap();
             assert_eq!("fiboa(2, 1) = direct call: 1", res);
+        }
+
+        #[tokio::test]
+        async fn webhook_wasm_schedule_with_id() {
+            test_utils::set_up();
+            let harness =
+                SetUpFiboWebhook::new(Database::Sqlite, LockingStrategy::ByComponentDigest).await;
+            let id = ExecutionId::generate();
+            let url = format!("http://{}/fibo/10/1?id={id}", harness.server_addr);
+            let response = reqwest::get(&url).await.unwrap();
+            assert_eq!(
+                response.status().as_u16(),
+                200,
+                "{}",
+                response.text().await.unwrap()
+            );
+            let conn = harness.db_pool.connection().await.unwrap();
+            let original = conn
+                .get_execution_event(&id, &concepts::storage::Version::new(0))
+                .await
+                .unwrap();
+            harness
+                .sim_clock
+                .move_time_forward(Duration::from_secs(120));
+            assert_eq!(reqwest::get(&url).await.unwrap().status().as_u16(), 200);
+            let response =
+                reqwest::get(format!("http://{}/fibo/11/1?id={id}", harness.server_addr))
+                    .await
+                    .unwrap();
+            assert_eq!(response.status().as_u16(), 409);
+            assert!(response.text().await.unwrap().contains("Conflict"));
+            let response = reqwest::get(format!(
+                "http://{}/fibo/10/1?id=invalid",
+                harness.server_addr
+            ))
+            .await
+            .unwrap();
+            assert_eq!(response.status().as_u16(), 409);
+            assert!(
+                response
+                    .text()
+                    .await
+                    .unwrap()
+                    .contains("ExecutionIdParsingError")
+            );
+            assert_eq!(
+                original,
+                conn.get_execution_event(&id, &concepts::storage::Version::new(0))
+                    .await
+                    .unwrap()
+            );
         }
 
         #[expand_enum_database]
@@ -4969,6 +5064,130 @@ pub(crate) mod tests {
                     .filter(|execution| execution.ffqn.to_string() == "testing:fibo/fibo.fibo")
                     .count(),
                 2
+            );
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn webhook_js_schedule_with_id(
+            #[values(WebhookJsRuntime::BoaWasm, WebhookJsRuntime::V8)] runtime: WebhookJsRuntime,
+        ) {
+            use concepts::{ExecutionId, JoinSetId, JoinSetKind, storage::Version};
+            use std::time::Duration;
+            test_utils::set_up();
+            let js_source = r#"
+                import { fiboSchedule, fiboScheduleWithId } from "testing:fibo-obelisk-schedule/fibo";
+                import * as dynamic from "obelisk:webhook-dynamic@1.0.0";
+                export default function handle(request) {
+                    const query = new URL(request.url).searchParams;
+                    const executionId = query.get('id');
+                    const n = Number(query.get('n') ?? 10);
+                    const schedule = query.has('immediate') ? { executionId } : { executionId, seconds: Number(query.get('seconds') ?? 60) };
+                    try {
+                        if (query.has('with-id')) return Response.json(fiboScheduleWithId(executionId, schedule, n));
+                        if (query.has('dynamic')) { dynamic.schedule(executionId, 'testing:fibo/fibo.fibo', [n], schedule); return Response.json(executionId); }
+                        return Response.json(fiboSchedule(schedule, n));
+                    } catch (e) { return new Response(String(e), { status: 409 }); }
+                }
+            "#;
+            let harness =
+                JsWebhookWithActivitiesHarness::new_with_runtime(js_source, false, runtime).await;
+            let id = ExecutionId::generate();
+            let url = format!("http://{}/?id={id}", harness.server_addr);
+            let mut requests = tokio::task::JoinSet::new();
+            for suffix in ["", "&with-id", "&dynamic", "", "&with-id", "&dynamic"] {
+                let url = format!("{url}{suffix}");
+                requests.spawn(async move {
+                    let response = reqwest::get(url).await.unwrap();
+                    assert_eq!(
+                        response.status().as_u16(),
+                        200,
+                        "{}",
+                        response.text().await.unwrap()
+                    );
+                });
+            }
+            while let Some(result) = requests.join_next().await {
+                result.unwrap();
+            }
+            let conn = harness.db_pool.connection().await.unwrap();
+            let original = conn
+                .get_execution_event(&id, &Version::new(0))
+                .await
+                .unwrap();
+            harness
+                .sim_clock
+                .move_time_forward(Duration::from_secs(120));
+            for suffix in ["", "&with-id", "&dynamic"] {
+                assert_eq!(
+                    reqwest::get(format!("{url}{suffix}"))
+                        .await
+                        .unwrap()
+                        .status()
+                        .as_u16(),
+                    200
+                );
+            }
+            for suffix in [
+                "&seconds=61",
+                "&n=11",
+                "&immediate",
+                "&with-id&seconds=61",
+                "&dynamic&n=11",
+            ] {
+                assert_eq!(
+                    reqwest::get(format!("{url}{suffix}"))
+                        .await
+                        .unwrap()
+                        .status()
+                        .as_u16(),
+                    409
+                );
+            }
+            let join_set = JoinSetId::new(JoinSetKind::Named, "derived".into()).unwrap();
+            let derived = id.next_level(&join_set);
+            for invalid_id in ["invalid".to_string(), derived.to_string()] {
+                for suffix in ["", "&with-id", "&dynamic"] {
+                    assert_eq!(
+                        reqwest::get(format!(
+                            "http://{}/?id={invalid_id}{suffix}",
+                            harness.server_addr
+                        ))
+                        .await
+                        .unwrap()
+                        .status()
+                        .as_u16(),
+                        409
+                    );
+                }
+            }
+            let immediate_id = ExecutionId::generate();
+            let immediate_url = format!(
+                "http://{}/?id={immediate_id}&immediate",
+                harness.server_addr
+            );
+            assert_eq!(
+                reqwest::get(&immediate_url)
+                    .await
+                    .unwrap()
+                    .status()
+                    .as_u16(),
+                200
+            );
+            harness.sim_clock.move_time_forward(Duration::from_secs(1));
+            assert_eq!(
+                reqwest::get(&immediate_url)
+                    .await
+                    .unwrap()
+                    .status()
+                    .as_u16(),
+                200
+            );
+            assert_eq!(
+                original,
+                conn.get_execution_event(&id, &Version::new(0))
+                    .await
+                    .unwrap()
             );
         }
 

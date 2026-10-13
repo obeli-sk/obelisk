@@ -552,6 +552,39 @@ expression: exports
     "extension": "schedule",
     "submittable": true
   },
+  "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-concurrent-schedule-with-id": {
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-concurrent-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
+  },
   "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-schedule": {
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-schedule",
     "parameter_types": [
@@ -580,6 +613,39 @@ expression: exports
     "extension": "schedule",
     "submittable": true
   },
+  "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-schedule-with-id": {
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
+  },
   "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-submit-json-schedule": {
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-submit-json-schedule",
     "parameter_types": [
@@ -602,6 +668,34 @@ expression: exports
     },
     "extension": "schedule",
     "submittable": true
+  },
+  "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-submit-json-schedule-with-id": {
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fiboa-submit-json-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
   },
   "testing:fibo-workflow-obelisk-schedule/workflow.fibow-schedule": {
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fibow-schedule",
@@ -631,6 +725,39 @@ expression: exports
     "extension": "schedule",
     "submittable": true
   },
+  "testing:fibo-workflow-obelisk-schedule/workflow.fibow-schedule-with-id": {
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.fibow-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "u8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
+  },
   "testing:fibo-workflow-obelisk-schedule/workflow.test-get-result-json-before-await-schedule": {
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-get-result-json-before-await-schedule",
     "parameter_types": [
@@ -648,6 +775,29 @@ expression: exports
     },
     "extension": "schedule",
     "submittable": true
+  },
+  "testing:fibo-workflow-obelisk-schedule/workflow.test-get-result-json-before-await-schedule-with-id": {
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-get-result-json-before-await-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
   },
   "testing:fibo-workflow-obelisk-schedule/workflow.test-get-result-json-err-variant-schedule": {
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-get-result-json-err-variant-schedule",
@@ -667,6 +817,29 @@ expression: exports
     "extension": "schedule",
     "submittable": true
   },
+  "testing:fibo-workflow-obelisk-schedule/workflow.test-get-result-json-err-variant-schedule-with-id": {
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-get-result-json-err-variant-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
+  },
   "testing:fibo-workflow-obelisk-schedule/workflow.test-schedule-json-schedule": {
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-schedule-json-schedule",
     "parameter_types": [
@@ -684,6 +857,29 @@ expression: exports
     },
     "extension": "schedule",
     "submittable": true
+  },
+  "testing:fibo-workflow-obelisk-schedule/workflow.test-schedule-json-schedule-with-id": {
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-schedule-json-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
   },
   "testing:fibo-workflow-obelisk-schedule/workflow.test-submit-json-malformed-params-schedule": {
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-submit-json-malformed-params-schedule",
@@ -703,6 +899,29 @@ expression: exports
     "extension": "schedule",
     "submittable": true
   },
+  "testing:fibo-workflow-obelisk-schedule/workflow.test-submit-json-malformed-params-schedule-with-id": {
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-submit-json-malformed-params-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
+  },
   "testing:fibo-workflow-obelisk-schedule/workflow.test-submit-json-unknown-ffqn-schedule": {
     "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-submit-json-unknown-ffqn-schedule",
     "parameter_types": [
@@ -720,6 +939,29 @@ expression: exports
     },
     "extension": "schedule",
     "submittable": true
+  },
+  "testing:fibo-workflow-obelisk-schedule/workflow.test-submit-json-unknown-ffqn-schedule-with-id": {
+    "ffqn": "testing:fibo-workflow-obelisk-schedule/workflow.test-submit-json-unknown-ffqn-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
   },
   "testing:fibo-workflow/workflow.fiboa": {
     "ffqn": "testing:fibo-workflow/workflow.fiboa",

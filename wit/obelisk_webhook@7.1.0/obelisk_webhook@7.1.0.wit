@@ -1,10 +1,10 @@
-package obelisk:webhook@7.0.0;
+package obelisk:webhook@7.1.0;
 
 @since(version = 5.0.0)
 interface webhook-support {
-    use obelisk:types/time@6.0.0.{schedule-at, datetime};
-    use obelisk:types/function@6.0.0.{function};
-    use obelisk:types/execution@6.0.0.{execution-id, schedule-json-error, execution-failure-kind};
+    use obelisk:types/time@6.1.0.{schedule-at, datetime};
+    use obelisk:types/function@6.1.0.{function};
+    use obelisk:types/execution@6.1.0.{execution-id, schedule-json-error, execution-failure-kind};
 
     /// Error variants that may occur when calling `get-status`.
     @since(version = 5.0.0)
@@ -113,9 +113,9 @@ interface webhook-support {
 /// Dynamically dispatch functions selected at runtime.
 @since(version = 7.0.0)
 interface webhook-dynamic-support {
-    use obelisk:types/time@6.0.0.{schedule-at};
-    use obelisk:types/function@6.0.0.{function};
-    use obelisk:types/execution@6.0.0.{execution-id, schedule-json-error};
+    use obelisk:types/time@6.1.0.{schedule-at};
+    use obelisk:types/function@6.1.0.{function};
+    use obelisk:types/execution@6.1.0.{execution-id, schedule-json-error};
 
     /// Call a function and wait for the result.
     /// Creates a child execution, waits for it to complete, and returns the result.
@@ -130,10 +130,10 @@ interface webhook-dynamic-support {
 /// Backtrace-carrying variants of `webhook-dynamic-support`.
 @since(version = 7.0.0)
 interface webhook-dynamic-support-backtrace {
-    use obelisk:types/time@6.0.0.{schedule-at};
-    use obelisk:types/function@6.0.0.{function};
-    use obelisk:types/execution@6.0.0.{execution-id, schedule-json-error};
-    use obelisk:types/backtrace@6.0.0.{wasm-backtrace};
+    use obelisk:types/time@6.1.0.{schedule-at};
+    use obelisk:types/function@6.1.0.{function};
+    use obelisk:types/execution@6.1.0.{execution-id, schedule-json-error};
+    use obelisk:types/backtrace@6.1.0.{wasm-backtrace};
 
     /// See `webhook-dynamic-support.call-json`.
     call-json: func(function: function, params: string, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;

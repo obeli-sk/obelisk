@@ -315,30 +315,51 @@ fn create_direct_call_proxy(
 fn create_schedule_proxy(
     interface_name: &str,
     function_name: &str,
+    with_id: bool,
     context: &mut Context,
 ) -> JsValue {
     let ifc = js_string!(interface_name);
     let func = js_string!(function_name);
 
     let native = NativeFunction::from_copy_closure_with_captures(
-        |_this, args, (ifc, func): &(JsString, JsString), ctx| {
+        |_this, args, (ifc, func, with_id): &(JsString, JsString, bool), ctx| {
             let function = Function {
                 interface_name: ifc.to_std_string_escaped(),
                 function_name: func.to_std_string_escaped(),
             };
 
             // First argument is scheduleAt
-            let schedule = parse_schedule_at(args.get_or_undefined(0), ctx)?;
+            let offset = usize::from(*with_id);
+            let schedule_value = args.get_or_undefined(offset);
+            let schedule = parse_schedule_at(schedule_value, ctx)?;
 
             // Remaining arguments are the function params
             let array = boa_engine::object::builtins::JsArray::new(ctx)?;
-            for (i, arg) in args.iter().skip(1).enumerate() {
+            for (i, arg) in args.iter().skip(offset + 1).enumerate() {
                 array.set(i as u32, arg.clone(), false, ctx)?;
             }
             let params_json = json_stringify(&array.into(), ctx)?;
 
             let backtrace = capture_backtrace(ctx);
-            let exec_id = execution_id_generate(Some(&backtrace));
+            let explicit_id = if *with_id {
+                Some(args.get_or_undefined(0).clone())
+            } else {
+                schedule_value
+                    .as_object()
+                    .map(|obj| obj.get(js_string!("executionId"), ctx))
+                    .transpose()?
+            };
+            let exec_id = match explicit_id.filter(|id| *with_id || !id.is_undefined()) {
+                Some(id) => ExecutionId {
+                    id: id
+                        .as_string()
+                        .ok_or_else(|| {
+                            JsNativeError::typ().with_message("executionId must be a string")
+                        })?
+                        .to_std_string_escaped(),
+                },
+                None => execution_id_generate(Some(&backtrace)),
+            };
 
             match schedule_json(
                 &exec_id,
@@ -353,7 +374,7 @@ fn create_schedule_proxy(
                     .into()),
             }
         },
-        (ifc, func),
+        (ifc, func, with_id),
     );
     native.to_js_function(context.realm()).into()
 }
@@ -703,7 +724,8 @@ fn create_workflow_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
         ProxyKind::Schedule {
             interface_name,
             function_name,
-        } => create_schedule_proxy(interface_name, function_name, context),
+            with_id,
+        } => create_schedule_proxy(interface_name, function_name, with_id, context),
         ProxyKind::ExtSubmit {
             interface_name,
             function_name,
@@ -1737,6 +1759,9 @@ fn parse_schedule_at(value: &JsValue, ctx: &mut Context) -> JsResult<ScheduleAt>
         }));
     }
 
+    if !obj.get(js_string!("executionId"), ctx)?.is_undefined() {
+        return Ok(ScheduleAt::Now);
+    }
     Err(JsNativeError::typ()
         .with_message(
             "schedule object has no recognized key (milliseconds, seconds, minutes, hours, days, at) and is not a Date",

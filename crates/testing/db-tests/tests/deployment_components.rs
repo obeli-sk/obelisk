@@ -352,7 +352,7 @@ async fn component_metadata_upsert_replaces_only_imports(database: Database) {
     };
     api_conn
         .upsert_component_metadata(vec![record(
-            "obelisk:workflow/workflow-dynamic-support@7.0.0.call-json",
+            "obelisk:workflow/workflow-dynamic-support@7.1.0.call-json",
             "testing:pkg/exported.fn",
             "package testing:pkg;",
         )])

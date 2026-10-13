@@ -24,7 +24,7 @@ world root {
     export testing:stub-activity-obelisk-ext/activity;
     export testing:stub-activity-obelisk-stub/activity;
 }
-package obelisk:types@6.0.0 {
+package obelisk:types@6.1.0 {
     @since(version = 3.0.0)
     interface time {
         @since(version = 3.0.0)
@@ -142,6 +142,17 @@ package obelisk:types@6.0.0 {
         variant schedule-json-error {
             /// See `Function` definition
             ffqn-parsing-error(string),
+            function-not-found,
+            type-check-error(string),
+            value-too-large(u64),
+        }
+
+        /// Errors from typed scheduling with a caller-supplied top-level execution ID.
+        @since(version = 6.1.0)
+        variant schedule-with-id-error {
+            execution-id-parsing-error(string),
+            execution-id-must-be-top-level,
+            conflict,
             function-not-found,
             type-check-error(string),
             value-too-large(u64),
@@ -300,9 +311,9 @@ package testing:stub-activity {
 
 package testing:stub-activity-obelisk-ext {
     interface activity {
-        use obelisk:types/execution@6.0.0.{execution-id};
-        use obelisk:types/join-set@6.0.0.{join-set};
-        use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
+        use obelisk:types/execution@6.1.0.{execution-id};
+        use obelisk:types/join-set@6.1.0.{join-set};
+        use obelisk:types/execution@6.1.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
         foo-submit: func(join-set: borrow<join-set>, arg: string) -> result<execution-id, child-execution-request-error>;
 
@@ -321,7 +332,7 @@ package testing:stub-activity-obelisk-ext {
 
 package testing:stub-activity-obelisk-stub {
     interface activity {
-        use obelisk:types/execution@6.0.0.{execution-id, stub-error};
+        use obelisk:types/execution@6.1.0.{execution-id, stub-error};
 
         foo-stub: func(execution-id: execution-id, execution-result: result<string>) -> result<_, stub-error>;
 

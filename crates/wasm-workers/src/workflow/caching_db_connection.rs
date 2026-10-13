@@ -35,6 +35,14 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         called_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite>;
 
+    async fn append_schedule(
+        &mut self,
+        mut request: AppendRequest,
+        version: Version,
+        child_req: CreateRequest,
+        backtrace: Option<BacktraceInfo>,
+    ) -> Result<Result<(), storage::ScheduleRequestError>, DbErrorWrite>;
+
     // Caller must trigger flushing before this call.
     async fn append_blocking(
         &mut self,
@@ -251,6 +259,28 @@ impl WorkflowDbConnection for CachingDbConnection {
 
     async fn append_backtrace(&mut self, _backtrace: BacktraceInfo) -> Result<(), DbErrorWrite> {
         unreachable!("CachingDbConnection never captures backtraces")
+    }
+
+    async fn append_schedule(
+        &mut self,
+        request: AppendRequest,
+        version: Version,
+        child_req: CreateRequest,
+        _backtrace: Option<BacktraceInfo>,
+    ) -> Result<Result<(), storage::ScheduleRequestError>, DbErrorWrite> {
+        self.flush_non_blocking_event_cache(request.created_at)
+            .await?;
+        let (_, result) = self
+            .db_connection
+            .append_schedule(
+                self.execution_id.clone(),
+                version,
+                request,
+                child_req,
+                vec![],
+            )
+            .await?;
+        Ok(result)
     }
 
     async fn append_non_blocking(

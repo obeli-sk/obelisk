@@ -301,6 +301,7 @@ pub(crate) struct ScheduleFnCall<'a> {
     schedule_at: HistoryEventScheduleAt,
     #[debug(skip)]
     target_params: &'a [Val],
+    execution_id: Option<Result<ExecutionId, storage::ScheduleRequestError>>,
     #[debug(skip)]
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
@@ -312,6 +313,26 @@ impl ScheduleFnCall<'_> {
         wasm_backtrace: Option<storage::WasmBacktrace>,
         target_component_id: ComponentId,
     ) -> Result<ScheduleFnCall<'_>, WorkflowFunctionError> {
+        let (execution_id, params) = if called_ffqn
+            .function_name
+            .ends_with(concepts::SUFFIX_FN_SCHEDULE_WITH_ID)
+        {
+            let (id, params) = params
+                .split_first()
+                .expect("typed schedule-with-id requires an ID");
+            let id = match id {
+                Val::Record(fields) => match &fields[0].1 {
+                    Val::String(id) => id.parse::<ExecutionId>().map_err(|err| {
+                        storage::ScheduleRequestError::ExecutionIdParsingError(err.to_string())
+                    }),
+                    _ => unreachable!("execution ID must contain a string"),
+                },
+                _ => unreachable!("execution ID must be a record"),
+            };
+            (Some(id), params)
+        } else {
+            (None, params)
+        };
         let Some((schedule_at, params)) = params.split_first() else {
             return Err(WorkflowFunctionError::ImportedFunctionCallError {
                 ffqn: called_ffqn,
@@ -347,6 +368,7 @@ impl ScheduleFnCall<'_> {
             target_component_id,
             schedule_at,
             target_params: params,
+            execution_id,
             wasm_backtrace,
         })
     }
@@ -362,16 +384,26 @@ impl ScheduleFnCall<'_> {
             target_component_id,
             schedule_at,
             target_params,
+            execution_id,
             wasm_backtrace,
         } = self;
         // Generate new ULID using this execution, changing the randomness part using this execution's seed.
         // We are ignoring the possibility of ExecutionId conflict:
         // According to birthday paradox, with 80 bits of randomness, a 50% chance
         // of a conflict will occur only after we generate 10^12 ULIDs.
-        let execution_id = ExecutionId::from_parts(
-            ctx.execution_id.get_top_level().timestamp_part(),
-            ctx.next_u128(),
-        );
+        let idempotent = execution_id.is_some();
+        let execution_id = match execution_id {
+            Some(Ok(id)) => id,
+            Some(Err(err)) => {
+                return Ok(Val::Result(Err(Some(Box::new(
+                    schedule_with_id_error_to_wast_val(err).as_val(),
+                )))));
+            }
+            None => ExecutionId::from_parts(
+                ctx.execution_id.get_top_level().timestamp_part(),
+                ctx.next_u128(),
+            ),
+        };
         let scheduled_at_if_new = schedule_at.as_date_time(called_at).map_err(|err| {
             WorkflowFunctionError::ImportedFunctionCallError {
                 ffqn: called_ffqn.clone(),
@@ -385,6 +417,7 @@ impl ScheduleFnCall<'_> {
             schedule_at,
             scheduled_at_if_new,
             execution_id,
+            idempotent,
             ffqn: target_ffqn,
             params_hash: concepts::persisted_value::compact_json_sha256(&params),
             intent: ScheduleIntent::Ok {
@@ -402,9 +435,11 @@ impl ScheduleFnCall<'_> {
         .await?;
         Ok(match result {
             Ok(()) => wasmtime::component::Val::Result(Ok(Some(Box::new(execution_id_val)))),
-            Err(err) => wasmtime::component::Val::Result(Err(Some(Box::new(
-                schedule_request_error_to_wast_val(err).as_val(),
-            )))),
+            Err(err) => wasmtime::component::Val::Result(Err(Some(Box::new(if idempotent {
+                schedule_with_id_error_to_wast_val(err).as_val()
+            } else {
+                schedule_request_error_to_wast_val(err).as_val()
+            })))),
         })
     }
 }
@@ -504,8 +539,30 @@ fn child_request_error_to_wast_val(err: storage::ChildExecutionRequestError) -> 
     }
 }
 
+pub(crate) fn schedule_with_id_error_to_wast_val(err: storage::ScheduleRequestError) -> WastVal {
+    match err {
+        storage::ScheduleRequestError::ExecutionIdParsingError(msg) => WastVal::Variant(
+            ValKey::from_kebab("execution-id-parsing-error"),
+            Some(Box::new(WastVal::String(msg))),
+        ),
+        storage::ScheduleRequestError::ExecutionIdMustBeTopLevel => {
+            WastVal::Variant(ValKey::from_kebab("execution-id-must-be-top-level"), None)
+        }
+        storage::ScheduleRequestError::Conflict => {
+            WastVal::Variant(ValKey::from_kebab("conflict"), None)
+        }
+        err => schedule_request_error_to_wast_val(err),
+    }
+}
+
 pub(crate) fn schedule_request_error_to_wast_val(err: storage::ScheduleRequestError) -> WastVal {
     match err {
+        err @ (storage::ScheduleRequestError::ExecutionIdParsingError(_)
+        | storage::ScheduleRequestError::ExecutionIdMustBeTopLevel
+        | storage::ScheduleRequestError::Conflict) => WastVal::Variant(
+            ValKey::from_kebab("type-check-error"),
+            Some(Box::new(WastVal::String(err.to_string()))),
+        ),
         storage::ScheduleRequestError::FunctionNotFound => {
             WastVal::Variant(ValKey::from_kebab("function-not-found"), None)
         }
@@ -913,7 +970,10 @@ impl<'a> ImportedFnCall<'a> {
                 called_ffqn.ifc_fqn.ifc_name(),
                 called_ffqn.ifc_fqn.version(),
             );
-            if let Some(function_name) = called_ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
+            if let Some(function_name) = called_ffqn
+                .function_name
+                .strip_suffix(concepts::SUFFIX_FN_SCHEDULE_WITH_ID)
+                .or_else(|| called_ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE))
             {
                 let target_ffqn = FunctionFqn::new_arc(
                     Arc::from(target_ifc_fqn.to_string()),
@@ -1020,12 +1080,12 @@ impl WasiView for WorkflowCtx {
     }
 }
 
-const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@7.0.0";
+const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@7.1.0";
 const IFC_FQN_WORKFLOW_SUPPORT_BACKTRACE: &str =
-    "obelisk:workflow/workflow-support-backtrace@7.0.0";
-const IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT: &str = "obelisk:workflow/workflow-dynamic-support@7.0.0";
+    "obelisk:workflow/workflow-support-backtrace@7.1.0";
+const IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT: &str = "obelisk:workflow/workflow-dynamic-support@7.1.0";
 const IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT_BACKTRACE: &str =
-    "obelisk:workflow/workflow-dynamic-support-backtrace@7.0.0";
+    "obelisk:workflow/workflow-dynamic-support-backtrace@7.1.0";
 
 #[derive(Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub(crate) enum ReplayKind {
@@ -1248,11 +1308,11 @@ impl WorkflowCtx {
         // Link type-only interfaces imported by workflow components.
         typesTypes::execution::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| state)
             .map_err(|err| {
-                WasmFileError::linking_error("cannot link obelisk:types/execution@6.0.0", err)
+                WasmFileError::linking_error("cannot link obelisk:types/execution@6.1.0", err)
             })?;
         typesTypes::function::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| state)
             .map_err(|err| {
-                WasmFileError::linking_error("cannot link obelisk:types/function@6.0.0", err)
+                WasmFileError::linking_error("cannot link obelisk:types/function@6.1.0", err)
             })?;
 
         // link obelisk:workflow/workflow-support interface (native, no backtrace)
@@ -1271,7 +1331,7 @@ impl WorkflowCtx {
     }
 
     fn add_to_linker_join_set(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
-        const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@6.0.0";
+        const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@6.1.0";
         let mut inst_join_set_ifc = linker
             .instance(IFC_FQN_JOIN_SET)
             .map_err(|err| WasmFileError::linking_error(IFC_FQN_JOIN_SET, err))?;
@@ -1350,7 +1410,7 @@ impl WorkflowCtx {
         })
     }
 
-    /// Register the plain `workflow-support` functions for 6.0.0. Native components
+    /// Register the plain `workflow-support` functions for 7.1.0. Native components
     /// import these; they carry no `backtrace` param. Any host-side backtrace is still
     /// captured when `backtrace_capture` is enabled (`get_host_maybe_capture_backtrace`
     /// with `None`). The backtrace-carrying variants live on
@@ -1834,7 +1894,7 @@ impl WorkflowCtx {
     }
 
     /// Register the backtrace-carrying `workflow-support-backtrace` functions for
-    /// 6.0.0. Only interpreted runtimes (the JS runtime) import these; they supply a
+    /// 7.1.0. Only interpreted runtimes (the JS runtime) import these; they supply a
     /// source-level `backtrace`. The event-persisting subset only (getters and id
     /// accessors live solely on the plain `workflow-support` interface).
     fn add_to_linker_workflow_support_backtrace(
@@ -3028,6 +3088,7 @@ pub(crate) mod workflow_support {
                 schedule_at,
                 scheduled_at_if_new,
                 execution_id,
+                idempotent: true,
                 ffqn: target_ffqn,
                 params_hash,
                 intent,
@@ -3044,6 +3105,11 @@ pub(crate) mod workflow_support {
 
             match result {
                 Ok(()) => Ok(Ok(())),
+                Err(
+                    err @ (ScheduleRequestError::ExecutionIdParsingError(_)
+                    | ScheduleRequestError::ExecutionIdMustBeTopLevel
+                    | ScheduleRequestError::Conflict),
+                ) => Ok(Err(ScheduleJsonError::TypeCheckError(err.to_string()))),
                 Err(ScheduleRequestError::FunctionNotFound) => {
                     self.error("schedule-json: function not found".to_string())
                         .await;

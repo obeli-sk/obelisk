@@ -50,7 +50,7 @@ fn interface_functions(
 static WORKFLOW_DYNAMIC_SUPPORT: LazyLock<Vec<FunctionMetadata>> = LazyLock::new(|| {
     interface_functions(
         WIT_OBELISK_WORKFLOW_PACKAGE[2],
-        "obelisk:workflow/workflow-dynamic-support@7.0.0",
+        "obelisk:workflow/workflow-dynamic-support@7.1.0",
         ComponentType::Workflow,
     )
 });
@@ -58,7 +58,7 @@ static WORKFLOW_DYNAMIC_SUPPORT: LazyLock<Vec<FunctionMetadata>> = LazyLock::new
 static WEBHOOK_DYNAMIC_SUPPORT: LazyLock<Vec<FunctionMetadata>> = LazyLock::new(|| {
     interface_functions(
         WIT_OBELISK_WEBHOOK_PACKAGE[2],
-        "obelisk:webhook/webhook-dynamic-support@7.0.0",
+        "obelisk:webhook/webhook-dynamic-support@7.1.0",
         ComponentType::WebhookEndpoint,
     )
 });
@@ -320,7 +320,7 @@ impl JsDispatchPolicy {
         for (specifier, functions) in imports {
             let specifier = specifier.to_string();
             let extension = [
-                (SCHEDULE_SUFFIX, &["-schedule"][..]),
+                (SCHEDULE_SUFFIX, &["-schedule-with-id", "-schedule"][..]),
                 (EXT_SUFFIX, &["-submit", "-await-next", "-get"][..]),
                 (STUB_SUFFIX, &["-stub"][..]),
             ]
@@ -584,7 +584,7 @@ mod tests {
         assert!(
             dynamic
                 .iter()
-                .all(|ffqn| ffqn.starts_with("obelisk:workflow/workflow-dynamic-support@7.0.0."))
+                .all(|ffqn| ffqn.starts_with("obelisk:workflow/workflow-dynamic-support@7.1.0."))
         );
     }
 
@@ -601,12 +601,12 @@ mod tests {
             (
                 WORKFLOW_BUILTIN_MODULES,
                 "obelisk:workflow-dynamic@1.0.0",
-                "obelisk:workflow/workflow-dynamic-support@7.0.0",
+                "obelisk:workflow/workflow-dynamic-support@7.1.0",
             ),
             (
                 WEBHOOK_BUILTIN_MODULES,
                 "obelisk:webhook-dynamic@1.0.0",
-                "obelisk:webhook/webhook-dynamic-support@7.0.0",
+                "obelisk:webhook/webhook-dynamic-support@7.1.0",
             ),
         ] {
             for declaration in [

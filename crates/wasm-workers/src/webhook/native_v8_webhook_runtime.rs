@@ -493,11 +493,11 @@ async fn dispatch_host(
         "schedule" => {
             let target = string_arg(args, "target")?;
             let (interface_name, function_name) = split_target(target)?;
-            let execution_id = args
-                .get("executionId")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| concepts::ExecutionId::generate().to_string());
+            let execution_id = if args.get("executionId").is_some() {
+                string_arg(args, "executionId")?.to_owned()
+            } else {
+                concepts::ExecutionId::generate().to_string()
+            };
             let params = serde_json::to_string(args.get("params").unwrap_or(&Value::Null))
                 .map_err(JsErrorBox::from_err)?;
             ctx.schedule_json_inner(
@@ -677,6 +677,9 @@ fn schedule_arg(
                 .map_err(|_| JsErrorBox::type_error("days out of range"))?,
         )));
     }
+    if schedule.get("executionId").is_some() {
+        return Ok(ScheduleAt::Now);
+    }
     Err(JsErrorBox::type_error("unsupported schedule"))
 }
 
@@ -773,8 +776,13 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
     let schedule_base = strip_specifier_suffix(specifier, SCHEDULE_SUFFIX);
     let exports = functions.iter().enumerate().fold(String::new(), |mut exports, (index, function)| {
         let (target, body) = if let Some(base) = &schedule_base {
-            let name = function.wit_name.strip_suffix("-schedule").expect("validated schedule import");
-            (format!("{base}.{name}"), "(schedule, ...params) => host('schedule', { target: TARGET, schedule, params })".to_owned())
+            let with_id = function.wit_name.ends_with("-schedule-with-id");
+            let name = function.wit_name.strip_suffix("-schedule-with-id").or_else(|| function.wit_name.strip_suffix("-schedule")).expect("validated schedule import");
+            (format!("{base}.{name}"), if with_id {
+                "(executionId, schedule, ...params) => { if (typeof executionId !== 'string') throw new TypeError('executionId must be a string'); return host('schedule', { target: TARGET, schedule, params, executionId }); }".to_owned()
+            } else {
+                "(schedule, ...params) => host('schedule', { target: TARGET, schedule, params, executionId: schedule?.executionId })".to_owned()
+            })
         } else {
             (format!("{specifier}.{}", function.wit_name), "(...params) => unwrap(host('call', { target: TARGET, params }))".to_owned())
         };

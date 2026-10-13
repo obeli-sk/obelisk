@@ -1,4 +1,4 @@
-package obelisk:types@6.0.0;
+package obelisk:types@6.1.0;
 
 @since(version = 3.0.0)
 interface time {
@@ -117,6 +117,17 @@ interface execution {
     variant schedule-json-error {
         /// See `Function` definition
         ffqn-parsing-error(string),
+        function-not-found,
+        type-check-error(string),
+        value-too-large(u64),
+    }
+
+    /// Errors from typed scheduling with a caller-supplied top-level execution ID.
+    @since(version = 6.1.0)
+    variant schedule-with-id-error {
+        execution-id-parsing-error(string),
+        execution-id-must-be-top-level,
+        conflict,
         function-not-found,
         type-check-error(string),
         value-too-large(u64),

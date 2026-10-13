@@ -1,8 +1,8 @@
 package any:any;
 
 world any {
-    import obelisk:webhook/webhook-support@7.0.0;
-    import obelisk:webhook/webhook-dynamic-support@7.0.0;
-    import obelisk:webhook/webhook-dynamic-support-backtrace@7.0.0;
+    import obelisk:webhook/webhook-support@7.1.0;
+    import obelisk:webhook/webhook-dynamic-support@7.1.0;
+    import obelisk:webhook/webhook-dynamic-support-backtrace@7.1.0;
     import obelisk:log/log@1.0.0;
 }

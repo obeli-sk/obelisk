@@ -5,7 +5,7 @@ expression: wit
 package root:component;
 
 world root {
-    import obelisk:types/time@6.0.0;
+    import obelisk:types/time@6.1.0;
     import wasi:io/poll@0.2.9;
     import wasi:clocks/monotonic-clock@0.2.9;
     import wasi:io/error@0.2.9;
@@ -25,7 +25,7 @@ world root {
     export testing:sleep-obelisk-ext/sleep;
     export testing:sleep-obelisk-schedule/sleep;
 }
-package obelisk:types@6.0.0 {
+package obelisk:types@6.1.0 {
     @since(version = 3.0.0)
     interface time {
         @since(version = 3.0.0)
@@ -143,6 +143,17 @@ package obelisk:types@6.0.0 {
         variant schedule-json-error {
             /// See `Function` definition
             ffqn-parsing-error(string),
+            function-not-found,
+            type-check-error(string),
+            value-too-large(u64),
+        }
+
+        /// Errors from typed scheduling with a caller-supplied top-level execution ID.
+        @since(version = 6.1.0)
+        variant schedule-with-id-error {
+            execution-id-parsing-error(string),
+            execution-id-must-be-top-level,
+            conflict,
             function-not-found,
             type-check-error(string),
             value-too-large(u64),
@@ -296,7 +307,7 @@ package wasi:cli@0.2.9 {
 
 package testing:sleep {
     interface sleep {
-        use obelisk:types/time@6.0.0.{duration};
+        use obelisk:types/time@6.1.0.{duration};
 
         sleep: func(duration: duration) -> result;
 
@@ -309,10 +320,10 @@ package testing:sleep {
 
 package testing:sleep-obelisk-ext {
     interface sleep {
-        use obelisk:types/time@6.0.0.{duration};
-        use obelisk:types/execution@6.0.0.{execution-id};
-        use obelisk:types/join-set@6.0.0.{join-set};
-        use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
+        use obelisk:types/time@6.1.0.{duration};
+        use obelisk:types/execution@6.1.0.{execution-id};
+        use obelisk:types/join-set@6.1.0.{join-set};
+        use obelisk:types/execution@6.1.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
         sleep-submit: func(join-set: borrow<join-set>, duration: duration) -> result<execution-id, child-execution-request-error>;
 
@@ -337,15 +348,21 @@ package testing:sleep-obelisk-ext {
 
 package testing:sleep-obelisk-schedule {
     interface sleep {
-        use obelisk:types/time@6.0.0.{duration};
-        use obelisk:types/execution@6.0.0.{execution-id};
-        use obelisk:types/time@6.0.0.{schedule-at};
-        use obelisk:types/execution@6.0.0.{schedule-json-error};
+        use obelisk:types/time@6.1.0.{duration};
+        use obelisk:types/execution@6.1.0.{execution-id};
+        use obelisk:types/time@6.1.0.{schedule-at};
+        use obelisk:types/execution@6.1.0.{schedule-json-error, schedule-with-id-error};
 
         sleep-schedule: func(schedule-at: schedule-at, duration: duration) -> result<execution-id, schedule-json-error>;
 
+        sleep-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, duration: duration) -> result<execution-id, schedule-with-id-error>;
+
         sleep-loop-schedule: func(schedule-at: schedule-at, duration: duration, iterations: u32) -> result<execution-id, schedule-json-error>;
 
+        sleep-loop-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, duration: duration, iterations: u32) -> result<execution-id, schedule-with-id-error>;
+
         noop-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
+
+        noop-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
     }
 }
