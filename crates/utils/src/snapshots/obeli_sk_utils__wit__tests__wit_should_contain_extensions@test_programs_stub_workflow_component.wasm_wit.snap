@@ -149,6 +149,16 @@ package obelisk:types@6.0.0 {
             value-too-large(u64),
         }
 
+        /// Errors from typed scheduling with a caller-supplied top-level execution ID.
+        variant schedule-with-id-error {
+            execution-id-parsing-error(string),
+            execution-id-must-be-top-level,
+            conflict,
+            function-not-found,
+            type-check-error(string),
+            value-too-large(u64),
+        }
+
         variant child-execution-request-error {
             function-not-found,
             type-check-error(string),
@@ -386,32 +396,58 @@ package testing:stub-workflow-obelisk-schedule {
     interface workflow {
         use obelisk:types/execution@6.0.0.{execution-id};
         use obelisk:types/time@6.0.0.{schedule-at};
-        use obelisk:types/execution@6.0.0.{schedule-json-error};
+        use obelisk:types/execution@6.0.0.{schedule-json-error, schedule-with-id-error};
 
         submit-stub-await-schedule: func(schedule-at: schedule-at, arg: string) -> result<execution-id, schedule-json-error>;
 
+        submit-stub-await-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, arg: string) -> result<execution-id, schedule-with-id-error>;
+
         submit-await-schedule: func(schedule-at: schedule-at, arg: string) -> result<execution-id, schedule-json-error>;
+
+        submit-await-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, arg: string) -> result<execution-id, schedule-with-id-error>;
 
         submit-await-next-schedule: func(schedule-at: schedule-at, arg: string) -> result<execution-id, schedule-json-error>;
 
+        submit-await-next-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, arg: string) -> result<execution-id, schedule-with-id-error>;
+
         noret-submit-await-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
+
+        noret-submit-await-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
 
         submit-race-join-next-stub-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        submit-race-join-next-stub-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         submit-race-join-next-stub-error-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
+
+        submit-race-join-next-stub-error-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
 
         submit-race-join-next-delay-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        submit-race-join-next-delay-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         stub-subworkflow-schedule: func(schedule-at: schedule-at, execution-id: execution-id, retval: string) -> result<execution-id, schedule-json-error>;
+
+        stub-subworkflow-schedule-with-id: func(execution-id-a: execution-id, schedule-at: schedule-at, execution-id: execution-id, retval: string) -> result<execution-id, schedule-with-id-error>;
 
         await-next-produces-all-processed-error-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        await-next-produces-all-processed-error-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         join-next-in-scope-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
+
+        join-next-in-scope-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
 
         join-set-close-cancellation-order-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        join-set-close-cancellation-order-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         invoke-expect-execution-error-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        invoke-expect-execution-error-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         stub-not-found-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
+
+        stub-not-found-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
     }
 }

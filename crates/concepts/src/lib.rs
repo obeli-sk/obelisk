@@ -397,6 +397,7 @@ enum ParamsInternal {
 pub const SUFFIX_FN_SUBMIT: &str = "-submit";
 pub const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 pub const SUFFIX_FN_SCHEDULE: &str = "-schedule";
+pub const SUFFIX_FN_SCHEDULE_WITH_ID: &str = "-schedule-with-id";
 pub const SUFFIX_FN_STUB: &str = "-stub";
 pub const SUFFIX_FN_GET: &str = "-get";
 
@@ -416,6 +417,7 @@ pub enum FunctionExtension {
     Submit,
     AwaitNext,
     Schedule,
+    ScheduleWithId,
     Stub,
     Get,
 }
@@ -426,6 +428,7 @@ impl FunctionExtension {
             FunctionExtension::Submit => SUFFIX_FN_SUBMIT,
             FunctionExtension::AwaitNext => SUFFIX_FN_AWAIT_NEXT,
             FunctionExtension::Schedule => SUFFIX_FN_SCHEDULE,
+            FunctionExtension::ScheduleWithId => SUFFIX_FN_SCHEDULE_WITH_ID,
             FunctionExtension::Stub => SUFFIX_FN_STUB,
             FunctionExtension::Get => SUFFIX_FN_GET,
         }
@@ -440,7 +443,7 @@ impl FunctionExtension {
                 FunctionExtension::Submit | FunctionExtension::AwaitNext | FunctionExtension::Get
             ) | (
                 PackageExtension::ObeliskSchedule,
-                FunctionExtension::Schedule
+                FunctionExtension::Schedule | FunctionExtension::ScheduleWithId
             ) | (PackageExtension::ObeliskStub, FunctionExtension::Stub)
         )
     }

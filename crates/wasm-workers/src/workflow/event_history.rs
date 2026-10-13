@@ -1773,6 +1773,7 @@ impl EventHistory {
                 schedule_at,
                 scheduled_at_if_new,
                 execution_id: new_execution_id,
+                idempotent,
                 ffqn,
                 params_hash,
                 intent,
@@ -1837,7 +1838,7 @@ impl EventHistory {
                     result,
                 };
 
-                let history_event = (event.clone(), version.clone());
+                let mut history_event = (event.clone(), version.clone());
                 let append_req = AppendRequest {
                     event: ExecutionRequest::HistoryEvent { event },
                     created_at: called_at,
@@ -1854,15 +1855,28 @@ impl EventHistory {
 
                 // If we have a child_req, use Schedule event; otherwise just persist the history event
                 if let Some(child_req) = maybe_child_req {
-                    let non_blocking_event = CacheableDbEvent::Schedule {
-                        request: append_req,
-                        version: version.clone(),
-                        child_req,
-                        backtrace,
-                    };
-                    db_connection
-                        .append_non_blocking(non_blocking_event, called_at)
-                        .await?;
+                    if idempotent {
+                        let result = db_connection
+                            .append_schedule(append_req, version.clone(), child_req, backtrace)
+                            .await?;
+                        if let HistoryEvent::Schedule {
+                            result: stored_result,
+                            ..
+                        } = &mut history_event.0
+                        {
+                            *stored_result = result;
+                        }
+                    } else {
+                        let non_blocking_event = CacheableDbEvent::Schedule {
+                            request: append_req,
+                            version: version.clone(),
+                            child_req,
+                            backtrace,
+                        };
+                        db_connection
+                            .append_non_blocking(non_blocking_event, called_at)
+                            .await?;
+                    }
                 } else {
                     // Error case: only persist the history event, no child creation
                     let non_blocking_event = CacheableDbEvent::ScheduleError {
@@ -3049,6 +3063,7 @@ pub(crate) struct Schedule {
     pub(crate) schedule_at: HistoryEventScheduleAt, // Intention that must be compared when checking determinism
     pub(crate) scheduled_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
     pub(crate) execution_id: ExecutionId,
+    pub(crate) idempotent: bool,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params_hash: concepts::component_id::Digest,
     pub(crate) intent: ScheduleIntent,
@@ -4610,6 +4625,7 @@ mod tests {
                     schedule_at: HistoryEventScheduleAt::Now,
                     scheduled_at_if_new: sim_clock.now(),
                     execution_id: ExecutionId::generate(),
+                    idempotent: false,
                     ffqn: MOCK_FFQN,
                     params_hash: concepts::persisted_value::compact_json_sha256(&Params::empty()),
                     intent: ScheduleIntent::Ok {
@@ -4985,6 +5001,7 @@ mod tests {
             schedule_at: HistoryEventScheduleAt::Now,
             scheduled_at_if_new: sim_clock.now(),
             execution_id: scheduled_execution_id.clone(),
+            idempotent: false,
             ffqn: MOCK_FFQN,
             params_hash: params_hash.clone(),
             intent: ScheduleIntent::Ok {
@@ -5030,6 +5047,7 @@ mod tests {
             schedule_at: HistoryEventScheduleAt::Now,
             scheduled_at_if_new: sim_clock.now(),
             execution_id: scheduled_execution_id,
+            idempotent: false,
             ffqn: MOCK_FFQN,
             params_hash,
             intent: ScheduleIntent::Ok {

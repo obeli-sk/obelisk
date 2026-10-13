@@ -13,6 +13,7 @@ world root {
     import obelisk:workflow/workflow-dynamic-support@7.0.0;
     import testing:fibo/fibo;
     import testing:fibo-obelisk-ext/fibo;
+    import testing:fibo-obelisk-schedule/fibo;
 
     export testing:fibo-workflow/workflow;
     export testing:fibo-workflow-obelisk-ext/workflow;
@@ -141,6 +142,16 @@ package obelisk:types@6.0.0 {
             value-too-large(u64),
         }
 
+        /// Errors from typed scheduling with a caller-supplied top-level execution ID.
+        variant schedule-with-id-error {
+            execution-id-parsing-error(string),
+            execution-id-must-be-top-level,
+            conflict,
+            function-not-found,
+            type-check-error(string),
+            value-too-large(u64),
+        }
+
         variant child-execution-request-error {
             function-not-found,
             type-check-error(string),
@@ -256,6 +267,17 @@ package testing:fibo-obelisk-ext {
 }
 
 
+package testing:fibo-obelisk-schedule {
+    interface fibo {
+        use obelisk:types/execution@6.0.0.{execution-id};
+        use obelisk:types/time@6.0.0.{schedule-at};
+        use obelisk:types/execution@6.0.0.{schedule-with-id-error};
+
+        fibo-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, n: u8) -> result<execution-id, schedule-with-id-error>;
+    }
+}
+
+
 package testing:fibo-workflow {
     interface workflow {
         use obelisk:types/execution@6.0.0.{execution-id};
@@ -348,24 +370,42 @@ package testing:fibo-workflow-obelisk-schedule {
     interface workflow {
         use obelisk:types/execution@6.0.0.{execution-id};
         use obelisk:types/time@6.0.0.{schedule-at};
-        use obelisk:types/execution@6.0.0.{schedule-json-error};
+        use obelisk:types/execution@6.0.0.{schedule-json-error, schedule-with-id-error};
 
         fibow-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> result<execution-id, schedule-json-error>;
 
+        fibow-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, n: u8, iterations: u32) -> result<execution-id, schedule-with-id-error>;
+
         fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> result<execution-id, schedule-json-error>;
+
+        fiboa-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, n: u8, iterations: u32) -> result<execution-id, schedule-with-id-error>;
 
         fiboa-concurrent-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> result<execution-id, schedule-json-error>;
 
+        fiboa-concurrent-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, n: u8, iterations: u32) -> result<execution-id, schedule-with-id-error>;
+
         fiboa-submit-json-schedule: func(schedule-at: schedule-at, n: u8) -> result<execution-id, schedule-json-error>;
+
+        fiboa-submit-json-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, n: u8) -> result<execution-id, schedule-with-id-error>;
 
         test-submit-json-unknown-ffqn-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        test-submit-json-unknown-ffqn-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         test-submit-json-malformed-params-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
+
+        test-submit-json-malformed-params-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
 
         test-get-result-json-before-await-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        test-get-result-json-before-await-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         test-get-result-json-err-variant-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        test-get-result-json-err-variant-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         test-schedule-json-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
+
+        test-schedule-json-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
     }
 }

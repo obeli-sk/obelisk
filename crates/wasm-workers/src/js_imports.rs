@@ -320,7 +320,7 @@ impl JsDispatchPolicy {
         for (specifier, functions) in imports {
             let specifier = specifier.to_string();
             let extension = [
-                (SCHEDULE_SUFFIX, &["-schedule"][..]),
+                (SCHEDULE_SUFFIX, &["-schedule-with-id", "-schedule"][..]),
                 (EXT_SUFFIX, &["-submit", "-await-next", "-get"][..]),
                 (STUB_SUFFIX, &["-stub"][..]),
             ]

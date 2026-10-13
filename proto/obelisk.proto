@@ -212,6 +212,7 @@ enum FunctionExtension {
     FUNCTION_EXTENSION_SCHEDULE = 3;
     FUNCTION_EXTENSION_STUB = 4;
     FUNCTION_EXTENSION_GET = 5;
+    FUNCTION_EXTENSION_SCHEDULE_WITH_ID = 6;
 }
 
 message FunctionParameter {
@@ -622,6 +623,9 @@ message ExecutionEvent {
                     KIND_FUNCTION_NOT_FOUND = 1;
                     KIND_TYPE_CHECK_ERROR = 2;
                     KIND_VALUE_TOO_LARGE = 3;
+                    KIND_EXECUTION_ID_PARSING_ERROR = 4;
+                    KIND_EXECUTION_ID_MUST_BE_TOP_LEVEL = 5;
+                    KIND_CONFLICT = 6;
                 }
                 Kind kind = 1;
                 optional string detail = 2;

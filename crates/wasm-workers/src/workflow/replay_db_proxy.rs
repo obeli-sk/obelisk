@@ -497,6 +497,37 @@ fn cacheable_event_parts(
     }
 }
 
+impl ReplayWorkflowDbConnection {
+    async fn get_schedule_create_request(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<(DateTime<Utc>, Created), DbErrorRead> {
+        if let Some(request) =
+            self.collector
+                .preview
+                .iter()
+                .rev()
+                .find_map(|captured| match &captured.write {
+                    CapturedDbWrite::AppendBatchCreateNewExecution { child_req, .. } => child_req
+                        .iter()
+                        .find(|req| &req.execution_id == execution_id)
+                        .cloned(),
+                    _ => None,
+                })
+        {
+            return Ok((request.created_at, Created::from(request)));
+        }
+        let event = self
+            .real_connection
+            .get_execution_event(execution_id, &Version::new(0))
+            .await?;
+        let ExecutionRequest::Created(created) = event.event else {
+            unreachable!("first event must be Created")
+        };
+        Ok((event.created_at, created))
+    }
+}
+
 #[async_trait]
 impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     fn as_any(self: Box<Self>) -> Box<dyn Any> {
@@ -515,6 +546,75 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     async fn append_backtrace(&mut self, backtrace: BacktraceInfo) -> Result<(), DbErrorWrite> {
         self.push_backtrace(backtrace);
         Ok(())
+    }
+
+    async fn append_schedule(
+        &mut self,
+        mut request: AppendRequest,
+        version: Version,
+        mut child_req: CreateRequest,
+        backtrace: Option<BacktraceInfo>,
+    ) -> Result<Result<(), storage::ScheduleRequestError>, DbErrorWrite> {
+        let schedule_at = match &request.event {
+            storage::ExecutionRequest::HistoryEvent {
+                event: storage::HistoryEvent::Schedule { schedule_at, .. },
+            } => *schedule_at,
+            _ => unreachable!("expected schedule event"),
+        };
+        child_req.normalize_schedule_timestamps(schedule_at)?;
+        let (result, child_req) = if !child_req.execution_id.is_top_level() {
+            (
+                Err(storage::ScheduleRequestError::ExecutionIdMustBeTopLevel),
+                None,
+            )
+        } else {
+            match self
+                .get_schedule_create_request(&child_req.execution_id)
+                .await
+            {
+                Ok((created_at, existing)) => {
+                    let result = if storage::schedule_matches(
+                        &existing,
+                        created_at,
+                        &child_req,
+                        schedule_at,
+                    ) {
+                        Ok(())
+                    } else {
+                        Err(storage::ScheduleRequestError::Conflict)
+                    };
+                    (result, None)
+                }
+                Err(DbErrorRead::NotFound) => (Ok(()), Some(child_req)),
+                Err(err) => return Err(err.into()),
+            }
+        };
+        if let storage::ExecutionRequest::HistoryEvent {
+            event:
+                storage::HistoryEvent::Schedule {
+                    result: stored_result,
+                    ..
+                },
+        } = &mut request.event
+        {
+            stored_result.clone_from(&result);
+        }
+        let called_at = request.created_at;
+        let event = match child_req {
+            Some(child_req) => CacheableDbEvent::Schedule {
+                request,
+                version,
+                child_req,
+                backtrace,
+            },
+            None => CacheableDbEvent::ScheduleError {
+                request,
+                version,
+                backtrace,
+            },
+        };
+        self.append_non_blocking(event, called_at).await?;
+        Ok(result)
     }
 
     async fn append_non_blocking(
@@ -814,6 +914,109 @@ mod tests {
     use concepts::{ComponentType, FunctionFqn, Params};
     use db_common::{JoinSetMember, JoinSetResponseId};
     use rstest::rstest;
+
+    #[tokio::test]
+    async fn schedule_with_id_replay_captures_one_creation_and_conflicts() {
+        use concepts::storage::{
+            DbPoolCloseable, HistoryEvent, HistoryEventScheduleAt, ScheduleRequestError,
+        };
+        use std::time::Duration;
+        let (_guard, pool, close) = db_tests::Database::Sqlite.set_up().await;
+        let conn = pool.connection().await.unwrap();
+        let created_at = DateTime::UNIX_EPOCH + Duration::from_nanos(123_456_789);
+        let request = |id| CreateRequest {
+            created_at,
+            execution_id: id,
+            ffqn: FunctionFqn::new_static("test:schedule/activity", "run"),
+            params: Params::empty(),
+            parent: None,
+            scheduled_at: created_at,
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_by: None,
+            paused: true,
+            max_persisted_value_size_bytes: u64::MAX,
+        };
+        let parent = ExecutionId::generate();
+        let mut version = conn.create(request(parent.clone())).await.unwrap();
+        let first_version = version.clone();
+        let child_id = ExecutionId::generate();
+        let mut replay = ReplayWorkflowDbConnection::new(parent.clone(), conn, None);
+        for (offset, expected) in [
+            (0, Ok(())),
+            (1, Ok(())),
+            (2, Err(ScheduleRequestError::Conflict)),
+        ] {
+            let mut child = request(child_id.clone());
+            child.created_at += Duration::from_secs(offset);
+            let schedule_at =
+                HistoryEventScheduleAt::In(Duration::from_secs(if offset == 2 { 61 } else { 60 }));
+            let event = AppendRequest {
+                created_at: child.created_at,
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::Schedule {
+                        execution_id: child_id.clone(),
+                        schedule_at,
+                        params_hash: Some(concepts::persisted_value::compact_json_sha256(
+                            &child.params,
+                        )),
+                        result: Ok(()),
+                    },
+                },
+            };
+            assert_eq!(
+                replay
+                    .append_schedule(event, version.clone(), child, None)
+                    .await
+                    .unwrap(),
+                expected
+            );
+            version = version.increment();
+        }
+        let (writes, _, conn) = replay.into_parts();
+        assert_eq!(writes.len(), 3);
+        assert_eq!(writes.iter().filter(|write| matches!(&write.write, CapturedDbWrite::AppendBatchCreateNewExecution { child_req, .. } if !child_req.is_empty())).count(), 1);
+        assert!(matches!(
+            conn.get(&child_id).await,
+            Err(DbErrorRead::NotFound)
+        ));
+        apply_writes(
+            conn.as_ref(),
+            &CancelRegistry::new(),
+            None,
+            writes,
+            first_version,
+        )
+        .await
+        .unwrap();
+        let mut replay = ReplayWorkflowDbConnection::new(parent, conn, None);
+        let child = request(child_id.clone());
+        let event = AppendRequest {
+            created_at,
+            event: ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::Schedule {
+                    execution_id: child_id,
+                    schedule_at: HistoryEventScheduleAt::In(Duration::from_secs(60)),
+                    params_hash: Some(concepts::persisted_value::compact_json_sha256(
+                        &child.params,
+                    )),
+                    result: Ok(()),
+                },
+            },
+        };
+        assert_eq!(
+            replay
+                .append_schedule(event, version, child, None)
+                .await
+                .unwrap(),
+            Ok(())
+        );
+        let (writes, _, conn) = replay.into_parts();
+        assert!(matches!(&writes[0].write, CapturedDbWrite::Append { .. }));
+        drop(conn);
+        close.close().await;
+    }
 
     enum ConnectionMode {
         Caching,

@@ -1599,8 +1599,22 @@
         {
           "type": "string",
           "enum": [
+            "execution_id_must_be_top_level",
+            "conflict",
             "function_not_found"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "execution_id_parsing_error": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "execution_id_parsing_error"
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -2201,6 +2215,7 @@
         "submit",
         "await_next",
         "schedule",
+        "schedule_with_id",
         "stub",
         "get"
       ]

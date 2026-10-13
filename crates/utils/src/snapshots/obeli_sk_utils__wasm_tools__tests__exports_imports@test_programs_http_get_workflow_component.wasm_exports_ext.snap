@@ -326,6 +326,34 @@ expression: exports
     "extension": "schedule",
     "submittable": true
   },
+  "testing:http-workflow-obelisk-schedule/workflow.get-resp-schedule-with-id": {
+    "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-resp-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
+  },
   "testing:http-workflow-obelisk-schedule/workflow.get-schedule": {
     "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-schedule",
     "parameter_types": [
@@ -349,6 +377,34 @@ expression: exports
     "extension": "schedule",
     "submittable": true
   },
+  "testing:http-workflow-obelisk-schedule/workflow.get-schedule-with-id": {
+    "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
+  },
   "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-schedule": {
     "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-schedule",
     "parameter_types": [
@@ -371,6 +427,34 @@ expression: exports
     },
     "extension": "schedule",
     "submittable": true
+  },
+  "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-schedule-with-id": {
+    "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "list<string>",
+        "name": "urls",
+        "wit_type": "list<string>"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
   },
   "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-stress-schedule": {
     "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-stress-schedule",
@@ -400,6 +484,39 @@ expression: exports
     "extension": "schedule",
     "submittable": true
   },
+  "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-stress-schedule-with-id": {
+    "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-concurrently-stress-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "u32",
+        "name": "concurrency",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
+  },
   "testing:http-workflow-obelisk-schedule/workflow.get-successful-schedule": {
     "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-schedule",
     "parameter_types": [
@@ -422,6 +539,34 @@ expression: exports
     },
     "extension": "schedule",
     "submittable": true
+  },
+  "testing:http-workflow-obelisk-schedule/workflow.get-successful-schedule-with-id": {
+    "ffqn": "testing:http-workflow-obelisk-schedule/workflow.get-successful-schedule-with-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "record { id: string }",
+        "name": "execution-id",
+        "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "variant { now, at(record { seconds: u64, nanoseconds: u32 }), in(variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }) }",
+        "name": "scheduled-at",
+        "wit_type": "schedule-at"
+      },
+      {
+        "type_wrapper": "string",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "result<record { id: string }, variant { execution-id-parsing-error(string), execution-id-must-be-top-level, conflict, function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-with-id-error>"
+      }
+    },
+    "extension": "schedule_with_id",
+    "submittable": false
   },
   "testing:http-workflow/workflow.get": {
     "ffqn": "testing:http-workflow/workflow.get",

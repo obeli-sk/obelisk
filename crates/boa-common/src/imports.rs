@@ -90,6 +90,7 @@ pub enum ProxyKind<'a> {
     Schedule {
         interface_name: &'a str,
         function_name: &'a str,
+        with_id: bool,
     },
     /// Extension submit: `import { addSubmit } from 'ns:pkg-obelisk-ext/ifc'`
     ExtSubmit {
@@ -142,15 +143,20 @@ pub fn register_import_modules(
             // package suffix in `wasm-workers::js_imports`, so the strip /
             // suffix-match calls below are infallible by construction.
             let proxy = if let Some(base_specifier) = &schedule_base {
-                let base_fn = wit_name.strip_suffix("-schedule").unwrap_or_else(|| {
-                    unreachable!(
-                        "host-resolved schedule import `{wit_name}` must end with `-schedule`"
-                    )
-                });
+                let with_id = wit_name.ends_with("-schedule-with-id");
+                let base_fn = wit_name
+                    .strip_suffix("-schedule-with-id")
+                    .or_else(|| wit_name.strip_suffix("-schedule"))
+                    .unwrap_or_else(|| {
+                        unreachable!(
+                            "host-resolved schedule import `{wit_name}` must be a schedule extension"
+                        )
+                    });
                 create_proxy(
                     ProxyKind::Schedule {
                         interface_name: base_specifier,
                         function_name: base_fn,
+                        with_id,
                     },
                     context,
                 )

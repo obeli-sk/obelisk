@@ -939,11 +939,13 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
             let (target, body) = if let Some(base) = &schedule_base {
                 let name = function
                     .wit_name
-                    .strip_suffix("-schedule")
+                    .strip_suffix("-schedule-with-id").or_else(|| function.wit_name.strip_suffix("-schedule"))
                     .expect("validated schedule import");
                 (
                     format!("{base}.{name}"),
-                    "(...args) => scheduleTarget(TARGET, args)".to_string(),
+                    if function.wit_name.ends_with("-schedule-with-id") {
+                        "(executionId, schedule, ...params) => { if (typeof executionId !== 'string') throw new TypeError('executionId must be a string'); return scheduleTarget(TARGET, [schedule, ...params], executionId); }".to_string()
+                    } else { "(...args) => scheduleTarget(TARGET, args)".to_string() },
                 )
             } else if let Some(base) = &ext_base {
                 if let Some(name) = function.wit_name.strip_suffix("-submit") {
@@ -1154,6 +1156,9 @@ fn schedule_arg(args: &Value, name: &str) -> Result<HistoryEventScheduleAt, JsEr
             .ok_or_else(|| JsErrorBox::type_error("invalid absolute schedule"))?;
         return Ok(HistoryEventScheduleAt::At(datetime));
     }
+    if object.contains_key("executionId") {
+        return Ok(HistoryEventScheduleAt::Now);
+    }
     Err(JsErrorBox::type_error(
         "schedule object has no recognized key",
     ))
@@ -1224,7 +1229,7 @@ export function unwrapHost(result) {
   if (Object.hasOwn(result, 'throw')) throw new ChildError(result.throw, options);
   return result.ok;
 }
-export const scheduleTarget = (target, args) => { const executionId = executionIdGenerate(); schedule(executionId, target, args.slice(1), args[0]); return executionId; };
+export const scheduleTarget = (target, args, explicitId) => { const requestedId = explicitId === undefined ? args[0]?.executionId : explicitId; if (requestedId !== undefined && typeof requestedId !== 'string') throw new TypeError('executionId must be a string'); const executionId = requestedId === undefined ? executionIdGenerate() : requestedId; schedule(executionId, target, args.slice(1), args[0]); return executionId; };
 ";
 
 const BASE_MODULE: &str = r"

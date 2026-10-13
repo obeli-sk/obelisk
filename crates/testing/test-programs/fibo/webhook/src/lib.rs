@@ -11,7 +11,7 @@ mod generated {
 }
 
 #[wstd::http_server]
-async fn main(_request: Request<Body>) -> Result<Response<Body>, Error> {
+async fn main(request: Request<Body>) -> Result<Response<Body>, Error> {
     let Ok(n) = std::env::var("N")
         .expect("env var `N` must be set by Obelisk if routes are configured properly")
         .parse()
@@ -32,8 +32,24 @@ async fn main(_request: Request<Body>) -> Result<Response<Body>, Error> {
 
     let fibo_res = if n >= 10 {
         println!("scheduling");
-        let execution_id = workflow_schedule::fiboa_schedule(ScheduleAt::Now, n, iterations)
-            .expect("schedule must succeed");
+        let execution_id = if let Some(id) = request
+            .uri()
+            .query()
+            .and_then(|query| query.strip_prefix("id="))
+        {
+            let id = generated::obelisk::types::execution::ExecutionId { id: id.to_string() };
+            match workflow_schedule::fiboa_schedule_with_id(&id, ScheduleAt::Now, n, iterations) {
+                Ok(id) => id,
+                Err(err) => {
+                    return Ok(Response::builder()
+                        .status(StatusCode::CONFLICT)
+                        .body(Body::from(format!("{err:?}")))?);
+                }
+            }
+        } else {
+            workflow_schedule::fiboa_schedule(ScheduleAt::Now, n, iterations)
+                .expect("schedule must succeed")
+        };
         format!("scheduled: {}", execution_id.id)
     } else if n > 1 {
         // Call the execution directly.

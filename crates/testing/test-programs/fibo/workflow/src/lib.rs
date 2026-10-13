@@ -239,6 +239,29 @@ impl Guest for Component {
         let execution_id = execution_id_generate();
         schedule_json(&execution_id, ScheduleAt::Now, &function, "[10]")
             .map_err(|e| format!("schedule_json failed: {e:?}"))?;
+        use generated::testing::fibo_obelisk_schedule::fibo::{
+            ScheduleWithIdError, fibo_schedule_with_id,
+        };
+        assert_eq!(
+            fibo_schedule_with_id(&execution_id, ScheduleAt::Now, 10)
+                .unwrap()
+                .id,
+            execution_id.id
+        );
+        assert_matches!(
+            fibo_schedule_with_id(&execution_id, ScheduleAt::Now, 11),
+            Err(ScheduleWithIdError::Conflict)
+        );
+        assert_matches!(
+            fibo_schedule_with_id(
+                &ExecutionId {
+                    id: "invalid".to_string()
+                },
+                ScheduleAt::Now,
+                10
+            ),
+            Err(ScheduleWithIdError::ExecutionIdParsingError(_))
+        );
 
         // Test 2: Schedule with unknown FFQN -> FunctionNotFound
         let unknown_function = Function {

@@ -726,6 +726,21 @@ impl ExIm {
             TypeKey::new_kebab("type-check-error") => Some(TypeWrapper::String),
             TypeKey::new_kebab("value-too-large") => Some(TypeWrapper::U64),
         });
+        let schedule_with_id_error_type_wrapper = TypeWrapper::Variant(indexmap! {
+            TypeKey::new_kebab("execution-id-parsing-error") => Some(TypeWrapper::String),
+            TypeKey::new_kebab("execution-id-must-be-top-level") => None,
+            TypeKey::new_kebab("conflict") => None,
+            TypeKey::new_kebab("function-not-found") => None,
+            TypeKey::new_kebab("type-check-error") => Some(TypeWrapper::String),
+            TypeKey::new_kebab("value-too-large") => Some(TypeWrapper::U64),
+        });
+        let return_type_schedule_with_id = ReturnType::detect(
+            TypeWrapper::Result {
+                ok: Some(Box::new(execution_id_type_wrapper.clone())),
+                err: Some(Box::new(schedule_with_id_error_type_wrapper)),
+            },
+            StrVariant::Static("result<execution-id, schedule-with-id-error>"),
+        );
         let return_type_schedule = ReturnType::detect(
             TypeWrapper::Result {
                 ok: Some(Box::new(execution_id_type_wrapper.clone())),
@@ -979,7 +994,21 @@ impl ExIm {
                         extension: Some(FunctionExtension::Schedule),
                         submittable: true,
                     };
+                    let mut fn_schedule_with_id = fn_schedule.clone();
+                    fn_schedule_with_id.ffqn.function_name = FnName::from(format!(
+                        "{}{}",
+                        exported_fn_metadata.ffqn.function_name,
+                        concepts::SUFFIX_FN_SCHEDULE_WITH_ID
+                    ));
+                    fn_schedule_with_id
+                        .parameter_types
+                        .0
+                        .insert(0, param_type_execution_id.clone());
+                    fn_schedule_with_id.return_type = return_type_schedule_with_id.clone();
+                    fn_schedule_with_id.extension = Some(FunctionExtension::ScheduleWithId);
+                    fn_schedule_with_id.submittable = false;
                     insert_schedule(fn_schedule);
+                    insert_schedule(fn_schedule_with_id);
                 }
 
                 if component_type == ComponentType::ActivityStub {

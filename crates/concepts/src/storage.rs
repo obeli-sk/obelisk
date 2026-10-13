@@ -23,8 +23,8 @@ use crate::prefixed_ulid::RunId;
 use crate::prefixed_ulid::SystemEventId;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
-use chrono::TimeDelta;
 use chrono::{DateTime, Utc};
+use chrono::{SubsecRound, TimeDelta};
 use http_client_trace::HttpClientTrace;
 use serde::Deserialize;
 use serde::Serialize;
@@ -1047,6 +1047,12 @@ pub enum StubError {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ScheduleRequestError {
+    #[error("invalid execution ID: {0}")]
+    ExecutionIdParsingError(String),
+    #[error("execution ID must be top-level")]
+    ExecutionIdMustBeTopLevel,
+    #[error("conflict")]
+    Conflict,
     #[error("function not found")]
     FunctionNotFound,
     #[error("params parsing error: {0}")]
@@ -1369,7 +1375,38 @@ pub struct CreateRequest {
     pub max_persisted_value_size_bytes: u64,
 }
 
+#[must_use]
+pub fn schedule_matches(
+    existing: &Created,
+    created_at: DateTime<Utc>,
+    requested: &CreateRequest,
+    schedule_at: HistoryEventScheduleAt,
+) -> bool {
+    existing.ffqn == requested.ffqn
+        && existing.params == requested.params
+        && existing.parent.is_none()
+        && match schedule_at {
+            HistoryEventScheduleAt::Now => existing.scheduled_at == created_at,
+            HistoryEventScheduleAt::At(at) => existing.scheduled_at == at,
+            HistoryEventScheduleAt::In(duration) => {
+                (existing.scheduled_at - created_at).to_std().ok() == Some(duration)
+            }
+        }
+}
+
 impl CreateRequest {
+    pub fn normalize_schedule_timestamps(
+        &mut self,
+        schedule_at: HistoryEventScheduleAt,
+    ) -> Result<(), DbErrorWriteNonRetriable> {
+        // PostgreSQL timestamps retain microseconds; normalize before deriving a relative deadline.
+        self.created_at = self.created_at.trunc_subsecs(6);
+        self.scheduled_at = schedule_at
+            .as_date_time(self.created_at)
+            .map_err(|err| DbErrorWriteNonRetriable::ValidationFailed(err.to_string().into()))?;
+        Ok(())
+    }
+
     pub fn validate_persisted_values(&self) -> Result<(), DbErrorWriteNonRetriable> {
         ExecutionRequest::from(self.clone())
             .validate_for_persistence(self.max_persisted_value_size_bytes)
@@ -2836,6 +2873,76 @@ pub trait DbConnection: DbExecutor {
         child_req: Vec<CreateRequest>,
         backtraces: Vec<BacktraceInfo>,
     ) -> Result<AppendBatchResponse, DbErrorWrite>;
+
+    async fn append_schedule(
+        &self,
+        execution_id: ExecutionId,
+        version: Version,
+        mut request: AppendRequest,
+        mut child: CreateRequest,
+        backtraces: Vec<BacktraceInfo>,
+    ) -> Result<(Version, Result<(), ScheduleRequestError>), DbErrorWrite> {
+        let current_time = request.created_at;
+        let schedule_at = match &request.event {
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::Schedule { schedule_at, .. },
+            } => *schedule_at,
+            _ => unreachable!("append_schedule requires a schedule event"),
+        };
+        child.normalize_schedule_timestamps(schedule_at)?;
+        let result = if child.execution_id.is_top_level() {
+            match self
+                .append_batch_create_new_execution(
+                    current_time,
+                    vec![request.clone()],
+                    execution_id.clone(),
+                    version.clone(),
+                    vec![child.clone()],
+                    backtraces.clone(),
+                )
+                .await
+            {
+                Ok(version) => return Ok((version, Ok(()))),
+                Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)) => {
+                    let event = self
+                        .get_execution_event(&child.execution_id, &Version::new(0))
+                        .await?;
+                    let ExecutionRequest::Created(existing) = event.event else {
+                        unreachable!("first event must be Created")
+                    };
+                    if schedule_matches(&existing, event.created_at, &child, schedule_at) {
+                        Ok(())
+                    } else {
+                        Err(ScheduleRequestError::Conflict)
+                    }
+                }
+                Err(err) => return Err(err),
+            }
+        } else {
+            Err(ScheduleRequestError::ExecutionIdMustBeTopLevel)
+        };
+        if let ExecutionRequest::HistoryEvent {
+            event:
+                HistoryEvent::Schedule {
+                    result: stored_result,
+                    ..
+                },
+        } = &mut request.event
+        {
+            stored_result.clone_from(&result);
+        }
+        let version = self
+            .append_batch_create_new_execution(
+                current_time,
+                vec![request],
+                execution_id,
+                version,
+                vec![],
+                backtraces,
+            )
+            .await?;
+        Ok((version, result))
+    }
 
     /// Get a single event specified by version. Impls may set `ExecutionEvent::backtrace_id` to `None`.
     async fn get_execution_event(

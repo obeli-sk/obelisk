@@ -9,4 +9,5 @@ world any {
 
     import testing:fibo/fibo;
     import testing:fibo-obelisk-ext/fibo;
+    import testing:fibo-obelisk-schedule/fibo;
 }

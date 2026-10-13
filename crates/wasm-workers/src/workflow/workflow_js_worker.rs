@@ -3582,6 +3582,90 @@ mod tests {
         db_close.close().await;
     }
 
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_schedule_with_id(
+        database: Database,
+        #[values(WorkflowJsRuntime::BoaWasm, WorkflowJsRuntime::V8)] runtime: WorkflowJsRuntime,
+    ) {
+        use concepts::{JoinSetId, JoinSetKind};
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let join_set = JoinSetId::new(JoinSetKind::Named, "derived".into()).unwrap();
+        let derived = ExecutionId::generate().next_level(&join_set);
+        let js_source = r"
+            import { fiboSchedule, fiboScheduleWithId } from 'testing:fibo-obelisk-schedule/fibo';
+            import * as dynamic from 'obelisk:workflow-dynamic@1.0.0';
+            export default function run() {
+                const id = obelisk.executionIdGenerate();
+                fiboSchedule({ executionId: id, seconds: 60 }, 10);
+                obelisk.sleep({ milliseconds: 1 });
+                fiboScheduleWithId(id, { minutes: 1 }, 10);
+                dynamic.schedule(id, 'testing:fibo/fibo.fibo', [10], { seconds: 60 });
+                let conflicts = 0;
+                for (const attempt of [
+                    () => fiboSchedule({ executionId: id, seconds: 61 }, 10),
+                    () => fiboScheduleWithId(id, { seconds: 60 }, 11),
+                    () => fiboSchedule({ executionId: id }, 10),
+                    () => dynamic.schedule(id, 'testing:fibo/fibo.fibo', [11], { seconds: 60 }),
+                ]) {
+                    try { attempt(); } catch (e) { if (!String(e).toLowerCase().includes('conflict')) throw e; conflicts++; }
+                }
+                let invalid = 0;
+                for (const bad of ['invalid', '$DERIVED', null, 42]) {
+                    try { fiboScheduleWithId(bad, null, 10); } catch (e) { invalid++; }
+                }
+                const immediate = obelisk.executionIdGenerate();
+                fiboSchedule({ executionId: immediate }, 10);
+                fiboSchedule({ executionId: immediate }, 10);
+                return JSON.stringify({ id, immediate, conflicts, invalid });
+            }
+        ".replace("$DERIVED", &derived.to_string());
+        let harness = JsWorkflowTestHarness::new_with_runtime(
+            db_pool.clone(),
+            &js_source,
+            "schedule-with-id",
+            TestActivities::ChildErrorProjections,
+            JoinNextBlockingStrategy::Interrupt,
+            default_return_type(),
+            u64::MAX,
+            match runtime {
+                WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
+                WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Executor::default()),
+            },
+        )
+        .await;
+        harness.tick().await;
+        harness.advance_time(Duration::from_millis(1)).await;
+        harness.tick().await;
+        let result = harness.get_result_json().await;
+        assert_eq!(result["conflicts"], 4);
+        assert_eq!(result["invalid"], 4);
+        let id = ExecutionId::from_str(result["id"].as_str().unwrap()).unwrap();
+        let event = harness
+            .db_connection
+            .get_execution_event(&id, &Version::new(0))
+            .await
+            .unwrap();
+        let ExecutionRequest::Created(created) = event.event else {
+            panic!("expected Created")
+        };
+        assert_eq!(
+            (created.scheduled_at - event.created_at).to_std().unwrap(),
+            Duration::from_secs(60)
+        );
+        assert!(
+            harness
+                .db_connection
+                .get(&ExecutionId::Derived(derived))
+                .await
+                .is_err()
+        );
+        drop(harness);
+        db_close.close().await;
+    }
+
     /// Test: `obelisk.executionIdGenerate()` and `obelisk.schedule()` to schedule a top-level execution.
     #[expand_enum_database]
     #[rstest]

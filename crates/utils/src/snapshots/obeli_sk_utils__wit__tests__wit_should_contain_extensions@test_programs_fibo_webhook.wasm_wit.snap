@@ -160,6 +160,16 @@ package obelisk:types@6.0.0 {
             value-too-large(u64),
         }
 
+        /// Errors from typed scheduling with a caller-supplied top-level execution ID.
+        variant schedule-with-id-error {
+            execution-id-parsing-error(string),
+            execution-id-must-be-top-level,
+            conflict,
+            function-not-found,
+            type-check-error(string),
+            value-too-large(u64),
+        }
+
         variant child-execution-request-error {
             function-not-found,
             type-check-error(string),
@@ -222,10 +232,13 @@ package testing:fibo-workflow {
 
 package testing:fibo-workflow-obelisk-schedule {
     interface workflow {
+        use obelisk:types/execution@6.0.0.{execution-id};
         use obelisk:types/time@6.0.0.{schedule-at};
-        use obelisk:types/execution@6.0.0.{execution-id, schedule-json-error};
+        use obelisk:types/execution@6.0.0.{schedule-with-id-error, schedule-json-error};
 
         fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> result<execution-id, schedule-json-error>;
+
+        fiboa-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, n: u8, iterations: u32) -> result<execution-id, schedule-with-id-error>;
     }
 }
 

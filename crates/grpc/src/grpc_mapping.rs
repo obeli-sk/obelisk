@@ -1427,6 +1427,9 @@ fn history_event_from_grpc(
                     match grpc_gen::execution_event::history_event::schedule::error::Kind::try_from(err.kind)
                         .map_err(|_| tonic::Status::invalid_argument("invalid schedule.error.kind"))?
                     {
+                        grpc_gen::execution_event::history_event::schedule::error::Kind::ExecutionIdParsingError => ScheduleRequestError::ExecutionIdParsingError(err.detail.ok_or_else(|| tonic::Status::invalid_argument("missing schedule.error.detail"))?),
+                        grpc_gen::execution_event::history_event::schedule::error::Kind::ExecutionIdMustBeTopLevel => ScheduleRequestError::ExecutionIdMustBeTopLevel,
+                        grpc_gen::execution_event::history_event::schedule::error::Kind::Conflict => ScheduleRequestError::Conflict,
                         grpc_gen::execution_event::history_event::schedule::error::Kind::FunctionNotFound => {
                             ScheduleRequestError::FunctionNotFound
                         }
@@ -1684,6 +1687,18 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
                     Ok(()) => grpc_gen::execution_event::history_event::schedule::Result::Ok(
                         grpc_gen::execution_event::history_event::schedule::Ok {},
                     ),
+                    Err(err @ (ScheduleRequestError::ExecutionIdParsingError(_) | ScheduleRequestError::ExecutionIdMustBeTopLevel | ScheduleRequestError::Conflict)) => {
+                        use grpc_gen::execution_event::history_event::schedule::error::Kind;
+                        let (kind, detail) = match err {
+                            ScheduleRequestError::ExecutionIdParsingError(msg) => (Kind::ExecutionIdParsingError, Some(msg)),
+                            ScheduleRequestError::ExecutionIdMustBeTopLevel => (Kind::ExecutionIdMustBeTopLevel, None),
+                            ScheduleRequestError::Conflict => (Kind::Conflict, None),
+                            _ => unreachable!(),
+                        };
+                        grpc_gen::execution_event::history_event::schedule::Result::Error(
+                            grpc_gen::execution_event::history_event::schedule::Error { kind: kind.into(), detail },
+                        )
+                    }
                     Err(ScheduleRequestError::FunctionNotFound) => {
                         grpc_gen::execution_event::history_event::schedule::Result::Error(
                             grpc_gen::execution_event::history_event::schedule::Error {

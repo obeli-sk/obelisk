@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(scheduling)* Typed `-schedule-with-id` extensions let webhooks and workflows supply a
+  top-level execution ID. JavaScript typed schedules accept `executionId` in their leading
+  schedule object. Matching retries reuse the original execution; different targets,
+  parameters, or timing return a conflict. Relative timing compares the original offset
+  from creation, and retries never reschedule an execution.
+
 ### Removed
 
 - **Breaking:** *(api)* Removed structured REST `text/plain` representations earlier than the

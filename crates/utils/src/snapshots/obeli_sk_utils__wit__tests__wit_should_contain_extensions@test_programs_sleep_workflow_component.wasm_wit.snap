@@ -150,6 +150,16 @@ package obelisk:types@6.0.0 {
             value-too-large(u64),
         }
 
+        /// Errors from typed scheduling with a caller-supplied top-level execution ID.
+        variant schedule-with-id-error {
+            execution-id-parsing-error(string),
+            execution-id-must-be-top-level,
+            conflict,
+            function-not-found,
+            type-check-error(string),
+            value-too-large(u64),
+        }
+
         variant child-execution-request-error {
             function-not-found,
             type-check-error(string),
@@ -400,32 +410,58 @@ package testing:sleep-workflow-obelisk-ext {
 package testing:sleep-workflow-obelisk-schedule {
     interface workflow {
         use obelisk:types/time@6.0.0.{duration, schedule-at};
-        use obelisk:types/execution@6.0.0.{execution-id, schedule-json-error};
+        use obelisk:types/execution@6.0.0.{execution-id, schedule-json-error, schedule-with-id-error};
 
         sleep-host-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> result<execution-id, schedule-json-error>;
 
+        sleep-host-activity-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, duration: duration) -> result<execution-id, schedule-with-id-error>;
+
         sleep-host-activity-schedule-many-schedule: func(schedule-at-a: schedule-at, n: u64, schedule-at: schedule-at, duration-secs: u64) -> result<execution-id, schedule-json-error>;
+
+        sleep-host-activity-schedule-many-schedule-with-id: func(execution-id: execution-id, schedule-at-a: schedule-at, n: u64, schedule-at: schedule-at, duration-secs: u64) -> result<execution-id, schedule-with-id-error>;
 
         sleep-schedule-at-schedule: func(schedule-at-a: schedule-at, schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        sleep-schedule-at-schedule-with-id: func(execution-id: execution-id, schedule-at-a: schedule-at, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         sleep-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> result<execution-id, schedule-json-error>;
+
+        sleep-activity-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, duration: duration) -> result<execution-id, schedule-with-id-error>;
 
         sleep-random-schedule: func(schedule-at: schedule-at, min-millis: u64, max-millis-inclusive: u64) -> result<execution-id, schedule-json-error>;
 
+        sleep-random-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, min-millis: u64, max-millis-inclusive: u64) -> result<execution-id, schedule-with-id-error>;
+
         schedule-noop-schedule: func(schedule-at: schedule-at, duration: duration) -> result<execution-id, schedule-json-error>;
+
+        schedule-noop-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at, duration: duration) -> result<execution-id, schedule-with-id-error>;
 
         two-delays-in-same-join-set-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        two-delays-in-same-join-set-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         join-next-produces-all-processed-error-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
+
+        join-next-produces-all-processed-error-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
 
         join-next-try-pending-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        join-next-try-pending-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         join-next-try-all-processed-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
+
+        join-next-try-all-processed-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
 
         join-next-try-found-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        join-next-try-found-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         sleep-activity-submit-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
+        sleep-activity-submit-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
+
         sleep-activity-submit-then-trap-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
+
+        sleep-activity-submit-then-trap-schedule-with-id: func(execution-id: execution-id, schedule-at: schedule-at) -> result<execution-id, schedule-with-id-error>;
     }
 }
