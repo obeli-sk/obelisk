@@ -6,59 +6,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.1](https://github.com/obeli-sk/obelisk/compare/v0.42.0...v0.43.0-rc.1)
+
+This release candidate adds caller-supplied execution IDs for typed schedules, cloud management
+commands, and scoped app-policy repairs. CLI commands separate machine-readable stdout from
+human-readable stderr and reuse unchanged deployments. Review the breaking verification, API,
+and authentication changes below before upgrading from 0.42.
+
 ### Added
 
+- *(cli)* New `cloud` commands manage apps, policy, environment variables, and secrets, and proxy
+  deployment, execution, component, and admin commands through the cloud API. Select an app with
+  `--app`, `OBELISK_APP_NAME`, or `app_name` in `./app.toml`.
+  [#1128](https://github.com/obeli-sk/obelisk/pull/1128)
 - *(scheduling)* Typed `-schedule-with-id` extensions let webhooks and workflows supply a
   top-level execution ID. The WIT packages are now `obelisk:types@6.1.0`,
   `obelisk:workflow@7.1.0`, and `obelisk:webhook@7.1.0`. JavaScript typed schedules accept
   `executionId` in their leading schedule object. Matching retries reuse the original execution;
   different targets, parameters, or timing return a conflict. Relative timing compares the original offset
   from creation, and retries never reschedule an execution.
+  [#1134](https://github.com/obeli-sk/obelisk/pull/1134)
 
 ### Removed
 
 - **Breaking:** *(api)* Removed structured REST `text/plain` representations earlier than the
   previously announced after-0.43 timeline. Use JSON for resources and actions. WIT, source
   files, IDs, scalar app-config digests, execution-log streams, and SSE remain supported.
+  [#1132](https://github.com/obeli-sk/obelisk/pull/1132)
 
 - **Breaking:** *(webhook-js)* Removed automatic `__OBELISK_JS_SOURCE__` and
   `__OBELISK_JS_FILE_NAME__` environment variables from Boa and V8 webhooks.
+  [#1132](https://github.com/obeli-sk/obelisk/pull/1132)
 
 - **Breaking:** *(api)* System-event retention requests must explicitly supply `dry_run`.
   Omitting it is rejected without deleting events. gRPC behavior is unchanged.
+  [#1132](https://github.com/obeli-sk/obelisk/pull/1132)
 
 - **Breaking:** *(cli)* Removed compatibility defaults for replay measurements and public
   environment classifications in responses from servers older than 0.42.
+  [#1132](https://github.com/obeli-sk/obelisk/pull/1132)
 
 - **Breaking:** *(cli)* Removed `server run --allow-unauthenticated-api`. Use `--no-auth`.
+  [#1132](https://github.com/obeli-sk/obelisk/pull/1132)
 - **Breaking:** *(auth)* Removed the `OBELISK__API__TOKEN` fallback. Use `OBELISK_API_TOKEN`,
   `--api-token`, or server `api.token_hashes`.
+  [#1132](https://github.com/obeli-sk/obelisk/pull/1132)
 
 ### Changed
 
+- *(cli)* Deployment `submit`, `apply`, and `enqueue` reuse the active deployment when its parsed
+  content and description match. Changing or removing the description creates a new deployment;
+  explicit deployment IDs are honored. [#1127](https://github.com/obeli-sk/obelisk/pull/1127)
+- *(cli)* Server commands and cloud policy commands discover `./app.toml` when `--app-config`
+  is omitted. Explicit configuration paths take precedence.
+  [#1131](https://github.com/obeli-sk/obelisk/pull/1131)
 - **Breaking:** *(cli)* `deployment verify` validates deployment components without loading app/server
   policy or database state. App/server configuration, runtime availability, and repair flags are
   now exclusive to `server verify`. Authored deployments reject generated `content_digest` and
   `component_files` metadata; the CLI adds it during submission and removes it from exports.
+  [#1130](https://github.com/obeli-sk/obelisk/pull/1130)
 - *(cli)* `server verify` supports scoped `--fix-app-declarations`, `--fix-app-http-permissions`,
   `--fix-app-exec-permissions`, and `--fix-app-secret-exposure` repairs. `--fix` applies all app
   repairs, including HTTP secret replacements, exec approvals, and secret exposure grants.
   Platform exec permissions require explicit `--fix-server-exec-permissions`. Repairs require
-  explicit target configuration paths and a deployment file, preserve existing grants, and
-  rerun verification. `--allow-unavailable-runtime-config` tolerates missing values while still
-  enforcing declarations and permissions during server verification.
+  target configuration paths (including discovered `./app.toml`) and a deployment file,
+  preserve existing grants, and rerun verification. `--allow-unavailable-runtime-config` tolerates
+  missing values while still enforcing declarations and permissions during server verification.
+  [#1130](https://github.com/obeli-sk/obelisk/pull/1130),
+  [#1131](https://github.com/obeli-sk/obelisk/pull/1131)
 - **Breaking:** *(cli)* Human-readable listings, progress, and confirmations now go to stderr.
   Stdout carries IDs, JSON, generated configuration, source content, and execution logs.
   Scripts that capture human-readable output must read stderr or use `--json` for structured
   results. This also applies to commands under `cloud`.
+  [#1129](https://github.com/obeli-sk/obelisk/pull/1129)
 - *(cli)* Execution JSON follow modes emit flushed NDJSON, one compact JSON object per line,
   including submission responses, log records, and final results.
+  [#1129](https://github.com/obeli-sk/obelisk/pull/1129)
+- *(JS)* Updated Boa to `1.0.0-obeli-sk.14`.
+  [#1133](https://github.com/obeli-sk/obelisk/pull/1133)
+- *(WIT)* Components importing `obelisk:types@6.0.0`, `obelisk:workflow@7.0.0`, and
+  `obelisk:webhook@7.0.0` remain accepted alongside the new minor versions.
+  [#1134](https://github.com/obeli-sk/obelisk/pull/1134)
 
 ### Fixed
 
 - *(cli)* Deployment `apply` and `enqueue` now print the deployment ID to stdout on success.
   Added `--json` to deployment `submit`, `apply`, `enqueue`, and `list`, component `list`,
   execution `pause`, `unpause`, `cancel`, and `upgrade`, and `cloud app endpoint`.
+  [#1129](https://github.com/obeli-sk/obelisk/pull/1129)
 
 ## [0.42.0](https://github.com/obeli-sk/obelisk/compare/v0.41.5...v0.42.0)
 
