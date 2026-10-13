@@ -65,13 +65,7 @@ listening_addr = "127.0.0.1:19091"
         for command in ["deployment", "server"] {
             for fix in [false, true] {
                 std::fs::write(&app_path, if fix { app } else { &declared_app }).unwrap();
-                let mut manifest = deployment.parse::<toml_edit::DocumentMut>().unwrap();
-                if fix {
-                    manifest["webhook_endpoint_js"][0]["content_digest"] = toml_edit::value(
-                        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-                    );
-                }
-                std::fs::write(&deployment_path, manifest.to_string()).unwrap();
+                std::fs::write(&deployment_path, &deployment).unwrap();
 
                 let mut cli = Command::new(env!("CARGO_BIN_EXE_obelisk"));
                 cli.args([command, "verify"])
@@ -105,15 +99,11 @@ listening_addr = "127.0.0.1:19091"
                             .unwrap()
                             .contains_key("OBELISK_VERIFY_FIX_TEST_ENV")
                     );
-                    let fixed_deployment = std::fs::read_to_string(&deployment_path)
-                        .unwrap()
-                        .parse::<toml_edit::DocumentMut>()
-                        .unwrap();
-                    assert_ne!(
-                        fixed_deployment["webhook_endpoint_js"][0]["content_digest"].as_str(),
-                        manifest["webhook_endpoint_js"][0]["content_digest"].as_str(),
-                    );
                 }
+                assert_eq!(
+                    std::fs::read_to_string(&deployment_path).unwrap(),
+                    deployment
+                );
             }
         }
     }

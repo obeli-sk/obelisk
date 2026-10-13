@@ -57,7 +57,6 @@ use crate::config::deployment::WorkflowJsComponentConfigResolvedExt as _;
 use crate::config::deployment::WorkflowJsConfigVerified;
 use crate::config::deployment::WorkflowWasmComponentConfigResolvedExt as _;
 use crate::config::deployment::prepare_deployment_manifest_from_disk;
-use crate::config::deployment::reconcile_deployment_digests;
 use crate::config::deployment::resolve_allowed_hosts;
 use crate::config::deployment::resolve_manifest;
 use crate::config::deployment::{AllowedHostToml, MethodsInput, MethodsInputStar};
@@ -789,39 +788,6 @@ pub(crate) async fn verify(
     );
     let _guard: Guard = init::init(&config)?;
     let deployment_opt = if let Some(deployment_path) = deployment {
-        let broken = reconcile_deployment_digests(&deployment_path, fix).await?;
-        if !broken.is_empty() {
-            if fix {
-                for digest in &broken {
-                    info!(
-                        "Fixed {} ({}): {} -> {}",
-                        digest.field_path, digest.path, digest.stored, digest.actual
-                    );
-                }
-                info!(
-                    "Corrected {} content digest(s) in {}",
-                    broken.len(),
-                    deployment_path.display()
-                );
-            } else {
-                let details = broken
-                    .iter()
-                    .map(|digest| {
-                        format!(
-                            "- {} ({}): expected {}, got {}",
-                            digest.field_path, digest.path, digest.stored, digest.actual
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                bail!(
-                    "{} content digest(s) in {} do not match:\n{}\nRun again with `--fix` to update them.",
-                    broken.len(),
-                    deployment_path.display(),
-                    details
-                );
-            }
-        }
         // Create a in-memory CAS with the deployment referenced files.
         Some(resolve_deployment_offline(&deployment_path).await?)
     } else {

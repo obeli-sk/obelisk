@@ -687,7 +687,7 @@ pub(crate) struct VerifyArgs {
     /// since with no database there is no active deployment to fall back to.
     #[arg(long, requires = "deployment")]
     pub(crate) skip_db: bool,
-    /// Clean deployment metadata and scaffold app env, secrets, outbound hosts, and exec grants.
+    /// Scaffold app env, secrets, outbound hosts, and exec grants.
     #[arg(long, requires = "deployment")]
     pub(crate) fix: bool,
 }
@@ -719,7 +719,7 @@ pub(crate) struct DeploymentVerifyArgs {
     /// Do not fail when a component's imports/exports fail type checking against the deployment.
     #[arg(long)]
     pub(crate) suppress_type_checking_errors: bool,
-    /// Clean deployment metadata and scaffold app env, secrets, outbound hosts, and exec grants.
+    /// Scaffold app env, secrets, outbound hosts, and exec grants.
     #[arg(long)]
     pub(crate) fix: bool,
 }

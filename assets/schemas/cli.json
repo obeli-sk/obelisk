@@ -412,7 +412,7 @@
                 },
                 {
                   "name": "--fix",
-                  "help": "Clean deployment metadata and scaffold app env, secrets, outbound hosts, and exec grants"
+                  "help": "Scaffold app env, secrets, outbound hosts, and exec grants"
                 }
               ]
             }
@@ -1222,7 +1222,7 @@
             },
             {
               "name": "--fix",
-              "help": "Clean deployment metadata and scaffold app env, secrets, outbound hosts, and exec grants"
+              "help": "Scaffold app env, secrets, outbound hosts, and exec grants"
             }
           ]
         }
@@ -1959,7 +1959,7 @@
             },
             {
               "name": "--fix",
-              "help": "Clean deployment metadata and scaffold app env, secrets, outbound hosts, and exec grants"
+              "help": "Scaffold app env, secrets, outbound hosts, and exec grants"
             }
           ]
         }

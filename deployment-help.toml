@@ -170,8 +170,6 @@
 # location = "scripts/my-script.sh"
 ## `location` may also be an OCI reference. Script is pulled from the exec layer and resolved at deploy time. Written by `obelisk component add`.
 # location = "oci://docker.io/repo/image:tag@sha256:..."
-## Optional content digest of the exec script. Useful for verifying OCI-backed or local script contents.
-# content_digest = "sha256:..."
 # ffqn = "namespace:package/interface.function" # Required. Fully qualified function name.
 ## Function interface: either reference an authored WIT directory, or use `params` and `return_type` below.
 # wit = "path/to/wit"
@@ -345,7 +343,7 @@
 
 ## Map from frame symbol file names to corresponding file paths on local filesystem. Supports path prefixes on both sides.
 ## If frame symbol path starts with `...`, only the suffix will be used to find the matching source file.
-## During manifest preparation, relative paths are rewritten to `{ path = "...", content_digest = "sha256:..." }`.
+## Source digests are added to generated submission metadata during manifest preparation.
 # backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
 
 # Stub WASI CLI world imports. Only needed for workflows authored in TinyGo.
@@ -426,7 +424,7 @@
 # exposed_secrets = ["HMAC_SECRET"]
 ## Registered secrets exposed under their logical names as environment variables.
 # exposed_secrets = ["GITHUB_WEBHOOK_SECRET"]
-## During manifest preparation, relative paths are rewritten to `{ path = "...", content_digest = "sha256:..." }`.
+## Source digests are added to generated submission metadata during manifest preparation.
 # backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
 ## Capture and persist call-site backtraces for this webhook. Default is false.
 # backtrace_persist = false
