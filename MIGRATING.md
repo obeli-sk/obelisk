@@ -37,3 +37,17 @@ leave events unchanged. The CLI already supplies the field. gRPC is unchanged.
 Webhooks no longer receive `__OBELISK_JS_SOURCE__` or `__OBELISK_JS_FILE_NAME__`
 automatically. Pass application metadata through deployment `env_vars` when
 needed. Module loading continues to use the module graph in both Boa and V8.
+
+## Structured REST responses
+
+Use `Accept: application/json` for structured resources and actions. The old
+human-readable `text/plain` representations have been removed earlier than the
+previously announced after-0.43 timeline. Endpoints that negotiated structured text
+now return HTTP 406 when the Accept header allows only text. JSON remains the
+default when no Accept header is sent. Replace pipelines that parse formatted
+text with JSON consumers such as `jq`.
+
+WIT documents, source files, execution and deployment IDs, node-run IDs and
+app-config digests retain their text representations. Execution-log streams and
+SSE follow modes remain available; SSE clients can send `Accept: text/event-stream`.
+The CLI still formats human-readable output locally.

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Breaking:** *(api)* Removed structured REST `text/plain` representations earlier than the
+  previously announced after-0.43 timeline. Use JSON for resources and actions. WIT, source
+  files, IDs, scalar app-config digests, execution-log streams, and SSE remain supported.
+
 - **Breaking:** *(webhook-js)* Removed automatic `__OBELISK_JS_SOURCE__` and
   `__OBELISK_JS_FILE_NAME__` environment variables from Boa and V8 webhooks.
 

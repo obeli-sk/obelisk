@@ -1181,9 +1181,6 @@ impl LogsOpts {
         if self.show_derived {
             req = req.query(&[("show_derived", "true")]);
         }
-        if self.show_run_id {
-            req = req.query(&[("show_run_id", "true")]);
-        }
         req
     }
 }
