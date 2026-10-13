@@ -482,8 +482,6 @@ pub(crate) mod admin {
     pub(crate) struct RetainSystemEventsRequest {
         pub(crate) max_age_seconds: u64,
         pub(crate) batch_size: u32,
-        // backcompat: 0.42.0-rc.10 requests omit dry_run.
-        #[serde(default)]
         pub(crate) dry_run: bool,
     }
 

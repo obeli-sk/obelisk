@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Breaking:** *(api)* System-event retention requests must explicitly supply `dry_run`.
+  Omitting it is rejected without deleting events. gRPC behavior is unchanged.
+
 - **Breaking:** *(cli)* Removed compatibility defaults for replay measurements and public
   environment classifications in responses from servers older than 0.42.
 

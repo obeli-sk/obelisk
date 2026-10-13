@@ -4033,7 +4033,8 @@
         "type": "object",
         "required": [
           "max_age_seconds",
-          "batch_size"
+          "batch_size",
+          "dry_run"
         ],
         "properties": {
           "batch_size": {

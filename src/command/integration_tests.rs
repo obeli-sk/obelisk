@@ -3662,6 +3662,18 @@ async fn system_event_retention_dry_run_webapi_and_grpc() {
     let response = server
         .client
         .post(&url)
+        .json(&json!({"max_age_seconds": 86400, "batch_size": 100}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    for event_id in &event_ids {
+        assert!(admin.get_system_event(*event_id).await.unwrap().is_some());
+    }
+
+    let response = server
+        .client
+        .post(&url)
         .json(&json!({"max_age_seconds": 86400, "batch_size": 1, "dry_run": true}))
         .send()
         .await
@@ -3699,7 +3711,7 @@ async fn system_event_retention_dry_run_webapi_and_grpc() {
     let response = server
         .client
         .post(&url)
-        .json(&json!({"max_age_seconds": 86400, "batch_size": 100}))
+        .json(&json!({"max_age_seconds": 86400, "batch_size": 100, "dry_run": false}))
         .send()
         .await
         .unwrap();

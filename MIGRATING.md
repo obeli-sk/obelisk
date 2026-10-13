@@ -25,3 +25,9 @@ Use the next CLI with Obelisk servers version 0.42 or newer. Replay responses mu
 include `replayed_event_count`, `replay_duration_ms`, and `replay_version`; structured
 missing-runtime-config responses must include `optional_public_env` and
 `required_public_env`. The optional replay failure detail remains optional.
+
+## System-event retention
+
+REST requests to `POST /v1/admin/system-events/retain` must include `dry_run`:
+use `true` to preview and `false` to delete. Omitted values return HTTP 422 and
+leave events unchanged. The CLI already supplies the field. gRPC is unchanged.
