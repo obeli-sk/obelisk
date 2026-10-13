@@ -1,3 +1,4 @@
+use super::output::{print_json, print_value};
 use crate::args::{self, DeploymentSource};
 use crate::client::{ClientStartup, send_bytes, send_json};
 use crate::config::deployment::sanitize_deployment_relative_path;
@@ -24,6 +25,7 @@ impl args::Deployment {
                 allow_unavailable_runtime_config,
                 description,
                 deployment_id,
+                json,
             } => {
                 let id = submit_deployment(
                     &client_startup,
@@ -35,8 +37,7 @@ impl args::Deployment {
                     deployment_id,
                 )
                 .await?;
-                println!("{id}");
-                Ok(())
+                print_value(&id, json)
             }
 
             args::Deployment::Enqueue {
@@ -45,6 +46,7 @@ impl args::Deployment {
                 allow_unavailable_runtime_config,
                 description,
                 deployment_id,
+                json,
             } => {
                 let id = submit_deployment(
                     &client_startup,
@@ -63,7 +65,8 @@ impl args::Deployment {
                     allow_unavailable_runtime_config,
                     SwitchCommand::Enqueue,
                 )
-                .await
+                .await?;
+                print_value(&id, json)
             }
 
             args::Deployment::Apply {
@@ -71,6 +74,7 @@ impl args::Deployment {
                 empty,
                 description,
                 deployment_id,
+                json,
             } => {
                 let id = submit_deployment(
                     &client_startup,
@@ -82,10 +86,12 @@ impl args::Deployment {
                     deployment_id,
                 )
                 .await?;
-                switch_deployment(&client_startup, api_url, id, false, SwitchCommand::Apply).await
+                switch_deployment(&client_startup, api_url, id, false, SwitchCommand::Apply)
+                    .await?;
+                print_value(&id, json)
             }
 
-            args::Deployment::List {} => {
+            args::Deployment::List { json } => {
                 let client = client_startup.web_api_client()?;
                 let deployments: Vec<DeploymentStateSer> = send_json(
                     client
@@ -94,12 +100,15 @@ impl args::Deployment {
                 )
                 .await?;
 
+                if json {
+                    return print_json(&deployments);
+                }
                 if deployments.is_empty() {
                     eprintln!("No deployments found.");
                     return Ok(());
                 }
 
-                println!(
+                eprintln!(
                     "{:<32}  {:<12}  {:<19}  {:<19}  DESCRIPTION",
                     "ID", "STATUS", "CREATED_AT", "LAST_ACTIVE_AT"
                 );
@@ -111,7 +120,7 @@ impl args::Deployment {
                         .last_active_at
                         .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
                         .unwrap_or_default();
-                    println!(
+                    eprintln!(
                         "{id:<32}  {status:<12}  {created:<19}  {last_active:<19}  {}",
                         dep.description.unwrap_or_default()
                     );
@@ -127,12 +136,7 @@ impl args::Deployment {
                         .header(ACCEPT, "application/json"),
                 )
                 .await?;
-                if json {
-                    println!("\"{id}\"");
-                } else {
-                    println!("{id}");
-                }
-                Ok(())
+                print_value(&id, json)
             }
 
             args::Deployment::Show { id, file, json } => {

@@ -4,6 +4,7 @@ pub(crate) mod component;
 pub(crate) mod deployment;
 pub(crate) mod execution;
 pub(crate) mod generate;
+mod output;
 pub(crate) mod server;
 pub(crate) mod termination_notifier;
 

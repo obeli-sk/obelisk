@@ -182,7 +182,13 @@
             },
             {
               "name": "endpoint",
-              "about": "Print the selected app's API endpoint URL"
+              "about": "Print the selected app's API endpoint URL",
+              "options": [
+                {
+                  "name": "--json",
+                  "help": "Print the endpoint as a JSON string"
+                }
+              ]
             }
           ]
         },
@@ -209,6 +215,10 @@
                 {
                   "name": "--deployment-id",
                   "help": "Optional client-supplied deployment ID for idempotent submission"
+                },
+                {
+                  "name": "--json",
+                  "help": "Print the deployment ID as a JSON string"
                 }
               ],
               "positionals": [
@@ -240,6 +250,10 @@
                 {
                   "name": "--deployment-id",
                   "help": "Optional client-supplied deployment ID for idempotent submission"
+                },
+                {
+                  "name": "--json",
+                  "help": "Print the deployment ID as a JSON string"
                 }
               ],
               "positionals": [
@@ -264,6 +278,10 @@
                 {
                   "name": "--deployment-id",
                   "help": "Optional client-supplied deployment ID for idempotent submission"
+                },
+                {
+                  "name": "--json",
+                  "help": "Print the deployment ID as a JSON string"
                 }
               ],
               "positionals": [
@@ -275,7 +293,13 @@
             },
             {
               "name": "list",
-              "about": "List recent deployments"
+              "about": "List recent deployments",
+              "options": [
+                {
+                  "name": "--json",
+                  "help": "Output as JSON instead of human-readable text"
+                }
+              ]
             },
             {
               "name": "active",
@@ -465,7 +489,7 @@
                 {
                   "name": "--json",
                   "short": "j",
-                  "help": "Output as JSON instead of human-readable text"
+                  "help": "Output one JSON log record per line (NDJSON)"
                 }
               ],
               "positionals": [
@@ -557,7 +581,7 @@
                 {
                   "name": "--json",
                   "short": "j",
-                  "help": "Output events as JSON in Web API format instead of human-readable text"
+                  "help": "Output Web API JSON, using NDJSON when following"
                 }
               ],
               "positionals": [
@@ -608,7 +632,7 @@
                 {
                   "name": "--json",
                   "short": "j",
-                  "help": "Output as JSON instead of human-readable text"
+                  "help": "Output JSON, using NDJSON when following"
                 }
               ],
               "positionals": [
@@ -635,7 +659,7 @@
                 {
                   "name": "--json",
                   "short": "j",
-                  "help": "Output as JSON instead of human-readable text"
+                  "help": "Output JSON, using NDJSON when following"
                 }
               ],
               "positionals": [
@@ -649,6 +673,12 @@
             {
               "name": "cancel",
               "about": "Request cancellation of a running activity or pending delay",
+              "options": [
+                {
+                  "name": "--json",
+                  "help": "Output the outcome as JSON"
+                }
+              ],
               "positionals": [
                 {
                   "name": "id",
@@ -660,6 +690,12 @@
             {
               "name": "pause",
               "about": "Pause a workflow execution or a pending delay",
+              "options": [
+                {
+                  "name": "--json",
+                  "help": "Output the outcome as JSON"
+                }
+              ],
               "positionals": [
                 {
                   "name": "id",
@@ -671,6 +707,12 @@
             {
               "name": "unpause",
               "about": "Resume a previously paused workflow execution or delay",
+              "options": [
+                {
+                  "name": "--json",
+                  "help": "Output the outcome as JSON"
+                }
+              ],
               "positionals": [
                 {
                   "name": "id",
@@ -754,6 +796,10 @@
                 {
                   "name": "--skip-determinism-check",
                   "help": "Skip the determinism check during upgrade"
+                },
+                {
+                  "name": "--json",
+                  "help": "Output the outcome as JSON"
                 }
               ],
               "positionals": [
@@ -778,6 +824,10 @@
                   "name": "--imports",
                   "short": "i",
                   "help": "Show component imports"
+                },
+                {
+                  "name": "--json",
+                  "help": "Output as JSON instead of human-readable text"
                 },
                 {
                   "name": "--extensions",
@@ -1260,7 +1310,7 @@
             {
               "name": "--json",
               "short": "j",
-              "help": "Output as JSON instead of human-readable text"
+              "help": "Output one JSON log record per line (NDJSON)"
             }
           ],
           "positionals": [
@@ -1352,7 +1402,7 @@
             {
               "name": "--json",
               "short": "j",
-              "help": "Output events as JSON in Web API format instead of human-readable text"
+              "help": "Output Web API JSON, using NDJSON when following"
             }
           ],
           "positionals": [
@@ -1403,7 +1453,7 @@
             {
               "name": "--json",
               "short": "j",
-              "help": "Output as JSON instead of human-readable text"
+              "help": "Output JSON, using NDJSON when following"
             }
           ],
           "positionals": [
@@ -1430,7 +1480,7 @@
             {
               "name": "--json",
               "short": "j",
-              "help": "Output as JSON instead of human-readable text"
+              "help": "Output JSON, using NDJSON when following"
             }
           ],
           "positionals": [
@@ -1444,6 +1494,12 @@
         {
           "name": "cancel",
           "about": "Request cancellation of a running activity or pending delay",
+          "options": [
+            {
+              "name": "--json",
+              "help": "Output the outcome as JSON"
+            }
+          ],
           "positionals": [
             {
               "name": "id",
@@ -1455,6 +1511,12 @@
         {
           "name": "pause",
           "about": "Pause a workflow execution or a pending delay",
+          "options": [
+            {
+              "name": "--json",
+              "help": "Output the outcome as JSON"
+            }
+          ],
           "positionals": [
             {
               "name": "id",
@@ -1466,6 +1528,12 @@
         {
           "name": "unpause",
           "about": "Resume a previously paused workflow execution or delay",
+          "options": [
+            {
+              "name": "--json",
+              "help": "Output the outcome as JSON"
+            }
+          ],
           "positionals": [
             {
               "name": "id",
@@ -1549,6 +1617,10 @@
             {
               "name": "--skip-determinism-check",
               "help": "Skip the determinism check during upgrade"
+            },
+            {
+              "name": "--json",
+              "help": "Output the outcome as JSON"
             }
           ],
           "positionals": [
@@ -1584,6 +1656,10 @@
               "name": "--imports",
               "short": "i",
               "help": "Show component imports"
+            },
+            {
+              "name": "--json",
+              "help": "Output as JSON instead of human-readable text"
             },
             {
               "name": "--extensions",
@@ -1686,6 +1762,10 @@
             {
               "name": "--deployment-id",
               "help": "Optional client-supplied deployment ID for idempotent submission"
+            },
+            {
+              "name": "--json",
+              "help": "Print the deployment ID as a JSON string"
             }
           ],
           "positionals": [
@@ -1717,6 +1797,10 @@
             {
               "name": "--deployment-id",
               "help": "Optional client-supplied deployment ID for idempotent submission"
+            },
+            {
+              "name": "--json",
+              "help": "Print the deployment ID as a JSON string"
             }
           ],
           "positionals": [
@@ -1741,6 +1825,10 @@
             {
               "name": "--deployment-id",
               "help": "Optional client-supplied deployment ID for idempotent submission"
+            },
+            {
+              "name": "--json",
+              "help": "Print the deployment ID as a JSON string"
             }
           ],
           "positionals": [
@@ -1752,7 +1840,13 @@
         },
         {
           "name": "list",
-          "about": "List recent deployments"
+          "about": "List recent deployments",
+          "options": [
+            {
+              "name": "--json",
+              "help": "Output as JSON instead of human-readable text"
+            }
+          ]
         },
         {
           "name": "active",
