@@ -324,9 +324,11 @@ impl ComponentConfigRegistry {
                     import.ffqn.ifc_fqn.pkg_fqn_name().to_string().as_str(),
                     "obelisk:log@1.0.0"
                         | "obelisk:workflow@7.1.0"
+                        | "obelisk:workflow@7.0.0"
                         | "obelisk:workflow@5.0.0"
                         | "obelisk:workflow@5.1.0"
                         | "obelisk:types@6.1.0"
+                        | "obelisk:types@6.0.0"
                         | "obelisk:types@4.2.0"
                 )
             }
@@ -337,12 +339,14 @@ impl ComponentConfigRegistry {
                     "obelisk" => matches!(
                         import.ffqn.ifc_fqn.pkg_fqn_name().to_string().as_str(),
                         "obelisk:webhook@7.1.0"
+                            | "obelisk:webhook@7.0.0"
                             | "obelisk:webhook@5.3.0"
                             | "obelisk:webhook@5.2.0"
                             | "obelisk:webhook@5.1.0"
                             | "obelisk:webhook@5.0.0"
                             | "obelisk:log@1.0.0"
                             | "obelisk:types@6.1.0"
+                            | "obelisk:types@6.0.0"
                             | "obelisk:types@4.0.0"
                             | "obelisk:types@4.1.0"
                             | "obelisk:types@4.2.0"
