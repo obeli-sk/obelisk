@@ -30,7 +30,7 @@ world root {
     export testing:http-obelisk-schedule/http-get;
     export testing:http-obelisk-schedule/http-post;
 }
-package obelisk:types@6.0.0 {
+package obelisk:types@6.1.0 {
     @since(version = 3.0.0)
     interface time {
         @since(version = 3.0.0)
@@ -154,6 +154,7 @@ package obelisk:types@6.0.0 {
         }
 
         /// Errors from typed scheduling with a caller-supplied top-level execution ID.
+        @since(version = 6.1.0)
         variant schedule-with-id-error {
             execution-id-parsing-error(string),
             execution-id-must-be-top-level,
@@ -506,9 +507,9 @@ package testing:http {
 package testing:http-obelisk-ext {
     interface http-get {
         use testing:http/http-get.{response, response-str};
-        use obelisk:types/execution@6.0.0.{execution-id};
-        use obelisk:types/join-set@6.0.0.{join-set};
-        use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
+        use obelisk:types/execution@6.1.0.{execution-id};
+        use obelisk:types/join-set@6.1.0.{join-set};
+        use obelisk:types/execution@6.1.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
         get-submit: func(join-set: borrow<join-set>, url: string) -> result<execution-id, child-execution-request-error>;
 
@@ -536,9 +537,9 @@ package testing:http-obelisk-ext {
     }
     interface http-post {
         use testing:http/http-get.{response-str};
-        use obelisk:types/execution@6.0.0.{execution-id};
-        use obelisk:types/join-set@6.0.0.{join-set};
-        use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
+        use obelisk:types/execution@6.1.0.{execution-id};
+        use obelisk:types/join-set@6.1.0.{join-set};
+        use obelisk:types/execution@6.1.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
         secret-post-submit: func(join-set: borrow<join-set>, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> result<execution-id, child-execution-request-error>;
 
@@ -552,9 +553,9 @@ package testing:http-obelisk-ext {
 package testing:http-obelisk-schedule {
     interface http-get {
         use testing:http/http-get.{response, response-str};
-        use obelisk:types/execution@6.0.0.{execution-id};
-        use obelisk:types/time@6.0.0.{schedule-at};
-        use obelisk:types/execution@6.0.0.{schedule-json-error, schedule-with-id-error};
+        use obelisk:types/execution@6.1.0.{execution-id};
+        use obelisk:types/time@6.1.0.{schedule-at};
+        use obelisk:types/execution@6.1.0.{schedule-json-error, schedule-with-id-error};
 
         get-schedule: func(schedule-at: schedule-at, url: string) -> result<execution-id, schedule-json-error>;
 
@@ -574,9 +575,9 @@ package testing:http-obelisk-schedule {
     }
     interface http-post {
         use testing:http/http-get.{response-str};
-        use obelisk:types/execution@6.0.0.{execution-id};
-        use obelisk:types/time@6.0.0.{schedule-at};
-        use obelisk:types/execution@6.0.0.{schedule-json-error, schedule-with-id-error};
+        use obelisk:types/execution@6.1.0.{execution-id};
+        use obelisk:types/time@6.1.0.{schedule-at};
+        use obelisk:types/execution@6.1.0.{schedule-json-error, schedule-with-id-error};
 
         secret-post-schedule: func(schedule-at: schedule-at, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> result<execution-id, schedule-json-error>;
 

@@ -1308,11 +1308,11 @@ impl WorkflowCtx {
         // Link type-only interfaces imported by workflow components.
         typesTypes::execution::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| state)
             .map_err(|err| {
-                WasmFileError::linking_error("cannot link obelisk:types/execution@6.0.0", err)
+                WasmFileError::linking_error("cannot link obelisk:types/execution@6.1.0", err)
             })?;
         typesTypes::function::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| state)
             .map_err(|err| {
-                WasmFileError::linking_error("cannot link obelisk:types/function@6.0.0", err)
+                WasmFileError::linking_error("cannot link obelisk:types/function@6.1.0", err)
             })?;
 
         // link obelisk:workflow/workflow-support interface (native, no backtrace)
@@ -1331,7 +1331,7 @@ impl WorkflowCtx {
     }
 
     fn add_to_linker_join_set(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
-        const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@6.0.0";
+        const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@6.1.0";
         let mut inst_join_set_ifc = linker
             .instance(IFC_FQN_JOIN_SET)
             .map_err(|err| WasmFileError::linking_error(IFC_FQN_JOIN_SET, err))?;

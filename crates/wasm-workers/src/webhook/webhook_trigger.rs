@@ -73,11 +73,11 @@ pub(crate) mod types {
         path: "host-wit-webhook/",
         inline: "package any:any;
                 world bindings {
-                    import obelisk:types/time@6.0.0;
-                    import obelisk:types/function@6.0.0;
-                    import obelisk:types/execution@6.0.0;
-                    import obelisk:types/backtrace@6.0.0;
-                    import obelisk:types/join-set@6.0.0;
+                    import obelisk:types/time@6.1.0;
+                    import obelisk:types/function@6.1.0;
+                    import obelisk:types/execution@6.1.0;
+                    import obelisk:types/backtrace@6.1.0;
+                    import obelisk:types/join-set@6.1.0;
                     import obelisk:webhook/webhook-support@7.0.0;
                     import obelisk:webhook/webhook-dynamic-support@7.0.0;
                     import obelisk:webhook/webhook-dynamic-support-backtrace@7.0.0;
@@ -2019,9 +2019,9 @@ impl WebhookEndpointCtx {
             .map_err(|err| WasmFileError::linking_error("cannot link log activities", err))?;
         // Link type-only interfaces imported by webhook components.
         types::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx>(linker, |x| x)
-            .map_err(|err| WasmFileError::linking_error("obelisk:types/execution@6.0.0", err))?;
+            .map_err(|err| WasmFileError::linking_error("obelisk:types/execution@6.1.0", err))?;
         types::obelisk::types::function::add_to_linker::<_, WebhookEndpointCtx>(linker, |x| x)
-            .map_err(|err| WasmFileError::linking_error("obelisk:types/function@6.0.0", err))?;
+            .map_err(|err| WasmFileError::linking_error("obelisk:types/function@6.1.0", err))?;
         // link obelisk:webhook/webhook-support (native, no backtrace)
         types::obelisk::webhook::webhook_support::add_to_linker::<_, WebhookEndpointCtx>(
             linker,

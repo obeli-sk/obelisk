@@ -5,10 +5,10 @@ expression: wit
 package root:component;
 
 world root {
-    import obelisk:types/time@6.0.0;
-    import obelisk:types/function@6.0.0;
-    import obelisk:types/execution@6.0.0;
-    import obelisk:types/join-set@6.0.0;
+    import obelisk:types/time@6.1.0;
+    import obelisk:types/function@6.1.0;
+    import obelisk:types/execution@6.1.0;
+    import obelisk:types/join-set@6.1.0;
     import obelisk:workflow/workflow-support@7.0.0;
     import obelisk:workflow/workflow-dynamic-support@7.0.0;
     import testing:sleep/sleep;
@@ -27,7 +27,7 @@ package obelisk:log@1.0.0 {
 }
 
 
-package obelisk:types@6.0.0 {
+package obelisk:types@6.1.0 {
     @since(version = 3.0.0)
     interface time {
         @since(version = 3.0.0)
@@ -151,6 +151,7 @@ package obelisk:types@6.0.0 {
         }
 
         /// Errors from typed scheduling with a caller-supplied top-level execution ID.
+        @since(version = 6.1.0)
         variant schedule-with-id-error {
             execution-id-parsing-error(string),
             execution-id-must-be-top-level,
@@ -215,11 +216,11 @@ package obelisk:types@6.0.0 {
 
 package obelisk:workflow@7.0.0 {
     interface workflow-support {
-        use obelisk:types/join-set@6.0.0.{join-set};
-        use obelisk:types/time@6.0.0.{schedule-at};
-        use obelisk:types/execution@6.0.0.{delay-id};
-        use obelisk:types/time@6.0.0.{datetime};
-        use obelisk:types/execution@6.0.0.{execution-id};
+        use obelisk:types/join-set@6.1.0.{join-set};
+        use obelisk:types/time@6.1.0.{schedule-at};
+        use obelisk:types/execution@6.1.0.{delay-id};
+        use obelisk:types/time@6.1.0.{datetime};
+        use obelisk:types/execution@6.1.0.{execution-id};
 
         variant join-next-try-error {
             all-processed,
@@ -245,10 +246,10 @@ package obelisk:workflow@7.0.0 {
         execution-id-generate: func() -> execution-id;
     }
     interface workflow-dynamic-support {
-        use obelisk:types/execution@6.0.0.{execution-id};
-        use obelisk:types/time@6.0.0.{schedule-at};
-        use obelisk:types/function@6.0.0.{function};
-        use obelisk:types/execution@6.0.0.{schedule-json-error};
+        use obelisk:types/execution@6.1.0.{execution-id};
+        use obelisk:types/time@6.1.0.{schedule-at};
+        use obelisk:types/function@6.1.0.{function};
+        use obelisk:types/execution@6.1.0.{schedule-json-error};
 
         schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string) -> result<_, schedule-json-error>;
     }
@@ -257,7 +258,7 @@ package obelisk:workflow@7.0.0 {
 
 package testing:sleep {
     interface sleep {
-        use obelisk:types/time@6.0.0.{duration};
+        use obelisk:types/time@6.1.0.{duration};
 
         sleep: func(duration: duration) -> result;
     }
@@ -266,9 +267,9 @@ package testing:sleep {
 
 package testing:sleep-obelisk-ext {
     interface sleep {
-        use obelisk:types/join-set@6.0.0.{join-set};
-        use obelisk:types/time@6.0.0.{duration};
-        use obelisk:types/execution@6.0.0.{execution-id, child-execution-request-error};
+        use obelisk:types/join-set@6.1.0.{join-set};
+        use obelisk:types/time@6.1.0.{duration};
+        use obelisk:types/execution@6.1.0.{execution-id, child-execution-request-error};
 
         sleep-submit: func(join-set: borrow<join-set>, duration: duration) -> result<execution-id, child-execution-request-error>;
     }
@@ -277,8 +278,8 @@ package testing:sleep-obelisk-ext {
 
 package testing:sleep-obelisk-schedule {
     interface sleep {
-        use obelisk:types/time@6.0.0.{schedule-at};
-        use obelisk:types/execution@6.0.0.{execution-id, schedule-json-error};
+        use obelisk:types/time@6.1.0.{schedule-at};
+        use obelisk:types/execution@6.1.0.{execution-id, schedule-json-error};
 
         noop-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
     }
@@ -287,8 +288,8 @@ package testing:sleep-obelisk-schedule {
 
 package testing:sleep-workflow {
     interface workflow {
-        use obelisk:types/time@6.0.0.{duration, schedule-at};
-        use obelisk:types/execution@6.0.0.{execution-id};
+        use obelisk:types/time@6.1.0.{duration, schedule-at};
+        use obelisk:types/execution@6.1.0.{execution-id};
 
         sleep-host-activity: func(duration: duration) -> result;
 
@@ -321,10 +322,10 @@ package testing:sleep-workflow {
 
 package testing:sleep-workflow-obelisk-ext {
     interface workflow {
-        use obelisk:types/time@6.0.0.{duration, schedule-at};
-        use obelisk:types/execution@6.0.0.{execution-id};
-        use obelisk:types/join-set@6.0.0.{join-set};
-        use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
+        use obelisk:types/time@6.1.0.{duration, schedule-at};
+        use obelisk:types/execution@6.1.0.{execution-id};
+        use obelisk:types/join-set@6.1.0.{join-set};
+        use obelisk:types/execution@6.1.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
         sleep-host-activity-submit: func(join-set: borrow<join-set>, duration: duration) -> result<execution-id, child-execution-request-error>;
 
@@ -409,8 +410,8 @@ package testing:sleep-workflow-obelisk-ext {
 
 package testing:sleep-workflow-obelisk-schedule {
     interface workflow {
-        use obelisk:types/time@6.0.0.{duration, schedule-at};
-        use obelisk:types/execution@6.0.0.{execution-id, schedule-json-error, schedule-with-id-error};
+        use obelisk:types/time@6.1.0.{duration, schedule-at};
+        use obelisk:types/execution@6.1.0.{execution-id, schedule-json-error, schedule-with-id-error};
 
         sleep-host-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> result<execution-id, schedule-json-error>;
 

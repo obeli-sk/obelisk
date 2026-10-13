@@ -6,9 +6,9 @@ package root:component;
 
 world root {
     import testing:http/http-get;
-    import obelisk:types/function@6.0.0;
-    import obelisk:types/execution@6.0.0;
-    import obelisk:types/join-set@6.0.0;
+    import obelisk:types/function@6.1.0;
+    import obelisk:types/execution@6.1.0;
+    import obelisk:types/join-set@6.1.0;
     import testing:http-obelisk-ext/http-get;
     import obelisk:workflow/workflow-support@7.0.0;
     import obelisk:log/log@1.0.0;
@@ -24,7 +24,7 @@ package obelisk:log@1.0.0 {
 }
 
 
-package obelisk:types@6.0.0 {
+package obelisk:types@6.1.0 {
     @since(version = 3.0.0)
     interface time {
         @since(version = 3.0.0)
@@ -148,6 +148,7 @@ package obelisk:types@6.0.0 {
         }
 
         /// Errors from typed scheduling with a caller-supplied top-level execution ID.
+        @since(version = 6.1.0)
         variant schedule-with-id-error {
             execution-id-parsing-error(string),
             execution-id-must-be-top-level,
@@ -212,7 +213,7 @@ package obelisk:types@6.0.0 {
 
 package obelisk:workflow@7.0.0 {
     interface workflow-support {
-        use obelisk:types/join-set@6.0.0.{join-set};
+        use obelisk:types/join-set@6.1.0.{join-set};
 
         join-set-create: func() -> join-set;
     }
@@ -237,8 +238,8 @@ package testing:http {
 
 package testing:http-obelisk-ext {
     interface http-get {
-        use obelisk:types/join-set@6.0.0.{join-set};
-        use obelisk:types/execution@6.0.0.{execution-id, child-execution-request-error, await-next-extension-error};
+        use obelisk:types/join-set@6.1.0.{join-set};
+        use obelisk:types/execution@6.1.0.{execution-id, child-execution-request-error, await-next-extension-error};
 
         get-successful-submit: func(join-set: borrow<join-set>, url: string) -> result<execution-id, child-execution-request-error>;
 
@@ -264,9 +265,9 @@ package testing:http-workflow {
 
 package testing:http-workflow-obelisk-ext {
     interface workflow {
-        use obelisk:types/execution@6.0.0.{execution-id};
-        use obelisk:types/join-set@6.0.0.{join-set};
-        use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
+        use obelisk:types/execution@6.1.0.{execution-id};
+        use obelisk:types/join-set@6.1.0.{join-set};
+        use obelisk:types/execution@6.1.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
         get-submit: func(join-set: borrow<join-set>, url: string) -> result<execution-id, child-execution-request-error>;
 
@@ -303,9 +304,9 @@ package testing:http-workflow-obelisk-ext {
 
 package testing:http-workflow-obelisk-schedule {
     interface workflow {
-        use obelisk:types/execution@6.0.0.{execution-id};
-        use obelisk:types/time@6.0.0.{schedule-at};
-        use obelisk:types/execution@6.0.0.{schedule-json-error, schedule-with-id-error};
+        use obelisk:types/execution@6.1.0.{execution-id};
+        use obelisk:types/time@6.1.0.{schedule-at};
+        use obelisk:types/execution@6.1.0.{schedule-json-error, schedule-with-id-error};
 
         get-schedule: func(schedule-at: schedule-at, url: string) -> result<execution-id, schedule-json-error>;
 

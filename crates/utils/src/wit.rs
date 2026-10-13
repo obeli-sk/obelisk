@@ -18,7 +18,7 @@ use wit_parser::{
 };
 
 const OBELISK_TYPES_VERSION_MAJOR: u64 = 6;
-const OBELISK_TYPES_VERSION_MINOR: u64 = 0;
+const OBELISK_TYPES_VERSION_MINOR: u64 = 1;
 const OBELISK_TYPES_VERSION_PATCH: u64 = 0;
 const OBELISK_TYPES_VERSION: &str = formatcp!(
     "{OBELISK_TYPES_VERSION_MAJOR}.{OBELISK_TYPES_VERSION_MINOR}.{OBELISK_TYPES_VERSION_PATCH}"
@@ -35,11 +35,11 @@ pub const WIT_OBELISK_LOG_PACKAGE: [&str; 3] = [
 ];
 const WIT_OBELISK_TYPES_PACKAGE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@6.0.0/obelisk_types@6.0.0.wit"
+    "/wit/obelisk_types@6.1.0/obelisk_types@6.1.0.wit"
 ));
 pub const WIT_OBELISK_TYPES_PACKAGE: [&str; 3] = [
-    "obelisk_types@6.0.0",
-    "obelisk_types@6.0.0.wit",
+    "obelisk_types@6.1.0",
+    "obelisk_types@6.1.0.wit",
     WIT_OBELISK_TYPES_PACKAGE_CONTENT,
 ];
 pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
@@ -1204,6 +1204,47 @@ mod tests {
         printer.print(&resolve, main_id, &ids).unwrap(); // verify it parses
         // store original WIT string in snapshots, because that is the `wit()` output.
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit")}, {insta::assert_snapshot!(wit)});
+    }
+
+    #[test]
+    fn extensions_support_previous_types_minor() {
+        let previous_types = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/wit/obelisk_types@6.0.0/obelisk_types@6.0.0.wit"
+        ));
+        let wit = r"
+            package test:legacy;
+            interface api {
+                use obelisk:types/execution@6.0.0.{execution-id};
+                run: func(id: execution-id) -> result<execution-id>;
+            }
+            world component { export api; }
+        ";
+        let component = WasmComponent::new_from_wit_string_with_deps(
+            wit,
+            &[previous_types],
+            ComponentType::Activity,
+        )
+        .unwrap();
+        let output = component.wit();
+        let group = UnresolvedPackageGroup::parse(PathBuf::new(), &output).unwrap();
+        let mut resolve = Resolve::default();
+        resolve.push_group(group).unwrap();
+        let package = resolve
+            .packages
+            .iter()
+            .find_map(|(_, package)| {
+                (package.name.to_string() == "test:legacy-obelisk-schedule").then_some(package)
+            })
+            .unwrap();
+        let interface = &resolve.interfaces[package.interfaces["api"]];
+        assert!(interface.functions.contains_key("run-schedule-with-id"));
+        assert!(
+            resolve
+                .packages
+                .iter()
+                .any(|(_, package)| package.name.to_string() == "obelisk:types@6.1.0")
+        );
     }
 
     #[test]

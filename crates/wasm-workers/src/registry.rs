@@ -309,6 +309,7 @@ impl ComponentConfigRegistry {
         import: &FunctionMetadata,
         component_type: ComponentType,
     ) -> bool {
+        // backcompat: 0.42 components can still import obelisk:types@6.0.0.
         match component_type {
             ComponentType::Activity => {
                 // wasi + log
@@ -326,6 +327,7 @@ impl ComponentConfigRegistry {
                         | "obelisk:workflow@7.0.0"
                         | "obelisk:workflow@5.0.0"
                         | "obelisk:workflow@5.1.0"
+                        | "obelisk:types@6.1.0"
                         | "obelisk:types@6.0.0"
                         | "obelisk:types@4.2.0"
                 )
@@ -342,6 +344,7 @@ impl ComponentConfigRegistry {
                             | "obelisk:webhook@5.1.0"
                             | "obelisk:webhook@5.0.0"
                             | "obelisk:log@1.0.0"
+                            | "obelisk:types@6.1.0"
                             | "obelisk:types@6.0.0"
                             | "obelisk:types@4.0.0"
                             | "obelisk:types@4.1.0"
