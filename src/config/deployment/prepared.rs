@@ -82,6 +82,7 @@ pub(crate) async fn prepare_deployment_manifest(
     let mut doc = deployment_toml
         .parse::<DocumentMut>()
         .context("cannot parse deployment manifest as TOML")?;
+    reject_generated_deployment_metadata(&doc)?;
 
     // Validate through the typed config before collecting files so malformed component
     // entries fail with the same errors as today's resolution path.
@@ -148,6 +149,28 @@ pub(crate) fn compute_manifest_digest(deployment_toml: &str) -> ContentDigest {
     ContentDigest(Digest(hash))
 }
 
+pub(super) fn reject_generated_deployment_metadata(doc: &DocumentMut) -> anyhow::Result<()> {
+    for (section, components) in doc.iter() {
+        for field in ["content_digest", "component_files"] {
+            let present = components
+                .as_array_of_tables()
+                .is_some_and(|tables| tables.iter().any(|component| component.contains_key(field)))
+                || components.as_array().is_some_and(|components| {
+                    components.iter().any(|component| {
+                        component
+                            .as_inline_table()
+                            .is_some_and(|component| component.contains_key(field))
+                    })
+                });
+            ensure!(
+                !present,
+                "{section}.{field} is generated submission metadata; remove it from deployment.toml"
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn strip_generated_deployment_metadata(deployment_toml: &str) -> anyhow::Result<String> {
     let mut doc = deployment_toml
         .parse::<DocumentMut>()
@@ -164,16 +187,7 @@ fn strip_generated_deployment_metadata_from_doc(doc: &mut DocumentMut) -> anyhow
             continue;
         };
         for table in components.iter_mut() {
-            let is_deployment_owned = table
-                .get("location")
-                .and_then(Item::as_str)
-                .map(deployment_owned_path)
-                .transpose()?
-                .flatten()
-                .is_some();
-            if is_deployment_owned {
-                table.remove("content_digest");
-            }
+            table.remove("content_digest");
         }
     }
 
@@ -580,10 +594,6 @@ fn parse_manifest(
     deployment
         .validate(deployment_dir)
         .context("cannot validate deployment manifest")
-}
-
-fn component_name(table: &toml_edit::Table) -> Option<String> {
-    table.get("name").and_then(Item::as_str).map(str::to_string)
 }
 
 fn collect_script_section(
@@ -1198,174 +1208,45 @@ async fn read_deployment_file(
     Ok((digest, bytes))
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct BrokenDigest {
-    pub(crate) field_path: String,
-    pub(crate) path: String,
-    pub(crate) stored: String,
-    pub(crate) actual: ContentDigest,
-}
-
-pub(crate) async fn reconcile_deployment_digests(
-    deployment_toml_path: &Path,
-    fix: bool,
-) -> anyhow::Result<Vec<BrokenDigest>> {
-    let deployment_toml = tokio::fs::read_to_string(deployment_toml_path)
-        .await
-        .with_context(|| format!("cannot read deployment manifest {deployment_toml_path:?}"))?;
-    let deployment_dir = canonicalize_parent(deployment_toml_path)
-        .with_context(|| format!("cannot resolve parent of {deployment_toml_path:?}"))?;
-    let mut doc = deployment_toml
-        .parse::<DocumentMut>()
-        .context("cannot parse deployment manifest as TOML")?;
-
-    let mut broken = Vec::new();
-    for section in WASM_SECTIONS.iter().chain(SCRIPT_SECTIONS) {
-        reconcile_location_section(&mut doc, section, &deployment_dir, fix, &mut broken).await?;
-    }
-    for section in BACKTRACE_SECTIONS {
-        reconcile_backtrace_section(&mut doc, section, &deployment_dir, fix, &mut broken).await?;
-    }
-
-    if fix {
-        strip_generated_deployment_metadata_from_doc(&mut doc)?;
-        let fixed_toml = doc.to_string();
-        if fixed_toml == deployment_toml {
-            return Ok(broken);
-        }
-        tokio::fs::write(deployment_toml_path, fixed_toml)
-            .await
-            .with_context(|| {
-                format!("cannot write fixed deployment manifest {deployment_toml_path:?}")
-            })?;
-    }
-    Ok(broken)
-}
-
-async fn reconcile_location_section(
-    doc: &mut DocumentMut,
-    section: &str,
-    deployment_dir: &Path,
-    fix: bool,
-    broken: &mut Vec<BrokenDigest>,
-) -> anyhow::Result<()> {
-    let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
-        return Ok(());
-    };
-
-    for table in components.iter_mut() {
-        let name = component_name(table);
-        let Some(stored) = table
-            .get("content_digest")
-            .and_then(Item::as_str)
-            .map(str::to_string)
-        else {
-            continue;
-        };
-        let (path, actual) =
-            if let Some(raw_location) = table.get("location").and_then(Item::as_str) {
-                let Some(path) = deployment_owned_path(raw_location)? else {
-                    continue;
-                };
-                let (actual, _) = read_deployment_file(deployment_dir, &path).await?;
-                (path, actual)
-            } else if let Some(content) = table.get("content").and_then(Item::as_str) {
-                ("<inline>".to_string(), content_digest(content.as_bytes()))
-            } else {
-                continue;
-            };
-
-        if stored != actual.to_string() {
-            if fix {
-                table["content_digest"] = value(actual.to_string());
-            }
-            broken.push(BrokenDigest {
-                field_path: format!(
-                    "{section}[name={}].content_digest",
-                    name.as_deref().unwrap_or("")
-                ),
-                path,
-                stored,
-                actual,
-            });
-        }
-    }
-
-    Ok(())
-}
-
-async fn reconcile_backtrace_section(
-    doc: &mut DocumentMut,
-    section: &str,
-    deployment_dir: &Path,
-    fix: bool,
-    broken: &mut Vec<BrokenDigest>,
-) -> anyhow::Result<()> {
-    let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
-        return Ok(());
-    };
-
-    for table in components.iter_mut() {
-        let name = component_name(table);
-        // Collect deployment-owned backtrace source paths before touching `component_files`,
-        // which now holds every source's digest (the source map is a plain path map).
-        let Some(sources) = table
-            .get("backtrace")
-            .and_then(Item::as_table_like)
-            .and_then(|backtrace| backtrace.get("sources"))
-            .and_then(Item::as_table_like)
-        else {
-            continue;
-        };
-        let mut owned_paths = Vec::new();
-        for (_, source) in sources.iter() {
-            let Some(raw_path) = backtrace_source_path(source) else {
-                continue;
-            };
-            if let Some(path) = deployment_owned_path(&raw_path)? {
-                owned_paths.push(path);
-            }
-        }
-
-        for path in owned_paths {
-            let Some(stored) = table
-                .get("component_files")
-                .and_then(Item::as_table_like)
-                .and_then(|files| files.get(&path))
-                .and_then(Item::as_str)
-                .map(str::to_string)
-            else {
-                continue;
-            };
-            let (actual, _) = read_deployment_file(deployment_dir, &path).await?;
-            if stored != actual.to_string() {
-                if fix
-                    && let Some(files) = table
-                        .get_mut("component_files")
-                        .and_then(Item::as_table_like_mut)
-                {
-                    files.insert(&path, value(actual.to_string()));
-                }
-                broken.push(BrokenDigest {
-                    field_path: format!(
-                        "{section}[name={}].component_files[{path}]",
-                        name.as_deref().unwrap_or("")
-                    ),
-                    path,
-                    stored,
-                    actual,
-                });
-            }
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use concepts::cas::InMemoryCas;
+
+    #[tokio::test]
+    async fn authored_deployments_reject_generated_digest_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("deployment.toml");
+        for field in ["content_digest", "component_files"] {
+            let metadata = if field == "content_digest" {
+                "\"sha256:1111111111111111111111111111111111111111111111111111111111111111\""
+            } else {
+                "{}"
+            };
+            for manifest in [
+                format!(
+                    "[[activity_exec]]\ncontent = 'echo hello'\nffqn = 'ns:pkg/ifc.run'\n{field} = {metadata}\n"
+                ),
+                format!(
+                    "activity_exec = [{{ location = 'oci://example.com/exec:latest', ffqn = 'ns:pkg/ifc.run', {field} = {metadata} }}]\n"
+                ),
+            ] {
+                let error = prepare_deployment_manifest(&manifest, dir.path())
+                    .await
+                    .unwrap_err()
+                    .to_string();
+                assert!(error.contains(field), "{error}");
+                assert!(error.contains("generated submission metadata"), "{error}");
+                tokio::fs::write(&path, &manifest).await.unwrap();
+                let error = super::super::load_deployment_validated(&path)
+                    .await
+                    .err()
+                    .expect("component push must also reject generated metadata")
+                    .to_string();
+                assert!(error.contains("generated submission metadata"), "{error}");
+            }
+        }
+    }
 
     /// Upload a prepared manifest's blobs to an in-memory CAS (checking each digest), then
     /// resolve the processed TOML through the shared CAS-based path.
@@ -1754,7 +1635,7 @@ location = "components/w.wasm"
     }
 
     #[tokio::test]
-    async fn export_strips_local_backtrace_digest_but_keeps_oci_digest() {
+    async fn export_strips_generated_metadata_from_local_inline_and_oci_sources() {
         let dir = tempfile::tempdir().unwrap();
         tokio::fs::create_dir_all(dir.path().join("components"))
             .await
@@ -1769,8 +1650,7 @@ location = "components/w.wasm"
             .await
             .unwrap();
         let oci_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
-        let manifest = format!(
-            r#"
+        let manifest = r#"
 [[workflow_wasm]]
 name = "local"
 location = "components/w.wasm"
@@ -1781,14 +1661,21 @@ location = "components/w.wasm"
 [[workflow_js]]
 name = "oci"
 location = "oci://docker.io/library/example:latest"
-content_digest = "{oci_digest}"
 ffqn = "ns:pkg/ifc.oci"
-"#
-        );
 
-        let prepared = prepare_deployment_manifest(&manifest, dir.path())
+[[workflow_js]]
+name = "inline"
+content = "export default () => null;"
+ffqn = "ns:pkg/ifc.inline"
+"#;
+
+        let mut prepared = prepare_deployment_manifest(manifest, dir.path())
             .await
             .unwrap();
+        let mut processed = prepared.deployment_toml.parse::<DocumentMut>().unwrap();
+        processed["workflow_js"][0]["content_digest"] = value(oci_digest);
+        processed["workflow_js"][1]["content_digest"] = value(oci_digest);
+        prepared.deployment_toml = processed.to_string();
         let exported = strip_generated_deployment_metadata(&prepared.deployment_toml).unwrap();
         let doc = exported.parse::<DocumentMut>().unwrap();
         let local = doc["workflow_wasm"]
@@ -1801,12 +1688,11 @@ ffqn = "ns:pkg/ifc.oci"
             local["backtrace"]["sources"][".../src/lib.rs"].as_str(),
             Some("src/lib.rs")
         );
-        let oci = doc["workflow_js"]
-            .as_array_of_tables()
-            .unwrap()
-            .get(0)
+        assert!(!exported.contains("content_digest"));
+        assert!(!exported.contains("component_files"));
+        prepare_deployment_manifest(&exported, dir.path())
+            .await
             .unwrap();
-        assert_eq!(oci["content_digest"].as_str(), Some(oci_digest));
     }
 
     #[tokio::test]
@@ -1925,92 +1811,5 @@ ffqn = "ns:pkg/ifc.fn"
         let resolved = resolve_prepared(&prepared).await;
 
         assert_eq!(resolved.activities_js.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn reconcile_reports_all_mismatches_and_fixes_them() {
-        let dir = tempfile::tempdir().unwrap();
-        tokio::fs::create_dir_all(dir.path().join("components"))
-            .await
-            .unwrap();
-        tokio::fs::create_dir_all(dir.path().join("scripts"))
-            .await
-            .unwrap();
-        tokio::fs::create_dir_all(dir.path().join("src"))
-            .await
-            .unwrap();
-        tokio::fs::write(dir.path().join("components/w.wasm"), b"workflow")
-            .await
-            .unwrap();
-        tokio::fs::write(dir.path().join("scripts/a.js"), b"activity")
-            .await
-            .unwrap();
-        tokio::fs::write(dir.path().join("src/lib.rs"), b"source")
-            .await
-            .unwrap();
-
-        let wrong = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-        let deployment_path = dir.path().join("deployment.toml");
-        let manifest = format!(
-            r#"# formatting is preserved
-[[workflow_wasm]]
-name = "wf"
-location = "components/w.wasm"
-content_digest = "{wrong}"
-component_files = {{ "src/lib.rs" = "{wrong}" }}
-
-[workflow_wasm.backtrace.sources]
-".../src/lib.rs" = "src/lib.rs"
-
-[[activity_js]]
-name = "file"
-location = "scripts/a.js"
-content_digest = "{wrong}"
-
-[[activity_exec]]
-name = "inline"
-content = "echo hello"
-content_digest = "{wrong}"
-"#
-        );
-        tokio::fs::write(&deployment_path, &manifest).await.unwrap();
-
-        let broken = reconcile_deployment_digests(&deployment_path, false)
-            .await
-            .unwrap();
-        assert_eq!(broken.len(), 4);
-        assert_eq!(
-            broken
-                .iter()
-                .map(|digest| digest.field_path.as_str())
-                .collect::<Vec<_>>(),
-            vec![
-                "workflow_wasm[name=wf].content_digest",
-                "activity_js[name=file].content_digest",
-                "activity_exec[name=inline].content_digest",
-                "workflow_wasm[name=wf].component_files[src/lib.rs]",
-            ]
-        );
-        assert_eq!(
-            tokio::fs::read_to_string(&deployment_path).await.unwrap(),
-            manifest
-        );
-
-        let fixed = reconcile_deployment_digests(&deployment_path, true)
-            .await
-            .unwrap();
-        assert_eq!(fixed.len(), 4);
-        assert!(
-            tokio::fs::read_to_string(&deployment_path)
-                .await
-                .unwrap()
-                .starts_with("# formatting is preserved")
-        );
-        assert!(
-            reconcile_deployment_digests(&deployment_path, false)
-                .await
-                .unwrap()
-                .is_empty()
-        );
     }
 }

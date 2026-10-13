@@ -677,7 +677,7 @@ pub(crate) struct VerifyArgs {
     /// falling back to the Active deployment. Errors if neither is found.
     #[arg(short, long)]
     pub(crate) deployment: Option<PathBuf>,
-    /// Tolerate missing values and pending app or platform approvals while verifying.
+    /// Tolerate missing environment and secret values; declarations and permissions are still checked.
     #[arg(long)]
     pub(crate) allow_unavailable_runtime_config: bool,
     /// Do not fail when a component's imports/exports fail type checking against the deployment.
@@ -687,15 +687,60 @@ pub(crate) struct VerifyArgs {
     /// since with no database there is no active deployment to fall back to.
     #[arg(long, requires = "deployment")]
     pub(crate) skip_db: bool,
-    /// Clean deployment metadata and scaffold app env, secrets, outbound hosts, and exec grants.
-    #[arg(long, requires = "deployment")]
+    #[command(flatten)]
+    pub(crate) fixes: VerifyFixArgs,
+}
+
+#[derive(Debug, Default, Clone, clap::Args)]
+#[expect(clippy::struct_excessive_bools)]
+pub(crate) struct VerifyFixArgs {
+    /// Apply all app repairs, including exec approvals and secret exposure grants. Does not change server permissions.
+    #[arg(long, requires_all = ["deployment", "app_config"])]
     pub(crate) fix: bool,
+    /// Add missing app environment and secret declarations without supplying values.
+    #[arg(long, requires_all = ["deployment", "app_config"])]
+    pub(crate) fix_app_declarations: bool,
+    /// Add app outbound HTTP destinations and secret replacement permissions.
+    #[arg(long, requires_all = ["deployment", "app_config"])]
+    pub(crate) fix_app_http_permissions: bool,
+    /// Add app exec approval digests for the selected deployment.
+    #[arg(long, requires_all = ["deployment", "app_config"])]
+    pub(crate) fix_app_exec_permissions: bool,
+    /// Add app secret exposure grants for the selected deployment.
+    #[arg(long, requires_all = ["deployment", "app_config"])]
+    pub(crate) fix_app_secret_exposure: bool,
+    /// Authorize app exec approvals and the selected deployment in the explicit server configuration.
+    #[arg(long, requires_all = ["deployment", "server_config"])]
+    pub(crate) fix_server_exec_permissions: bool,
+}
+
+impl VerifyFixArgs {
+    pub(crate) fn any(&self) -> bool {
+        self.app_declarations() || self.app_http_permissions() || self.digest_repairs()
+    }
+
+    pub(crate) fn app_declarations(&self) -> bool {
+        self.fix || self.fix_app_declarations
+    }
+    pub(crate) fn app_http_permissions(&self) -> bool {
+        self.fix || self.fix_app_http_permissions
+    }
+    pub(crate) fn app_exec_permissions(&self) -> bool {
+        self.fix || self.fix_app_exec_permissions
+    }
+    pub(crate) fn app_secret_exposure(&self) -> bool {
+        self.fix || self.fix_app_secret_exposure
+    }
+    pub(crate) fn digest_repairs(&self) -> bool {
+        self.app_exec_permissions()
+            || self.app_secret_exposure()
+            || self.fix_server_exec_permissions
+    }
 }
 
 #[derive(Debug, clap::Args)]
-#[expect(clippy::struct_excessive_bools)]
 pub(crate) struct DeploymentVerifyArgs {
-    // Shadow the global connection flag so `-a` keeps selecting the local app policy.
+    // Local verification ignores the inherited API connection.
     #[arg(long, hide = true)]
     pub(crate) api_url: Option<String>,
     /// Delete both the codegen cache and the OCI image cache before verifying.
@@ -704,24 +749,12 @@ pub(crate) struct DeploymentVerifyArgs {
     /// Delete only the codegen cache before verifying; OCI image cache is kept.
     #[arg(long)]
     pub(crate) clean_codegen_cache: bool,
-    /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
-    #[arg(short, long)]
-    pub(crate) server_config: Option<PathBuf>,
-    /// Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`.
-    #[arg(short, long)]
-    pub(crate) app_config: Option<PathBuf>,
     /// Path to the local deployment TOML file.
     #[arg(short, long)]
     pub(crate) deployment: PathBuf,
-    /// Tolerate missing values and pending app or platform approvals while verifying.
-    #[arg(long)]
-    pub(crate) allow_unavailable_runtime_config: bool,
     /// Do not fail when a component's imports/exports fail type checking against the deployment.
     #[arg(long)]
     pub(crate) suppress_type_checking_errors: bool,
-    /// Clean deployment metadata and scaffold app env, secrets, outbound hosts, and exec grants.
-    #[arg(long)]
-    pub(crate) fix: bool,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -1209,13 +1242,11 @@ mod tests {
     }
 
     #[test]
-    fn deployment_verify_preserves_app_config_short_flag() {
+    fn deployment_verify_accepts_only_deployment_inputs() {
         for prefix in [vec!["obelisk"], vec!["obelisk", "cloud"]] {
             let args = Args::try_parse_from(prefix.into_iter().chain([
                 "deployment",
                 "verify",
-                "-a",
-                "app.toml",
                 "-d",
                 "deployment.toml",
                 "--api-url",
@@ -1239,7 +1270,30 @@ mod tests {
                 }
                 _ => panic!(),
             };
-            assert_eq!(verify.app_config, Some(PathBuf::from("app.toml")));
+            assert_eq!(verify.deployment, PathBuf::from("deployment.toml"));
+        }
+    }
+
+    #[test]
+    fn deployment_verify_rejects_policy_and_repair_flags() {
+        for flag in [
+            "--app-config",
+            "--server-config",
+            "--fix",
+            "--fix-app-exec-permissions",
+            "--allow-unavailable-runtime-config",
+        ] {
+            assert!(
+                Args::try_parse_from([
+                    "obelisk",
+                    "deployment",
+                    "verify",
+                    "-d",
+                    "deployment.toml",
+                    flag
+                ])
+                .is_err()
+            );
         }
     }
 

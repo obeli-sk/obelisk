@@ -1,7 +1,4 @@
-//! User-authored deployment manifest: the `deployment.toml` shapes as written by hand,
-//! plus name/path validation into `DeploymentTomlValidated`. Content digests and
-//! `component_files` are optional here; the processing pass ([`super::resolved`]) fills
-//! and verifies them.
+//! Shared parser for authored and processed deployments; digest metadata is only accepted in processed manifests.
 
 use super::{
     AllowedHostToml, BlockingStrategyConfigToml, ByteSizeConfig, ComponentCommon,
@@ -16,7 +13,6 @@ use crate::config::env_var::EnvVarConfig;
 use anyhow::{Context, anyhow, bail, ensure};
 use concepts::cas::Cas;
 use concepts::{ContentDigest, FunctionFqn};
-use config::{ConfigBuilder, File, FileFormat, builder::AsyncState};
 use hashbrown::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -34,22 +30,15 @@ pub(crate) async fn load_deployment_validated(
         bail!("cannot find deployment file {deployment_toml:?}");
     }
     info!("Using deployment file {:?}", deployment_toml);
+    let source = tokio::fs::read_to_string(deployment_toml).await?;
+    super::prepared::reject_generated_deployment_metadata(&source.parse()?)?;
     let deployment_dir = deployment_toml
         .canonicalize()
         .with_context(|| format!("error calling canonicalize on {deployment_toml:?}"))?
         .parent()
         .with_context(|| format!("error getting parent path of {deployment_toml:?}"))?
         .to_path_buf();
-    let settings = ConfigBuilder::<AsyncState>::default()
-        .add_source(
-            File::from(deployment_toml)
-                .required(true)
-                .format(FileFormat::Toml),
-        )
-        .build()
-        .await?;
-    let deployment: DeploymentToml = settings
-        .try_deserialize()
+    let deployment: DeploymentToml = toml::from_str(&source)
         .with_context(|| format!("cannot parse deployment file {deployment_toml:?}"))?;
     deployment
         .validate(&deployment_dir)
@@ -631,9 +620,9 @@ pub(crate) struct ActivityJsComponentConfigToml {
     /// Exactly one of `location` or `content` must be set.
     #[serde(default)]
     pub(crate) content: Option<String>,
-    /// Content digest of the JS source file.
+    /// Generated content digest, only accepted in processed manifests.
     #[serde(default)]
-    #[schemars(with = "Option<String>")]
+    #[schemars(skip)]
     pub(crate) content_digest: Option<ContentDigest>,
     /// CAS references for the closed module graph, populated during deployment preparation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -705,7 +694,7 @@ pub(crate) struct ActivityVmComponentConfigToml {
     #[serde(default)]
     pub(crate) content: Option<String>,
     #[serde(default)]
-    #[schemars(with = "Option<String>")]
+    #[schemars(skip)]
     pub(crate) content_digest: Option<ContentDigest>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
@@ -776,9 +765,9 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// Exactly one of `location` or `content` must be set.
     #[serde(default)]
     pub(crate) content: Option<String>,
-    /// Content digest of the exec script.
+    /// Generated content digest, only accepted in processed manifests.
     #[serde(default)]
-    #[schemars(with = "Option<String>")]
+    #[schemars(skip)]
     pub(crate) content_digest: Option<ContentDigest>,
     /// Generated CAS references for parser-selected WIT files.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -833,9 +822,9 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     /// Exactly one of `location` or `content` must be set.
     #[serde(default)]
     pub(crate) content: Option<String>,
-    /// Content digest of the JS source file.
+    /// Generated content digest, only accepted in processed manifests.
     #[serde(default)]
-    #[schemars(with = "Option<String>")]
+    #[schemars(skip)]
     pub(crate) content_digest: Option<ContentDigest>,
     /// CAS references for the closed module graph, populated during deployment preparation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -869,9 +858,9 @@ pub(crate) struct WorkflowJsComponentConfigToml {
 pub(crate) struct WorkflowWasmComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
-    /// Optional content digest of the WASM file.
+    /// Generated content digest, only accepted in processed manifests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Option<String>")]
+    #[schemars(skip)]
     pub(crate) content_digest: Option<ContentDigest>,
     /// Generated CAS references for backtrace source files.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -916,9 +905,9 @@ pub(crate) struct ComponentBacktraceConfig {
 pub(crate) struct WebhookWasmComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
-    /// Optional content digest of the WASM file.
+    /// Generated content digest, only accepted in processed manifests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Option<String>")]
+    #[schemars(skip)]
     pub(crate) content_digest: Option<ContentDigest>,
     /// Generated CAS references for backtrace source files.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -960,9 +949,9 @@ pub(crate) struct WebhookJsComponentConfigToml {
     /// Exactly one of `location` or `content` must be set.
     #[serde(default)]
     pub(crate) content: Option<String>,
-    /// Content digest of the JS source file.
+    /// Generated content digest, only accepted in processed manifests.
     #[serde(default)]
-    #[schemars(with = "Option<String>")]
+    #[schemars(skip)]
     pub(crate) content_digest: Option<ContentDigest>,
     /// CAS references for the closed module graph, populated during deployment preparation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1000,9 +989,9 @@ pub(crate) struct WebhookJsComponentConfigToml {
 pub struct ActivityWasmComponentConfigToml {
     #[serde(flatten)]
     pub common: ComponentCommon,
-    /// Optional content digest of the WASM file.
+    /// Generated content digest, only accepted in processed manifests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Option<String>")]
+    #[schemars(skip)]
     pub content_digest: Option<ContentDigest>,
     #[serde(default)]
     pub exec: ExecConfigToml,
@@ -1031,9 +1020,9 @@ pub struct ActivityWasmComponentConfigToml {
 pub struct ActivityStubFileConfigToml {
     #[serde(flatten)]
     pub common: ComponentCommon,
-    /// Optional content digest of the WASM file.
+    /// Generated content digest, only accepted in processed manifests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Option<String>")]
+    #[schemars(skip)]
     pub content_digest: Option<ContentDigest>,
 }
 
@@ -1042,9 +1031,9 @@ pub struct ActivityStubFileConfigToml {
 pub struct ActivityExternalFileConfigToml {
     #[serde(flatten)]
     pub common: ComponentCommon,
-    /// Optional content digest of the WASM file.
+    /// Generated content digest, only accepted in processed manifests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Option<String>")]
+    #[schemars(skip)]
     pub content_digest: Option<ContentDigest>,
 }
 

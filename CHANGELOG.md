@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** *(cli)* `deployment verify` validates deployment components without loading app/server
+  policy or database state. App/server configuration, runtime availability, and repair flags are
+  now exclusive to `server verify`. Authored deployments reject generated `content_digest` and
+  `component_files` metadata; the CLI adds it during submission and removes it from exports.
+- *(cli)* `server verify` supports scoped `--fix-app-declarations`, `--fix-app-http-permissions`,
+  `--fix-app-exec-permissions`, and `--fix-app-secret-exposure` repairs. `--fix` applies all app
+  repairs, including HTTP secret replacements, exec approvals, and secret exposure grants.
+  Platform exec permissions require explicit `--fix-server-exec-permissions`. Repairs require
+  explicit target configuration paths and a deployment file, preserve existing grants, and
+  rerun verification. `--allow-unavailable-runtime-config` tolerates missing values while still
+  enforcing declarations and permissions during server verification.
 - **Breaking:** *(cli)* Human-readable listings, progress, and confirmations now go to stderr.
   Stdout carries IDs, JSON, generated configuration, source content, and execution logs.
   Scripts that capture human-readable output must read stderr or use `--json` for structured

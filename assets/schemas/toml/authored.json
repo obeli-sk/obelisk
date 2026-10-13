@@ -92,13 +92,6 @@
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
         },
-        "content_digest": {
-          "description": "Optional content digest of the WASM file.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml",
           "default": {
@@ -471,13 +464,6 @@
         },
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
-        },
-        "content_digest": {
-          "description": "Optional content digest of the WASM file.",
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "additionalProperties": false,
@@ -588,13 +574,6 @@
         },
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
-        },
-        "content_digest": {
-          "description": "Optional content digest of the WASM file.",
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "additionalProperties": false,
@@ -632,14 +611,6 @@
         },
         "content": {
           "description": "Inline JavaScript source embedded in the TOML.\nExactly one of `location` or `content` must be set.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "content_digest": {
-          "description": "Content digest of the JS source file.",
           "type": [
             "string",
             "null"
@@ -755,14 +726,6 @@
         },
         "content": {
           "description": "Inline script content embedded in the TOML.\nExactly one of `location` or `content` must be set.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "content_digest": {
-          "description": "Content digest of the exec script.",
           "type": [
             "string",
             "null"
@@ -886,13 +849,6 @@
           "default": null
         },
         "content": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "content_digest": {
           "type": [
             "string",
             "null"
@@ -1119,13 +1075,6 @@
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
         },
-        "content_digest": {
-          "description": "Optional content digest of the WASM file.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml",
           "default": {
@@ -1272,14 +1221,6 @@
           ],
           "default": null
         },
-        "content_digest": {
-          "description": "Content digest of the JS source file.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
         "ffqn": {
           "type": "string"
         },
@@ -1342,13 +1283,6 @@
         },
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
-        },
-        "content_digest": {
-          "description": "Optional content digest of the WASM file.",
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "http_server": {
           "$ref": "#/$defs/ConfigName",
@@ -1463,14 +1397,6 @@
         },
         "content": {
           "description": "Inline JavaScript source embedded in the TOML.\nExactly one of `location` or `content` must be set.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "content_digest": {
-          "description": "Content digest of the JS source file.",
           "type": [
             "string",
             "null"

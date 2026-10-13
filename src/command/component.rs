@@ -372,7 +372,7 @@ async fn add_component_from_oci(
     let toml_component_type = component_metadata_annotation.component_type();
 
     // For locked images, also pull the blob and record the pinned manifest digest.
-    let (oci_manifest_digest_if_locked, exec_content_digest_if_locked) = if locked {
+    let oci_manifest_digest_if_locked = if locked {
         let project_dirs = project_dirs();
         let base_dirs = BaseDirs::new();
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
@@ -402,7 +402,7 @@ async fn add_component_from_oci(
                     .await
                     .context("failed to pull JS OCI image")?;
                 info!("Fetched JS OCI image, manifest_digest: {manifest_digest}");
-                (Some(manifest_digest), None)
+                Some(manifest_digest)
             }
             TomlComponentType::ActivityWasm
             | TomlComponentType::WorkflowWasm
@@ -412,7 +412,7 @@ async fn add_component_from_oci(
                         .await
                         .context("failed to pull OCI image")?;
                 info!("Fetched OCI image, manifest_digest: {manifest_digest}");
-                (Some(manifest_digest), None)
+                Some(manifest_digest)
             }
             TomlComponentType::ActivityExec => {
                 let exec_cache_dir = wasm_cache_dir.join("exec");
@@ -422,14 +422,12 @@ async fn add_component_from_oci(
                         format!("cannot create exec cache directory {exec_cache_dir:?}")
                     })?;
                 let oci::ExecCacheResult {
-                    content_digest,
-                    manifest_digest,
-                    ..
+                    manifest_digest, ..
                 } = oci::pull_exec_to_cache(&oci_ref, &exec_cache_dir, &metadata_dir)
                     .await
                     .context("failed to pull exec OCI image")?;
                 info!("Fetched exec OCI image, manifest_digest: {manifest_digest}");
-                (Some(manifest_digest), Some(content_digest))
+                Some(manifest_digest)
             }
             TomlComponentType::ActivityVm
             | TomlComponentType::ActivityExternal
@@ -441,7 +439,7 @@ async fn add_component_from_oci(
             }
         }
     } else {
-        (None, None)
+        None
     };
 
     let location_raw = if let Some(actual_digest) = oci_manifest_digest_if_locked {
@@ -482,17 +480,12 @@ async fn add_component_from_oci(
         }) {
             // Update existing
             table["location"] = value(location_raw);
-            if let Some(content_digest) = exec_content_digest_if_locked.as_ref() {
-                table["content_digest"] = value(content_digest.to_string());
-            } else {
-                table.remove("content_digest");
-            }
+            table.remove("content_digest");
             table.remove("content");
         } else {
             components.push(build_component_table(
                 &name,
                 &location_raw,
-                exec_content_digest_if_locked.as_ref(),
                 &component_metadata_annotation,
             ));
         }
@@ -506,7 +499,6 @@ async fn add_component_from_oci(
 fn build_component_table(
     name: &str,
     location_raw: &str,
-    content_digest: Option<&concepts::ContentDigest>,
     metadata: &ComponentMetadataAnnotation,
 ) -> toml_edit::Table {
     use toml_edit::{Item, Table, value};
@@ -526,9 +518,6 @@ fn build_component_table(
     } = metadata
     {
         t["location"] = value(location_raw);
-        if let Some(content_digest) = content_digest {
-            t["content_digest"] = value(content_digest.to_string());
-        }
         t["ffqn"] = value(ffqn.to_string());
         write_params(&mut t, params);
         if let Some(rt) = return_type {
@@ -825,7 +814,6 @@ mod tests {
         let table = build_component_table(
             "my_activity",
             "oci://registry.example.com/repo/my-activity:latest",
-            None,
             &metadata,
         );
 
@@ -863,7 +851,6 @@ mod tests {
         let table = build_component_table(
             "my_webhook",
             "oci://registry.example.com/repo/webhook:v1",
-            None,
             &metadata,
         );
 
@@ -902,7 +889,6 @@ mod tests {
         let table = build_component_table(
             "my_js_activity",
             "oci://registry.example.com/repo/js-activity:v1",
-            None,
             &metadata,
         );
 
@@ -947,7 +933,7 @@ mod tests {
     #[test]
     fn build_and_parse_activity_exec_toml() {
         use crate::config::deployment::JsParamToml;
-        use concepts::{ContentDigest, FunctionFqn};
+        use concepts::FunctionFqn;
 
         let metadata = ComponentMetadataAnnotation::ActivityExec {
             env_vars: vec!["PATH".to_string()],
@@ -962,14 +948,9 @@ mod tests {
             exposed_secrets: Vec::new(),
             params_via_stdin: false,
         };
-        let content_digest: ContentDigest =
-            "sha256:1111111111111111111111111111111111111111111111111111111111111111"
-                .parse()
-                .unwrap();
         let table = build_component_table(
             "my_exec_activity",
             "oci://registry.example.com/repo/exec-activity:v1",
-            Some(&content_digest),
             &metadata,
         );
 
@@ -979,10 +960,7 @@ mod tests {
         doc.insert("activity_exec", toml_edit::Item::ArrayOfTables(aot));
 
         let toml_str = doc.to_string();
-        assert!(
-            toml_str.contains("content_digest = \"sha256:1111111111111111111111111111111111111111111111111111111111111111\""),
-            "unexpected content digest format:\n{toml_str}"
-        );
+        assert!(!toml_str.contains("content_digest"));
         let parsed: crate::config::deployment::DeploymentToml =
             toml::from_str(&toml_str).expect("generated TOML must parse");
 
@@ -997,7 +975,6 @@ mod tests {
             Some(ScriptLocationPathOrOci::Oci(_))
         ));
         assert!(act.content.is_none());
-        assert_eq!(act.content_digest, Some(content_digest));
         assert_eq!(act.ffqn.to_string(), "my-pkg:my-iface/my-ifc.my-fn");
         let FunctionInterfaceToml::Inline(interface) = &act.interface else {
             panic!("expected synthesized interface")

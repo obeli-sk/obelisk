@@ -129,10 +129,10 @@ fn command_future(
             deployment,
             suppress_type_checking_errors,
             skip_db,
-            fix,
+            fixes,
         })) => {
             let runtime_config_availability = if allow_unavailable_runtime_config {
-                RuntimeConfigAvailability::AllowUnavailable
+                RuntimeConfigAvailability::AllowMissingValues
             } else {
                 RuntimeConfigAvailability::Strict
             };
@@ -143,11 +143,16 @@ fn command_future(
                 secret_registry,
                 js_runtime,
                 activity_vm_runtime,
-            } = prepare_server_startup(
+            } = prepare_server_startup_with_exec_policy(
                 server_config.clone(),
                 app_config,
                 EnvVarSecretsCleanup::Noop,
-                runtime_config_availability,
+                if fixes.any() {
+                    RuntimeConfigAvailability::AllowMissingValues
+                } else {
+                    runtime_config_availability
+                },
+                !fixes.any(),
             )?;
             Box::pin(verify(
                 config_holder,
@@ -165,12 +170,11 @@ fn command_future(
                     activity_vm_runtime,
                 },
                 skip_db,
-                fix,
+                fixes,
                 secret_registry,
             ))
         }
 
-        // `deployment verify` aliases `server verify --skip-db --deployment <PATH>`.
         Subcommand::Deployment(DeploymentArgs {
             command: Deployment::Verify(args),
             token: _,
@@ -179,49 +183,23 @@ fn command_future(
                 api_url: _,
                 clean_cache,
                 clean_codegen_cache,
-                server_config,
-                app_config,
                 deployment,
-                allow_unavailable_runtime_config,
                 suppress_type_checking_errors,
-                fix,
             } = args;
-            let runtime_config_availability = if allow_unavailable_runtime_config {
-                RuntimeConfigAvailability::AllowUnavailable
-            } else {
-                RuntimeConfigAvailability::Strict
-            };
-            let ServerStartup {
-                config_holder,
-                config,
-                legacy_api_token: _,
-                secret_registry,
-                js_runtime,
-                activity_vm_runtime,
-            } = prepare_server_startup(
-                server_config.clone(),
-                app_config,
-                EnvVarSecretsCleanup::Noop,
-                runtime_config_availability,
-            )?;
-            Box::pin(verify(
-                config_holder,
-                config,
-                Some(deployment),
+            let env_vars = StartupEnvVars::capture();
+            Box::pin(command::server::verify_deployment(
+                deployment,
                 VerifyParams {
                     dir_params: PrepareDirsParams {
                         clean_cache,
                         clean_codegen_cache,
                     },
-                    runtime_config_availability,
+                    runtime_config_availability: RuntimeConfigAvailability::AllowUnavailable,
                     suppress_type_checking_errors,
                     suppress_linking_errors: false,
-                    js_runtime,
-                    activity_vm_runtime,
+                    js_runtime: parse_js_runtime_from_env(&env_vars)?,
+                    activity_vm_runtime: parse_activity_vm_runtime_from_env(&env_vars)?,
                 },
-                true, // `deployment verify` does not verify db.
-                fix,
-                secret_registry,
             ))
         }
 
@@ -287,6 +265,22 @@ fn prepare_server_startup(
     env_var_cleanup: EnvVarSecretsCleanup,
     runtime_config_availability: RuntimeConfigAvailability,
 ) -> anyhow::Result<ServerStartup> {
+    prepare_server_startup_with_exec_policy(
+        server_config,
+        app_config,
+        env_var_cleanup,
+        runtime_config_availability,
+        true,
+    )
+}
+
+fn prepare_server_startup_with_exec_policy(
+    server_config: Option<PathBuf>,
+    app_config: Option<PathBuf>,
+    env_var_cleanup: EnvVarSecretsCleanup,
+    runtime_config_availability: RuntimeConfigAvailability,
+    check_exec_policy: bool,
+) -> anyhow::Result<ServerStartup> {
     if env_var_cleanup == EnvVarSecretsCleanup::Wipe {
         assert_eq!(
             RuntimeConfigAvailability::Strict,
@@ -313,26 +307,26 @@ fn prepare_server_startup(
     let activity_vm_runtime = parse_activity_vm_runtime_from_env(&env_vars)?;
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
     app.resolve_env_vars(&env_vars)?;
-    match &config.platform_exec_activities {
-        PlatformExecActivities::Disabled => {
-            anyhow::ensure!(
-                app.allowed_exec_activities.is_empty(),
-                "app.toml allows exec activities, but server.toml has exec activities off"
-            );
-        }
-        PlatformExecActivities::All => warn!(
-            "server.toml enables unrestricted platform exec activity allowance; app.toml still controls deployments"
-        ),
-        PlatformExecActivities::Allowlist(platform) => {
-            for (name, digests) in &app.allowed_exec_activities {
-                let platform_digests = platform.get(name);
+    if check_exec_policy {
+        match &config.platform_exec_activities {
+            PlatformExecActivities::Disabled => {
                 anyhow::ensure!(
-                    digests
-                        .iter()
-                        .all(|digest| platform_digests
-                            .is_some_and(|allowed| allowed.contains(digest))),
-                    "app.toml `[allowed_exec_activities].{name}` is not covered by server.toml `[allowed_exec_activities]`"
+                    app.allowed_exec_activities.is_empty(),
+                    "app.toml allows exec activities, but server.toml has exec activities off"
                 );
+            }
+            PlatformExecActivities::All => warn!(
+                "server.toml enables unrestricted platform exec activity allowance; app.toml still controls deployments"
+            ),
+            PlatformExecActivities::Allowlist(platform) => {
+                for (name, digests) in &app.allowed_exec_activities {
+                    let platform_digests = platform.get(name);
+                    anyhow::ensure!(
+                        digests.iter().all(|digest| platform_digests
+                            .is_some_and(|allowed| allowed.contains(digest))),
+                        "app.toml `[allowed_exec_activities].{name}` is not covered by server.toml `[allowed_exec_activities]`"
+                    );
+                }
             }
         }
     }
