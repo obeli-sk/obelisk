@@ -2715,47 +2715,47 @@ fn deployment_record_to_grpc(record: concepts::storage::DeploymentRecord) -> grp
 }
 
 fn deployment_component_type_to_grpc(
-    component_type: deployment_summary::DeploymentComponentType,
+    component_type: rest_types::deployment::DeploymentComponentType,
 ) -> grpc_gen::DeploymentComponentType {
     match component_type {
-        deployment_summary::DeploymentComponentType::WorkflowWasm => {
+        rest_types::deployment::DeploymentComponentType::WorkflowWasm => {
             grpc_gen::DeploymentComponentType::WorkflowWasm
         }
-        deployment_summary::DeploymentComponentType::WorkflowJs => {
+        rest_types::deployment::DeploymentComponentType::WorkflowJs => {
             grpc_gen::DeploymentComponentType::WorkflowJs
         }
-        deployment_summary::DeploymentComponentType::ActivityWasm => {
+        rest_types::deployment::DeploymentComponentType::ActivityWasm => {
             grpc_gen::DeploymentComponentType::ActivityWasm
         }
-        deployment_summary::DeploymentComponentType::ActivityJs => {
+        rest_types::deployment::DeploymentComponentType::ActivityJs => {
             grpc_gen::DeploymentComponentType::ActivityJs
         }
-        deployment_summary::DeploymentComponentType::ActivityExec => {
+        rest_types::deployment::DeploymentComponentType::ActivityExec => {
             grpc_gen::DeploymentComponentType::ActivityExec
         }
-        deployment_summary::DeploymentComponentType::ActivityVm => {
+        rest_types::deployment::DeploymentComponentType::ActivityVm => {
             grpc_gen::DeploymentComponentType::ActivityVm
         }
-        deployment_summary::DeploymentComponentType::ActivityStub => {
+        rest_types::deployment::DeploymentComponentType::ActivityStub => {
             grpc_gen::DeploymentComponentType::ActivityStub
         }
-        deployment_summary::DeploymentComponentType::ActivityExternal => {
+        rest_types::deployment::DeploymentComponentType::ActivityExternal => {
             grpc_gen::DeploymentComponentType::ActivityExternal
         }
-        deployment_summary::DeploymentComponentType::WebhookEndpointWasm => {
+        rest_types::deployment::DeploymentComponentType::WebhookEndpointWasm => {
             grpc_gen::DeploymentComponentType::WebhookEndpointWasm
         }
-        deployment_summary::DeploymentComponentType::WebhookEndpointJs => {
+        rest_types::deployment::DeploymentComponentType::WebhookEndpointJs => {
             grpc_gen::DeploymentComponentType::WebhookEndpointJs
         }
-        deployment_summary::DeploymentComponentType::Cron => {
+        rest_types::deployment::DeploymentComponentType::Cron => {
             grpc_gen::DeploymentComponentType::Cron
         }
     }
 }
 
 fn deployment_component_summary_to_grpc(
-    summary: deployment_summary::DeploymentComponentSummary,
+    summary: rest_types::deployment::DeploymentComponentSummary,
 ) -> grpc_gen::DeploymentComponentSummary {
     grpc_gen::DeploymentComponentSummary {
         components: summary

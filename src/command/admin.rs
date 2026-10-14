@@ -1,13 +1,13 @@
 use crate::{
     args,
     client::{ClientStartup, send_json},
-    server::web_api_server::admin::{
-        CleanupRequest, CleanupResponse, DeleteDeploymentResponse, DeleteResponse,
-        RetainDeploymentsRequest, RetainSystemEventsRequest, RetainSystemEventsResponse,
-        StorageStatusResponse, SystemEventsResponse,
-    },
 };
 use http::header::ACCEPT;
+use rest_types::admin::{
+    CleanupRequest, CleanupResponse, DeleteDeploymentResponse, DeleteResponse,
+    RetainDeploymentsRequest, RetainSystemEventsRequest, RetainSystemEventsResponse,
+    StorageStatusResponse, SystemEventsResponse,
+};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -30,7 +30,7 @@ impl args::Admin {
         let api_url = client_startup.api_url();
         match self {
             Self::Events(args::AdminEvents::Get { event_id, json }) => {
-                let event: crate::server::web_api_server::admin::SystemEventResponse = send_json(
+                let event: rest_types::admin::SystemEventResponse = send_json(
                     client
                         .get(format!("{api_url}/v1/admin/system-events/{event_id}"))
                         .header(ACCEPT, "application/json"),

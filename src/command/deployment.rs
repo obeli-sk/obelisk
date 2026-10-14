@@ -5,13 +5,13 @@ use crate::config::deployment::sanitize_deployment_relative_path;
 use crate::config::deployment::{
     PreparedDeploymentManifest, prepare_deployment_manifest_from_disk,
 };
-use crate::server::web_api_server::deployment::{
-    DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitPayload,
-    DeploymentSwitchPayload, MissingRuntimeConfigErrorBody, SubmitPackageErrorBody,
-};
 use anyhow::{Context as _, bail};
 use concepts::prefixed_ulid::DeploymentId;
 use http::header::ACCEPT;
+use rest_types::deployment::{
+    DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitPayload,
+    DeploymentSwitchPayload, MissingRuntimeConfigErrorBody, SubmitPackageErrorBody,
+};
 use serde::Deserialize;
 use std::path::PathBuf;
 

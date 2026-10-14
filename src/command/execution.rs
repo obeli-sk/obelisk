@@ -4,19 +4,23 @@ use crate::args::CancelCommand;
 use crate::args::FunctionFqnOrShort;
 use crate::args::params::parse_params;
 use crate::client::{ClientStartup, send_empty, send_json};
-use crate::server::web_api_server::components::ComponentConfig;
-use crate::server::web_api_server::logs::{LogEntryRowSer, LogEntrySer};
-use crate::server::web_api_server::{
-    AdvanceRequestSer, ExecutionEventsResponse, ExecutionResponsesResponse, ExecutionSubmitPayload,
-    ExecutionUpgradePayload, ExecutionWithStateSer, PersistBacktracesResponseSer,
-    ReplayResponseSer, format_execution_status_text,
-};
+use crate::server::web_api_server::format_execution_status_text;
 use anyhow::Context as _;
 use anyhow::bail;
 use base64::Engine as _;
 use concepts::ExecutionId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use http::header::ACCEPT;
+use rest_types::components::ComponentConfig;
+use rest_types::executions::{
+    ExecutionEventsResponse, ExecutionResponsesResponse, ExecutionSubmitPayload,
+    ExecutionUpgradePayload, ExecutionWithStateSer,
+};
+use rest_types::logs::{LogEntryRowSer, LogEntrySer};
+use rest_types::replay::{
+    AdvanceRequestSer, CapturedWriteSer, PersistBacktracesResponseSer, ReplayOutcomeSer,
+    ReplayResponseSer,
+};
 use serde::Deserialize;
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -646,14 +650,14 @@ async fn replay(
         response.replayed_event_count, response.replay_duration_ms, response.replay_version
     );
     match response.outcome {
-        crate::server::web_api_server::ReplayOutcomeSer::Advanceable { captured_writes } => {
+        ReplayOutcomeSer::Advanceable { captured_writes } => {
             eprintln!("outcome: advanceable, {} writes", captured_writes.len());
         }
-        crate::server::web_api_server::ReplayOutcomeSer::Finished { retval } => {
+        ReplayOutcomeSer::Finished { retval } => {
             eprintln!("outcome: finished\nresult: {retval}");
         }
-        crate::server::web_api_server::ReplayOutcomeSer::Blocked => eprintln!("outcome: blocked"),
-        crate::server::web_api_server::ReplayOutcomeSer::ReplayFailed {
+        ReplayOutcomeSer::Blocked => eprintln!("outcome: blocked"),
+        ReplayOutcomeSer::ReplayFailed {
             error,
             failure,
             captured_writes,
@@ -716,10 +720,8 @@ async fn replay_json(
 
 fn pause_submitted_in_replay(advance_request: &mut AdvanceRequestSer) {
     for captured_write in &mut advance_request.captured_writes {
-        if let crate::server::web_api_server::CapturedWriteSer::AppendBatchCreateNewExecution {
-            child_requests,
-            ..
-        } = captured_write
+        if let CapturedWriteSer::AppendBatchCreateNewExecution { child_requests, .. } =
+            captured_write
         {
             for child_request in child_requests {
                 child_request.paused = true;
@@ -745,23 +747,18 @@ fn pause_delays_in_replay(advance_request: &mut AdvanceRequestSer) {
     }
     for captured_write in &mut advance_request.captured_writes {
         match captured_write {
-            crate::server::web_api_server::CapturedWriteSer::Append { event, .. } => {
+            CapturedWriteSer::Append { event, .. } => {
                 pause_delays_in_events(std::slice::from_mut(event));
             }
-            crate::server::web_api_server::CapturedWriteSer::AppendBatch { events, .. }
-            | crate::server::web_api_server::CapturedWriteSer::AppendBatchCreateNewExecution {
-                events,
-                ..
+            CapturedWriteSer::AppendBatch { events, .. }
+            | CapturedWriteSer::AppendBatchCreateNewExecution { events, .. }
+            | CapturedWriteSer::AppendStubResponse { events, .. } => {
+                pause_delays_in_events(events);
             }
-            | crate::server::web_api_server::CapturedWriteSer::AppendStubResponse {
-                events, ..
-            } => pause_delays_in_events(events),
             // An already-due `sleep(now)` is resolved in the same transaction; there is
             // no pending delay to pause.
-            crate::server::web_api_server::CapturedWriteSer::AppendBatchWithDelayResponse {
-                ..
-            }
-            | crate::server::web_api_server::CapturedWriteSer::AppendFinished { .. } => {}
+            CapturedWriteSer::AppendBatchWithDelayResponse { .. }
+            | CapturedWriteSer::AppendFinished { .. } => {}
         }
     }
 }
@@ -775,19 +772,17 @@ fn replay_to_advanceable_request(
     force: bool,
 ) -> anyhow::Result<AdvanceRequestSer> {
     match replay.outcome {
-        crate::server::web_api_server::ReplayOutcomeSer::Advanceable { captured_writes } => {
-            Ok(AdvanceRequestSer {
-                captured_writes,
-                persist_backtrace: true,
-            })
-        }
-        crate::server::web_api_server::ReplayOutcomeSer::Finished { .. } => {
+        ReplayOutcomeSer::Advanceable { captured_writes } => Ok(AdvanceRequestSer {
+            captured_writes,
+            persist_backtrace: true,
+        }),
+        ReplayOutcomeSer::Finished { .. } => {
             bail!("execution is already finished")
         }
-        crate::server::web_api_server::ReplayOutcomeSer::Blocked => {
+        ReplayOutcomeSer::Blocked => {
             bail!("execution is blocked")
         }
-        crate::server::web_api_server::ReplayOutcomeSer::ReplayFailed {
+        ReplayOutcomeSer::ReplayFailed {
             error,
             failure,
             captured_writes,
@@ -878,8 +873,8 @@ async fn advance(
 #[cfg(test)]
 mod tests {
     use super::{format_execution_failure, pause_delays_in_replay, pause_submitted_in_replay};
-    use crate::server::web_api_server::{AdvanceRequestSer, CapturedWriteSer};
     use chrono::{DateTime, Utc};
+    use rest_types::replay::{AdvanceRequestSer, CapturedWriteSer};
     use serde_json::json;
 
     #[test]
