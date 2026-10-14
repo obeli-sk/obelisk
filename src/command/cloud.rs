@@ -445,9 +445,14 @@ mod tests {
                 json!(concepts::prefixed_ulid::DeploymentId::generate())
             }
             "/prefix/proxy/demo/v1/components" => json!([]),
-            "/prefix/proxy/demo/v1/admin/node-run-id" => {
-                json!(concepts::prefixed_ulid::NodeRunId::generate())
-            }
+            "/prefix/proxy/demo/v1/info" => json!(rest_types::server::ServerInfoResponse {
+                app_name: "demo".to_owned(),
+                obelisk_version: "0.0.0".to_owned(),
+                deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
+                node_run_id: concepts::prefixed_ulid::NodeRunId::generate(),
+                app_config_digest: "digest".to_owned(),
+                started_at: chrono::Utc::now(),
+            }),
             "/prefix/v1/apps/demo/policy" if method == Method::GET => {
                 json!({"public_env":["CLOUD_TEST_MISSING_REQUIRED"],"secrets":{}})
             }
@@ -521,7 +526,7 @@ mod tests {
                 format!("PUT /prefix/proxy/demo/v1/executions/{execution_id}/cancel"),
                 "GET /prefix/proxy/demo/v1/components?exports=true&imports=true&extensions=false"
                     .to_owned(),
-                "GET /prefix/proxy/demo/v1/admin/node-run-id".to_owned(),
+                "GET /prefix/proxy/demo/v1/info".to_owned(),
             ]
         );
         task.abort();
