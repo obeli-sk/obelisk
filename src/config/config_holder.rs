@@ -333,6 +333,55 @@ mod tests {
     }
 
     #[test]
+    fn oidc_config_is_validated_when_loading_server_config() {
+        for (issuer, audience, claims, expected_error) in [
+            (
+                "http://oidc.fly.io/my-org",
+                "obelisk",
+                "{ app_name = 'deployer' }",
+                "must use https unless the host is loopback",
+            ),
+            (
+                "https://oidc.fly.io/my-org",
+                "",
+                "{ app_name = 'deployer' }",
+                "audience of issuer",
+            ),
+            (
+                "https://oidc.fly.io/my-org",
+                "obelisk",
+                "{}",
+                "must constrain at least one claim",
+            ),
+        ] {
+            let file = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(
+                file.path(),
+                format!(
+                    "api.enabled = false\n[[api.oidc]]\nissuer = '{issuer}'\naudience = '{audience}'\nclaims = {claims}\n"
+                ),
+            )
+            .unwrap();
+            let holder =
+                super::ConfigHolder::new(None, None, Some(file.path().to_path_buf())).unwrap();
+            let error = holder.load_config().unwrap_err().to_string();
+            assert!(error.contains(expected_error), "{error}");
+        }
+        for issuer in [
+            "https://oidc.fly.io/my-org",
+            "http://localhost:9000",
+            "http://127.0.0.1:9000",
+            "http://[::1]:9000",
+        ] {
+            let config: ServerConfigToml = toml::from_str(&format!(
+                "[[api.oidc]]\nissuer = '{issuer}'\naudience = 'obelisk'\nclaims = {{ app_name = 'deployer' }}\n"
+            ))
+            .unwrap();
+            assert_eq!(config.api.oidc[0].issuer, issuer);
+        }
+    }
+
+    #[test]
     fn omitted_app_config_has_empty_file_digest() {
         let file = tempfile::NamedTempFile::new().unwrap();
         let default = super::ConfigHolder::new(None, None, None)

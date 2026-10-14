@@ -1,6 +1,6 @@
 //! OIDC ID tokens (JWTs) accepted as API bearer tokens.
 
-use crate::config::server::OidcProviderConfig;
+use crate::config::server::{OidcProviderConfig, validate_oidc_url};
 use anyhow::{Context as _, ensure};
 use jsonwebtoken::{
     Algorithm, AlgorithmFamily, DecodingKey, DecodingKeyKind, Validation,
@@ -9,7 +9,6 @@ use jsonwebtoken::{
     jwk::JwkSet,
     signature,
 };
-use reqwest::Url;
 use ring::signature as ring_sig;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -63,19 +62,6 @@ impl OidcVerifier {
         install_crypto_provider()?;
         let mut issuers: Vec<Issuer> = Vec::new();
         for config in configs {
-            check_url(&config.issuer)
-                .with_context(|| format!("invalid `api.oidc` issuer {:?}", config.issuer))?;
-            ensure!(
-                !config.audience.is_empty(),
-                "`api.oidc` audience of issuer {:?} must not be empty",
-                config.issuer
-            );
-            ensure!(
-                !config.claims.is_empty(),
-                "`api.oidc` entry of issuer {:?} must constrain at least one claim, otherwise every \
-                token of that issuer would be accepted",
-                config.issuer
-            );
             let rule = Rule {
                 audience: config.audience.clone(),
                 claims: config.claims.clone(),
@@ -271,7 +257,7 @@ async fn fetch_jwks(http: &reqwest::Client, issuer: &str) -> anyhow::Result<JwkS
         "discovery document names a different issuer {:?}",
         discovery.issuer
     );
-    let jwks_uri = check_url(&discovery.jwks_uri).context("invalid `jwks_uri`")?;
+    let jwks_uri = validate_oidc_url(&discovery.jwks_uri).context("invalid `jwks_uri`")?;
     http.get(jwks_uri)
         .send()
         .await?
@@ -279,23 +265,6 @@ async fn fetch_jwks(http: &reqwest::Client, issuer: &str) -> anyhow::Result<JwkS
         .json()
         .await
         .with_context(|| format!("cannot parse {}", discovery.jwks_uri))
-}
-
-fn check_url(url: &str) -> anyhow::Result<Url> {
-    let parsed = Url::parse(url)?;
-    let loopback = parsed.host_str().is_some_and(|host| {
-        host == "localhost"
-            || host
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
-    });
-    ensure!(
-        parsed.scheme() == "https" || (parsed.scheme() == "http" && loopback),
-        "must use https unless the host is loopback"
-    );
-    Ok(parsed)
 }
 
 fn describe_error(kind: &ErrorKind) -> Cow<'static, str> {

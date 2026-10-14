@@ -2149,7 +2149,6 @@ pub(crate) async fn run_internal(
     secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
-    // Built before the slow startup steps so an invalid `api` config fails fast.
     let api_auth = match &params.auth {
         ServerAuth::Auth { api_token } if api_listening_addr.is_some() => Some(Arc::new(
             crate::server::auth::ApiAuth::new(&config.api, api_token.clone())?,
