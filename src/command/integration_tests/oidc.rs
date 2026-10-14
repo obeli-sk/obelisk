@@ -4,9 +4,20 @@ use ring::{
     rand::SystemRandom,
     signature::{self as ring_sig, KeyPair as _},
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+use tokio::sync::Notify;
 
 const AUDIENCE: &str = "https://obelisk.test";
+
+#[derive(Default)]
+struct JwksPause {
+    next: AtomicBool,
+    started: Notify,
+    resume: Notify,
+}
 
 enum Signer {
     Rsa(ring_sig::RsaKeyPair),
@@ -60,7 +71,7 @@ impl Signer {
 }
 
 /// Serves OIDC discovery and a mutable JWKS on a loopback port.
-async fn spawn_issuer(ip: &str, jwks: Arc<Mutex<Value>>) -> String {
+async fn spawn_issuer(ip: &str, jwks: Arc<Mutex<Value>>, pause: Arc<JwksPause>) -> String {
     let listener = tokio::net::TcpListener::bind(format!("{ip}:0"))
         .await
         .unwrap();
@@ -73,7 +84,17 @@ async fn spawn_issuer(ip: &str, jwks: Arc<Mutex<Value>>) -> String {
         )
         .route(
             "/.well-known/jwks",
-            axum::routing::get(move || async move { axum::Json(jwks.lock().unwrap().clone()) }),
+            axum::routing::get(move || {
+                let jwks = Arc::clone(&jwks);
+                let pause = Arc::clone(&pause);
+                async move {
+                    if pause.next.swap(false, Ordering::Relaxed) {
+                        pause.started.notify_one();
+                        pause.resume.notified().await;
+                    }
+                    axum::Json(jwks.lock().unwrap().clone())
+                }
+            }),
         );
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     issuer
@@ -86,7 +107,8 @@ async fn api_auth_should_accept_oidc_tokens() {
         ring_sig::RsaKeyPair::from_der(include_bytes!("oidc_rsa_test_key.der")).unwrap(),
     );
     let jwks = Arc::new(Mutex::new(json!({"keys": [rsa.jwk("rsa-1")]})));
-    let issuer = spawn_issuer(&ip, jwks.clone()).await;
+    let pause = Arc::new(JwksPause::default());
+    let issuer = spawn_issuer(&ip, jwks.clone(), Arc::clone(&pause)).await;
     let server = TestServer::start_empty_with_auth(
         ip,
         &format!(
@@ -166,6 +188,40 @@ async fn api_auth_should_accept_oidc_tokens() {
             "{rejected}"
         );
     }
+
+    // An unknown key must not block cached keys while the issuer is slow.
+    tokio::time::sleep(crate::server::auth::oidc::MIN_REFRESH_INTERVAL).await;
+    pause.next.store(true, Ordering::Relaxed);
+    let refresh_client = server.client.clone();
+    let refresh_url = url.clone();
+    let unknown_key_token = rsa.token("rsa-2", &claims(json!({})));
+    let refresh_request = tokio::spawn(async move {
+        refresh_client
+            .get(refresh_url)
+            .bearer_auth(unknown_key_token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+    });
+    tokio::time::timeout(Duration::from_secs(5), pause.started.notified())
+        .await
+        .expect("JWKS refresh did not start");
+    let cached_status = tokio::time::timeout(
+        Duration::from_secs(1),
+        status(rsa.token("rsa-1", &claims(json!({})))),
+    )
+    .await;
+    pause.resume.notify_one();
+    assert_eq!(
+        refresh_request.await.unwrap(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    assert!(
+        cached_status
+            .expect("cached key verification blocked on JWKS refresh")
+            .is_success()
+    );
 
     // Key rotation: a new `kid` triggers a JWKS refresh once the rate limit allows.
     let rng = SystemRandom::new();
