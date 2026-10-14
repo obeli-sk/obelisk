@@ -20,7 +20,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, MutexGuard};
 use tracing::{debug, warn};
 
 const JWKS_MAX_AGE: Duration = Duration::from_secs(3600);
@@ -102,8 +102,8 @@ impl OidcVerifier {
         let this = Arc::clone(self);
         tokio::spawn(async move {
             for issuer in &this.issuers {
-                let _refresh = issuer.refresh_lock.lock().await;
-                issuer.refresh(&this.http).await;
+                let refresh = issuer.refresh_lock.lock().await;
+                issuer.refresh(&this.http, refresh).await;
             }
         });
     }
@@ -179,8 +179,8 @@ impl Issuer {
             } else {
                 Some(self.refresh_lock.lock().await)
             };
-            if let Some(_refresh) = refresh {
-                self.refresh(http).await;
+            if let Some(refresh) = refresh {
+                self.refresh(http, refresh).await;
             }
         }
         let cache = self.keys.lock().unwrap();
@@ -197,11 +197,10 @@ impl Issuer {
         DecodingKey::from_jwk(jwk).map_err(|_| "unusable signing key")
     }
 
-    // Callers hold `refresh_lock`; cached keys remain readable during the fetch.
-    async fn refresh(&self, http: &reqwest::Client) {
+    async fn refresh(&self, http: &reqwest::Client, _guard: MutexGuard<'_, ()>) {
         {
             let mut cache = self.keys.lock().unwrap();
-            // Rate-limited so tokens with random `kid`s cannot make the server hammer the issuer.
+            // Rate-limit unknown-key refreshes, including requests queued behind an in-flight fetch.
             if cache
                 .last_attempt
                 .is_some_and(|attempt| attempt.elapsed() < MIN_REFRESH_INTERVAL)
