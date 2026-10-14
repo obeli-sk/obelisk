@@ -1,8 +1,10 @@
 use crate::{ExecutionId, FunctionFqn, SupportedFunctionReturnValue, component_id::Digest};
+#[cfg(feature = "runtime")]
 use opentelemetry::{KeyValue, global, metrics::Counter};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::io;
+#[cfg(feature = "runtime")]
 use std::sync::OnceLock;
 
 pub const DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES: u64 = 1024 * 1024;
@@ -69,7 +71,9 @@ pub fn report_rejection(
         "Rejected oversized persisted value"
     );
 
+    #[cfg(feature = "runtime")]
     static REJECTIONS: OnceLock<Counter<u64>> = OnceLock::new();
+    #[cfg(feature = "runtime")]
     REJECTIONS
         .get_or_init(|| {
             global::meter("obelisk")

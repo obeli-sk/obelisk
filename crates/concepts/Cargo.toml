@@ -11,11 +11,11 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-val-json = { workspace = true, features = ["wasmtime"] }
+val-json.workspace = true
 
 arbitrary.workspace = true
 assert_matches.workspace = true
-async-trait.workspace = true
+async-trait = { workspace = true, optional = true }
 cfg-if.workspace = true
 chrono.workspace = true
 const_format.workspace = true
@@ -24,7 +24,7 @@ derive-where.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
 indexmap.workspace = true
-opentelemetry.workspace = true
+opentelemetry = { workspace = true, optional = true }
 sha2.workspace = true
 tokio-postgres = { optional = true, workspace = true }
 rand.workspace = true
@@ -35,22 +35,33 @@ serde_json.workspace = true
 serde_with.workspace = true
 strum.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
-tracing-opentelemetry.workspace = true
+tokio = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-error.workspace = true
 ulid.workspace = true
-wasmtime.workspace = true
-wasmtime-environ.workspace = true
+wasmtime = { workspace = true, optional = true }
+wasmtime-environ = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta.workspace = true
 rstest.workspace = true
 
 [features]
-test = []
-rusqlite = ["dep:rusqlite"]
-postgres = ["dep:tokio-postgres", "dep:deadpool-postgres"]
+default = ["runtime"]
+# Everything except the serde types; disable to build for wasm32-unknown-unknown.
+runtime = [
+    "dep:async-trait",
+    "dep:opentelemetry",
+    "dep:tokio",
+    "dep:tracing-opentelemetry",
+    "dep:wasmtime",
+    "dep:wasmtime-environ",
+    "val-json/wasmtime",
+]
+test = ["runtime"]
+rusqlite = ["runtime", "dep:rusqlite"]
+postgres = ["runtime", "dep:tokio-postgres", "dep:deadpool-postgres"]
 
 [lints]
 workspace = true

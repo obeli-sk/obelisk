@@ -13,15 +13,18 @@ pub trait Sleep: Send + Sync + 'static {
     fn sleep(&self, duration: Duration) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 }
 
+#[cfg(feature = "runtime")]
 #[derive(Clone)]
 pub struct TokioSleep;
 
+#[cfg(feature = "runtime")]
 impl Sleep for TokioSleep {
     fn sleep(&self, duration: Duration) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(tokio::time::sleep(duration))
     }
 }
 
+#[cfg(feature = "runtime")]
 #[must_use]
 pub fn now_tokio_instant() -> tokio::time::Instant {
     tokio::time::Instant::now()

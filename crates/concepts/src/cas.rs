@@ -1,8 +1,11 @@
 use crate::ContentDigest;
 use crate::component_id::Digest;
+#[cfg(feature = "runtime")]
 use async_trait::async_trait;
 use sha2::{Digest as _, Sha256};
+#[cfg(feature = "runtime")]
 use std::collections::HashMap;
+#[cfg(feature = "runtime")]
 use std::sync::Mutex;
 
 /// Content digest of `content`, the address every `Cas` keys blobs by.
@@ -17,6 +20,7 @@ pub fn content_digest(content: &[u8]) -> ContentDigest {
 /// Deliberately separate from `DbConnection`: bytes may live in `SQLite`,
 /// Postgres, or a future object store such as S3, while the metadata that
 /// references blobs stays in the database.
+#[cfg(feature = "runtime")]
 #[async_trait]
 pub trait Cas: Send + Sync {
     /// Fetch a blob by digest. `Ok(None)` if absent.
@@ -33,11 +37,13 @@ pub trait Cas: Send + Sync {
 /// A `Cas` that keeps blobs in a `HashMap`, for offline deployment verification
 /// and tests. Follows the same content-addressed contract as the persistent
 /// implementations: `write_blob` computes and returns the digest of the content.
+#[cfg(feature = "runtime")]
 #[derive(Default)]
 pub struct InMemoryCas {
     blobs: Mutex<HashMap<ContentDigest, Vec<u8>>>,
 }
 
+#[cfg(feature = "runtime")]
 #[async_trait]
 impl Cas for InMemoryCas {
     async fn read_blob(&self, digest: &ContentDigest) -> Result<Option<Vec<u8>>, CasError> {

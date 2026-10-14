@@ -16,6 +16,7 @@ pub mod time;
 use ::serde::{Deserialize, Serialize};
 pub use component_id::{ComponentId, ComponentType, ContentDigest, InvalidNameError, check_name};
 use indexmap::IndexMap;
+#[cfg(feature = "runtime")]
 use opentelemetry::propagation::{Extractor, Injector};
 pub use prefixed_ulid::ExecutionId;
 use serde_json::Value;
@@ -29,12 +30,14 @@ use std::{
     time::Duration,
 };
 use storage::{PendingStateFinishedError, PendingStateFinishedResultKind};
+#[cfg(feature = "runtime")]
 use tracing::{Span, error};
 use val_json::{
     type_wrapper::{TypeConversionError, TypeKey, TypeWrapper},
     wast_val::{ValKey, WastVal, WastValWithType},
     wast_val_ser::params,
 };
+#[cfg(feature = "runtime")]
 use wasmtime::component::{Type, Val};
 
 pub use naming::{
@@ -198,6 +201,7 @@ pub enum ResultParsingErrorFromVal {
 }
 
 impl SupportedFunctionReturnValue {
+    #[cfg(feature = "runtime")]
     pub fn new_from_iterator<
         I: ExactSizeIterator<Item = (wasmtime::component::Val, wasmtime::component::Type)>,
     >(
@@ -216,6 +220,7 @@ impl SupportedFunctionReturnValue {
         }
     }
 
+    #[cfg(feature = "runtime")]
     pub fn new(
         val: wasmtime::component::Val,
         r#type: wasmtime::component::Type,
@@ -275,6 +280,7 @@ impl SupportedFunctionReturnValue {
         }
     }
 
+    #[cfg(feature = "runtime")]
     pub fn from_val_and_type_wrapper(
         value: wasmtime::component::Val,
         ty: TypeWrapper,
@@ -286,6 +292,7 @@ impl SupportedFunctionReturnValue {
         Self::from_val_and_type_wrapper_tl(value, ty)
     }
 
+    #[cfg(feature = "runtime")]
     pub fn from_val_and_type_wrapper_tl(
         value: wasmtime::component::Val,
         ty: TypeWrapperTopLevel,
@@ -386,6 +393,7 @@ pub struct Params(ParamsInternal);
 #[derive(derive_more::Debug, Clone)]
 enum ParamsInternal {
     JsonValues(Arc<[Value]>),
+    #[cfg(feature = "runtime")]
     Vals {
         vals: Arc<[wasmtime::component::Val]>,
         #[debug(skip)]
@@ -497,6 +505,7 @@ pub mod serde_params {
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use std::sync::Arc;
+    #[cfg(feature = "runtime")]
     use val_json::wast_val::WastVal;
 
     impl Serialize for Params {
@@ -512,6 +521,7 @@ pub mod serde_params {
                 seq.end()
             };
             match &self.0 {
+                #[cfg(feature = "runtime")]
                 ParamsInternal::Vals {
                     vals,
                     json_vals_cache,
@@ -607,6 +617,7 @@ impl Params {
         Self(ParamsInternal::Empty)
     }
 
+    #[cfg(feature = "runtime")]
     #[must_use]
     pub fn from_wasmtime(vals: Arc<[wasmtime::component::Val]>) -> Self {
         if vals.is_empty() {
@@ -651,6 +662,7 @@ impl Params {
         }
     }
 
+    #[cfg(feature = "runtime")]
     pub fn as_vals<'a>(
         &self,
         param_types: impl ExactSizeIterator<Item = (&'a str, Type)>,
@@ -685,6 +697,7 @@ impl Params {
     pub fn len(&self) -> usize {
         match &self.0 {
             ParamsInternal::JsonValues(vec) => vec.len(),
+            #[cfg(feature = "runtime")]
             ParamsInternal::Vals { vals, .. } => vals.len(),
             ParamsInternal::Empty => 0,
         }
@@ -698,6 +711,7 @@ impl Params {
     #[must_use]
     pub fn as_json_values(&self) -> Option<&[serde_json::Value]> {
         match &self.0 {
+            #[cfg(feature = "runtime")]
             ParamsInternal::Vals { .. } => None,
             ParamsInternal::Empty => Some(&[]),
             ParamsInternal::JsonValues(vec) => Some(vec),
@@ -717,6 +731,7 @@ impl PartialEq for Params {
         match (&self.0, &other.0) {
             (ParamsInternal::JsonValues(l), ParamsInternal::JsonValues(r)) => l == r,
 
+            #[cfg(feature = "runtime")]
             (
                 ParamsInternal::Vals {
                     vals: l,
@@ -728,6 +743,7 @@ impl PartialEq for Params {
                 },
             ) => l == r,
 
+            #[cfg(feature = "runtime")]
             (
                 ParamsInternal::JsonValues(json_vals),
                 ParamsInternal::Vals {
@@ -756,6 +772,7 @@ impl PartialEq for Params {
 }
 impl Eq for Params {}
 
+#[cfg(feature = "runtime")]
 /// Convert wasmtime's Vals to serde's Values
 fn to_json(vals: &[wasmtime::component::Val]) -> Result<Arc<[serde_json::Value]>, ()> {
     let mut vec = Vec::with_capacity(vals.len());
@@ -797,6 +814,7 @@ impl Display for Params {
             ParamsInternal::JsonValues(json_vals) => {
                 render_json_vals(f, json_vals)?;
             }
+            #[cfg(feature = "runtime")]
             ParamsInternal::Vals {
                 vals,
                 json_vals_cache,
@@ -1345,6 +1363,7 @@ pub mod prefixed_ulid {
         TypeError,
     }
 
+    #[cfg(feature = "runtime")]
     impl TryFrom<&wasmtime::component::Val> for ExecutionId {
         type Error = ExecutionIdStructuralParseError;
 
@@ -1886,6 +1905,7 @@ type MetadataMap = hashbrown::HashMap<String, String, BuildHasherDefault<Default
 pub struct ExecutionMetadata(MetadataMap, #[serde(skip)] Option<u64>);
 
 impl ExecutionMetadata {
+    #[cfg(feature = "runtime")]
     const LINKED_KEY: &str = "obelisk-tracing-linked";
 
     const EMPTY_MAP: MetadataMap = hashbrown::HashMap::with_hasher(BuildHasherDefault::new());
@@ -1910,16 +1930,19 @@ impl ExecutionMetadata {
         self.1
     }
 
+    #[cfg(feature = "runtime")]
     #[must_use]
     pub fn from_parent_span(less_specific: &Span) -> Self {
         ExecutionMetadata::create(less_specific, false)
     }
 
+    #[cfg(feature = "runtime")]
     #[must_use]
     pub fn from_linked_span(less_specific: &Span) -> Self {
         ExecutionMetadata::create(less_specific, true)
     }
 
+    #[cfg(feature = "runtime")]
     /// Attempt to use `Span::current()` to fill the trace and parent span.
     /// If that fails, which can happen due to interference with e.g.
     /// the stdout layer of the subscriber, use the `span` which is guaranteed
@@ -1948,6 +1971,7 @@ impl ExecutionMetadata {
         metadata
     }
 
+    #[cfg(feature = "runtime")]
     pub fn enrich(&self, span: &Span) {
         use opentelemetry::trace::TraceContextExt as _;
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
@@ -1965,16 +1989,19 @@ impl ExecutionMetadata {
     }
 }
 
+#[cfg(feature = "runtime")]
 struct ExecutionMetadataInjectorView<'a> {
     metadata: &'a mut ExecutionMetadata,
 }
 
+#[cfg(feature = "runtime")]
 impl ExecutionMetadataInjectorView<'_> {
     fn is_empty(&self) -> bool {
         self.metadata.0.is_empty()
     }
 }
 
+#[cfg(feature = "runtime")]
 impl opentelemetry::propagation::Injector for ExecutionMetadataInjectorView<'_> {
     fn set(&mut self, key: &str, value: String) {
         let key = format!("tracing:{key}");
@@ -1982,10 +2009,12 @@ impl opentelemetry::propagation::Injector for ExecutionMetadataInjectorView<'_> 
     }
 }
 
+#[cfg(feature = "runtime")]
 struct ExecutionMetadataExtractorView<'a> {
     metadata: &'a ExecutionMetadata,
 }
 
+#[cfg(feature = "runtime")]
 impl opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'_> {
     fn get(&self, key: &str) -> Option<&str> {
         self.metadata
