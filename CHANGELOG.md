@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(api)* `GET /v1/info` returns the app name, Obelisk version, current deployment ID, node run ID,
+  app config digest, and server start time as JSON.
+
+### Removed
+
+- *(api)* Removed `GET /v1/app-name` added in 0.43.0-rc.2. Read `app_name` from `GET /v1/info`.
+
 ## [0.43.0-rc.2](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.1...v0.43.0-rc.2)
 
 This release candidate adds OIDC API authentication and an app-name endpoint, and updates

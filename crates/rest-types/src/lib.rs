@@ -8,6 +8,7 @@ pub mod executions;
 pub mod functions;
 pub mod logs;
 pub mod replay;
+pub mod server;
 
 use serde::{Deserialize, Serialize};
 
