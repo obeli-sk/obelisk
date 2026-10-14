@@ -2602,7 +2602,7 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 
 #[derive(Clone)]
 pub(crate) struct ServerVerified {
-    app_name: String,
+    pub(crate) app_name: String,
     js_runtime: JsRuntimeMode,
     activity_vm_runtime: ActivityVmRuntimeMode,
     pub(crate) app_config_digest: AppConfigDigest,
