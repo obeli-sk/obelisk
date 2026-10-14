@@ -129,6 +129,7 @@ impl OidcVerifier {
 
         let mut validation = Validation::new(header.alg);
         validation.leeway = LEEWAY_SECS;
+        validation.validate_nbf = true;
         validation.set_issuer(&[&issuer.iss]);
         validation.validate_aud = false; // Checked per rule below.
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);

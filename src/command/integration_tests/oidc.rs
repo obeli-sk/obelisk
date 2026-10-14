@@ -142,6 +142,10 @@ async fn api_auth_should_accept_oidc_tokens() {
             rsa.token("rsa-1", &claims(json!({"exp": now - 3600}))),
         ),
         (
+            "not yet valid",
+            rsa.token("rsa-1", &claims(json!({"nbf": now + 300}))),
+        ),
+        (
             "claim mismatch",
             rsa.token("rsa-1", &claims(json!({"app_name": "other"}))),
         ),
