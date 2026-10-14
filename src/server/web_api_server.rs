@@ -350,6 +350,7 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
         .layer(DefaultBodyLimit::max(max_transport_message_size_bytes))
 }
 
+#[expect(deprecated)]
 fn admin_router() -> Router<Arc<WebApiState>> {
     Router::new()
         .route(
@@ -634,6 +635,8 @@ pub(crate) mod admin {
             content((String = "text/plain"), (String = "application/json"))
         ))
     )]
+    // backcompat: 0.43, delete this endpoint after 0.43 in favor of `GET /v1/info`.
+    #[deprecated(note = "use `GET /v1/info`")]
     pub(crate) async fn node_run_id(accept: TextDefaultAcceptHeader) -> Response {
         let id = concepts::storage::initialize_node_run_id();
         match accept.into() {
@@ -4380,6 +4383,7 @@ mod tests {
     };
 
     #[tokio::test]
+    #[expect(deprecated)]
     async fn node_run_id_defaults_to_text_and_supports_json() {
         let text_response = admin::node_run_id(TextDefaultAcceptHeader::Text).await;
         assert_eq!(

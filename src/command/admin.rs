@@ -292,12 +292,13 @@ impl args::Admin {
                 print_result(json, &response, &message)
             }
             Self::NodeRunId { json } => {
-                let id: concepts::prefixed_ulid::NodeRunId = send_json(
+                let info: rest_types::server::ServerInfoResponse = send_json(
                     client
-                        .get(format!("{api_url}/v1/admin/node-run-id"))
+                        .get(format!("{api_url}/v1/info"))
                         .header(ACCEPT, "application/json"),
                 )
                 .await?;
+                let id = info.node_run_id;
                 if json {
                     println!("\"{id}\"");
                 } else {

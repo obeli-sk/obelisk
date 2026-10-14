@@ -9,7 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - *(api)* `GET /v1/info` returns the app name, Obelisk version, current deployment ID, node run ID,
-  app config digest, and server start time as JSON.
+  app config digest, and server start time as JSON. `obelisk admin node-run-id` now uses it.
+
+### Deprecated
+
+- *(api)* `GET /v1/admin/node-run-id` is deprecated and will be removed after 0.43. Read
+  `node_run_id` from `GET /v1/info`.
 
 ### Removed
 
