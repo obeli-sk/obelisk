@@ -1930,6 +1930,15 @@ impl ExecutionMetadata {
         self.1
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.0.iter()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     #[cfg(feature = "runtime")]
     #[must_use]
     pub fn from_parent_span(less_specific: &Span) -> Self {
