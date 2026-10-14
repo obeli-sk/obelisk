@@ -13,6 +13,7 @@ version.workspace = true
 
 [dependencies]
 concepts.workspace = true
+rest-types.workspace = true
 db-postgres.workspace = true
 db-sqlite.workspace = true
 executor.workspace = true
@@ -172,6 +173,7 @@ members = [
     "crates/executor",
     "crates/grpc",
     "crates/js-crypto",
+    "crates/rest-types",
     "crates/testing/component-builder",
     "crates/testing/db-macro",
     "crates/testing/db-tests",
@@ -239,6 +241,7 @@ embedded-assets = { package = "obeli-sk-embedded-assets", path = "crates/embedde
 executor = { package = "obeli-sk-executor", path = "crates/executor" }
 grpc = { package = "obeli-sk-grpc", path = "crates/grpc" }
 js-crypto = { package = "obeli-sk-js-crypto", path = "crates/js-crypto" }
+rest-types = { package = "obeli-sk-rest-types", path = "crates/rest-types" }
 obelisk-component-builder = { path = "crates/testing/component-builder", features = [
     "genrs",
 ] }

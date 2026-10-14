@@ -5,6 +5,7 @@ use crate::ContentDigest;
 use crate::ExecutionFailureKind;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
+#[cfg(feature = "runtime")]
 use crate::FinishedExecutionFailure;
 use crate::FunctionExtension;
 use crate::FunctionFqn;
@@ -22,6 +23,7 @@ use crate::prefixed_ulid::NodeRunId;
 use crate::prefixed_ulid::RunId;
 use crate::prefixed_ulid::SystemEventId;
 use assert_matches::assert_matches;
+#[cfg(feature = "runtime")]
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use chrono::{SubsecRound, TimeDelta};
@@ -32,6 +34,7 @@ use std::fmt::Debug;
 use std::fmt::Display;
 use std::num::NonZeroU16;
 use std::panic::Location;
+#[cfg(feature = "runtime")]
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -1449,6 +1452,7 @@ impl From<CreateRequest> for ExecutionRequest {
     }
 }
 
+#[cfg(feature = "runtime")]
 #[async_trait]
 pub trait DbPool: Send + Sync {
     async fn db_exec_conn(&self) -> Result<Box<dyn DbExecutor>, DbErrorGeneric>;
@@ -1832,6 +1836,7 @@ pub struct StorageStatus {
     pub system_event_count: u64,
 }
 
+#[cfg(feature = "runtime")]
 #[async_trait]
 pub trait CasGc: Send + Sync {
     async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite>;
@@ -1840,6 +1845,7 @@ pub trait CasGc: Send + Sync {
 /// CAS GC byte budget per transaction; one larger blob is allowed so collection makes progress.
 pub const CAS_GC_BATCH_SIZE_BYTES: u64 = 16 * 1024 * 1024;
 
+#[cfg(feature = "runtime")]
 #[async_trait]
 pub trait DbAdmin: Send + Sync {
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite>;
@@ -1919,6 +1925,7 @@ pub trait DbAdmin: Send + Sync {
     async fn gc_executions(&self, batch_size: u32) -> Result<ExecutionGcResult, DbErrorWrite>;
 }
 
+#[cfg(feature = "runtime")]
 #[async_trait]
 pub trait DbPoolCloseable {
     async fn close(&self);
@@ -2009,6 +2016,7 @@ impl CapturedDbWrite {
     }
 }
 
+#[cfg(feature = "runtime")]
 #[async_trait]
 pub trait DbExecutor: Send + Sync {
     #[expect(clippy::too_many_arguments)]
@@ -2255,6 +2263,7 @@ impl FunctionNameFilter {
     }
 }
 
+#[cfg(feature = "runtime")]
 #[async_trait]
 pub trait DbExternalApi: DbConnection {
     /// Get the latest backtrace if version is not set.
@@ -2818,6 +2827,7 @@ pub struct ExecutionWithStateRequestsResponses {
     pub max_cursor: ResponseCursor,
 }
 
+#[cfg(feature = "runtime")]
 #[async_trait]
 pub trait DbConnection: DbExecutor {
     /// Get execution log.
@@ -3135,6 +3145,7 @@ pub enum DelayCancelOutcome {
     AlreadyFinished,
 }
 
+#[cfg(feature = "runtime")]
 async fn upsert_stub_finished(
     db_connection: &dyn DbConnection,
     execution_id: ExecutionIdDerived,
@@ -3170,6 +3181,7 @@ async fn upsert_stub_finished(
 }
 
 #[instrument(skip(db_connection))]
+#[cfg(feature = "runtime")]
 pub async fn stub_execution(
     db_connection: &dyn DbConnection,
     execution_id: ExecutionIdDerived,
@@ -3195,6 +3207,7 @@ pub async fn stub_execution(
     })
 }
 
+#[cfg(feature = "runtime")]
 pub async fn cancel_stub_execution_ignoring_conflict(
     db_connection: &dyn DbConnection,
     execution_id: ExecutionIdDerived,
@@ -3221,6 +3234,7 @@ pub async fn cancel_stub_execution_ignoring_conflict(
     }
 }
 
+#[cfg(feature = "runtime")]
 pub async fn cancel_delay(
     db_connection: &dyn DbConnection,
     delay_id: DelayId,
@@ -3281,6 +3295,7 @@ pub struct FrameSymbol {
     pub col: Option<u32>,
 }
 
+#[cfg(feature = "runtime")]
 mod wasm_backtrace {
     use super::{FrameInfo, FrameSymbol, WasmBacktrace};
 

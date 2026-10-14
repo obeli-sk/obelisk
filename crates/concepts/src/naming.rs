@@ -168,6 +168,18 @@ impl<T> Name<T> {
     }
 }
 
+impl<T: Eq> PartialOrd for Name<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: Eq> Ord for Name<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.deref().cmp(other.deref())
+    }
+}
+
 impl<T> Debug for Name<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Display::fmt(&self, f)

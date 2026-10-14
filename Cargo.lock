@@ -3910,6 +3910,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "obeli-sk-rest-types"
+version = "0.43.0-rc.1"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "derive_more",
+ "itertools 0.15.0",
+ "obeli-sk-concepts",
+ "obeli-sk-val-json",
+ "serde",
+ "serde_json",
+ "utoipa",
+]
+
+[[package]]
 name = "obeli-sk-small-btree"
 version = "1.0.0-obeli-sk.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4119,6 +4134,7 @@ dependencies = [
  "obeli-sk-embedded-assets",
  "obeli-sk-executor",
  "obeli-sk-grpc",
+ "obeli-sk-rest-types",
  "obeli-sk-utils",
  "obeli-sk-val-json",
  "obeli-sk-wasm-workers",

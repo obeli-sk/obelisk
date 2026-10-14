@@ -88,6 +88,36 @@ impl ComponentId {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ComponentIdParseError {
+    #[error("expected `component_type:name:digest`")]
+    MissingDelimiter,
+    #[error("invalid component type - {0}")]
+    ComponentType(#[from] strum::ParseError),
+    #[error("invalid component name - {0}")]
+    Name(#[from] InvalidNameError<ComponentId>),
+    #[error("invalid component digest - {0}")]
+    Digest(#[from] DigestParseErrror),
+}
+
+impl FromStr for ComponentId {
+    type Err = ComponentIdParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let mut parts = input.splitn(3, ':');
+        let (Some(component_type), Some(name), Some(digest)) =
+            (parts.next(), parts.next(), parts.next())
+        else {
+            return Err(ComponentIdParseError::MissingDelimiter);
+        };
+        Ok(ComponentId::new(
+            component_type.parse()?,
+            StrVariant::from(name.to_string()),
+            digest.parse()?,
+        )?)
+    }
+}
+
 pub fn check_name<T>(
     name: StrVariant,
     special: &'static str,
@@ -260,5 +290,22 @@ impl FromStr for Digest {
             return Err(DigestParseErrror::InvalidPrefix);
         };
         Digest::parse_without_prefix(hash_base16)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn component_id_display_round_trips() {
+        let component_id = ComponentId::new(
+            ComponentType::ActivityStub,
+            StrVariant::Static("my-stub"),
+            COMPONENT_DIGEST_DUMMY,
+        )
+        .unwrap();
+        let parsed: ComponentId = component_id.to_string().parse().unwrap();
+        assert_eq!(component_id, parsed);
     }
 }

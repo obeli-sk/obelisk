@@ -9,11 +9,11 @@
 
 use crate::command::server::{self, JsRuntimeMode, ServerAuth};
 use crate::config::env_var::StartupEnvVars;
-use crate::server::web_api_server::ReplayResponseSer;
 use crate::{
     command::server::{LocalDeployment, PrepareDirsParams, RunParams, prepare_dirs, run_internal},
     config::config_holder::ConfigHolder,
 };
+use rest_types::replay::{ReplayOutcomeSer, ReplayResponseSer};
 use toml_edit::{DocumentMut, value};
 
 mod activity_exec;
@@ -2252,17 +2252,14 @@ impl TestServer {
                 );
             }
             let captured_writes = match replay_body.outcome {
-                crate::server::web_api_server::ReplayOutcomeSer::Advanceable {
-                    captured_writes,
-                }
-                | crate::server::web_api_server::ReplayOutcomeSer::ReplayFailed {
-                    captured_writes,
-                    ..
+                ReplayOutcomeSer::Advanceable { captured_writes }
+                | ReplayOutcomeSer::ReplayFailed {
+                    captured_writes, ..
                 } => captured_writes,
-                crate::server::web_api_server::ReplayOutcomeSer::Finished { retval: _ } => {
+                ReplayOutcomeSer::Finished { retval: _ } => {
                     panic!("should have been returned as `advance` response first");
                 }
-                crate::server::web_api_server::ReplayOutcomeSer::Blocked => {
+                ReplayOutcomeSer::Blocked => {
                     unreachable!("blocked state is not created by any test")
                 }
             };
@@ -4676,10 +4673,7 @@ async fn replay_finished_execution_reports_final_version(
             assert_eq!(replay.status().as_u16(), 200);
             let replay: ReplayResponseSer = replay.json().await.unwrap();
             assert_eq!(5, replay.replay_version);
-            assert!(matches!(
-                replay.outcome,
-                crate::server::web_api_server::ReplayOutcomeSer::Finished { .. }
-            ));
+            assert!(matches!(replay.outcome, ReplayOutcomeSer::Finished { .. }));
         }
         TestExecutionClient::Grpc => {
             let mut grpc_client =

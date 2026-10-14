@@ -1,31 +1,6 @@
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum DeploymentComponentType {
-    WorkflowWasm,
-    WorkflowJs,
-    ActivityWasm,
-    ActivityJs,
-    ActivityExec,
-    ActivityVm,
-    ActivityStub,
-    ActivityExternal,
-    WebhookEndpointWasm,
-    WebhookEndpointJs,
-    Cron,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-pub(crate) struct DeploymentComponentCount {
-    pub(crate) component_type: DeploymentComponentType,
-    pub(crate) count: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-pub(crate) struct DeploymentComponentSummary {
-    pub(crate) components: Vec<DeploymentComponentCount>,
-}
+use rest_types::deployment::{
+    DeploymentComponentCount, DeploymentComponentSummary, DeploymentComponentType,
+};
 
 const COMPONENT_SECTIONS: &[(&str, DeploymentComponentType)] = &[
     ("workflow_wasm", DeploymentComponentType::WorkflowWasm),

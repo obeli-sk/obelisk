@@ -28,15 +28,25 @@ use concepts::{
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
         DbErrorWrite, DbErrorWriteNonRetriable, DbPool, DelayCancelOutcome, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionStateFilter, ExecutionWithState,
-        FunctionNameFilter, ListExecutionsFilter, Pagination, PendingState,
-        PendingStateFinishedError, PendingStateFinishedResultKind, ResponseCursor,
-        ResponseWithCursor, TimeoutOutcome, Version, VersionType,
+        ExecutionListPagination, ExecutionRequest, ExecutionStateFilter, FunctionNameFilter,
+        ListExecutionsFilter, Pagination, PendingState, PendingStateFinishedError,
+        PendingStateFinishedResultKind, TimeoutOutcome, Version, VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
 use http::HeaderMap;
 use http::{StatusCode, header};
+use rest_types::{
+    backtrace::BacktraceInfoSer,
+    executions::{
+        ExecutionEventsAndResponsesResponse, ExecutionEventsResponse, ExecutionResponsesResponse,
+        ExecutionSubmitPayload, ExecutionUpgradePayload, ExecutionWithStateSer, RetVal,
+    },
+    replay::{
+        AdvanceErrorSer, AdvanceRequestSer, AdvanceResponseSer, CapturedWriteSer,
+        PersistBacktracesResponseSer, ReplayOutcomeSer, ReplayResponseSer,
+    },
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
@@ -51,7 +61,7 @@ use tokio::{
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{Instrument as _, Span, debug, info, info_span, instrument, trace, warn};
 use utoipa::{IntoParams, OpenApi, ToSchema};
-use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
+use val_json::wast_val_ser::deserialize_value;
 use wasm_workers::{
     activity::cancel_registry::CancelRegistry,
     registry::ReplayWorker,
@@ -167,35 +177,35 @@ async fn until_terminated<T>(
         PersistBacktracesResponseSer,
         ExecutionSubmitPayload,
         ExecutionUpgradePayload,
-        logs::LogEntryRowSer,
-        logs::LogEntrySer,
-        logs::LogLevelSer,
-        logs::LogStreamTypeSer,
+        rest_types::logs::LogEntryRowSer,
+        rest_types::logs::LogEntrySer,
+        rest_types::logs::LogLevelSer,
+        rest_types::logs::LogStreamTypeSer,
         logs::LogLevelParam,
         logs::LogStreamTypeParam,
-        components::ComponentConfig,
-        components::FunctionMetadataLite,
-        components::ParameterTypeLite,
-        functions::FunctionOutput,
-        deployment::DeploymentStateSer,
-        deployment::DeploymentSubmitResponse,
-        admin::DeleteResponse,
-        admin::DeleteDeploymentResponse,
-        admin::CleanupRequest,
-        admin::RetainDeploymentsRequest,
-        admin::CleanupResponse,
-        admin::SystemEventsResponse,
-        admin::StorageStatusResponse,
-        admin::RetainSystemEventsRequest,
-        admin::RetainSystemEventsResponse,
-        deployment::DeploymentSubmitErrorBody,
+        rest_types::components::ComponentConfig,
+        rest_types::components::FunctionMetadataLite,
+        rest_types::components::ParameterTypeLite,
+        rest_types::functions::FunctionOutput,
+        rest_types::deployment::DeploymentStateSer,
+        rest_types::deployment::DeploymentSubmitResponse,
+        rest_types::admin::DeleteResponse,
+        rest_types::admin::DeleteDeploymentResponse,
+        rest_types::admin::CleanupRequest,
+        rest_types::admin::RetainDeploymentsRequest,
+        rest_types::admin::CleanupResponse,
+        rest_types::admin::SystemEventsResponse,
+        rest_types::admin::StorageStatusResponse,
+        rest_types::admin::RetainSystemEventsRequest,
+        rest_types::admin::RetainSystemEventsResponse,
+        rest_types::deployment::DeploymentSubmitErrorBody,
         app_config::AppConfigResponse,
-        deployment::GenericErrorBody,
-        deployment::SubmitPackageErrorBody,
-        deployment::MissingRuntimeConfigErrorBody,
-        deployment::FileIssue,
-        deployment::DigestMismatch,
-        backtrace::BacktraceInfoSer,
+        rest_types::deployment::GenericErrorBody,
+        rest_types::deployment::SubmitPackageErrorBody,
+        rest_types::deployment::MissingRuntimeConfigErrorBody,
+        rest_types::deployment::FileIssue,
+        rest_types::deployment::DigestMismatch,
+        BacktraceInfoSer,
     ))
 )]
 pub(crate) struct ApiDoc;
@@ -431,53 +441,11 @@ pub(crate) mod app_config {
 pub(crate) mod admin {
     use super::*;
     use concepts::storage::{DeleteDeploymentResult, DeleteExecutionTreeResult, SystemEventCode};
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct SystemEventsResponse {
-        pub(crate) events: Vec<SystemEventResponse>,
-        pub(crate) next_cursor: Option<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct SystemEventResponse {
-        #[schema(value_type = String)]
-        pub(crate) event_id: SystemEventId,
-        #[schema(value_type = String)]
-        pub(crate) node_run_id: NodeRunId,
-        // backcompat: 0.42.0-rc.3 event responses had no policy digest.
-        pub(crate) app_config_digest: Option<String>,
-        pub(crate) created_at: DateTime<Utc>,
-        pub(crate) level: String,
-        pub(crate) code: String,
-        pub(crate) message: String,
-        #[schema(value_type = Option<String>)]
-        pub(crate) execution_id: Option<ExecutionId>,
-        #[schema(value_type = Option<String>)]
-        pub(crate) deployment_id: Option<DeploymentId>,
-        pub(crate) details: serde_json::Value,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct StorageStatusResponse {
-        pub(crate) database_bytes: Option<u64>,
-        pub(crate) execution_count: u64,
-        pub(crate) deployment_count: u64,
-        pub(crate) system_event_count: u64,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct RetainSystemEventsRequest {
-        pub(crate) max_age_seconds: u64,
-        pub(crate) batch_size: u32,
-        pub(crate) dry_run: bool,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct RetainSystemEventsResponse {
-        /// Events deleted, or that would be deleted when `dry_run` is true.
-        pub(crate) deleted: u64,
-        pub(crate) has_more: bool,
-    }
+    use rest_types::admin::{
+        CleanupRequest, CleanupResponse, DeleteDeploymentResponse, DeleteResponse,
+        RetainDeploymentsRequest, RetainSystemEventsRequest, RetainSystemEventsResponse,
+        StorageStatusResponse, SystemEventResponse, SystemEventsResponse,
+    };
 
     #[derive(Debug, Default, Deserialize, IntoParams)]
     #[into_params(parameter_in = Query)]
@@ -551,7 +519,7 @@ pub(crate) mod admin {
                     node_run_id: event.node_run_id,
                     app_config_digest: event.app_config_digest,
                     created_at: event.created_at,
-                    level: event.level.as_str().into(),
+                    level: event.level,
                     code: event.code,
                     message,
                     execution_id: event.execution_id,
@@ -596,7 +564,7 @@ pub(crate) mod admin {
             node_run_id: event.node_run_id,
             app_config_digest: event.app_config_digest,
             created_at: event.created_at,
-            level: event.level.as_str().into(),
+            level: event.level,
             code: event.code,
             message,
             execution_id: event.execution_id,
@@ -678,66 +646,6 @@ pub(crate) mod admin {
                 has_more: result.has_more,
             },
         ))
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct DeleteResponse {
-        pub(crate) deleted: bool,
-        pub(crate) already_deleted: bool,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct DeleteDeploymentResponse {
-        pub(crate) deleted: bool,
-        pub(crate) already_deleted: bool,
-        pub(crate) deleted_execution_trees: u64,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct CleanupRequest {
-        pub(crate) retain_count: Option<u32>,
-        pub(crate) max_age_seconds: Option<u64>,
-        pub(crate) batch_size: u32,
-        #[serde(default)]
-        pub(crate) force_non_terminal: bool,
-        #[serde(default)]
-        pub(crate) dry_run: bool,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct RetainDeploymentsRequest {
-        pub(crate) retain_count: Option<u32>,
-        pub(crate) max_age_seconds: Option<u64>,
-        pub(crate) batch_size: u32,
-        #[serde(default)]
-        pub(crate) delete_executions: bool,
-        #[serde(default)]
-        pub(crate) force_non_terminal: bool,
-        #[serde(default)]
-        pub(crate) dry_run: bool,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct CleanupResponse {
-        pub(crate) deleted_execution_trees: u64,
-        pub(crate) deleted_deployments: u64,
-        pub(crate) retained: u64,
-        pub(crate) blocked_non_terminal: u64,
-        pub(crate) blocked_by_execution_reference: u64,
-        pub(crate) has_more: bool,
-    }
-
-    impl From<storage::CleanupResult> for CleanupResponse {
-        fn from(value: storage::CleanupResult) -> Self {
-            Self {
-                deleted_execution_trees: value.deleted_execution_trees,
-                deleted_deployments: value.deleted_deployments,
-                retained: value.retained,
-                blocked_non_terminal: value.blocked_non_terminal,
-                blocked_by_execution_reference: value.blocked_by_execution_reference,
-                has_more: value.has_more,
-            }
-        }
     }
 
     fn validate_batch_size(batch_size: u32) -> Result<(), HttpResponse> {
@@ -1267,56 +1175,6 @@ enum ExecutionListCursorDeser {
     CreatedBy(DateTime<Utc>),
     ExecutionId(ExecutionId),
 }
-/// Execution with current state information
-#[derive(Serialize, Deserialize, ToSchema)]
-pub struct ExecutionWithStateSer {
-    /// Unique execution identifier
-    #[schema(value_type = String, example = "E_01JKXYZ123456789ABCDEFGHIJ")]
-    pub execution_id: ExecutionId,
-    /// Fully qualified function name
-    #[schema(value_type = String, example = "my-pkg:my-ifc/my-fn")]
-    pub ffqn: FunctionFqn,
-    /// Current pending state of the execution
-    #[schema(value_type = Object)]
-    pub pending_state: PendingState,
-    /// When the execution was created
-    pub created_at: DateTime<Utc>,
-    /// When the execution was first scheduled
-    pub first_scheduled_at: DateTime<Utc>,
-    /// Component content digest
-    #[schema(value_type = String)]
-    pub component_digest: ComponentDigest,
-    /// Type of component (workflow, activity, webhook)
-    #[schema(value_type = String)]
-    pub component_type: ComponentType,
-    /// Deployment that created this execution
-    #[schema(value_type = String, example = "Dep_01JKXYZ123456789ABCDEFGHIJ")]
-    pub deployment_id: DeploymentId,
-}
-impl From<ExecutionWithState> for ExecutionWithStateSer {
-    fn from(value: ExecutionWithState) -> Self {
-        let ExecutionWithState {
-            execution_id,
-            ffqn,
-            pending_state,
-            created_at,
-            first_scheduled_at,
-            component_digest,
-            component_type,
-            deployment_id,
-        } = value;
-        ExecutionWithStateSer {
-            execution_id,
-            ffqn,
-            pending_state,
-            created_at,
-            first_scheduled_at,
-            component_digest,
-            component_type,
-            deployment_id,
-        }
-    }
-}
 
 /// List executions with filtering and pagination
 #[utoipa::path(
@@ -1602,17 +1460,6 @@ struct ExecutionEventsParams {
     include_backtrace_id: bool,
 }
 
-/// Response containing execution events
-#[derive(Serialize, Deserialize, ToSchema)]
-pub(crate) struct ExecutionEventsResponse {
-    /// List of execution events
-    #[schema(value_type = Vec<Object>)]
-    pub(crate) events: Vec<ExecutionEvent>,
-    /// Maximum version in the response
-    #[schema(value_type = u32)]
-    pub(crate) max_version: Version,
-}
-
 #[derive(Deserialize, ToSchema)]
 struct ExecutionEventBoundsBatchRequest {
     #[schema(value_type = Vec<String>)]
@@ -1666,19 +1513,6 @@ async fn execution_event_bounds_batch(
         })
         .collect();
     Ok(pretty_json_response(StatusCode::OK, &response))
-}
-
-#[derive(Serialize, ToSchema)]
-struct ExecutionEventsAndResponsesResponse {
-    #[schema(value_type = Vec<Object>)]
-    events: Vec<ExecutionEvent>,
-    #[schema(value_type = Vec<Object>)]
-    responses: Vec<ResponseWithCursor>,
-    current_status: ExecutionWithStateSer,
-    #[schema(value_type = u32)]
-    max_version: Version,
-    #[schema(value_type = u32)]
-    max_cursor: ResponseCursor,
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -1797,11 +1631,8 @@ pub(crate) mod logs {
     use super::*;
     use base64::{Engine as _, prelude::BASE64_STANDARD};
     use chrono::{DateTime, Utc};
-    use concepts::{
-        prefixed_ulid::RunId,
-        storage::{LogCursor, LogEntry, LogEntryRow, LogFilter, LogLevel, LogStreamType},
-    };
-    use std::fmt::Display;
+    use concepts::storage::{LogCursor, LogFilter, LogLevel, LogStreamType};
+    use rest_types::logs::LogEntryRowSer;
 
     #[derive(Deserialize, Debug, IntoParams)]
     #[into_params(parameter_in = Query)]
@@ -1879,130 +1710,6 @@ pub(crate) mod logs {
             match value {
                 LogStreamTypeParam::Stdout => LogStreamType::StdOut,
                 LogStreamTypeParam::Stderr => LogStreamType::StdErr,
-            }
-        }
-    }
-
-    /// Log entry row with cursor
-    #[derive(Serialize, Deserialize, ToSchema)]
-    pub(crate) struct LogEntryRowSer {
-        /// Opaque cursor position
-        pub cursor: String,
-        /// Run ID that produced this log
-        #[schema(value_type = String)]
-        pub run_id: RunId,
-        /// Execution ID that produced this log
-        pub execution_id: String,
-        /// Log entry details
-        #[serde(flatten)]
-        pub info: LogEntrySer,
-    }
-
-    /// Log entry content
-    #[derive(Serialize, Deserialize, ToSchema)]
-    #[serde(tag = "type", rename_all = "snake_case")]
-    pub(crate) enum LogEntrySer {
-        /// Structured log message
-        Log {
-            created_at: DateTime<Utc>,
-            level: LogLevelSer,
-            message: String,
-        },
-        /// Raw stream output (stdout/stderr)
-        Stream {
-            created_at: DateTime<Utc>,
-            /// Base64 encoded payload
-            payload: String,
-            stream_type: LogStreamTypeSer,
-        },
-    }
-
-    impl From<LogEntryRow> for LogEntryRowSer {
-        fn from(row: LogEntryRow) -> Self {
-            Self {
-                cursor: BASE64_STANDARD
-                    .encode(serde_json::to_vec(&row.cursor).expect("log cursor must serialize")),
-                run_id: row.run_id,
-                execution_id: row.execution_id.to_string(),
-                info: match row.log_entry {
-                    LogEntry::Log {
-                        created_at,
-                        level,
-                        message,
-                    } => LogEntrySer::Log {
-                        created_at,
-                        level: level.into(),
-                        message,
-                    },
-                    LogEntry::Stream {
-                        created_at,
-                        payload,
-                        stream_type,
-                    } => LogEntrySer::Stream {
-                        created_at,
-                        payload: BASE64_STANDARD.encode(payload),
-                        stream_type: stream_type.into(),
-                    },
-                },
-            }
-        }
-    }
-
-    #[derive(serde::Serialize, serde::Deserialize, ToSchema)]
-    #[serde(rename_all = "snake_case")]
-    pub(crate) enum LogLevelSer {
-        Trace,
-        Debug,
-        Info,
-        Warn,
-        Error,
-    }
-
-    impl Display for LogLevelSer {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.pad(match self {
-                Self::Trace => "TRACE",
-                Self::Debug => "DEBUG",
-                Self::Info => "INFO",
-                Self::Warn => "WARN",
-                Self::Error => "ERROR",
-            })
-        }
-    }
-
-    impl From<LogLevel> for LogLevelSer {
-        fn from(value: LogLevel) -> Self {
-            match value {
-                LogLevel::Trace => Self::Trace,
-                LogLevel::Debug => Self::Debug,
-                LogLevel::Info => Self::Info,
-                LogLevel::Warn => Self::Warn,
-                LogLevel::Error => Self::Error,
-            }
-        }
-    }
-
-    #[derive(serde::Serialize, serde::Deserialize, ToSchema)]
-    #[serde(rename_all = "snake_case")]
-    pub(crate) enum LogStreamTypeSer {
-        Stdout,
-        Stderr,
-    }
-
-    impl Display for LogStreamTypeSer {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.pad(match self {
-                Self::Stdout => "STDOUT",
-                Self::Stderr => "STDERR",
-            })
-        }
-    }
-
-    impl From<LogStreamType> for LogStreamTypeSer {
-        fn from(value: LogStreamType) -> Self {
-            match value {
-                LogStreamType::StdOut => Self::Stdout,
-                LogStreamType::StdErr => Self::Stderr,
             }
         }
     }
@@ -2130,19 +1837,6 @@ fn parse_join_set_filter(join_set: &str) -> Result<JoinSetId, String> {
         .map_err(|err: concepts::JoinSetIdParseError| err.to_string())
 }
 
-/// Response containing execution responses
-#[derive(Serialize, Deserialize, ToSchema)]
-pub(crate) struct ExecutionResponsesResponse {
-    /// List of responses with cursors
-    #[schema(value_type = Vec<Object>)]
-    pub(crate) responses: Vec<ResponseWithCursor>,
-    /// Maximum cursor in the response
-    #[schema(value_type = u32)]
-    pub(crate) max_cursor: ResponseCursor,
-    /// Cursor reached in the requested direction
-    #[schema(value_type = u32)]
-    pub(crate) scan_cursor: ResponseCursor,
-}
 /// Get execution responses (join set responses)
 #[utoipa::path(
     get,
@@ -2481,602 +2175,41 @@ async fn execution_stub(
     .into_response())
 }
 
-/// Lossy representation of `SupportedFunctionReturnValue`. Does not contain WIT type.
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-enum RetVal {
-    /// Successful result value
-    #[schema(value_type = Option<Object>)]
-    Ok(Option<WastVal>),
-    /// Error result (WIT result's error variant)
-    #[schema(value_type = Option<Object>)]
-    Err(Option<WastVal>),
-    /// Execution failed
-    #[schema(value_type = Object)]
-    ExecutionFailed(FinishedExecutionFailure),
+fn replay_response_ser(
+    value: wasm_workers::workflow::workflow_worker::MeasuredReplayResponse,
+) -> ReplayResponseSer {
+    use wasm_workers::workflow::workflow_worker::ReplayResponse;
+    let outcome = match value.response {
+        ReplayResponse::Advanceable(replay) => ReplayOutcomeSer::Advanceable {
+            captured_writes: replay
+                .captured_writes
+                .into_iter()
+                .map(CapturedWriteSer::from)
+                .collect(),
+        },
+        ReplayResponse::Finished { result } => ReplayOutcomeSer::Finished {
+            retval: serde_json::to_value(RetVal::from(result))
+                .expect("supported retval must be JSON serializable"),
+        },
+        ReplayResponse::Blocked => ReplayOutcomeSer::Blocked,
+    };
+    replay_response_with_measurements(outcome, value.measurements)
 }
-impl From<SupportedFunctionReturnValue> for RetVal {
-    fn from(value: SupportedFunctionReturnValue) -> RetVal {
-        match value {
-            SupportedFunctionReturnValue::Ok(val_with_type) => {
-                RetVal::Ok(val_with_type.map(|it| it.value))
-            }
-            SupportedFunctionReturnValue::Err(val_with_type) => {
-                RetVal::Err(val_with_type.map(|it| it.value))
-            }
-            SupportedFunctionReturnValue::ExecutionFailure(err) => RetVal::ExecutionFailed(err),
-        }
+
+fn replay_response_with_measurements(
+    outcome: ReplayOutcomeSer,
+    measurements: wasm_workers::workflow::workflow_worker::ReplayMeasurements,
+) -> ReplayResponseSer {
+    ReplayResponseSer {
+        outcome,
+        replayed_event_count: measurements.replayed_event_count,
+        replay_duration_ms: measurements
+            .replay_duration
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX),
+        replay_version: measurements.replay_version,
     }
-}
-
-/// A serializable mirror of `CreateRequest` from concepts.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub(crate) struct CreateRequestSer {
-    pub(crate) created_at: DateTime<Utc>,
-    pub(crate) execution_id: String,
-    pub(crate) ffqn: String,
-    #[schema(value_type = Vec<Object>)]
-    pub(crate) params: concepts::Params,
-    pub(crate) parent_execution_id: Option<String>,
-    pub(crate) parent_join_set_id: Option<String>,
-    pub(crate) scheduled_at: DateTime<Utc>,
-    #[schema(value_type = Object)]
-    pub(crate) component_id: concepts::ComponentId,
-    pub(crate) deployment_id: String,
-    #[schema(value_type = Object)]
-    pub(crate) metadata: concepts::ExecutionMetadata,
-    pub(crate) scheduled_by: Option<String>,
-    pub(crate) paused: bool,
-    #[serde(default = "concepts::persisted_value::legacy_unlimited_persisted_value_size")]
-    pub(crate) max_persisted_value_size_bytes: u64,
-}
-
-impl From<concepts::storage::CreateRequest> for CreateRequestSer {
-    fn from(r: concepts::storage::CreateRequest) -> Self {
-        let (parent_execution_id, parent_join_set_id) = r
-            .parent
-            .map(|(execution_id, join_set_id)| {
-                (
-                    Some(execution_id.to_string()),
-                    Some(join_set_id.to_string()),
-                )
-            })
-            .unwrap_or((None, None));
-        Self {
-            created_at: r.created_at,
-            execution_id: r.execution_id.to_string(),
-            ffqn: r.ffqn.to_string(),
-            params: r.params,
-            parent_execution_id,
-            parent_join_set_id,
-            scheduled_at: r.scheduled_at,
-            component_id: r.component_id,
-            deployment_id: r.deployment_id.to_string(),
-            metadata: r.metadata,
-            scheduled_by: r.scheduled_by.map(|execution_id| execution_id.to_string()),
-            paused: r.paused,
-            max_persisted_value_size_bytes: r.max_persisted_value_size_bytes,
-        }
-    }
-}
-
-impl TryFrom<CreateRequestSer> for concepts::storage::CreateRequest {
-    type Error = String;
-
-    fn try_from(value: CreateRequestSer) -> Result<Self, Self::Error> {
-        let parent = match (value.parent_execution_id, value.parent_join_set_id) {
-            (Some(execution_id), Some(join_set_id)) => Some((
-                execution_id
-                    .parse()
-                    .map_err(|err| format!("invalid parent_execution_id - {err}"))?,
-                join_set_id
-                    .parse::<JoinSetId>()
-                    .map_err(|err| format!("invalid parent_join_set_id - {err}"))?,
-            )),
-            (None, None) => None,
-            (Some(_), None) | (None, Some(_)) => {
-                return Err(
-                    "parent_execution_id and parent_join_set_id must be both set or both omitted"
-                        .to_string(),
-                );
-            }
-        };
-
-        Ok(Self {
-            created_at: value.created_at,
-            execution_id: value
-                .execution_id
-                .parse()
-                .map_err(|err| format!("invalid execution_id - {err}"))?,
-            ffqn: value
-                .ffqn
-                .parse()
-                .map_err(|err| format!("invalid ffqn - {err}"))?,
-            params: value.params,
-            parent,
-            scheduled_at: value.scheduled_at,
-            component_id: value.component_id,
-            deployment_id: value
-                .deployment_id
-                .parse()
-                .map_err(|err| format!("invalid deployment_id - {err}"))?,
-            metadata: value.metadata,
-            scheduled_by: value
-                .scheduled_by
-                .map(|execution_id| {
-                    execution_id
-                        .parse()
-                        .map_err(|err| format!("invalid scheduled_by - {err}"))
-                })
-                .transpose()?,
-            paused: value.paused,
-            max_persisted_value_size_bytes: value.max_persisted_value_size_bytes,
-        })
-    }
-}
-
-/// A serializable mirror of `AppendResponseToExecution` from concepts.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub(crate) struct StubResponseSer {
-    pub(crate) parent_execution_id: String,
-    pub(crate) created_at: DateTime<Utc>,
-    pub(crate) join_set_id: String,
-    pub(crate) child_execution_id: String,
-    pub(crate) finished_version: u32,
-    #[schema(value_type = Object)]
-    pub(crate) result: SupportedFunctionReturnValue,
-}
-
-impl From<concepts::storage::AppendResponseToExecution> for StubResponseSer {
-    fn from(r: concepts::storage::AppendResponseToExecution) -> Self {
-        Self {
-            parent_execution_id: r.parent_execution_id.to_string(),
-            created_at: r.created_at,
-            join_set_id: r.join_set_id.to_string(),
-            child_execution_id: r.child_execution_id.to_string(),
-            finished_version: r.finished_version.0,
-            result: r.result,
-        }
-    }
-}
-
-impl TryFrom<StubResponseSer> for concepts::storage::AppendResponseToExecution {
-    type Error = String;
-
-    fn try_from(value: StubResponseSer) -> Result<Self, Self::Error> {
-        let child_execution_id = value
-            .child_execution_id
-            .parse::<ExecutionId>()
-            .map_err(|err| format!("invalid child_execution_id - {err}"))?;
-        let ExecutionId::Derived(child_execution_id) = child_execution_id else {
-            return Err("child_execution_id must be a derived execution id".to_string());
-        };
-
-        Ok(Self {
-            parent_execution_id: value
-                .parent_execution_id
-                .parse()
-                .map_err(|err| format!("invalid parent_execution_id - {err}"))?,
-            created_at: value.created_at,
-            join_set_id: value
-                .join_set_id
-                .parse()
-                .map_err(|err| format!("invalid join_set_id - {err}"))?,
-            child_execution_id,
-            finished_version: Version::new(value.finished_version),
-            result: value.result,
-        })
-    }
-}
-
-/// A write captured during replay, produced by the replay endpoint and applied by the advance endpoint.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum CapturedWriteSer {
-    Append {
-        execution_id: String,
-        version: u32,
-        #[schema(value_type = Object)]
-        event: concepts::storage::AppendRequest,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        backtraces: Vec<backtrace::BacktraceInfoSer>,
-    },
-    AppendBatch {
-        #[schema(value_type = Vec<Object>)]
-        events: Vec<concepts::storage::AppendRequest>,
-        execution_id: String,
-        version: u32,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        backtraces: Vec<backtrace::BacktraceInfoSer>,
-    },
-    AppendBatchCreateNewExecution {
-        #[schema(value_type = Vec<Object>)]
-        events: Vec<concepts::storage::AppendRequest>,
-        execution_id: String,
-        version: u32,
-        child_requests: Vec<CreateRequestSer>,
-        backtraces: Vec<backtrace::BacktraceInfoSer>,
-    },
-    AppendBatchWithDelayResponse {
-        #[schema(value_type = Vec<Object>)]
-        events: Vec<concepts::storage::AppendRequest>,
-        execution_id: String,
-        version: u32,
-        join_set_id: String,
-        delay_id: String,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        backtraces: Vec<backtrace::BacktraceInfoSer>,
-    },
-    AppendStubResponse {
-        execution_id: String,
-        version: u32,
-        #[schema(value_type = Vec<Object>)]
-        events: Vec<concepts::storage::AppendRequest>,
-        response: StubResponseSer,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        backtraces: Vec<backtrace::BacktraceInfoSer>,
-    },
-    AppendFinished {
-        execution_id: String,
-        version: u32,
-        #[schema(value_type = Object)]
-        retval: SupportedFunctionReturnValue,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        parent_execution_id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        parent_join_set_id: Option<String>,
-    },
-}
-
-impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
-    fn from(w: concepts::storage::CapturedDbWrite) -> Self {
-        use concepts::storage::CapturedDbWrite;
-        match w {
-            CapturedDbWrite::Append {
-                execution_id,
-                version,
-                req,
-                backtraces,
-            } => CapturedWriteSer::Append {
-                execution_id: execution_id.to_string(),
-                version: version.0,
-                event: req,
-                backtraces: backtraces
-                    .into_iter()
-                    .map(backtrace::BacktraceInfoSer::from)
-                    .collect(),
-            },
-            CapturedDbWrite::AppendBatch {
-                current_time: _,
-                batch,
-                execution_id,
-                version,
-                backtraces,
-            } => CapturedWriteSer::AppendBatch {
-                events: batch,
-                execution_id: execution_id.to_string(),
-                version: version.0,
-                backtraces: backtraces
-                    .into_iter()
-                    .map(backtrace::BacktraceInfoSer::from)
-                    .collect(),
-            },
-            CapturedDbWrite::AppendBatchCreateNewExecution {
-                current_time: _,
-                batch,
-                execution_id,
-                version,
-                child_req,
-                backtraces,
-            } => CapturedWriteSer::AppendBatchCreateNewExecution {
-                events: batch,
-                execution_id: execution_id.to_string(),
-                version: version.0,
-                child_requests: child_req.into_iter().map(CreateRequestSer::from).collect(),
-                backtraces: backtraces
-                    .into_iter()
-                    .map(backtrace::BacktraceInfoSer::from)
-                    .collect(),
-            },
-            CapturedDbWrite::AppendBatchWithDelayResponse {
-                current_time: _,
-                batch,
-                execution_id,
-                version,
-                join_set_id,
-                delay_id,
-                backtraces,
-            } => CapturedWriteSer::AppendBatchWithDelayResponse {
-                events: batch,
-                execution_id: execution_id.to_string(),
-                version: version.0,
-                join_set_id: join_set_id.to_string(),
-                delay_id: delay_id.to_string(),
-                backtraces: backtraces
-                    .into_iter()
-                    .map(backtrace::BacktraceInfoSer::from)
-                    .collect(),
-            },
-            CapturedDbWrite::AppendStubResponse {
-                events,
-                response,
-                current_time: _,
-                backtraces,
-            } => CapturedWriteSer::AppendStubResponse {
-                execution_id: events.execution_id.to_string(),
-                version: events.version.0,
-                events: events.batch,
-                response: StubResponseSer::from(response),
-                backtraces: backtraces
-                    .into_iter()
-                    .map(backtrace::BacktraceInfoSer::from)
-                    .collect(),
-            },
-            CapturedDbWrite::AppendFinished {
-                execution_id,
-                version,
-                retval,
-                current_time: _,
-                parent,
-            } => CapturedWriteSer::AppendFinished {
-                execution_id: execution_id.to_string(),
-                version: version.0,
-                retval,
-                parent_execution_id: parent.as_ref().map(|(id, _)| id.to_string()),
-                parent_join_set_id: parent.map(|(_, js)| js.to_string()),
-            },
-        }
-    }
-}
-
-impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
-    type Error = String;
-
-    fn try_from(value: CapturedWriteSer) -> Result<Self, Self::Error> {
-        match value {
-            CapturedWriteSer::Append {
-                execution_id,
-                version,
-                event,
-                backtraces,
-            } => Ok(Self::Append {
-                execution_id: execution_id
-                    .parse()
-                    .map_err(|err| format!("invalid execution_id - {err}"))?,
-                version: Version::new(version),
-                req: event,
-                backtraces: backtraces
-                    .into_iter()
-                    .map(concepts::storage::BacktraceInfo::try_from)
-                    .collect::<Result<Vec<_>, _>>()?,
-            }),
-            CapturedWriteSer::AppendBatch {
-                events,
-                execution_id,
-                version,
-                backtraces,
-            } => Ok(Self::AppendBatch {
-                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
-                batch: events,
-                execution_id: execution_id
-                    .parse()
-                    .map_err(|err| format!("invalid execution_id - {err}"))?,
-                version: Version::new(version),
-                backtraces: backtraces
-                    .into_iter()
-                    .map(concepts::storage::BacktraceInfo::try_from)
-                    .collect::<Result<Vec<_>, _>>()?,
-            }),
-            CapturedWriteSer::AppendBatchCreateNewExecution {
-                events,
-                execution_id,
-                version,
-                child_requests,
-                backtraces,
-            } => Ok(Self::AppendBatchCreateNewExecution {
-                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
-                batch: events,
-                execution_id: execution_id
-                    .parse()
-                    .map_err(|err| format!("invalid execution_id - {err}"))?,
-                version: Version::new(version),
-                child_req: child_requests
-                    .into_iter()
-                    .map(concepts::storage::CreateRequest::try_from)
-                    .collect::<Result<Vec<_>, _>>()?,
-                backtraces: backtraces
-                    .into_iter()
-                    .map(concepts::storage::BacktraceInfo::try_from)
-                    .collect::<Result<Vec<_>, _>>()?,
-            }),
-            CapturedWriteSer::AppendBatchWithDelayResponse {
-                events,
-                execution_id,
-                version,
-                join_set_id,
-                delay_id,
-                backtraces,
-            } => Ok(Self::AppendBatchWithDelayResponse {
-                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
-                batch: events,
-                execution_id: execution_id
-                    .parse()
-                    .map_err(|err| format!("invalid execution_id - {err}"))?,
-                version: Version::new(version),
-                join_set_id: join_set_id
-                    .parse()
-                    .map_err(|err| format!("invalid join_set_id - {err}"))?,
-                delay_id: delay_id
-                    .parse()
-                    .map_err(|err| format!("invalid delay_id - {err}"))?,
-                backtraces: backtraces
-                    .into_iter()
-                    .map(concepts::storage::BacktraceInfo::try_from)
-                    .collect::<Result<Vec<_>, _>>()?,
-            }),
-            CapturedWriteSer::AppendStubResponse {
-                execution_id,
-                version,
-                events,
-                response,
-                backtraces,
-            } => Ok(Self::AppendStubResponse {
-                events: concepts::storage::AppendEventsToExecution {
-                    execution_id: execution_id
-                        .parse()
-                        .map_err(|err| format!("invalid execution_id - {err}"))?,
-                    version: Version::new(version),
-                    batch: events,
-                },
-                response: response.try_into()?,
-                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
-                backtraces: backtraces
-                    .into_iter()
-                    .map(concepts::storage::BacktraceInfo::try_from)
-                    .collect::<Result<Vec<_>, _>>()?,
-            }),
-            CapturedWriteSer::AppendFinished {
-                execution_id,
-                version,
-                retval,
-                parent_execution_id,
-                parent_join_set_id,
-            } => {
-                let parent = match (parent_execution_id, parent_join_set_id) {
-                    (Some(exec_id), Some(js_id)) => Some((
-                        exec_id
-                            .parse()
-                            .map_err(|err| format!("invalid parent_execution_id - {err}"))?,
-                        js_id
-                            .parse()
-                            .map_err(|err| format!("invalid parent_join_set_id - {err}"))?,
-                    )),
-                    (None, None) => None,
-                    _ => {
-                        return Err(
-                            "parent_execution_id and parent_join_set_id must both be set or both be unset"
-                                .to_string(),
-                        );
-                    }
-                };
-                Ok(Self::AppendFinished {
-                    execution_id: execution_id
-                        .parse()
-                        .map_err(|err| format!("invalid execution_id - {err}"))?,
-                    version: Version::new(version),
-                    retval,
-                    current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
-                    parent,
-                })
-            }
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub(crate) struct ReplayResponseSer {
-    #[serde(flatten)]
-    pub(crate) outcome: ReplayOutcomeSer,
-    /// Number of persisted history events supplied to the workflow replay.
-    pub(crate) replayed_event_count: u64,
-    /// Time spent executing the workflow replay after loading its execution log.
-    pub(crate) replay_duration_ms: u64,
-    /// Highest persisted execution-event version included in the replay log. Response records use
-    /// a separate cursor and are not represented by this version.
-    pub(crate) replay_version: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum ReplayOutcomeSer {
-    Advanceable {
-        captured_writes: Vec<CapturedWriteSer>,
-    },
-    Finished {
-        retval: serde_json::Value, // SupportedFunctionReturnValue -> RetVal
-    },
-    Blocked,
-    ReplayFailed {
-        error: String,
-        /// Structured, sanitized reason for the replay failure.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schema(value_type = Option<Object>)]
-        failure: Option<FinishedExecutionFailure>,
-        captured_writes: Vec<CapturedWriteSer>,
-    },
-}
-
-impl From<wasm_workers::workflow::workflow_worker::MeasuredReplayResponse> for ReplayResponseSer {
-    fn from(value: wasm_workers::workflow::workflow_worker::MeasuredReplayResponse) -> Self {
-        use wasm_workers::workflow::workflow_worker::ReplayResponse;
-        let outcome = match value.response {
-            ReplayResponse::Advanceable(replay) => ReplayOutcomeSer::Advanceable {
-                captured_writes: replay
-                    .captured_writes
-                    .into_iter()
-                    .map(CapturedWriteSer::from)
-                    .collect(),
-            },
-            ReplayResponse::Finished { result } => ReplayOutcomeSer::Finished {
-                retval: serde_json::to_value(RetVal::from(result))
-                    .expect("supported retval must be JSON serializable"),
-            },
-            ReplayResponse::Blocked => ReplayOutcomeSer::Blocked,
-        };
-        Self::new(outcome, value.measurements)
-    }
-}
-
-impl ReplayResponseSer {
-    fn new(
-        outcome: ReplayOutcomeSer,
-        measurements: wasm_workers::workflow::workflow_worker::ReplayMeasurements,
-    ) -> Self {
-        Self {
-            outcome,
-            replayed_event_count: measurements.replayed_event_count,
-            replay_duration_ms: measurements
-                .replay_duration
-                .as_millis()
-                .try_into()
-                .unwrap_or(u64::MAX),
-            replay_version: measurements.replay_version,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub(crate) struct AdvanceRequestSer {
-    pub(crate) captured_writes: Vec<CapturedWriteSer>,
-    /// Capture and persist fresh call-site backtraces while advancing.
-    #[serde(default)]
-    pub(crate) persist_backtrace: bool,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum AdvanceResponseSer {
-    Finished {
-        value: RetVal,
-    },
-    InProgress {
-        #[schema(value_type = Object)]
-        pending_state: PendingState,
-    },
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum AdvanceErrorSer {
-    VersionMismatch { expected: u32 },
-    ReplayMismatch,
-    Transient(String),
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub(crate) struct PersistBacktracesResponseSer {
-    /// Number of newly persisted backtraces (already-persisted ones are skipped).
-    pub(crate) persisted_backtrace_count: u32,
 }
 
 /// Get execution return value
@@ -3132,19 +2265,6 @@ async fn execution_get_retval(
         }
         .into_response())
     }
-}
-
-/// Payload for submitting a new execution
-#[derive(Serialize, Deserialize, Debug, ToSchema)]
-pub(crate) struct ExecutionSubmitPayload {
-    /// Fully qualified function name to execute
-    #[schema(value_type = String, example = "my-pkg:my-ifc/my-fn")]
-    pub(crate) ffqn: FunctionFqn,
-    /// Function parameters as JSON values
-    pub(crate) params: Vec<serde_json::Value>,
-    /// If true, create the execution in paused state.
-    #[serde(default)]
-    pub(crate) paused: bool,
 }
 
 #[derive(Deserialize, Debug, IntoParams)]
@@ -3672,7 +2792,7 @@ async fn replay_execution_internal(
                     measurements,
                 } => {
                     let failure = FinishedExecutionFailure::from(err.as_ref());
-                    Ok(ReplayResponseSer::new(
+                    Ok(replay_response_with_measurements(
                         ReplayOutcomeSer::ReplayFailed {
                             error: err.to_string(),
                             failure: Some(failure),
@@ -3701,23 +2821,9 @@ async fn replay_execution_internal(
     ))
     .await?;
     match replay_res {
-        Ok(response) => Ok(ReplayResponseSer::from(response)),
+        Ok(response) => Ok(replay_response_ser(response)),
         Err(err) => map_replay_err(err),
     }
-}
-
-/// Payload for upgrading an execution to a new component version
-#[derive(Serialize, Deserialize, ToSchema)]
-pub(crate) struct ExecutionUpgradePayload {
-    /// Old component digest to upgrade from
-    #[schema(value_type = String)]
-    pub(crate) old: ComponentDigest,
-    /// New component digest to upgrade to
-    #[schema(value_type = String)]
-    pub(crate) new: ComponentDigest,
-    /// Skip determinism check during upgrade
-    #[serde(default)]
-    pub(crate) skip_determinism_check: bool,
 }
 
 /// Upgrade an execution to a new component version
@@ -3794,22 +2900,20 @@ async fn execution_upgrade(
 
 pub(crate) mod components {
     use crate::server::web_api_server::{HttpResponse, pretty_json_response};
+    use rest_types::components::{ComponentConfig, FunctionMetadataLite};
 
     use super::{
         AcceptHeader, Arc, Deserialize, FunctionFqn, IntoParams, IntoResponse, Query, Response,
-        Serialize, State, StatusCode, ToSchema, WebApiState,
+        State, StatusCode, WebApiState,
     };
     use axum::extract::Path;
     use concepts::{
-        ComponentId, ComponentType, FunctionExtension, FunctionMetadata, ParameterType,
+        ComponentType,
         component_id::ComponentDigest,
         prefixed_ulid::DeploymentId,
-        storage::{
-            ComponentFileRole, DeploymentComponentDetail, DeploymentComponentFileDetail,
-            PersistedFunctionMetadata, PersistedParameterType,
-        },
+        storage::{DeploymentComponentDetail, PersistedFunctionMetadata},
     };
-    use itertools::Itertools;
+
     use std::fmt::Debug;
 
     #[derive(Deserialize, Debug, IntoParams)]
@@ -4004,126 +3108,6 @@ pub(crate) mod components {
         pretty_json_response(StatusCode::OK, &components)
     }
 
-    /// Component configuration with optional imports/exports
-    #[derive(Serialize, Deserialize, ToSchema)]
-    pub(crate) struct ComponentConfig {
-        /// Component identifier
-        #[schema(value_type = Object)]
-        pub(crate) component_id: ComponentId,
-        /// Deployment-owned files used by this component.
-        pub(crate) files: Vec<ComponentFileRef>,
-        /// Imported functions
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub(crate) imports: Option<Vec<FunctionMetadataLite>>,
-        /// Exported functions
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub(crate) exports: Option<Vec<FunctionMetadataLite>>,
-    }
-
-    #[derive(Serialize, Deserialize, ToSchema)]
-    pub(crate) struct ComponentFileRef {
-        pub(crate) file: ComponentFile,
-        #[schema(value_type = String)]
-        pub(crate) role: ComponentFileRole,
-    }
-
-    #[derive(Serialize, Deserialize, ToSchema)]
-    pub(crate) struct ComponentFile {
-        pub(crate) path: String,
-        pub(crate) digest: String,
-        pub(crate) size: u64,
-    }
-
-    impl From<DeploymentComponentFileDetail> for ComponentFileRef {
-        fn from(value: DeploymentComponentFileDetail) -> Self {
-            Self {
-                file: ComponentFile {
-                    path: value.file.path,
-                    digest: value.file.digest.to_string(),
-                    size: value.file.size,
-                },
-                role: value.role,
-            }
-        }
-    }
-
-    /// Lightweight function metadata
-    #[derive(serde::Serialize, serde::Deserialize, derive_more::Display, ToSchema)]
-    #[display("{ffqn}: func({}) -> {return_type}", parameter_types.iter().join(", "))]
-    pub(crate) struct FunctionMetadataLite {
-        /// Fully qualified function name
-        #[schema(value_type = String)]
-        pub(crate) ffqn: FunctionFqn,
-        /// Parameter types
-        pub(crate) parameter_types: Vec<ParameterTypeLite>,
-        /// Return type as WIT string
-        pub(crate) return_type: String,
-        /// Function extension type if any
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schema(value_type = Option<String>)]
-        pub(crate) extension: Option<FunctionExtension>,
-        /// Externally submittable: primary functions + `-schedule` extended, but no activity stubs
-        pub(crate) submittable: bool,
-    }
-    impl From<FunctionMetadata> for FunctionMetadataLite {
-        fn from(value: FunctionMetadata) -> Self {
-            FunctionMetadataLite {
-                ffqn: value.ffqn,
-                parameter_types: value
-                    .parameter_types
-                    .0
-                    .into_iter()
-                    .map(ParameterTypeLite::from)
-                    .collect(),
-                return_type: value.return_type.wit_type().to_string(),
-                extension: value.extension,
-                submittable: value.submittable,
-            }
-        }
-    }
-    impl From<PersistedFunctionMetadata> for FunctionMetadataLite {
-        fn from(value: PersistedFunctionMetadata) -> Self {
-            FunctionMetadataLite {
-                ffqn: value.ffqn,
-                parameter_types: value
-                    .parameter_types
-                    .into_iter()
-                    .map(ParameterTypeLite::from)
-                    .collect(),
-                return_type: value.return_type,
-                extension: value.extension,
-                submittable: value.submittable,
-            }
-        }
-    }
-
-    /// Parameter type information
-    #[derive(serde::Serialize, serde::Deserialize, derive_more::Display, ToSchema)]
-    #[display("{name}: {wit_type}")]
-    pub(crate) struct ParameterTypeLite {
-        /// Parameter name
-        pub(crate) name: String,
-        /// WIT type representation
-        pub(crate) wit_type: String,
-    }
-
-    impl From<ParameterType> for ParameterTypeLite {
-        fn from(value: ParameterType) -> Self {
-            ParameterTypeLite {
-                name: value.name.to_string(),
-                wit_type: value.wit_type.to_string(),
-            }
-        }
-    }
-    impl From<PersistedParameterType> for ParameterTypeLite {
-        fn from(value: PersistedParameterType) -> Self {
-            ParameterTypeLite {
-                name: value.name,
-                wit_type: value.wit_type,
-            }
-        }
-    }
-
     fn filtered_exports(
         component: &DeploymentComponentDetail,
         extensions: bool,
@@ -4139,9 +3123,10 @@ pub(crate) mod components {
 mod functions {
     use super::{
         AcceptHeader, Arc, Deserialize, IntoParams, IntoResponse, Query, Response, State,
-        StatusCode, ToSchema, WebApiState, pretty_json_response,
+        StatusCode, WebApiState, pretty_json_response,
     };
-    use concepts::{FunctionExtension, FunctionFqn, FunctionRegistry};
+    use concepts::{FunctionFqn, FunctionRegistry};
+    use rest_types::functions::FunctionOutput;
 
     #[derive(Deserialize, Debug, IntoParams)]
     #[into_params(parameter_in = Query)]
@@ -4185,18 +3170,6 @@ mod functions {
             .collect();
 
         pretty_json_response(StatusCode::OK, &functions)
-    }
-
-    /// Function output information
-    #[derive(serde::Serialize, ToSchema)]
-    pub(crate) struct FunctionOutput {
-        /// Fully qualified function name
-        #[schema(value_type = String)]
-        ffqn: FunctionFqn,
-        /// Extension type if any
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schema(value_type = Option<String>)]
-        extension: Option<FunctionExtension>,
     }
 
     use super::HttpResponse;
@@ -4270,6 +3243,11 @@ pub(crate) mod deployment {
         },
     };
     use http::header;
+    use rest_types::deployment::{
+        DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitErrorBody,
+        DeploymentSubmitPayload, DeploymentSubmitResponse, DeploymentSwitchPayload, DigestMismatch,
+        FileIssue, MissingRuntimeConfigErrorBody, SubmitPackageErrorBody,
+    };
 
     /// Map the REST `allow_unavailable_runtime_config` flag to the runtime config policy.
     fn runtime_config_availability_from_bool(allow_unavailable: bool) -> RuntimeConfigAvailability {
@@ -4284,118 +3262,55 @@ pub(crate) mod deployment {
         extract::{Path, Query, State},
         response::{IntoResponse, Response},
     };
-    use chrono::{DateTime, Utc};
+    use chrono::Utc;
     use concepts::prefixed_ulid::DeploymentId;
     use concepts::storage::Pagination;
     use concepts::storage::{
-        DeploymentExecutionCounts, DeploymentFileRecord, DeploymentRecord, DeploymentState,
-        DeploymentStatus, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
+        DeploymentExecutionCounts, DeploymentState, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
     };
     use http::StatusCode;
-    use serde::{Deserialize, Serialize};
+    use serde::Deserialize;
     use std::sync::Arc;
     use tracing::{info, instrument};
-    use utoipa::{IntoParams, ToSchema};
+    use utoipa::IntoParams;
 
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    #[serde(rename_all = "snake_case")]
-    pub enum DeploymentStatusSer {
-        Inactive,
-        Enqueued,
-        Active,
-    }
-
-    impl From<&DeploymentStatus> for DeploymentStatusSer {
-        fn from(s: &DeploymentStatus) -> Self {
-            match s {
-                DeploymentStatus::Inactive => Self::Inactive,
-                DeploymentStatus::Enqueued => Self::Enqueued,
-                DeploymentStatus::Active => Self::Active,
-            }
+    fn deployment_state_ser(
+        deployment_state: &DeploymentState,
+        include_component_summary: bool,
+        include_deployment_toml: bool,
+    ) -> DeploymentStateSer {
+        let component_summary = include_component_summary
+            .then(|| {
+                deployment_state
+                    .deployment_toml
+                    .as_deref()
+                    .and_then(deployment_summary::deployment_component_summary)
+            })
+            .flatten();
+        DeploymentStateSer {
+            deployment_id: deployment_state.deployment_id,
+            description: deployment_state.description.clone(),
+            digest: deployment_state.digest.to_string(),
+            status: DeploymentStatusSer::from(&deployment_state.status),
+            created_at: deployment_state.created_at,
+            last_active_at: deployment_state.last_active_at,
+            last_active_app_config_digest: deployment_state.last_active_app_config_digest.clone(),
+            locked: deployment_state.locked,
+            pending: deployment_state.pending,
+            scheduled: deployment_state.scheduled,
+            blocked: deployment_state.blocked,
+            paused: deployment_state.paused,
+            cancelling: deployment_state.cancelling,
+            finished_ok: deployment_state.finished_ok,
+            finished_error: deployment_state.finished_error,
+            finished_execution_failure: deployment_state.finished_execution_failure,
+            component_summary,
+            deployment_toml: include_deployment_toml
+                .then(|| deployment_state.deployment_toml.clone())
+                .flatten(),
         }
     }
-    /// Deployment state with execution counts
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub struct DeploymentStateSer {
-        /// Deployment identifier
-        #[schema(value_type = String, example = "Dep_01JKXYZ123456789ABCDEFGHIJ")]
-        pub deployment_id: DeploymentId,
-        /// Optional human-readable deployment description
-        pub description: Option<String>,
-        /// Content digest = `sha256(deployment_toml)`
-        pub digest: String,
-        /// Deployment lifecycle status
-        pub status: DeploymentStatusSer,
-        /// When this deployment was submitted
-        pub created_at: DateTime<Utc>,
-        /// When this deployment was last active; None if never active
-        pub last_active_at: Option<DateTime<Utc>>,
-        // backcompat: 0.42.0-rc.3 deployment responses had no policy digest.
-        pub last_active_app_config_digest: Option<String>,
-        /// Number of locked executions
-        pub locked: u32,
-        /// Number of pending executions
-        pub pending: u32,
-        /// Number of scheduled executions
-        pub scheduled: u32,
-        /// Number of blocked executions
-        pub blocked: u32,
-        /// Number of paused executions, regardless of the underlying state
-        pub paused: u32,
-        /// Number of executions with cancellation requested; teardown in progress
-        pub cancelling: u32,
-        /// Number of executions finished successfully
-        pub finished_ok: u32,
-        /// Number of executions finished with the `err` variant of the result type
-        pub finished_error: u32,
-        /// Number of executions finished with an execution failure
-        pub finished_execution_failure: u32,
-        /// Component counts by manifest section type. Absent when not requested or unavailable.
-        pub component_summary: Option<deployment_summary::DeploymentComponentSummary>,
-        /// Processed deployment manifest, present when requested.
-        pub deployment_toml: Option<String>,
-    }
 
-    impl DeploymentStateSer {
-        fn from(
-            deployment_state: &DeploymentState,
-            include_component_summary: bool,
-            include_deployment_toml: bool,
-        ) -> Self {
-            let component_summary = include_component_summary
-                .then(|| {
-                    deployment_state
-                        .deployment_toml
-                        .as_deref()
-                        .and_then(deployment_summary::deployment_component_summary)
-                })
-                .flatten();
-            Self {
-                deployment_id: deployment_state.deployment_id,
-                description: deployment_state.description.clone(),
-                digest: deployment_state.digest.to_string(),
-                status: DeploymentStatusSer::from(&deployment_state.status),
-                created_at: deployment_state.created_at,
-                last_active_at: deployment_state.last_active_at,
-                last_active_app_config_digest: deployment_state
-                    .last_active_app_config_digest
-                    .clone(),
-                locked: deployment_state.locked,
-                pending: deployment_state.pending,
-                scheduled: deployment_state.scheduled,
-                blocked: deployment_state.blocked,
-                paused: deployment_state.paused,
-                cancelling: deployment_state.cancelling,
-                finished_ok: deployment_state.finished_ok,
-                finished_error: deployment_state.finished_error,
-                finished_execution_failure: deployment_state.finished_execution_failure,
-                component_summary,
-                deployment_toml: include_deployment_toml
-                    .then(|| deployment_state.deployment_toml.clone())
-                    .flatten(),
-            }
-        }
-    }
     #[derive(Debug, Deserialize, IntoParams)]
     #[into_params(parameter_in = Query)]
     #[expect(clippy::struct_excessive_bools)]
@@ -4486,7 +3401,7 @@ pub(crate) mod deployment {
         let states: Vec<DeploymentStateSer> = states
             .into_iter()
             .map(|dep| {
-                DeploymentStateSer::from(
+                deployment_state_ser(
                     &dep,
                     params.include_component_summary,
                     params.include_deployment_toml,
@@ -4518,62 +3433,6 @@ pub(crate) mod deployment {
             AcceptHeader::Json => pretty_json_response(StatusCode::OK, &deployment_id),
             AcceptHeader::Text => deployment_id.to_string().into_response(),
         })
-    }
-
-    /// A deployment-owned file the manifest references.
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub struct FileRefSer {
-        /// Deployment-relative path.
-        pub path: String,
-        /// Content digest ("sha256:...").
-        pub digest: String,
-        /// Byte length of the referenced blob.
-        pub size: u64,
-    }
-
-    impl From<&DeploymentFileRecord> for FileRefSer {
-        fn from(f: &DeploymentFileRecord) -> Self {
-            Self {
-                path: f.path.clone(),
-                digest: f.digest.to_string(),
-                size: f.size,
-            }
-        }
-    }
-
-    /// Deployment details with config
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub struct DeploymentRecordSer {
-        #[schema(value_type = String)]
-        pub deployment_id: DeploymentId,
-        pub description: Option<String>,
-        /// Content digest = `sha256(deployment_toml)`
-        pub digest: String,
-        pub status: DeploymentStatusSer,
-        pub created_at: DateTime<Utc>,
-        pub last_active_at: Option<DateTime<Utc>>,
-        // backcompat: 0.42.0-rc.3 deployment responses had no policy digest.
-        pub last_active_app_config_digest: Option<String>,
-        /// Processed deployment manifest (`deployment.toml`), stored byte-for-byte
-        pub deployment_toml: String,
-        /// Files the manifest references.
-        pub files: Vec<FileRefSer>,
-    }
-
-    impl From<&DeploymentRecord> for DeploymentRecordSer {
-        fn from(r: &DeploymentRecord) -> Self {
-            Self {
-                deployment_id: r.deployment_id,
-                description: r.description.clone(),
-                digest: r.digest.to_string(),
-                status: DeploymentStatusSer::from(&r.status),
-                created_at: r.created_at,
-                last_active_at: r.last_active_at,
-                last_active_app_config_digest: r.last_active_app_config_digest.clone(),
-                deployment_toml: r.deployment_toml.clone(),
-                files: r.files.iter().map(FileRefSer::from).collect(),
-            }
-        }
     }
 
     #[derive(Debug, Default, Deserialize, IntoParams)]
@@ -4625,83 +3484,6 @@ pub(crate) mod deployment {
 
         let ser = DeploymentRecordSer::from(&record);
         Ok(pretty_json_response(StatusCode::OK, &ser))
-    }
-
-    /// Request payload for submitting a new deployment
-    #[derive(Serialize, Deserialize, ToSchema)]
-    pub struct DeploymentSubmitPayload {
-        /// Processed deployment manifest (`deployment.toml`). Referenced file blobs must
-        /// be uploaded separately after the server returns `missing_digests`.
-        pub deployment_toml: String,
-        /// Optional human-readable deployment description
-        pub description: Option<String>,
-        /// Store the deployment while app or platform approval is pending. Tolerates
-        /// unavailable values and approvals; activation still checks strictly.
-        #[serde(default)]
-        pub allow_unavailable_runtime_config: bool,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub struct DeploymentSubmitResponse {
-        pub deployment_id: String,
-    }
-
-    /// A single file-set problem found while validating a submit package.
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub struct FileIssue {
-        pub section: String,
-        pub component_name: Option<String>,
-        pub field_path: String,
-        pub path: Option<String>,
-        pub digest: Option<String>,
-        pub message: String,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub struct DigestMismatch {
-        pub file: FileIssue,
-        pub supplied_digest: String,
-        pub actual_digest: String,
-    }
-
-    /// Structured `409` body describing why a submit package was rejected. No
-    /// deployment is stored when this is returned. A client retries the same submit
-    /// with the `missing_files` blobs attached.
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub struct SubmitPackageErrorBody {
-        pub missing_digest_fields: Vec<FileIssue>,
-        pub missing_files: Vec<FileIssue>,
-        pub unexpected_files: Vec<FileIssue>,
-        pub digest_mismatches: Vec<DigestMismatch>,
-        pub oversized_files: Vec<FileIssue>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub struct MissingRuntimeConfigErrorBody {
-        pub error: String,
-        #[serde(default)]
-        pub public_env: Vec<String>,
-        pub optional_public_env: Vec<String>,
-        pub required_public_env: Vec<String>,
-        pub secrets: Vec<String>,
-        /// Subset of `secrets` whose every reference is optional.
-        #[serde(default)]
-        pub optional_secrets: Vec<String>,
-        /// Registered as optional and unset, yet referenced as required.
-        #[serde(default)]
-        pub unset_secrets: Vec<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub struct GenericErrorBody {
-        pub err: String,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    #[serde(untagged)]
-    pub enum DeploymentSubmitErrorBody {
-        InvalidConfig(GenericErrorBody),
-        MissingRuntimeConfig(MissingRuntimeConfigErrorBody),
     }
 
     impl From<&server::SubmitFileIssue> for FileIssue {
@@ -5025,18 +3807,6 @@ pub(crate) mod deployment {
         Ok(content.into_response())
     }
 
-    /// Request payload for switching deployment
-    #[derive(Serialize, Deserialize, ToSchema)]
-    pub struct DeploymentSwitchPayload {
-        /// Enqueue while app or platform approval is pending. Activation on restart
-        /// checks strictly; rejected when applying without restart.
-        #[serde(default)]
-        pub allow_unavailable_runtime_config: bool,
-        /// Apply deployment without restart
-        #[serde(default)]
-        pub apply: bool,
-    }
-
     /// Switch the active deployment
     #[utoipa::path(
         put,
@@ -5172,47 +3942,6 @@ mod backtrace {
     pub(crate) struct BacktraceParams {
         /// Which backtrace version to retrieve: "first", "last" (default), or a version number
         version: Option<String>,
-    }
-
-    /// Serializable version of `BacktraceInfo`
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct BacktraceInfoSer {
-        #[schema(value_type = String)]
-        pub execution_id: ExecutionId,
-        #[schema(value_type = Object)]
-        pub component_id: concepts::ComponentId,
-        #[schema(value_type = String)]
-        pub version_min_including: VersionType,
-        #[schema(value_type = String)]
-        pub version_max_excluding: VersionType,
-        #[schema(value_type = Object)]
-        pub wasm_backtrace: concepts::storage::WasmBacktrace,
-    }
-
-    impl From<concepts::storage::BacktraceInfo> for BacktraceInfoSer {
-        fn from(value: concepts::storage::BacktraceInfo) -> Self {
-            BacktraceInfoSer {
-                execution_id: value.execution_id,
-                component_id: value.component_id,
-                version_min_including: value.version_min_including.0,
-                version_max_excluding: value.version_max_excluding.0,
-                wasm_backtrace: value.wasm_backtrace,
-            }
-        }
-    }
-
-    impl TryFrom<BacktraceInfoSer> for concepts::storage::BacktraceInfo {
-        type Error = String;
-
-        fn try_from(value: BacktraceInfoSer) -> Result<Self, Self::Error> {
-            Ok(Self {
-                execution_id: value.execution_id,
-                component_id: value.component_id,
-                version_min_including: Version::new(value.version_min_including),
-                version_max_excluding: Version::new(value.version_max_excluding),
-                wasm_backtrace: value.wasm_backtrace,
-            })
-        }
     }
 
     /// Get execution backtrace
@@ -5502,9 +4231,9 @@ impl IntoResponse for HttpResponse {
             AcceptHeader::Json => pretty_json_response(
                 self.status,
                 &if self.status.is_success() {
-                    json!({ "ok": self.message })
+                    rest_types::MessageBody::Ok { ok: self.message }
                 } else {
-                    json!({ "err": self.message })
+                    rest_types::MessageBody::Err { err: self.message }
                 },
             ),
             AcceptHeader::Text => (self.status, self.message).into_response(),
