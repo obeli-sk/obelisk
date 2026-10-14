@@ -587,6 +587,64 @@ pub(crate) struct ApiConfig {
     /// `obelisk generate token`.
     #[serde(default)]
     pub(crate) token_hashes: Vec<Digest>,
+    /// Trusted OIDC issuers whose ID tokens are accepted as API bearer tokens.
+    #[serde(default, deserialize_with = "deserialize_oidc_providers")]
+    pub(crate) oidc: Vec<OidcProviderConfig>,
+}
+
+/// An OIDC issuer whose signed ID tokens (JWTs) grant full API access when they match.
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OidcProviderConfig {
+    /// Exact `iss` value, also the base URL for OIDC discovery. Must be `https://` unless the host is loopback.
+    pub(crate) issuer: String,
+    /// Required `aud` value, the audience clients request when minting the token.
+    pub(crate) audience: String,
+    /// Claims that must be present as strings with exactly these values, e.g. `{ app_name = "deployer" }`.
+    pub(crate) claims: BTreeMap<String, String>,
+}
+
+fn deserialize_oidc_providers<'de, D>(deserializer: D) -> Result<Vec<OidcProviderConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let configs = Vec::<OidcProviderConfig>::deserialize(deserializer)?;
+    for config in &configs {
+        validate_oidc_url(&config.issuer)
+            .with_context(|| format!("invalid `api.oidc` issuer {:?}", config.issuer))
+            .map_err(|err| serde::de::Error::custom(format!("{err:#}")))?;
+        if config.audience.is_empty() {
+            return Err(serde::de::Error::custom(format!(
+                "`api.oidc` audience of issuer {:?} must not be empty",
+                config.issuer
+            )));
+        }
+        if config.claims.is_empty() {
+            return Err(serde::de::Error::custom(format!(
+                "`api.oidc` entry of issuer {:?} must constrain at least one claim, otherwise every \
+                token of that issuer would be accepted",
+                config.issuer
+            )));
+        }
+    }
+    Ok(configs)
+}
+
+pub(crate) fn validate_oidc_url(url: &str) -> anyhow::Result<reqwest::Url> {
+    let parsed = reqwest::Url::parse(url)?;
+    let loopback = parsed.host_str().is_some_and(|host| {
+        host == "localhost"
+            || host
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    anyhow::ensure!(
+        parsed.scheme() == "https" || (parsed.scheme() == "http" && loopback),
+        "must use https unless the host is loopback"
+    );
+    Ok(parsed)
 }
 
 impl Default for ApiConfig {
@@ -595,6 +653,7 @@ impl Default for ApiConfig {
             enabled: true,
             listening_addr: default_api_listening_addr(),
             token_hashes: Vec::new(),
+            oidc: Vec::new(),
         }
     }
 }

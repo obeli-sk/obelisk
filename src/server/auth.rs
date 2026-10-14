@@ -4,6 +4,8 @@
 //! so all three surfaces are authenticated uniformly; gRPC streams are checked
 //! once at stream open. See `meta/designs/server-security-guard.md` (v1).
 
+pub(crate) mod oidc;
+
 use crate::config::server::ApiConfig;
 use axum::{
     body::Body,
@@ -13,9 +15,12 @@ use axum::{
     response::Response,
 };
 use secrecy::{ExposeSecret as _, SecretString};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    borrow::Cow,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use subtle::ConstantTimeEq as _;
 use tracing::{trace, warn};
@@ -29,10 +34,14 @@ pub(crate) struct ApiAuth {
     )>,
     /// Recovery token, printed to the console, valid until shutdown.
     startup_token: SecretString,
+    oidc: Option<Arc<oidc::OidcVerifier>>,
 }
 
 impl ApiAuth {
-    pub(crate) fn new(config: &ApiConfig, api_token: Option<SecretString>) -> Self {
+    pub(crate) fn new(
+        config: &ApiConfig,
+        api_token: Option<SecretString>,
+    ) -> Result<Self, anyhow::Error> {
         let startup_token = SecretString::from(crate::api::generate_token());
         let mut accepted = vec![(
             crate::api::token_digest(startup_token.expose_secret()),
@@ -50,17 +59,22 @@ impl ApiAuth {
                 AtomicBool::default(), // Short explicit tokens will remain accepted.
             ));
         }
-        Self {
+        let oidc = oidc::OidcVerifier::new(&config.oidc)?;
+        if let Some(oidc) = &oidc {
+            oidc.spawn_prefetch();
+        }
+        Ok(Self {
             accepted,
             startup_token,
-        }
+            oidc,
+        })
     }
 
     pub(crate) fn startup_token(&self) -> &SecretString {
         &self.startup_token
     }
 
-    fn check(&self, headers: &HeaderMap) -> Result<&str, &'static str> {
+    async fn check(&self, headers: &HeaderMap) -> Result<Cow<'_, str>, Cow<'static, str>> {
         let presented = headers
             .get(header::AUTHORIZATION)
             .ok_or("missing `authorization` header")?
@@ -70,17 +84,22 @@ impl ApiAuth {
             .split_once(' ')
             .ok_or("malformed `authorization` header")?;
         if !scheme.eq_ignore_ascii_case("bearer") {
-            return Err("unsupported `authorization` scheme, expected `Bearer`");
+            return Err("unsupported `authorization` scheme, expected `Bearer`".into());
         }
         // Hash-then-compare: digests of the secret are matched, so the comparison
         // cannot leak anything useful about accepted tokens.
         let token = token.trim();
         let digest = crate::api::token_digest(token);
-        let (_, identity, warned_short) = self
+        let Some((_, identity, warned_short)) = self
             .accepted
             .iter()
             .find(|(accepted, _, _)| accepted.ct_eq(&digest).into())
-            .ok_or("unknown token")?;
+        else {
+            return match &self.oidc {
+                Some(oidc) => oidc.verify(token).await.map(Cow::Owned),
+                None => Err("unknown token".into()),
+            };
+        };
         // backcompat: 0.41 accepts tokens shorter than 32 characters; reject after 0.43.
         if token.len() < crate::api::MIN_API_TOKEN_CHAR_LENGTH
             && !warned_short.swap(true, Ordering::Relaxed)
@@ -92,7 +111,7 @@ impl ApiAuth {
                 "Accepted a short API token for compatibility; replace it with `obelisk generate token`"
             );
         }
-        Ok(identity)
+        Ok(Cow::Borrowed(identity))
     }
 }
 
@@ -101,9 +120,9 @@ pub(crate) async fn auth_middleware(
     req: Request,
     next: Next,
 ) -> Response {
-    match auth.check(req.headers()) {
+    match auth.check(req.headers()).await {
         Ok(identity) => {
-            trace!(identity, path = %req.uri().path(), "Authorized API request");
+            trace!(%identity, path = %req.uri().path(), "Authorized API request");
             next.run(req).await
         }
         Err(reason) => {

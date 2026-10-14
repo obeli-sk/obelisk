@@ -347,9 +347,43 @@
             "type": "string"
           },
           "default": []
+        },
+        "oidc": {
+          "description": "Trusted OIDC issuers whose ID tokens are accepted as API bearer tokens.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OidcProviderConfig"
+          }
         }
       },
       "additionalProperties": false
+    },
+    "OidcProviderConfig": {
+      "description": "An OIDC issuer whose signed ID tokens (JWTs) grant full API access when they match.",
+      "type": "object",
+      "properties": {
+        "issuer": {
+          "description": "Exact `iss` value, also the base URL for OIDC discovery. Must be `https://` unless the host is loopback.",
+          "type": "string"
+        },
+        "audience": {
+          "description": "Required `aud` value, the audience clients request when minting the token.",
+          "type": "string"
+        },
+        "claims": {
+          "description": "Claims that must be present as strings with exactly these values, e.g. `{ app_name = \"deployer\" }`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "issuer",
+        "audience",
+        "claims"
+      ]
     },
     "DatabaseConfigToml": {
       "oneOf": [

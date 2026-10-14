@@ -63,6 +63,7 @@ prost.workspace = true
 rand.workspace = true
 regex.workspace = true
 reqwest.workspace = true
+ring.workspace = true
 ruzstd.workspace = true
 rustls.workspace = true # Enable ring crypto provider for rustls (instead of aws-lc-rs)
 schemars.workspace = true
@@ -342,6 +343,7 @@ reqwest = { version = "0.13", default-features = false, features = [
     "multipart",
     "rustls-no-provider",
 ] }
+ring = "0.17" # Verifies OIDC JWTs (jsonwebtoken has no crypto backend enabled)
 rustls = { version = "0.23", default-features = false, features = [
     "logging",
     "ring",
