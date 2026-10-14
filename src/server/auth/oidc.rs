@@ -17,10 +17,10 @@ use std::{
     borrow::Cow,
     collections::BTreeMap,
     str::FromStr as _,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, warn};
 
 const JWKS_MAX_AGE: Duration = Duration::from_secs(3600);
@@ -41,7 +41,7 @@ struct Issuer {
     iss: String,
     rules: Vec<Rule>,
     keys: Mutex<KeyCache>,
-    refresh_lock: Mutex<()>,
+    refresh_lock: AsyncMutex<()>,
 }
 
 struct Rule {
@@ -86,7 +86,7 @@ impl OidcVerifier {
                     iss: config.issuer.clone(),
                     rules: vec![rule],
                     keys: Mutex::default(),
-                    refresh_lock: Mutex::default(),
+                    refresh_lock: AsyncMutex::default(),
                 }),
             }
         }
@@ -161,15 +161,18 @@ impl Issuer {
         kid: &str,
         alg: Algorithm,
     ) -> Result<DecodingKey, &'static str> {
-        let cache = self.keys.lock().await;
-        let has_key = cache
-            .jwks
-            .as_ref()
-            .is_some_and(|(jwks, _)| jwks.find(kid).is_some());
-        let stale = cache.jwks.as_ref().is_none_or(|(jwks, fetched_at)| {
-            fetched_at.elapsed() >= JWKS_MAX_AGE || jwks.find(kid).is_none()
-        });
-        drop(cache);
+        let (has_key, stale) = {
+            let cache = self.keys.lock().unwrap();
+            let has_key = cache
+                .jwks
+                .as_ref()
+                .is_some_and(|(jwks, _)| jwks.find(kid).is_some());
+            let stale = cache
+                .jwks
+                .as_ref()
+                .is_none_or(|(_jwks, fetched_at)| fetched_at.elapsed() >= JWKS_MAX_AGE || !has_key);
+            (has_key, stale)
+        };
         if stale {
             let refresh = if has_key {
                 self.refresh_lock.try_lock().ok()
@@ -180,7 +183,7 @@ impl Issuer {
                 self.refresh(http).await;
             }
         }
-        let cache = self.keys.lock().await;
+        let cache = self.keys.lock().unwrap();
         let jwk = cache
             .jwks
             .as_ref()
@@ -196,16 +199,17 @@ impl Issuer {
 
     // Callers hold `refresh_lock`; cached keys remain readable during the fetch.
     async fn refresh(&self, http: &reqwest::Client) {
-        let mut cache = self.keys.lock().await;
-        // Rate-limited so tokens with random `kid`s cannot make the server hammer the issuer.
-        if cache
-            .last_attempt
-            .is_some_and(|attempt| attempt.elapsed() < MIN_REFRESH_INTERVAL)
         {
-            return;
+            let mut cache = self.keys.lock().unwrap();
+            // Rate-limited so tokens with random `kid`s cannot make the server hammer the issuer.
+            if cache
+                .last_attempt
+                .is_some_and(|attempt| attempt.elapsed() < MIN_REFRESH_INTERVAL)
+            {
+                return;
+            }
+            cache.last_attempt = Some(Instant::now());
         }
-        cache.last_attempt = Some(Instant::now());
-        drop(cache);
         match fetch_jwks(http, &self.iss).await {
             Ok(jwks) => {
                 debug!(
@@ -213,7 +217,7 @@ impl Issuer {
                     keys = jwks.keys.len(),
                     "Fetched OIDC signing keys"
                 );
-                self.keys.lock().await.jwks = Some((jwks, Instant::now()));
+                self.keys.lock().unwrap().jwks = Some((jwks, Instant::now()));
             }
             Err(err) => warn!(
                 issuer = self.iss,
