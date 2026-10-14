@@ -19,7 +19,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::sync::{Mutex as AsyncMutex, MutexGuard};
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tracing::{debug, warn};
 
 const JWKS_MAX_AGE: Duration = Duration::from_secs(3600);
@@ -32,7 +32,7 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const LEEWAY_SECS: u64 = 60;
 
 pub(crate) struct OidcVerifier {
-    issuers: Vec<Issuer>,
+    issuers: Vec<Arc<Issuer>>,
     http: reqwest::Client,
 }
 
@@ -40,7 +40,7 @@ struct Issuer {
     iss: String,
     rules: Vec<Rule>,
     keys: Mutex<KeyCache>,
-    refresh_lock: AsyncMutex<()>,
+    refresh_lock: Arc<AsyncMutex<()>>,
 }
 
 struct Rule {
@@ -72,7 +72,7 @@ impl OidcVerifier {
                     iss: config.issuer.clone(),
                     rules: vec![rule],
                     keys: Mutex::default(),
-                    refresh_lock: AsyncMutex::default(),
+                    refresh_lock: Arc::default(),
                 }),
             }
         }
@@ -80,6 +80,7 @@ impl OidcVerifier {
             .timeout(FETCH_TIMEOUT)
             .user_agent(concat!("obelisk/", env!("CARGO_PKG_VERSION")))
             .build()?;
+        let issuers = issuers.into_iter().map(Arc::new).collect();
         Ok(Some(Arc::new(Self { issuers, http })))
     }
 
@@ -88,7 +89,7 @@ impl OidcVerifier {
         let this = Arc::clone(self);
         tokio::spawn(async move {
             for issuer in &this.issuers {
-                let refresh = issuer.refresh_lock.lock().await;
+                let refresh = Arc::clone(&issuer.refresh_lock).lock_owned().await;
                 issuer.refresh(&this.http, refresh).await;
             }
         });
@@ -142,7 +143,7 @@ impl OidcVerifier {
 
 impl Issuer {
     async fn key(
-        &self,
+        self: &Arc<Self>,
         http: &reqwest::Client,
         kid: &str,
         alg: Algorithm,
@@ -160,12 +161,15 @@ impl Issuer {
             (has_key, stale)
         };
         if stale {
-            let refresh = if has_key {
-                self.refresh_lock.try_lock().ok()
+            if has_key {
+                // The cached key still verifies, so a slow issuer must not delay this request.
+                if let Ok(refresh) = Arc::clone(&self.refresh_lock).try_lock_owned() {
+                    let issuer = Arc::clone(self);
+                    let http = http.clone();
+                    tokio::spawn(async move { issuer.refresh(&http, refresh).await });
+                }
             } else {
-                Some(self.refresh_lock.lock().await)
-            };
-            if let Some(refresh) = refresh {
+                let refresh = Arc::clone(&self.refresh_lock).lock_owned().await;
                 self.refresh(http, refresh).await;
             }
         }
@@ -183,7 +187,7 @@ impl Issuer {
         DecodingKey::from_jwk(jwk).map_err(|_| "unusable signing key")
     }
 
-    async fn refresh(&self, http: &reqwest::Client, _guard: MutexGuard<'_, ()>) {
+    async fn refresh(&self, http: &reqwest::Client, _guard: OwnedMutexGuard<()>) {
         {
             let mut cache = self.keys.lock().unwrap();
             // Rate-limit unknown-key refreshes, including requests queued behind an in-flight fetch.
