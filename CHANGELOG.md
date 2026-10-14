@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.3](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.2...v0.43.0-rc.3)
+
+This release candidate adds live API token-hash reloads, replaces the app-name endpoint with
+server information, and updates the Web UI and Wasmtime.
+
 ### Added
 
 - *(auth)* Reload `api.token_hashes` from the configured `server.toml` about once per second,
@@ -14,18 +19,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CLI/environment tokens, OIDC verification, and already authenticated streams.
   `api.token_hashes_loaded` and `api.token_hashes_changed` system events acknowledge the
   normalized set with its SHA-256 fingerprint and count; failed event writes are retried.
+  [#1144](https://github.com/obeli-sk/obelisk/pull/1144)
 - *(api)* `GET /v1/info` returns the app name, Obelisk version, current deployment ID, node run ID,
   app config digest, and server start time as JSON. `obelisk admin node-run-id` now uses it.
+  [#1143](https://github.com/obeli-sk/obelisk/pull/1143)
 
 ### Deprecated
 
 - *(api)* `GET /v1/admin/node-run-id` is deprecated and will be removed after 0.43. Read
   `node_run_id` from `GET /v1/info`.
+  [#1143](https://github.com/obeli-sk/obelisk/pull/1143)
 
 ### Removed
 
 - *(api)* Removed `GET /v1/app-name` added in 0.43.0-rc.2. Read `app_name` from `GET /v1/info`.
-
+  [#1143](https://github.com/obeli-sk/obelisk/pull/1143)
 
 ## [0.43.0-rc.2](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.1...v0.43.0-rc.2)
 

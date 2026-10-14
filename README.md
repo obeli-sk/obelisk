@@ -4,7 +4,7 @@
   </a>
 </h1>
 
-A [deterministic](https://obeli.sk/#faq) workflow engine built on the WASM Component Model.
+A [deterministic](https://obeli.sk/#faq) workflow runtime built on the WASM Component Model.
 
 > [!WARNING]
 > **Pre-release**: Expect changes in CLI, gRPC, WIT, and database schema.
