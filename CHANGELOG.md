@@ -6,11 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.2](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.1...v0.43.0-rc.2)
+
+This release candidate adds OIDC API authentication and an app-name endpoint, and updates
+the Web UI.
+
 ### Added
 
 - *(auth)* The API accepts OIDC ID tokens from issuers trusted in `api.oidc`, such as Fly.io
   machine tokens. Each entry requires an `issuer`, an `audience`, and exact `claims` matches.
   Signing keys are fetched via OIDC discovery. Static tokens are unaffected.
+  [#1140](https://github.com/obeli-sk/obelisk/pull/1140)
+- *(api)* `GET /v1/app-name` returns the configured app name as plain text or JSON.
+  [#1138](https://github.com/obeli-sk/obelisk/pull/1138)
 
 ## [0.43.0-rc.1](https://github.com/obeli-sk/obelisk/compare/v0.42.0...v0.43.0-rc.1)
 
