@@ -5,6 +5,7 @@
 //! once at stream open. See `meta/designs/server-security-guard.md` (v1).
 
 pub(crate) mod oidc;
+pub(crate) mod reload;
 
 use crate::config::server::ApiConfig;
 use axum::{
@@ -18,7 +19,7 @@ use secrecy::{ExposeSecret as _, SecretString};
 use std::{
     borrow::Cow,
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -26,15 +27,45 @@ use subtle::ConstantTimeEq as _;
 use tracing::{trace, warn};
 
 pub(crate) struct ApiAuth {
-    /// Accepted token digests with the identity label used in audit logs.
-    accepted: Vec<(
-        [u8; 32],
-        String,
-        AtomicBool, // true means do not emit low length warnings (anymore).
-    )>,
+    accepted: Vec<AcceptedToken>,
+    configured: RwLock<Vec<AcceptedToken>>,
     /// Recovery token, printed to the console, valid until shutdown.
     startup_token: SecretString,
     oidc: Option<Arc<oidc::OidcVerifier>>,
+}
+
+struct AcceptedToken {
+    digest: [u8; 32],
+    identity: String,
+    warned_short: AtomicBool,
+}
+
+impl AcceptedToken {
+    fn new(digest: [u8; 32], identity: String) -> Self {
+        Self {
+            digest,
+            identity,
+            warned_short: AtomicBool::default(),
+        }
+    }
+
+    fn check(&self, digest: &[u8; 32], token_length: usize) -> Option<String> {
+        if !bool::from(self.digest.ct_eq(digest)) {
+            return None;
+        }
+        // Dev convenience: Accept tokens shorter than 32 characters, but emit a warning.
+        if token_length < crate::api::MIN_API_TOKEN_CHAR_LENGTH
+            && !self.warned_short.swap(true, Ordering::Relaxed)
+        {
+            warn!(
+                identity = self.identity,
+                length = token_length,
+                minimum = crate::api::MIN_API_TOKEN_CHAR_LENGTH,
+                "Accepted a short API token; replace it with `obelisk generate token`"
+            );
+        }
+        Some(self.identity.clone())
+    }
 }
 
 impl ApiAuth {
@@ -43,21 +74,13 @@ impl ApiAuth {
         api_token: Option<SecretString>,
     ) -> Result<Self, anyhow::Error> {
         let startup_token = SecretString::from(crate::api::generate_token());
-        let mut accepted = vec![(
+        let mut accepted = vec![AcceptedToken::new(
             crate::api::token_digest(startup_token.expose_secret()),
             "startup-token".to_string(),
-            AtomicBool::default(),
         )];
-        for digest in &config.token_hashes {
-            accepted.push((digest.0, hash_prefix_label(digest), AtomicBool::default()));
-        }
         if let Some(token) = api_token {
-            let digest = crate::api::token_digest(token.expose_secret());
-            accepted.push((
-                digest,
-                hash_prefix_label(&concepts::component_id::Digest(digest)),
-                AtomicBool::default(), // Short explicit tokens will remain accepted.
-            ));
+            let digest = crate::api::token_hash(token.expose_secret());
+            accepted.push(AcceptedToken::new(digest.0, hash_prefix_label(&digest)));
         }
         let oidc = oidc::OidcVerifier::new(&config.oidc)?;
         if let Some(oidc) = &oidc {
@@ -65,16 +88,29 @@ impl ApiAuth {
         }
         Ok(Self {
             accepted,
+            configured: RwLock::new(Self::configured_tokens(&config.token_hashes)),
             startup_token,
             oidc,
         })
+    }
+
+    fn configured_tokens(hashes: &[concepts::component_id::Digest]) -> Vec<AcceptedToken> {
+        hashes
+            .iter()
+            .map(|digest| AcceptedToken::new(digest.0, hash_prefix_label(digest)))
+            .collect()
+    }
+
+    fn replace_configured(&self, hashes: &[concepts::component_id::Digest]) {
+        let configured = Self::configured_tokens(hashes);
+        *self.configured.write().unwrap() = configured;
     }
 
     pub(crate) fn startup_token(&self) -> &SecretString {
         &self.startup_token
     }
 
-    async fn check(&self, headers: &HeaderMap) -> Result<Cow<'_, str>, Cow<'static, str>> {
+    async fn check(&self, headers: &HeaderMap) -> Result<String, Cow<'static, str>> {
         let presented = headers
             .get(header::AUTHORIZATION)
             .ok_or("missing `authorization` header")?
@@ -90,28 +126,25 @@ impl ApiAuth {
         // cannot leak anything useful about accepted tokens.
         let token = token.trim();
         let digest = crate::api::token_digest(token);
-        let Some((_, identity, warned_short)) = self
+        let identity = self
             .accepted
             .iter()
-            .find(|(accepted, _, _)| accepted.ct_eq(&digest).into())
-        else {
-            return match &self.oidc {
-                Some(oidc) => oidc.verify(token).await.map(Cow::Owned),
+            .find_map(|accepted| accepted.check(&digest, token.len()))
+            .or_else(|| {
+                self.configured
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .find_map(|accepted| accepted.check(&digest, token.len()))
+            });
+        if let Some(identity) = identity {
+            Ok(identity)
+        } else {
+            match &self.oidc {
+                Some(oidc) => oidc.verify(token).await,
                 None => Err("unknown token".into()),
-            };
-        };
-        // backcompat: 0.41 accepts tokens shorter than 32 characters; reject after 0.43.
-        if token.len() < crate::api::MIN_API_TOKEN_CHAR_LENGTH
-            && !warned_short.swap(true, Ordering::Relaxed)
-        {
-            warn!(
-                identity,
-                length = token.len(),
-                minimum = crate::api::MIN_API_TOKEN_CHAR_LENGTH,
-                "Accepted a short API token for compatibility; replace it with `obelisk generate token`"
-            );
+            }
         }
-        Ok(Cow::Borrowed(identity))
     }
 }
 

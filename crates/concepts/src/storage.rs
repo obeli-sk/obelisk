@@ -1570,6 +1570,8 @@ pub struct SystemEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemEventCode {
+    ApiTokenHashesLoaded,
+    ApiTokenHashesChanged,
     ServerConfigurationResolved,
     ServerStartupCompleted,
     ServerStartupFailed,
@@ -1602,6 +1604,8 @@ impl SystemEventCode {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::ApiTokenHashesLoaded => "api.token_hashes_loaded",
+            Self::ApiTokenHashesChanged => "api.token_hashes_changed",
             Self::ServerConfigurationResolved => "server.configuration.resolved",
             Self::ServerStartupCompleted => "server.startup.completed",
             Self::ServerStartupFailed => "server.startup.failed",
@@ -1650,6 +1654,8 @@ impl SystemEventCode {
     #[must_use]
     pub fn message(self) -> &'static str {
         match self {
+            Self::ApiTokenHashesLoaded => "API token hashes loaded",
+            Self::ApiTokenHashesChanged => "API token hashes changed",
             Self::ServerConfigurationResolved => "Server configuration resolved",
             Self::ServerStartupCompleted => "Server startup completed",
             Self::ServerStartupFailed => "Server startup failed",
@@ -1754,6 +1760,8 @@ impl SystemEvent {
     #[must_use]
     pub fn message(&self) -> &str {
         match self.code.as_str() {
+            "api.token_hashes_loaded" => SystemEventCode::ApiTokenHashesLoaded.message(),
+            "api.token_hashes_changed" => SystemEventCode::ApiTokenHashesChanged.message(),
             "server.configuration.resolved" => {
                 SystemEventCode::ServerConfigurationResolved.message()
             }
@@ -3937,6 +3945,8 @@ mod tests {
     #[test]
     fn system_event_codes_fit_storage_limits() {
         for code in [
+            SystemEventCode::ApiTokenHashesLoaded,
+            SystemEventCode::ApiTokenHashesChanged,
             SystemEventCode::ServerConfigurationResolved,
             SystemEventCode::ServerStartupCompleted,
             SystemEventCode::ServerStartupFailed,

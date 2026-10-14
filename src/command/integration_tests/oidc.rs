@@ -244,5 +244,22 @@ async fn api_auth_should_accept_oidc_tokens() {
             .is_success()
     );
 
+    let token = crate::api::generate_token();
+    let hash = crate::api::token_hash(&token);
+    let config_path = server.tmp_dir.path().join("server.toml");
+    // Changing trust on disk must leave the existing verifier and cached keys intact.
+    super::token_reload::replace(&config_path, &format!("api.token_hashes = ['{hash}']"));
+    super::token_reload::wait_for_set(&server, &rsa.token("rsa-1", &claims(json!({}))), &[hash])
+        .await;
+    assert!(
+        status(ed25519.token("ed-1", &claims(json!({}))))
+            .await
+            .is_success()
+    );
+    super::token_reload::replace(&config_path, "api.token_hashes = []");
+    super::token_reload::wait_for_set(&server, &ed25519.token("ed-1", &claims(json!({}))), &[])
+        .await;
+    assert_eq!(status(token).await, reqwest::StatusCode::UNAUTHORIZED);
+
     server.shutdown().await;
 }
