@@ -2149,8 +2149,13 @@ pub(crate) async fn run_internal(
     secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
-    // `config` is moved into `server_verify` below; keep the API auth config.
-    let api_config = config.api.clone();
+    // Built before the slow startup steps so an invalid `api` config fails fast.
+    let api_auth = match &params.auth {
+        ServerAuth::Auth { api_token } if api_listening_addr.is_some() => Some(Arc::new(
+            crate::server::auth::ApiAuth::new(&config.api, api_token.clone())?,
+        )),
+        ServerAuth::Auth { .. } | ServerAuth::NoAuth => None,
+    };
 
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
@@ -2475,13 +2480,12 @@ pub(crate) async fn run_internal(
     });
     if let Some(api_listening_addr) = api_listening_addr {
         let app = app_router.fallback_service(grpc_service);
-        let app_svc = match params.auth {
-            ServerAuth::NoAuth => {
+        let app_svc = match api_auth {
+            None => {
                 warn!("API authentication is disabled by --no-auth: accepting all API requests");
                 app.into_make_service()
             }
-            ServerAuth::Auth { api_token } => {
-                let api_auth = Arc::new(crate::server::auth::ApiAuth::new(&api_config, api_token));
+            Some(api_auth) => {
                 // Not `tracing`, see `auth_middleware`.
                 eprintln!(
                     "API startup token: {}",

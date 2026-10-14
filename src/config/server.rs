@@ -587,6 +587,21 @@ pub(crate) struct ApiConfig {
     /// `obelisk generate token`.
     #[serde(default)]
     pub(crate) token_hashes: Vec<Digest>,
+    /// Trusted OIDC issuers whose ID tokens are accepted as API bearer tokens.
+    #[serde(default)]
+    pub(crate) oidc: Vec<OidcProviderConfig>,
+}
+
+/// An OIDC issuer whose signed ID tokens (JWTs) grant full API access when they match.
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OidcProviderConfig {
+    /// Exact `iss` value, also the base URL for OIDC discovery. Must be `https://` unless the host is loopback.
+    pub(crate) issuer: String,
+    /// Required `aud` value, the audience clients request when minting the token.
+    pub(crate) audience: String,
+    /// Claims that must be present as strings with exactly these values, e.g. `{ app_name = "deployer" }`.
+    pub(crate) claims: BTreeMap<String, String>,
 }
 
 impl Default for ApiConfig {
@@ -595,6 +610,7 @@ impl Default for ApiConfig {
             enabled: true,
             listening_addr: default_api_listening_addr(),
             token_hashes: Vec::new(),
+            oidc: Vec::new(),
         }
     }
 }

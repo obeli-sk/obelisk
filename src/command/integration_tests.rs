@@ -21,6 +21,7 @@ mod activity_vm;
 mod crypto;
 mod greet_activity;
 mod multifile;
+mod oidc;
 mod util;
 mod v8_heap;
 mod webhook_js;

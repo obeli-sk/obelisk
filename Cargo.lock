@@ -4153,6 +4153,7 @@ dependencies = [
  "rand 0.9.5",
  "regex",
  "reqwest",
+ "ring",
  "rstest",
  "rusqlite",
  "rustls",

@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(auth)* The API accepts OIDC ID tokens from issuers trusted in `api.oidc`, such as Fly.io
+  machine tokens. Each entry requires an `issuer`, an `audience`, and exact `claims` matches.
+  Signing keys are fetched via OIDC discovery. Static tokens are unaffected.
+
 ## [0.43.0-rc.1](https://github.com/obeli-sk/obelisk/compare/v0.42.0...v0.43.0-rc.1)
 
 This release candidate adds caller-supplied execution IDs for typed schedules, cloud management

@@ -23,6 +23,13 @@
 #   "sha256:...",   # agent
 #   "sha256:...",   # laptop
 # ]
+## OIDC ID tokens (JWTs) from trusted issuers are accepted as bearer tokens too, granting full API access.
+## `issuer` must equal the token's `iss`, `audience` must be in its `aud`, and every listed claim must match exactly.
+## Example for Fly.io machines: the issuer pins the organization, `app_name` pins the app. A machine obtains a token with
+## `curl --unix-socket /.fly/api -X POST http://localhost/v1/tokens/oidc -d '{"aud":"https://obelisk.example.com"}'`.
+# api.oidc = [
+#   { issuer = "https://oidc.fly.io/my-org", audience = "https://obelisk.example.com", claims = { app_name = "deployer" } },
+# ]
 
 ## Semver version requirement for the Obelisk binary.
 ## If set, the server will fail to start if the binary version doesn't match.
