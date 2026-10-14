@@ -2156,6 +2156,14 @@ pub(crate) async fn run_internal(
         ServerAuth::Auth { .. } | ServerAuth::NoAuth => None,
     };
 
+    let token_reload = api_auth.as_ref().map(|auth| {
+        crate::server::auth::reload::TokenHashReload::new(
+            auth.clone(),
+            config.source_path.clone(),
+            config.api.token_hashes.clone(),
+        )
+    });
+
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
     let maintenance_gc_config = config.maintenance.gc;
@@ -2536,37 +2544,52 @@ pub(crate) async fn run_internal(
         info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
         obelisk_is_ready();
 
-        tokio::select! {
-            server_result = &mut http_server => {
+        let token_reload_task = token_reload.map(|reload| {
+            let db_pool = server_init.db_pool.clone();
+            utils::spawn::spawn_named("api_token_hash_reload", async move {
+                reload.run(db_pool.as_ref()).await;
+            })
+        });
+        let _token_reload_abort = token_reload_task
+            .as_ref()
+            .map(|task| AbortOnDropHandle::new(task.abort_handle()));
+
+        let server_result = tokio::select! {
+            server_result = &mut http_server => Some(server_result),
+            _ = termination_watcher.changed() => None,
+        };
+        if let Some(task) = token_reload_task {
+            task.abort();
+            let _ = task.await;
+        }
+        if let Some(server_result) = server_result {
+            server_init.close().await;
+            server_result
+                .context("API server task failed")?
+                .with_context(|| format!("server error listening on {api_listening_addr}"))?;
+        } else {
+            let _ = graceful_shutdown_sender.send(());
+            if let Ok(server_result) =
+                tokio::time::timeout(REQUEST_CANCELLATION_GRACE_PERIOD, &mut http_server).await
+            {
                 server_init.close().await;
                 server_result
                     .context("API server task failed")?
                     .with_context(|| format!("server error listening on {api_listening_addr}"))?;
-            }
-            _ = termination_watcher.changed() => {
-                let _ = graceful_shutdown_sender.send(());
-                if let Ok(server_result) = tokio::time::timeout(
-                    REQUEST_CANCELLATION_GRACE_PERIOD,
-                    &mut http_server,
-                ).await {
-                    server_init.close().await;
+            } else {
+                server_init.close().await;
+                if let Ok(server_result) =
+                    tokio::time::timeout(HTTP_SERVER_DRAIN_TIMEOUT, &mut http_server).await
+                {
                     server_result
                         .context("API server task failed")?
-                        .with_context(|| format!("server error listening on {api_listening_addr}"))?;
+                        .with_context(|| {
+                            format!("server error listening on {api_listening_addr}")
+                        })?;
                 } else {
-                    server_init.close().await;
-                    if let Ok(server_result) = tokio::time::timeout(
-                        HTTP_SERVER_DRAIN_TIMEOUT,
-                        &mut http_server,
-                    ).await {
-                        server_result
-                            .context("API server task failed")?
-                            .with_context(|| format!("server error listening on {api_listening_addr}"))?;
-                    } else {
-                        warn!("Aborting API server drain after shutdown timeout");
-                        http_server.abort();
-                        let _ = http_server.await;
-                    }
+                    warn!("Aborting API server drain after shutdown timeout");
+                    http_server.abort();
+                    let _ = http_server.await;
                 }
             }
         }

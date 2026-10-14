@@ -13,16 +13,30 @@ pub(crate) async fn record(
     deployment_id: Option<DeploymentId>,
     details: Value,
 ) {
+    let _ = record_retryable(db_pool, code, execution_id, deployment_id, details).await;
+}
+
+pub(crate) async fn record_retryable(
+    db_pool: &dyn DbPool,
+    code: SystemEventCode,
+    execution_id: Option<ExecutionId>,
+    deployment_id: Option<DeploymentId>,
+    details: Value,
+) -> Option<SystemEventId> {
     let event = match SystemEvent::new(code, execution_id, deployment_id, details) {
         Ok(event) => event,
         Err(err) => {
             warn!(code = code.as_str(), "Cannot construct system event: {err}");
-            return;
+            return None;
         }
     };
+    let event_id = event.event_id;
     let result = async { db_pool.admin_conn().await?.append_system_event(event).await }.await;
     if let Err(err) = result {
         warn!(code = code.as_str(), "Cannot persist system event: {err}");
+        None
+    } else {
+        Some(event_id)
     }
 }
 

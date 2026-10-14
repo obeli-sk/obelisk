@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(auth)* Reload `api.token_hashes` from the configured `server.toml` about once per second,
+  including atomic file replacements. Invalid or missing files retain the last valid set.
+  Empty lists revoke all configured hashes while preserving startup tokens, explicit
+  CLI/environment tokens, OIDC verification, and already authenticated streams.
+  `api.token_hashes_loaded` and `api.token_hashes_changed` system events acknowledge the
+  normalized set with its SHA-256 fingerprint and count; failed event writes are retried.
+
 ## [0.43.0-rc.2](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.1...v0.43.0-rc.2)
 
 This release candidate adds OIDC API authentication and an app-name endpoint, and updates
