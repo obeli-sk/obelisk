@@ -158,7 +158,8 @@
               }
             }
           }
-        }
+        },
+        "deprecated": true
       }
     },
     "/v1/admin/storage": {
@@ -350,30 +351,6 @@
           "app config"
         ],
         "operationId": "digest",
-        "responses": {
-          "200": {
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "application/json": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/app-name": {
-      "get": {
-        "tags": [
-          "app config"
-        ],
-        "operationId": "name",
         "responses": {
           "200": {
             "content": {
@@ -2262,6 +2239,25 @@
           }
         }
       }
+    },
+    "/v1/info": {
+      "get": {
+        "tags": [
+          "server"
+        ],
+        "operationId": "get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerInfoResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4085,6 +4081,38 @@
           }
         }
       },
+      "ServerInfoResponse": {
+        "type": "object",
+        "required": [
+          "app_name",
+          "obelisk_version",
+          "deployment_id",
+          "node_run_id",
+          "app_config_digest",
+          "started_at"
+        ],
+        "properties": {
+          "app_config_digest": {
+            "type": "string"
+          },
+          "app_name": {
+            "type": "string"
+          },
+          "deployment_id": {
+            "type": "string"
+          },
+          "node_run_id": {
+            "type": "string"
+          },
+          "obelisk_version": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "StorageStatusResponse": {
         "type": "object",
         "required": [
@@ -4286,6 +4314,10 @@
     {
       "name": "deployments",
       "description": "Deployment management"
+    },
+    {
+      "name": "server",
+      "description": "Running server identity"
     },
     {
       "name": "app config",

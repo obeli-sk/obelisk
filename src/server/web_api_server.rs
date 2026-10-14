@@ -107,6 +107,7 @@ async fn until_terminated<T>(
         (name = "components", description = "Component management"),
         (name = "functions", description = "Function management"),
         (name = "deployments", description = "Deployment management"),
+        (name = "server", description = "Running server identity"),
         (name = "app config", description = "Running app policy"),
         (name = "admin", description = "Operator-only destructive maintenance"),
         (name = "delays", description = "Delay management")
@@ -150,7 +151,7 @@ async fn until_terminated<T>(
         deployment::get_file,
         app_config::get,
         app_config::digest,
-        app_config::name,
+        server_info::get,
         admin::delete_execution_tree,
         admin::retain_executions,
         admin::delete_deployment,
@@ -197,6 +198,7 @@ async fn until_terminated<T>(
         rest_types::admin::CleanupResponse,
         rest_types::admin::SystemEventsResponse,
         rest_types::admin::StorageStatusResponse,
+        rest_types::server::ServerInfoResponse,
         rest_types::admin::RetainSystemEventsRequest,
         rest_types::admin::RetainSystemEventsResponse,
         rest_types::deployment::DeploymentSubmitErrorBody,
@@ -336,7 +338,7 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
         .route("/deployment-id", routing::get(deployment::current))
         .route("/app-config", routing::get(app_config::get))
         .route("/app-config-digest", routing::get(app_config::digest))
-        .route("/app-name", routing::get(app_config::name))
+        .route("/info", routing::get(server_info::get))
         .route(
             "/executions/{execution-id}/backtrace",
             routing::get(execution_backtrace),
@@ -348,6 +350,7 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
         .layer(DefaultBodyLimit::max(max_transport_message_size_bytes))
 }
 
+#[expect(deprecated)]
 fn admin_router() -> Router<Arc<WebApiState>> {
     Router::new()
         .route(
@@ -438,17 +441,29 @@ pub(crate) mod app_config {
             AcceptHeader::Text => digest.to_string().into_response(),
         }
     }
+}
 
-    #[utoipa::path(get, path = "/v1/app-name", tag = "app config", responses((status = 200, content((String = "text/plain"), (String = "application/json")))))]
-    pub(crate) async fn name(
-        State(state): State<Arc<WebApiState>>,
-        accept: TextDefaultAcceptHeader,
-    ) -> Response {
-        let name = &state.server_verified.app_name;
-        match accept.into() {
-            AcceptHeader::Json => pretty_json_response(StatusCode::OK, name),
-            AcceptHeader::Text => name.clone().into_response(),
-        }
+pub(crate) mod server_info {
+    use super::*;
+    use crate::args::shadow::PKG_VERSION;
+    use rest_types::server::ServerInfoResponse;
+
+    #[utoipa::path(get, path = "/v1/info", tag = "server", responses((status = 200, body = ServerInfoResponse)))]
+    pub(crate) async fn get(State(state): State<Arc<WebApiState>>) -> Response {
+        let node_run_id = concepts::storage::initialize_node_run_id();
+        let started_at = i64::try_from(node_run_id.timestamp_part())
+            .ok()
+            .and_then(DateTime::from_timestamp_millis)
+            .expect("node run ID timestamp is generated from the current time");
+        let body = ServerInfoResponse {
+            app_name: state.server_verified.app_name.clone(),
+            obelisk_version: PKG_VERSION.to_string(),
+            deployment_id: state.deployment_ctx.read().await.deployment_id,
+            node_run_id,
+            app_config_digest: state.server_verified.app_config_digest.to_string(),
+            started_at,
+        };
+        pretty_json_response(StatusCode::OK, &body)
     }
 }
 
@@ -620,6 +635,8 @@ pub(crate) mod admin {
             content((String = "text/plain"), (String = "application/json"))
         ))
     )]
+    // backcompat: 0.43, delete this endpoint after 0.43 in favor of `GET /v1/info`.
+    #[deprecated(note = "use `GET /v1/info`")]
     pub(crate) async fn node_run_id(accept: TextDefaultAcceptHeader) -> Response {
         let id = concepts::storage::initialize_node_run_id();
         match accept.into() {
@@ -4366,6 +4383,7 @@ mod tests {
     };
 
     #[tokio::test]
+    #[expect(deprecated)]
     async fn node_run_id_defaults_to_text_and_supports_json() {
         let text_response = admin::node_run_id(TextDefaultAcceptHeader::Text).await;
         assert_eq!(
