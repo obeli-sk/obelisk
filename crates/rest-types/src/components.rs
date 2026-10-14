@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// Component configuration with optional imports/exports
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ComponentConfig {
     /// Component identifier
     #[schema(value_type = Object)]
@@ -25,14 +25,14 @@ pub struct ComponentConfig {
     pub exports: Option<Vec<FunctionMetadataLite>>,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ComponentFileRef {
     pub file: ComponentFile,
     #[schema(value_type = String)]
     pub role: ComponentFileRole,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ComponentFile {
     pub path: String,
     pub digest: String,
@@ -53,7 +53,7 @@ impl From<DeploymentComponentFileDetail> for ComponentFileRef {
 }
 
 /// Lightweight function metadata
-#[derive(Serialize, Deserialize, derive_more::Display, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, derive_more::Display, ToSchema)]
 #[display("{ffqn}: func({}) -> {return_type}", parameter_types.iter().join(", "))]
 pub struct FunctionMetadataLite {
     /// Fully qualified function name
@@ -105,7 +105,7 @@ impl From<PersistedFunctionMetadata> for FunctionMetadataLite {
 }
 
 /// Parameter type information
-#[derive(Serialize, Deserialize, derive_more::Display, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, derive_more::Display, ToSchema)]
 #[display("{name}: {wit_type}")]
 pub struct ParameterTypeLite {
     /// Parameter name

@@ -9,7 +9,7 @@ use std::fmt::Display;
 use utoipa::ToSchema;
 
 /// Log entry row with cursor
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LogEntryRowSer {
     /// Opaque cursor position
     pub cursor: String,
@@ -24,7 +24,7 @@ pub struct LogEntryRowSer {
 }
 
 /// Log entry content
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LogEntrySer {
     /// Structured log message
@@ -73,7 +73,7 @@ impl From<LogEntryRow> for LogEntryRowSer {
     }
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LogLevelSer {
     Trace,
@@ -107,7 +107,7 @@ impl From<LogLevel> for LogLevelSer {
     }
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LogStreamTypeSer {
     Stdout,

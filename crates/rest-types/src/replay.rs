@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// A serializable mirror of `CreateRequest` from concepts.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct CreateRequestSer {
     pub created_at: DateTime<Utc>,
     pub execution_id: String,
@@ -114,7 +114,7 @@ impl TryFrom<CreateRequestSer> for concepts::storage::CreateRequest {
 }
 
 /// A serializable mirror of `AppendResponseToExecution` from concepts.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct StubResponseSer {
     pub parent_execution_id: String,
     pub created_at: DateTime<Utc>,
@@ -168,7 +168,7 @@ impl TryFrom<StubResponseSer> for concepts::storage::AppendResponseToExecution {
 }
 
 /// A write captured during replay, produced by the replay endpoint and applied by the advance endpoint.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CapturedWriteSer {
     Append {
@@ -456,7 +456,7 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ReplayResponseSer {
     #[serde(flatten)]
     pub outcome: ReplayOutcomeSer,
@@ -469,7 +469,7 @@ pub struct ReplayResponseSer {
     pub replay_version: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ReplayOutcomeSer {
     Advanceable {
@@ -489,7 +489,7 @@ pub enum ReplayOutcomeSer {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AdvanceRequestSer {
     pub captured_writes: Vec<CapturedWriteSer>,
     /// Capture and persist fresh call-site backtraces while advancing.
@@ -497,7 +497,7 @@ pub struct AdvanceRequestSer {
     pub persist_backtrace: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AdvanceResponseSer {
     Finished {
@@ -509,7 +509,7 @@ pub enum AdvanceResponseSer {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AdvanceErrorSer {
     VersionMismatch { expected: u32 },
@@ -517,7 +517,7 @@ pub enum AdvanceErrorSer {
     Transient(String),
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct PersistBacktracesResponseSer {
     /// Number of newly persisted backtraces (already-persisted ones are skipped).
     pub persisted_backtrace_count: u32,

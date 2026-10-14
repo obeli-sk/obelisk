@@ -42,7 +42,7 @@ impl args::Admin {
                     eprintln!(
                         "{} {} {}: {}",
                         event.created_at.to_rfc3339(),
-                        event.level,
+                        event.level.as_str(),
                         event.code,
                         event.message
                     );
@@ -243,7 +243,7 @@ impl args::Admin {
                         eprintln!(
                             "{} {} {}: {}",
                             event.created_at.to_rfc3339(),
-                            event.level,
+                            event.level.as_str(),
                             event.code,
                             event.message
                         );

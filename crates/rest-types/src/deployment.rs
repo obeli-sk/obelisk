@@ -31,7 +31,7 @@ pub struct DeploymentComponentSummary {
     pub components: Vec<DeploymentComponentCount>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentStatusSer {
     Inactive,
@@ -49,7 +49,7 @@ impl From<&DeploymentStatus> for DeploymentStatusSer {
     }
 }
 /// Deployment state with execution counts
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DeploymentStateSer {
     /// Deployment identifier
     #[schema(value_type = String, example = "Dep_01JKXYZ123456789ABCDEFGHIJ")]
@@ -91,7 +91,7 @@ pub struct DeploymentStateSer {
 }
 
 /// A deployment-owned file the manifest references.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct FileRefSer {
     /// Deployment-relative path.
     pub path: String,
@@ -112,7 +112,7 @@ impl From<&DeploymentFileRecord> for FileRefSer {
 }
 
 /// Deployment details with config
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DeploymentRecordSer {
     #[schema(value_type = String)]
     pub deployment_id: DeploymentId,
@@ -147,7 +147,7 @@ impl From<&DeploymentRecord> for DeploymentRecordSer {
 }
 
 /// Request payload for submitting a new deployment
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DeploymentSubmitPayload {
     /// Processed deployment manifest (`deployment.toml`). Referenced file blobs must
     /// be uploaded separately after the server returns `missing_digests`.
@@ -160,13 +160,13 @@ pub struct DeploymentSubmitPayload {
     pub allow_unavailable_runtime_config: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DeploymentSubmitResponse {
     pub deployment_id: String,
 }
 
 /// A single file-set problem found while validating a submit package.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct FileIssue {
     pub section: String,
     pub component_name: Option<String>,
@@ -176,7 +176,7 @@ pub struct FileIssue {
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DigestMismatch {
     pub file: FileIssue,
     pub supplied_digest: String,
@@ -186,7 +186,7 @@ pub struct DigestMismatch {
 /// Structured `409` body describing why a submit package was rejected. No
 /// deployment is stored when this is returned. A client retries the same submit
 /// with the `missing_files` blobs attached.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SubmitPackageErrorBody {
     pub missing_digest_fields: Vec<FileIssue>,
     pub missing_files: Vec<FileIssue>,
@@ -195,7 +195,7 @@ pub struct SubmitPackageErrorBody {
     pub oversized_files: Vec<FileIssue>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct MissingRuntimeConfigErrorBody {
     pub error: String,
     #[serde(default)]
@@ -211,12 +211,12 @@ pub struct MissingRuntimeConfigErrorBody {
     pub unset_secrets: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct GenericErrorBody {
     pub err: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(untagged)]
 pub enum DeploymentSubmitErrorBody {
     InvalidConfig(GenericErrorBody),
@@ -224,7 +224,7 @@ pub enum DeploymentSubmitErrorBody {
 }
 
 /// Request payload for switching deployment
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DeploymentSwitchPayload {
     /// Enqueue while app or platform approval is pending. Activation on restart
     /// checks strictly; rejected when applying without restart.

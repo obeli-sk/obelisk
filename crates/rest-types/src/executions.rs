@@ -14,7 +14,7 @@ use utoipa::ToSchema;
 use val_json::wast_val::WastVal;
 
 /// Execution with current state information
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ExecutionWithStateSer {
     /// Unique execution identifier
     #[schema(value_type = String, example = "E_01JKXYZ123456789ABCDEFGHIJ")]
@@ -66,7 +66,7 @@ impl From<ExecutionWithState> for ExecutionWithStateSer {
 }
 
 /// Response containing execution events
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ExecutionEventsResponse {
     /// List of execution events
     #[schema(value_type = Vec<Object>)]
@@ -76,7 +76,7 @@ pub struct ExecutionEventsResponse {
     pub max_version: Version,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ExecutionEventsAndResponsesResponse {
     #[schema(value_type = Vec<Object>)]
     pub events: Vec<ExecutionEvent>,
@@ -90,7 +90,7 @@ pub struct ExecutionEventsAndResponsesResponse {
 }
 
 /// Response containing execution responses
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ExecutionResponsesResponse {
     /// List of responses with cursors
     #[schema(value_type = Vec<Object>)]
@@ -104,7 +104,7 @@ pub struct ExecutionResponsesResponse {
 }
 
 /// Lossy representation of `SupportedFunctionReturnValue`. Does not contain WIT type.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetVal {
     /// Successful result value
@@ -133,7 +133,7 @@ impl From<SupportedFunctionReturnValue> for RetVal {
 }
 
 /// Payload for submitting a new execution
-#[derive(Serialize, Deserialize, Debug, ToSchema)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug, ToSchema)]
 pub struct ExecutionSubmitPayload {
     /// Fully qualified function name to execute
     #[schema(value_type = String, example = "my-pkg:my-ifc/my-fn")]
@@ -146,7 +146,7 @@ pub struct ExecutionSubmitPayload {
 }
 
 /// Payload for upgrading an execution to a new component version
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ExecutionUpgradePayload {
     /// Old component digest to upgrade from
     #[schema(value_type = String)]

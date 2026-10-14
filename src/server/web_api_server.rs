@@ -519,7 +519,7 @@ pub(crate) mod admin {
                     node_run_id: event.node_run_id,
                     app_config_digest: event.app_config_digest,
                     created_at: event.created_at,
-                    level: event.level.as_str().into(),
+                    level: event.level,
                     code: event.code,
                     message,
                     execution_id: event.execution_id,
@@ -564,7 +564,7 @@ pub(crate) mod admin {
             node_run_id: event.node_run_id,
             app_config_digest: event.app_config_digest,
             created_at: event.created_at,
-            level: event.level.as_str().into(),
+            level: event.level,
             code: event.code,
             message,
             execution_id: event.execution_id,
@@ -4231,9 +4231,9 @@ impl IntoResponse for HttpResponse {
             AcceptHeader::Json => pretty_json_response(
                 self.status,
                 &if self.status.is_success() {
-                    json!({ "ok": self.message })
+                    rest_types::MessageBody::Ok { ok: self.message }
                 } else {
-                    json!({ "err": self.message })
+                    rest_types::MessageBody::Err { err: self.message }
                 },
             ),
             AcceptHeader::Text => (self.status, self.message).into_response(),
