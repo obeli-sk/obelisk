@@ -150,6 +150,7 @@ async fn until_terminated<T>(
         deployment::get_file,
         app_config::get,
         app_config::digest,
+        app_config::name,
         admin::delete_execution_tree,
         admin::retain_executions,
         admin::delete_deployment,
@@ -335,6 +336,7 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
         .route("/deployment-id", routing::get(deployment::current))
         .route("/app-config", routing::get(app_config::get))
         .route("/app-config-digest", routing::get(app_config::digest))
+        .route("/app-name", routing::get(app_config::name))
         .route(
             "/executions/{execution-id}/backtrace",
             routing::get(execution_backtrace),
@@ -434,6 +436,18 @@ pub(crate) mod app_config {
         match accept.into() {
             AcceptHeader::Json => pretty_json_response(StatusCode::OK, digest),
             AcceptHeader::Text => digest.to_string().into_response(),
+        }
+    }
+
+    #[utoipa::path(get, path = "/v1/app-name", tag = "app config", responses((status = 200, content((String = "text/plain"), (String = "application/json")))))]
+    pub(crate) async fn name(
+        State(state): State<Arc<WebApiState>>,
+        accept: TextDefaultAcceptHeader,
+    ) -> Response {
+        let name = &state.server_verified.app_name;
+        match accept.into() {
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, name),
+            AcceptHeader::Text => name.clone().into_response(),
         }
     }
 }

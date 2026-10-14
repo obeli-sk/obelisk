@@ -368,6 +368,30 @@
         }
       }
     },
+    "/v1/app-name": {
+      "get": {
+        "tags": [
+          "app config"
+        ],
+        "operationId": "name",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/components": {
       "get": {
         "tags": [
