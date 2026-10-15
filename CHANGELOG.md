@@ -6,15 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.4](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.3...v0.43.0-rc.4)
+
+This release candidate accepts backtrace sources on WASM activities, fixes API token-hash
+reloads when an app config is given, and updates the Web UI.
+
 ### Added
 
 - *(deployment)* `activity_wasm` components accept `backtrace.sources`, so their sources can be
   viewed with the component. Activity backtraces are not captured yet.
+  [#1149](https://github.com/obeli-sk/obelisk/pull/1149)
 
 ### Fixed
 
 - *(auth)* API token-hash reloads now watch the `server.toml` passed via `--server-config`.
   In 0.43.0-rc.3 they watched the app config instead, so `api.token_hashes` changes were ignored.
+  [#1148](https://github.com/obeli-sk/obelisk/pull/1148)
 
 ## [0.43.0-rc.3](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.2...v0.43.0-rc.3)
 
