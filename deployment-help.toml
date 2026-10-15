@@ -47,6 +47,9 @@
 ## Registered secrets exposed under their logical names as environment variables.
 ## Authorize the generated configuration digest in `app.toml` under `[secrets.<name>.exposed_to]`.
 # exposed_secrets = ["HMAC_SECRET"]
+## Map from frame symbol file names to source files, see `workflow_wasm`. Activity backtraces are not captured,
+## the sources are only attached to the component for viewing.
+# backtrace.sources = {".../src/lib.rs" = "path to source file"}
 
 ## Outgoing HTTP host allowlist.
 ## Each `[[activity_wasm.allowed_host]]` entry permits outbound requests to a host.

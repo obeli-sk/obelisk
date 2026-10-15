@@ -898,6 +898,12 @@ pub(crate) struct ComponentBacktraceConfig {
     pub(crate) frame_files_to_sources: HashMap<String, String>,
 }
 
+impl ComponentBacktraceConfig {
+    fn is_empty(&self) -> bool {
+        self.frame_files_to_sources.is_empty()
+    }
+}
+
 // Authored webhook component configs
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -993,6 +999,13 @@ pub struct ActivityWasmComponentConfigToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(skip)]
     pub content_digest: Option<ContentDigest>,
+    /// Generated CAS references for backtrace source files.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(skip)]
+    pub(crate) component_files: BTreeMap<String, ContentDigest>,
+    /// Sources viewable alongside the component; activity backtraces are not captured yet.
+    #[serde(default, skip_serializing_if = "ComponentBacktraceConfig::is_empty")]
+    pub(crate) backtrace: ComponentBacktraceConfig,
     #[serde(default)]
     pub exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]

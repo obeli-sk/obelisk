@@ -92,6 +92,10 @@
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
         },
+        "backtrace": {
+          "description": "Sources viewable alongside the component; activity backtraces are not captured yet.",
+          "$ref": "#/$defs/ComponentBacktraceConfig"
+        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml",
           "default": {
@@ -166,6 +170,22 @@
     "ComponentLocationToml": {
       "description": "Location of a WASM component.\nThe OCI reference is kept as a string (without the `oci://` prefix); it is\nvalidated and normalized by the obelisk server before resolution.",
       "type": "string"
+    },
+    "ComponentBacktraceConfig": {
+      "type": "object",
+      "properties": {
+        "sources": {
+          "description": "Maps a frame-symbol key to a backtrace source file path. On-disk format only;\nresolved to `ComponentBacktraceConfigResolved` before hash\ncomputation. A relative path is deployment-dir-relative; absolute paths are rejected.\nThe source's content digest lives in the component's `component_files`, so\nthis is a plain path map in both authored and processed manifests.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sources"
+      ]
     },
     "ExecConfigToml": {
       "type": "object",
@@ -1168,22 +1188,6 @@
       "enum": [
         "interrupt",
         "await"
-      ]
-    },
-    "ComponentBacktraceConfig": {
-      "type": "object",
-      "properties": {
-        "sources": {
-          "description": "Maps a frame-symbol key to a backtrace source file path. On-disk format only;\nresolved to `ComponentBacktraceConfigResolved` before hash\ncomputation. A relative path is deployment-dir-relative; absolute paths are rejected.\nThe source's content digest lives in the component's `component_files`, so\nthis is a plain path map in both authored and processed manifests.",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "sources"
       ]
     },
     "WorkflowJsComponentConfigToml": {

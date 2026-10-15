@@ -450,6 +450,7 @@ pub(crate) struct ActivityWasmConfigVerified {
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
     pub(crate) secret_exposure_digest: SecretExposureDigest,
+    pub(crate) frame_files_to_sources: FrameFilesToSource,
 }
 
 impl ActivityWasmConfigVerified {
@@ -493,6 +494,12 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
             &common.location.to_string(),
         )?;
 
+        let frame_files_to_sources: FrameFilesToSource =
+            resolve_backtrace(&self.backtrace, &self.component_files)?
+                .into_frame_files()
+                .into_iter()
+                .map(|(name, digest)| (name, FrameSource::Digest(digest)))
+                .collect();
         let env_vars =
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
         let (allowed_hosts, _advisories) =
@@ -542,6 +549,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
             )?,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
             secret_exposure_digest,
+            frame_files_to_sources,
         })
     }
 }
@@ -1955,7 +1963,7 @@ async fn resolve_function_interface(
 }
 
 /// Reject deployments where two deployment-owned source files (inline/owned scripts and
-/// recreated workflow/webhook backtrace sources) would be written to the same `file_name`
+/// recreated WASM component backtrace sources) would be written to the same `file_name`
 /// with differing content. Such a deployment hashes and runs fine, but could never be
 /// retrieved with `deployment pull`, which writes every owned source to disk at its
 /// `file_name` and refuses to clobber. Identical re-uses of a name are allowed (they dedupe
@@ -1985,6 +1993,11 @@ pub(crate) fn validate_owned_source_file_names(
         Ok(())
     }
 
+    let activity_backtraces = resolved
+        .activities_wasm
+        .iter()
+        .map(|c| resolve_backtrace(&c.backtrace, &c.component_files))
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let mut seen: HashMap<&str, ContentDigest> = HashMap::new();
 
     let script_locations = resolved
@@ -2008,10 +2021,9 @@ pub(crate) fn validate_owned_source_file_names(
         }
     }
 
-    let backtraces = resolved
-        .workflows_wasm
+    let backtraces = activity_backtraces
         .iter()
-        .map(|c| &c.backtrace)
+        .chain(resolved.workflows_wasm.iter().map(|c| &c.backtrace))
         .chain(resolved.webhooks_wasm.iter().map(|c| &c.backtrace));
     for bt in backtraces {
         for source in bt.frame_files_to_sources.values() {

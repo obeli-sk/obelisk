@@ -90,6 +90,7 @@ pub(crate) async fn prepare_deployment_manifest(
 
     let mut files = Vec::new();
     collect_wasm_refs(&mut doc, "activity_wasm", deployment_dir, &mut files).await?;
+    collect_backtrace_refs(&mut doc, "activity_wasm", deployment_dir, &mut files).await?;
     collect_wasm_refs(&mut doc, "activity_stub", deployment_dir, &mut files).await?;
     collect_wasm_refs(&mut doc, "activity_external", deployment_dir, &mut files).await?;
     collect_wasm_refs(&mut doc, "workflow_wasm", deployment_dir, &mut files).await?;
@@ -299,7 +300,7 @@ const WASM_SECTIONS: &[&str] = &[
     "workflow_wasm",
     "webhook_endpoint_wasm",
 ];
-const BACKTRACE_SECTIONS: &[&str] = &["workflow_wasm", "webhook_endpoint_wasm"];
+const BACKTRACE_SECTIONS: &[&str] = &["activity_wasm", "workflow_wasm", "webhook_endpoint_wasm"];
 const SCRIPT_SECTIONS: &[&str] = &[
     "activity_js",
     "workflow_js",
@@ -336,6 +337,13 @@ impl DeploymentManifest {
         let mut files = Vec::new();
         let mut component_files = Vec::new();
         collect_wasm_section(
+            &doc,
+            "activity_wasm",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
+        collect_backtrace_section(
             &doc,
             "activity_wasm",
             &names,
@@ -425,7 +433,7 @@ impl DeploymentManifest {
         )?;
 
         debug_assert!(
-            WASM_SECTIONS.len() + SCRIPT_SECTIONS.len() + BACKTRACE_SECTIONS.len() == 12,
+            WASM_SECTIONS.len() + SCRIPT_SECTIONS.len() + BACKTRACE_SECTIONS.len() == 13,
             "section lists drifted from collection order"
         );
 
@@ -1631,6 +1639,48 @@ location = "components/w.wasm"
             resolved.workflows_wasm[0].backtrace.frame_files_to_sources[".../src/lib.rs"]
                 .content_digest,
             content_digest(b"fn workflow() {}")
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_attaches_activity_backtrace_source_to_component() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(dir.path().join("src"))
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("a.wasm"), b"\0asm")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("src/lib.rs"), "fn activity() {}")
+            .await
+            .unwrap();
+        let manifest = r#"
+[[activity_wasm]]
+name = "a"
+location = "a.wasm"
+
+[activity_wasm.backtrace.sources]
+".../src/lib.rs" = "src/lib.rs"
+"#;
+
+        let prepared = prepare_deployment_manifest(manifest, dir.path())
+            .await
+            .unwrap();
+
+        let classified =
+            DeploymentManifest::try_from_toml(&prepared.deployment_toml, Path::new("")).unwrap();
+        let source = classified
+            .component_files
+            .iter()
+            .find(|file| file.path == "src/lib.rs")
+            .unwrap();
+        assert_eq!(source.component_name, "a");
+        assert_eq!(source.role, ComponentFileRole::BacktraceSource);
+
+        let resolved = resolve_prepared(&prepared).await;
+        assert_eq!(
+            resolved.activities_wasm[0].component_files["src/lib.rs"],
+            content_digest(b"fn activity() {}")
         );
     }
 

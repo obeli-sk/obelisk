@@ -1,6 +1,7 @@
 [[activity_wasm]]
 name = "test_programs_fibo_activity"
 location = "oci://docker.io/getobelisk/test_programs_fibo_activity:2026-09-12@sha256:34ba291a1ce12660c4962f63fc63b3d5742fae157ba739262533573d3cf3c8fc"
+backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/fibo/activity/src/lib.rs" }
 max_retries = 0
 
 [[workflow_wasm]]
@@ -23,6 +24,7 @@ routes = []
 [[activity_wasm]]
 name = "test_programs_http_get_activity"
 location = "oci://docker.io/getobelisk/test_programs_http_get_activity:2026-09-12@sha256:37dfb996b48e84320ab00cbefa2a504831e5b4bb9ce944b741bab46fac357bba"
+backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/http/activity/src/lib.rs" }
 
 [[workflow_wasm]]
 name = "test_programs_http_get_workflow"
@@ -32,6 +34,7 @@ backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/http/work
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
 location = "oci://docker.io/getobelisk/test_programs_sleep_activity:2026-09-12@sha256:bf1b7d8b5032b2d9850b5c69f85542f712cfce35dfaa813ade6c4b991adde918"
+backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/sleep/activity/src/lib.rs" }
 exec.lock_expiry.seconds = 10
 
 [[activity_wasm]]

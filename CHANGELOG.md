@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(deployment)* `activity_wasm` components accept `backtrace.sources`, so their sources can be
+  viewed with the component. Activity backtraces are not captured yet.
+
 ### Fixed
 
 - *(auth)* API token-hash reloads now watch the `server.toml` passed via `--server-config`.
