@@ -1,6 +1,7 @@
 [[activity_wasm]]
 name = "test_programs_fibo_activity"
 location = "target/wasm-cache/test_programs_fibo_activity.wasm"
+backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/fibo/activity/src/lib.rs" }
 max_retries = 0
 
 [[workflow_wasm]]
@@ -24,6 +25,7 @@ backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/fibo/webh
 [[activity_wasm]]
 name = "test_programs_http_get_activity"
 location = "target/wasm-cache/test_programs_http_get_activity.wasm"
+backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/http/activity/src/lib.rs" }
 max_retries = 0
 exec.lock_expiry.seconds = 5
 [[activity_wasm.allowed_host]]
@@ -44,6 +46,7 @@ backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/http/work
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
 location = "target/wasm-cache/test_programs_sleep_activity.wasm"
+backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/sleep/activity/src/lib.rs" }
 exec.lock_expiry.seconds = 10
 
 [[workflow_wasm]]
@@ -60,6 +63,7 @@ backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/sleep/web
 [[activity_wasm]]
 name = "test_programs_serde_activity"
 location = "target/wasm-cache/test_programs_serde_activity.wasm"
+backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/serde/activity/src/lib.rs" }
 max_retries = 0
 
 [[workflow_wasm]]

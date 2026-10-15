@@ -6306,7 +6306,7 @@ fn prespawn_activity_wasm(
             Ok(CompiledComponent::ActivityOrWorkflow {
                 worker,
                 component_config,
-                frame_files: FrameFilesToSource::new(),
+                frame_files: activity.frame_files_to_sources,
             })
         }
         Err(err) if suppress_linking_errors => {
