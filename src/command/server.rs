@@ -2776,7 +2776,7 @@ impl ServerVerified {
         // (which runs before this) using `server_outbound_allowed_hosts`; here they resolve to
         // nothing and are dropped.
         let server_outbound_allowed_hosts = config.outbound_http.allowed_hosts.clone();
-        let source_path = config.source_path.clone();
+        let source_path = config.app_source_path.clone();
         let (server_hosts, _advisories) =
             resolve_allowed_hosts(config.outbound_http.allowed_hosts, false, &secret_registry)
                 .context("invalid app.toml `[[outbound_http.allowed_host]]` entry")?;

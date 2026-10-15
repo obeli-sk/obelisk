@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- *(auth)* API token-hash reloads now watch the `server.toml` passed via `--server-config`.
+  In 0.43.0-rc.3 they watched the app config instead, so `api.token_hashes` changes were ignored.
+
 ## [0.43.0-rc.3](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.2...v0.43.0-rc.3)
 
 This release candidate adds live API token-hash reloads, replaces the app-name endpoint with

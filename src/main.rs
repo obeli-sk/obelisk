@@ -325,7 +325,7 @@ fn prepare_server_startup_with_exec_policy(
     config.public_env = app.public_env;
     config.allowed_exec_activities = app.allowed_exec_activities;
     config.outbound_http = app.outbound_http;
-    config.source_path.clone_from(&config_holder.app_source);
+    config.app_source_path.clone_from(&config_holder.app_source);
     config
         .app_name
         .clone_from(&config_holder.path_prefixes.app_name);
@@ -419,6 +419,25 @@ mod app_policy_tests {
         assert_eq!(ERR_ACTIVITIES_ARE_OFF, load().unwrap_err().to_string());
         std::fs::write(&server, "allowed_exec_activities = '*'\n").unwrap();
         assert!(load().is_ok());
+    }
+
+    #[test]
+    fn startup_keeps_server_and_app_source_paths_separate() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = dir.path().join("server.toml");
+        let app = dir.path().join("app.toml");
+        std::fs::write(&server, "").unwrap();
+        std::fs::write(&app, "app_name='foo'\n").unwrap();
+        let startup = prepare_server_startup(
+            Some(server.clone()),
+            Some(app.clone()),
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::AllowUnavailable,
+        )
+        .unwrap();
+        // The API token-hash reload watches `source_path`.
+        assert_eq!(Some(server), startup.config.source_path);
+        assert_eq!(Some(app), startup.config.app_source_path);
     }
 }
 

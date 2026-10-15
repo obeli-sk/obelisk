@@ -36,9 +36,14 @@ pub(crate) struct ServerConfigToml {
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) app_policy: crate::config::app::AppPolicyV1,
+    /// Path to the server.toml this config was loaded from, if any.
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) source_path: Option<PathBuf>,
+    /// Path to the app.toml the app policy was loaded from, if any.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) app_source_path: Option<PathBuf>,
     #[cfg(feature = "tokio-console")]
     #[serde(skip)]
     #[schemars(skip)]
