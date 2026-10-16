@@ -1,15 +1,29 @@
 use super::output::print_value;
 use crate::args::{
-    AdminArgs, ClientConnection, Cloud, CloudApp, CloudApps, CloudArgs, CloudEnv, CloudSecrets,
-    ComponentArgs, DeploymentArgs, ExecutionArgs, Subcommand,
+    AdminArgs, ClientConnection, Cloud, CloudApp, CloudApps, CloudArgs, CloudCommandId, CloudEnv,
+    CloudSecrets, ComponentArgs, DeploymentArgs, ExecutionArgs, Subcommand,
 };
 use crate::client::ClientStartup;
 use crate::config::app::AppConfigToml;
 use anyhow::{Context as _, bail, ensure};
+use concepts::prefixed_ulid::ExecutionIdTopLevel;
 use reqwest::{Method, Url, header};
 use secrecy::ExposeSecret as _;
 use serde_json::{Value, json};
 use std::{io::Read as _, path::Path, time::Duration};
+
+#[derive(Clone, Copy)]
+enum Kind {
+    Read,
+    /// Error bodies are redacted; staged secret edits are not provisioner commands.
+    Secret,
+    Command(Option<ExecutionIdTopLevel>),
+}
+impl From<CloudCommandId> for Kind {
+    fn from(command_id: CloudCommandId) -> Self {
+        Kind::Command(command_id.id)
+    }
+}
 
 struct Client {
     http: reqwest::Client,
@@ -65,16 +79,21 @@ impl Client {
         method: Method,
         path: &[&str],
         body: Option<Value>,
-        secret: bool,
+        kind: Kind,
     ) -> anyhow::Result<Value> {
         let mut request = self.http.request(method, self.url(path)?);
+        if let Kind::Command(id) = kind {
+            let id = id.unwrap_or_else(ExecutionIdTopLevel::generate);
+            eprintln!("Cloud command execution ID: {id}");
+            request = request.header("Idempotency-Key", id.to_string());
+        }
         if let Some(body) = body {
             request = request.json(&body);
         }
         let response = request.send().await.map_err(reqwest::Error::without_url)?;
         let status = response.status();
         if !status.is_success() {
-            if secret {
+            if matches!(kind, Kind::Secret) {
                 bail!("Cloud secret operation failed: HTTP {status}");
             }
             let body = response.text().await.unwrap_or_default();
@@ -88,11 +107,11 @@ impl Client {
         method: Method,
         suffix: &[&str],
         body: Option<Value>,
-        secret: bool,
+        kind: Kind,
     ) -> anyhow::Result<Value> {
         let mut path = vec!["v1", "apps", name];
         path.extend_from_slice(suffix);
-        self.request(method, &path, body, secret).await
+        self.request(method, &path, body, kind).await
     }
 }
 fn dns_label(name: &str, max: usize) -> bool {
@@ -182,10 +201,14 @@ impl CloudArgs {
             }
             Cloud::Apps(CloudApps::List) => {
                 client
-                    .request(Method::GET, &["v1", "apps"], None, false)
+                    .request(Method::GET, &["v1", "apps"], None, Kind::Read)
                     .await
             }
-            Cloud::App(CloudApp::New { name, app_config }) => {
+            Cloud::App(CloudApp::New {
+                name,
+                app_config,
+                command_id,
+            }) => {
                 let config = match crate::config::app::resolve_app_config(app_config)? {
                     Some(path) => Some(policy(&path).await?),
                     None => None,
@@ -201,62 +224,79 @@ impl CloudArgs {
                     body["policy"] = serde_json::to_value(config.policy())?;
                 }
                 client
-                    .request(Method::POST, &["v1", "apps"], Some(body), false)
+                    .request(Method::POST, &["v1", "apps"], Some(body), command_id.into())
                     .await
             }
             Cloud::App(command) => {
                 let name = &app_name(self.app.as_deref()).await?;
                 match command {
-                    CloudApp::Get => client.app(name, Method::GET, &[], None, false).await,
+                    CloudApp::Get => client.app(name, Method::GET, &[], None, Kind::Read).await,
                     CloudApp::Status => {
                         client
-                            .app(name, Method::GET, &["status"], None, false)
+                            .app(name, Method::GET, &["status"], None, Kind::Read)
                             .await
                     }
-                    CloudApp::Update { app_config } => {
+                    CloudApp::Update {
+                        app_config,
+                        command_id,
+                    } => {
                         client
                             .app(
                                 name,
                                 Method::PUT,
                                 &["policy"],
                                 Some(serde_json::to_value(policy(&app_config).await?.policy())?),
-                                false,
+                                command_id.into(),
                             )
                             .await
                     }
-                    CloudApp::Apply { force } => {
+                    CloudApp::Apply { force, command_id } => {
                         client
                             .app(
                                 name,
                                 Method::POST,
                                 &["apply"],
                                 Some(json!({"force":force})),
-                                false,
+                                command_id.into(),
                             )
                             .await
                     }
-                    CloudApp::Start => {
+                    CloudApp::Start { command_id } => {
                         client
-                            .app(name, Method::POST, &["start"], None, false)
+                            .app(name, Method::POST, &["start"], None, command_id.into())
                             .await
                     }
-                    CloudApp::Stop => client.app(name, Method::POST, &["stop"], None, false).await,
-                    CloudApp::Delete => client.app(name, Method::DELETE, &[], None, false).await,
+                    CloudApp::Stop { command_id } => {
+                        client
+                            .app(name, Method::POST, &["stop"], None, command_id.into())
+                            .await
+                    }
+                    CloudApp::Delete { command_id } => {
+                        client
+                            .app(name, Method::DELETE, &[], None, command_id.into())
+                            .await
+                    }
                     CloudApp::Fill { app_config } => {
                         let declarations = match app_config {
                             Some(path) => serde_json::to_value(policy(&path).await?.policy())?,
                             None => {
                                 client
-                                    .app(name, Method::GET, &["policy"], None, false)
+                                    .app(name, Method::GET, &["policy"], None, Kind::Read)
                                     .await?
                             }
                         };
                         fill(&client, name, &declarations).await
                     }
                     CloudApp::Env(CloudEnv::List) => {
-                        client.app(name, Method::GET, &["env"], None, false).await
+                        client
+                            .app(name, Method::GET, &["env"], None, Kind::Read)
+                            .await
                     }
-                    CloudApp::Env(CloudEnv::Set { name: key, value }) => {
+                    CloudApp::Env(CloudEnv::Set {
+                        name: key,
+                        value,
+                        command_id,
+                    }) => {
                         config_name(&key)?;
                         client
                             .app(
@@ -264,19 +304,28 @@ impl CloudArgs {
                                 Method::PUT,
                                 &["env", &key],
                                 Some(json!({"value":value})),
-                                false,
+                                command_id.into(),
                             )
                             .await
                     }
-                    CloudApp::Env(CloudEnv::Unset { name: key }) => {
+                    CloudApp::Env(CloudEnv::Unset {
+                        name: key,
+                        command_id,
+                    }) => {
                         config_name(&key)?;
                         client
-                            .app(name, Method::DELETE, &["env", &key], None, false)
+                            .app(
+                                name,
+                                Method::DELETE,
+                                &["env", &key],
+                                None,
+                                command_id.into(),
+                            )
                             .await
                     }
                     CloudApp::Secrets(CloudSecrets::List) => {
                         client
-                            .app(name, Method::GET, &["secrets"], None, true)
+                            .app(name, Method::GET, &["secrets"], None, Kind::Secret)
                             .await
                     }
                     CloudApp::Secrets(CloudSecrets::Set {
@@ -305,7 +354,7 @@ impl CloudArgs {
                                 Method::PUT,
                                 &["secrets", &key],
                                 Some(json!({"value":value})),
-                                true,
+                                Kind::Secret,
                             )
                             .await?;
                         Ok(json!({"staged_secret":key}))
@@ -313,7 +362,7 @@ impl CloudArgs {
                     CloudApp::Secrets(CloudSecrets::Unset { name: key }) => {
                         config_name(&key)?;
                         client
-                            .app(name, Method::DELETE, &["secrets", &key], None, true)
+                            .app(name, Method::DELETE, &["secrets", &key], None, Kind::Secret)
                             .await?;
                         Ok(json!({"deleted_secret":key}))
                     }
@@ -326,9 +375,11 @@ impl CloudArgs {
 }
 
 async fn fill(client: &Client, app: &str, policy: &Value) -> anyhow::Result<Value> {
-    let env = client.app(app, Method::GET, &["env"], None, false).await?;
+    let env = client
+        .app(app, Method::GET, &["env"], None, Kind::Read)
+        .await?;
     let secrets = client
-        .app(app, Method::GET, &["secrets"], None, true)
+        .app(app, Method::GET, &["secrets"], None, Kind::Secret)
         .await?;
     let mut pending = Vec::new();
     let mut missing = Vec::new();
@@ -382,7 +433,11 @@ async fn fill(client: &Client, app: &str, policy: &Value) -> anyhow::Result<Valu
                 Method::PUT,
                 &[kind, &name],
                 Some(json!({"value":value})),
-                kind == "secrets",
+                if kind == "secrets" {
+                    Kind::Secret
+                } else {
+                    Kind::Command(None)
+                },
             )
             .await
             .with_context(|| {
@@ -425,6 +480,18 @@ mod tests {
         };
         let mut state = state.lock().unwrap();
         state.received.push((format!("{method} {uri}"), body));
+        if method != Method::GET
+            && uri.path().starts_with("/prefix/v1/apps")
+            && !uri.path().contains("/secrets/")
+        {
+            let id = headers["idempotency-key"].to_str().unwrap();
+            assert!(
+                id.parse::<concepts::prefixed_ulid::ExecutionIdTopLevel>()
+                    .is_ok()
+            );
+        } else {
+            assert!(!headers.contains_key("idempotency-key"));
+        }
         if state.redirect {
             return (
                 axum::http::StatusCode::TEMPORARY_REDIRECT,
@@ -648,7 +715,7 @@ mod tests {
                 Method::PUT,
                 &["secrets", "KEY"],
                 Some(json!({"value":"DO-NOT-ECHO-SECRET"})),
-                true,
+                Kind::Secret,
             )
             .await
             .unwrap_err();
@@ -662,7 +729,7 @@ mod tests {
                 Method::PUT,
                 &["secrets", "KEY"],
                 Some(json!({"value":"DO-NOT-ECHO-SECRET"})),
-                true,
+                Kind::Secret,
             )
             .await
             .unwrap_err();
