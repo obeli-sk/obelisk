@@ -1502,6 +1502,9 @@ mod tests {
 
 #[derive(Debug, clap::Args)]
 pub(crate) struct CloudArgs {
+    /// Direct tenant API URL; bypasses provisioner endpoint discovery.
+    #[arg(long, global = true, env = "OBELISK_APP_API_URL")]
+    pub(crate) app_api_url: Option<String>,
     /// Provisioner webhook URL.
     #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
     pub(crate) api_url: Option<String>,

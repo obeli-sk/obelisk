@@ -30,24 +30,28 @@ struct Client {
     http: reqwest::Client,
     origin: Url,
 }
+fn api_origin(value: &str) -> anyhow::Result<Url> {
+    let origin = value.parse::<Url>()?;
+    ensure!(
+        matches!(origin.scheme(), "http" | "https") && origin.host_str().is_some(),
+        "API URL must use HTTP or HTTPS"
+    );
+    ensure!(
+        origin.username().is_empty()
+            && origin.password().is_none()
+            && origin.query().is_none()
+            && origin.fragment().is_none(),
+        "API URL must not contain credentials, query or fragment"
+    );
+    Ok(origin)
+}
 impl Client {
     fn new(args: &CloudArgs) -> anyhow::Result<Self> {
-        let origin = args
-            .api_url
-            .as_ref()
-            .context("Set --api-url or OBELISK_CLOUD_API_URL")?
-            .parse::<Url>()?;
-        ensure!(
-            matches!(origin.scheme(), "http" | "https") && origin.host_str().is_some(),
-            "Cloud API URL must use HTTP or HTTPS"
-        );
-        ensure!(
-            origin.username().is_empty()
-                && origin.password().is_none()
-                && origin.query().is_none()
-                && origin.fragment().is_none(),
-            "Cloud API URL must not contain credentials, query or fragment"
-        );
+        let origin = api_origin(
+            args.api_url
+                .as_ref()
+                .context("Set --api-url or OBELISK_CLOUD_API_URL")?,
+        )?;
         let mut headers = header::HeaderMap::new();
         if let Some(token) = &args.api_token {
             let mut value =
@@ -245,19 +249,34 @@ async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<V
     }
 }
 impl CloudArgs {
+    async fn direct_api_url(&self) -> anyhow::Result<String> {
+        let value = if let Some(url) = &self.app_api_url {
+            url.clone()
+        } else {
+            let client = Client::new(self)?;
+            let name = app_name(self.app.as_deref()).await?;
+            let app = client
+                .app(&name, Method::GET, &[], None, Kind::Read)
+                .await?;
+            app["api_url"]
+                .as_str()
+                .context("Provisioner response is missing api_url")?
+                .to_owned()
+        };
+        Ok(api_origin(&value)?
+            .as_str()
+            .trim_end_matches('/')
+            .to_owned())
+    }
     pub(crate) async fn run(self) -> anyhow::Result<()> {
         if let Cloud::App(CloudApp::Endpoint { json }) = &self.command {
-            let client = Client::new(&self)?;
-            let name = app_name(self.app.as_deref()).await?;
-            return print_value(&client.url(&["proxy", &name])?.to_string(), *json);
+            return print_value(&self.direct_api_url().await?, *json);
         }
         if matches!(
             self.command,
             Cloud::Deployment(_) | Cloud::Execution(_) | Cloud::Component(_) | Cloud::Admin(_)
         ) {
-            let client = Client::new(&self)?;
-            let name = app_name(self.app.as_deref()).await?;
-            let api_url = client.url(&["proxy", &name])?.to_string();
+            let api_url = self.direct_api_url().await?;
             let startup = ClientStartup::cloud(api_url.clone(), self.api_token);
             let token = ClientConnection {
                 api_url,
@@ -552,6 +571,7 @@ mod tests {
         error: bool,
         redirect: bool,
         existing_config: bool,
+        api_url: Option<String>,
     }
     #[tokio::test]
     async fn cloud_token_retries_keep_private_secret_out_of_requests() {
@@ -633,16 +653,19 @@ mod tests {
             return (axum::http::StatusCode::CONFLICT, "DO-NOT-ECHO-SECRET").into_response();
         }
         let result = match uri.path() {
-            path if path.starts_with("/prefix/proxy/demo/v1/executions/")
+            "/prefix/v1/apps/demo" => {
+                json!({"api_url":state.api_url.clone().unwrap_or_else(||format!("http://{}/prefix/tenant",headers["host"].to_str().unwrap()))})
+            }
+            path if path.starts_with("/prefix/tenant/v1/executions/")
                 && path.ends_with("/cancel") =>
             {
                 json!({"ok":"cancelled"})
             }
-            "/prefix/proxy/demo/v1/deployment-id" => {
+            "/prefix/tenant/v1/deployment-id" => {
                 json!(concepts::prefixed_ulid::DeploymentId::generate())
             }
-            "/prefix/proxy/demo/v1/components" => json!([]),
-            "/prefix/proxy/demo/v1/info" => json!(rest_types::server::ServerInfoResponse {
+            "/prefix/tenant/v1/components" => json!([]),
+            "/prefix/tenant/v1/info" => json!(rest_types::server::ServerInfoResponse {
                 app_name: "demo".to_owned(),
                 obelisk_version: "0.0.0".to_owned(),
                 deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
@@ -696,8 +719,11 @@ mod tests {
         args
     }
     #[tokio::test]
-    async fn cloud_api_commands_use_app_proxy_and_cloud_token() {
+    async fn cloud_api_commands_use_direct_api_and_cloud_token() {
         let (origin, state, task) = server().await;
+        let (target, target_state, target_task) = server().await;
+        let api_url = format!("{target}tenant");
+        state.lock().unwrap().api_url = Some(api_url.clone());
         let execution_id = concepts::ExecutionId::generate().to_string();
         for command in [
             vec!["deployment", "active"],
@@ -708,25 +734,37 @@ mod tests {
         ] {
             args(&origin, &command).run().await.unwrap();
         }
-        let routes: Vec<_> = state
-            .lock()
-            .unwrap()
-            .received
-            .iter()
-            .map(|(route, _)| route.clone())
-            .collect();
         assert_eq!(
-            routes,
+            state.lock().unwrap().received,
+            vec![("GET /prefix/v1/apps/demo".to_owned(), Value::Null); 5]
+        );
+        assert_eq!(
+            target_state
+                .lock()
+                .unwrap()
+                .received
+                .iter()
+                .map(|(route, _)| route.clone())
+                .collect::<Vec<_>>(),
             vec![
-                "GET /prefix/proxy/demo/v1/deployment-id".to_owned(),
-                format!("PUT /prefix/proxy/demo/v1/executions/{execution_id}/pause"),
-                format!("PUT /prefix/proxy/demo/v1/executions/{execution_id}/cancel"),
-                "GET /prefix/proxy/demo/v1/components?exports=true&imports=true&extensions=false"
+                "GET /prefix/tenant/v1/deployment-id".to_owned(),
+                format!("PUT /prefix/tenant/v1/executions/{execution_id}/pause"),
+                format!("PUT /prefix/tenant/v1/executions/{execution_id}/cancel"),
+                "GET /prefix/tenant/v1/components?exports=true&imports=true&extensions=false"
                     .to_owned(),
-                "GET /prefix/proxy/demo/v1/info".to_owned(),
+                "GET /prefix/tenant/v1/info".to_owned(),
             ]
         );
+        state.lock().unwrap().error = true;
+        let mut direct = args(&origin, &["admin", "node-run-id"]);
+        direct.api_url = None;
+        direct.app_api_url = Some(api_url.clone());
+        assert_eq!(direct.direct_api_url().await.unwrap(), api_url);
+        direct.run().await.unwrap();
+        assert_eq!(state.lock().unwrap().received.len(), 5);
+        assert_eq!(target_state.lock().unwrap().received.len(), 6);
         task.abort();
+        target_task.abort();
     }
 
     #[tokio::test]
@@ -739,7 +777,21 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("307"));
         assert_eq!(state.lock().unwrap().received.len(), 1);
+        let (target, target_state, target_task) = server().await;
+        state.lock().unwrap().redirect = false;
+        state.lock().unwrap().api_url = Some(format!("{target}tenant"));
+        target_state.lock().unwrap().redirect = true;
+        assert!(
+            args(&origin, &["deployment", "active"])
+                .run()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("307")
+        );
+        assert_eq!(target_state.lock().unwrap().received.len(), 1);
         task.abort();
+        target_task.abort();
     }
     #[tokio::test]
     async fn cloud_commands_keep_policy_staged_and_force_explicit() {
