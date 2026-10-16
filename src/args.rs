@@ -1502,6 +1502,9 @@ mod tests {
 
 #[derive(Debug, clap::Args)]
 pub(crate) struct CloudArgs {
+    /// Print machine-readable JSON instead of human-readable output.
+    #[arg(long, global = true)]
+    pub(crate) json: bool,
     /// Direct tenant API URL; bypasses provisioner endpoint discovery.
     #[arg(long, global = true, env = "OBELISK_APP_API_URL")]
     pub(crate) app_api_url: Option<String>,
@@ -1644,12 +1647,18 @@ pub(crate) enum CloudApp {
     Env(CloudEnv),
     #[command(subcommand)]
     Secrets(CloudSecrets),
-    /// Print the selected app's API endpoint URL.
+    /// Show all endpoints, or select the API, webhook or Web UI URL.
     Endpoint {
-        /// Print the endpoint as a JSON string.
-        #[arg(long)]
-        json: bool,
+        #[command(subcommand)]
+        command: Option<CloudEndpoint>,
     },
+}
+
+#[derive(Debug, Clone, Copy, clap::Subcommand)]
+pub(crate) enum CloudEndpoint {
+    Api,
+    Webhook,
+    Webui,
 }
 
 #[derive(Debug, clap::Subcommand)]

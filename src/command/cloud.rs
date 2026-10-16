@@ -1,8 +1,9 @@
-use super::output::print_value;
+use super::output::{print_json, print_value};
 use crate::args::CloudToken;
 use crate::args::{
-    AdminArgs, ClientConnection, Cloud, CloudApp, CloudApps, CloudArgs, CloudCommandId, CloudEnv,
-    CloudSecrets, ComponentArgs, DeploymentArgs, ExecutionArgs, Subcommand,
+    AdminArgs, ClientConnection, Cloud, CloudApp, CloudApps, CloudArgs, CloudCommandId,
+    CloudEndpoint, CloudEnv, CloudSecrets, ComponentArgs, DeploymentArgs, ExecutionArgs,
+    Subcommand,
 };
 use crate::client::ClientStartup;
 use crate::config::app::AppConfigToml;
@@ -11,7 +12,46 @@ use concepts::prefixed_ulid::ExecutionIdTopLevel;
 use reqwest::{Method, Url, header};
 use secrecy::ExposeSecret as _;
 use serde_json::{Value, json};
-use std::{io::Read as _, path::Path, time::Duration};
+use std::{fmt::Write as _, io::Read as _, path::Path, time::Duration};
+
+fn human_output(value: &Value) -> String {
+    fn render(out: &mut String, value: &Value, indent: usize) {
+        match value {
+            Value::Object(fields) if !fields.is_empty() => {
+                for (key, value) in fields {
+                    let label = key.replace('_', " ");
+                    let _ = write!(out, "{:indent$}{label}:", "");
+                    if value.is_object() || value.is_array() {
+                        out.push('\n');
+                        render(out, value, indent + 2);
+                    } else {
+                        out.push(' ');
+                        render(out, value, 0);
+                    }
+                }
+            }
+            Value::Array(items) if !items.is_empty() => {
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 && item.is_object() {
+                        out.push('\n');
+                    }
+                    render(out, item, indent);
+                }
+            }
+            value => {
+                let text = match value {
+                    Value::String(text) => text.clone(),
+                    Value::Null | Value::Array(_) | Value::Object(_) => "(none)".to_owned(),
+                    value => value.to_string(),
+                };
+                let _ = writeln!(out, "{:indent$}{text}", "");
+            }
+        }
+    }
+    let mut output = String::new();
+    render(&mut output, value, 0);
+    output
+}
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -249,6 +289,27 @@ async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<V
     }
 }
 impl CloudArgs {
+    async fn endpoints(&self) -> anyhow::Result<Value> {
+        let client = Client::new(self)?;
+        let name = app_name(self.app.as_deref()).await?;
+        let app = client
+            .app(&name, Method::GET, &[], None, Kind::Read)
+            .await?;
+        let webhook = match app["webhook_url"].as_str() {
+            Some(url) => url.to_owned(),
+            None => format!(
+                "https://{}",
+                app["hostname"]
+                    .as_str()
+                    .context("Provisioner response is missing hostname")?
+            ),
+        };
+        Ok(json!({
+            "api_url": self.app_api_url.as_deref().or(app["api_url"].as_str()).context("Provisioner response is missing api_url")?,
+            "webhook_url": webhook,
+            "webui_url": app["webui_url"].as_str().context("Provisioner response is missing webui_url")?,
+        }))
+    }
     async fn direct_api_url(&self) -> anyhow::Result<String> {
         let value = if let Some(url) = &self.app_api_url {
             url.clone()
@@ -269,8 +330,28 @@ impl CloudArgs {
             .to_owned())
     }
     pub(crate) async fn run(self) -> anyhow::Result<()> {
-        if let Cloud::App(CloudApp::Endpoint { json }) = &self.command {
-            return print_value(&self.direct_api_url().await?, *json);
+        if let Cloud::App(CloudApp::Endpoint { command }) = &self.command {
+            if matches!(command, Some(CloudEndpoint::Api)) {
+                return print_value(&self.direct_api_url().await?, self.json);
+            }
+            let endpoints = self.endpoints().await?;
+            if let Some(command) = command {
+                let key = match command {
+                    CloudEndpoint::Api => "api_url",
+                    CloudEndpoint::Webhook => "webhook_url",
+                    CloudEndpoint::Webui => "webui_url",
+                };
+                return print_value(
+                    &endpoints[key].as_str().context("Missing endpoint URL")?,
+                    self.json,
+                );
+            }
+            return if self.json {
+                print_json(&endpoints)
+            } else {
+                print!("{}", human_output(&endpoints));
+                Ok(())
+            };
         }
         if matches!(
             self.command,
@@ -297,9 +378,14 @@ impl CloudArgs {
             };
             return crate::command_future(command, Some(startup))?.await;
         }
+        let json = self.json;
         let value = self.execute().await?;
-        println!("{}", serde_json::to_string_pretty(&value)?);
-        Ok(())
+        if json {
+            print_json(&value)
+        } else {
+            print!("{}", human_output(&value));
+            Ok(())
+        }
     }
     async fn execute(self) -> anyhow::Result<Value> {
         let client = Client::new(&self)?;
@@ -717,6 +803,20 @@ mod tests {
             panic!()
         };
         args
+    }
+    #[test]
+    fn cloud_json_flag_reaches_tenant_commands() {
+        for command in [
+            vec!["--json", "admin", "node-run-id"],
+            vec!["admin", "node-run-id", "--json"],
+        ] {
+            let args = args("https://cloud.example.com", &command);
+            assert!(args.json);
+            assert!(matches!(
+                args.command,
+                Cloud::Admin(crate::args::Admin::NodeRunId { json: true })
+            ));
+        }
     }
     #[tokio::test]
     async fn cloud_api_commands_use_direct_api_and_cloud_token() {
