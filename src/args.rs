@@ -2,7 +2,9 @@ use crate::config::secret_registry::API_TOKEN;
 use clap::Parser;
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, NodeRunId, SystemEventId},
+    prefixed_ulid::{
+        DelayId, DeploymentId, ExecutionIdDerived, ExecutionIdTopLevel, NodeRunId, SystemEventId,
+    },
 };
 use secrecy::SecretString;
 
@@ -1513,6 +1515,13 @@ pub(crate) struct CloudArgs {
     pub(crate) command: Cloud,
 }
 
+#[derive(Debug, clap::Args)]
+pub(crate) struct CloudCommandId {
+    /// Reuse this root execution ID when retrying the command.
+    #[arg(long = "command-id", value_name = "EXECUTION_ID")]
+    pub(crate) id: Option<ExecutionIdTopLevel>,
+}
+
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Cloud {
     /// List apps owned by the authenticated user.
@@ -1549,6 +1558,8 @@ pub(crate) enum CloudApp {
         /// App policy path; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
+        #[command(flatten)]
+        command_id: CloudCommandId,
     },
     /// Inspect the app row.
     Get,
@@ -1559,16 +1570,29 @@ pub(crate) enum CloudApp {
         /// App policy path; defaults to ./app.toml.
         #[arg(short = 'a', long, default_value = "app.toml")]
         app_config: PathBuf,
+        #[command(flatten)]
+        command_id: CloudCommandId,
     },
     /// Apply staged policy, env and secrets; start a stopped VM.
     Apply {
         /// Reapply even with a clear stale flag, including uncertain secret changes.
         #[arg(long)]
         force: bool,
+        #[command(flatten)]
+        command_id: CloudCommandId,
     },
-    Start,
-    Stop,
-    Delete,
+    Start {
+        #[command(flatten)]
+        command_id: CloudCommandId,
+    },
+    Stop {
+        #[command(flatten)]
+        command_id: CloudCommandId,
+    },
+    Delete {
+        #[command(flatten)]
+        command_id: CloudCommandId,
+    },
     /// Stage declared configuration from process environment, including optional values if set.
     Fill {
         /// Use this policy's declarations; otherwise read the currently staged policy.
@@ -1590,8 +1614,17 @@ pub(crate) enum CloudApp {
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum CloudEnv {
     List,
-    Set { name: String, value: String },
-    Unset { name: String },
+    Set {
+        name: String,
+        value: String,
+        #[command(flatten)]
+        command_id: CloudCommandId,
+    },
+    Unset {
+        name: String,
+        #[command(flatten)]
+        command_id: CloudCommandId,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]

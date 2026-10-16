@@ -51,6 +51,10 @@
                   "accepts": {
                     "path": true
                   }
+                },
+                {
+                  "name": "--command-id",
+                  "help": "Reuse this root execution ID when retrying the command"
                 }
               ],
               "positionals": [
@@ -79,6 +83,10 @@
                   "accepts": {
                     "path": true
                   }
+                },
+                {
+                  "name": "--command-id",
+                  "help": "Reuse this root execution ID when retrying the command"
                 }
               ]
             },
@@ -89,17 +97,39 @@
                 {
                   "name": "--force",
                   "help": "Reapply even with a clear stale flag, including uncertain secret changes"
+                },
+                {
+                  "name": "--command-id",
+                  "help": "Reuse this root execution ID when retrying the command"
                 }
               ]
             },
             {
-              "name": "start"
+              "name": "start",
+              "options": [
+                {
+                  "name": "--command-id",
+                  "help": "Reuse this root execution ID when retrying the command"
+                }
+              ]
             },
             {
-              "name": "stop"
+              "name": "stop",
+              "options": [
+                {
+                  "name": "--command-id",
+                  "help": "Reuse this root execution ID when retrying the command"
+                }
+              ]
             },
             {
-              "name": "delete"
+              "name": "delete",
+              "options": [
+                {
+                  "name": "--command-id",
+                  "help": "Reuse this root execution ID when retrying the command"
+                }
+              ]
             },
             {
               "name": "fill",
@@ -123,6 +153,12 @@
                 },
                 {
                   "name": "set",
+                  "options": [
+                    {
+                      "name": "--command-id",
+                      "help": "Reuse this root execution ID when retrying the command"
+                    }
+                  ],
                   "positionals": [
                     {
                       "name": "name",
@@ -136,6 +172,12 @@
                 },
                 {
                   "name": "unset",
+                  "options": [
+                    {
+                      "name": "--command-id",
+                      "help": "Reuse this root execution ID when retrying the command"
+                    }
+                  ],
                   "positionals": [
                     {
                       "name": "name",
