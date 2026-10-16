@@ -14,6 +14,14 @@
       "about": "Manage apps through an Obelisk cloud provisioner",
       "options": [
         {
+          "name": "--json",
+          "help": "Print machine-readable JSON instead of human-readable output"
+        },
+        {
+          "name": "--app-api-url",
+          "help": "Direct tenant API URL; bypasses provisioner endpoint discovery"
+        },
+        {
           "name": "--api-url",
           "help": "Provisioner webhook URL"
         },
@@ -27,6 +35,79 @@
         }
       ],
       "subcommands": [
+        {
+          "name": "token",
+          "about": "Create, inspect and revoke cloud bearer tokens",
+          "subcommands": [
+            {
+              "name": "create",
+              "options": [
+                {
+                  "name": "--name",
+                  "required": true
+                },
+                {
+                  "name": "--token-file",
+                  "help": "Persist the generated token here before registration; reuse the file to retry",
+                  "required": true,
+                  "accepts": {
+                    "path": true
+                  }
+                },
+                {
+                  "name": "--global"
+                },
+                {
+                  "name": "--apps"
+                },
+                {
+                  "name": "--expires-at",
+                  "help": "Absolute expiry in RFC 3339 format"
+                },
+                {
+                  "name": "--user",
+                  "help": "Operator-only issuance for this user"
+                }
+              ]
+            },
+            {
+              "name": "list",
+              "options": [
+                {
+                  "name": "--user"
+                }
+              ]
+            },
+            {
+              "name": "get",
+              "options": [
+                {
+                  "name": "--user"
+                }
+              ],
+              "positionals": [
+                {
+                  "name": "id",
+                  "required": true
+                }
+              ]
+            },
+            {
+              "name": "revoke",
+              "options": [
+                {
+                  "name": "--user"
+                }
+              ],
+              "positionals": [
+                {
+                  "name": "id",
+                  "required": true
+                }
+              ]
+            }
+          ]
+        },
         {
           "name": "apps",
           "about": "List apps owned by the authenticated user",
@@ -226,11 +307,16 @@
             },
             {
               "name": "endpoint",
-              "about": "Print the selected app's API endpoint URL",
-              "options": [
+              "about": "Show all endpoints, or select the API, webhook or Web UI URL",
+              "subcommands": [
                 {
-                  "name": "--json",
-                  "help": "Print the endpoint as a JSON string"
+                  "name": "api"
+                },
+                {
+                  "name": "webhook"
+                },
+                {
+                  "name": "webui"
                 }
               ]
             }
