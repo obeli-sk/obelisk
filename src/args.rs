@@ -1524,6 +1524,9 @@ pub(crate) struct CloudCommandId {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Cloud {
+    /// Create, inspect and revoke cloud bearer tokens.
+    #[command(subcommand)]
+    Token(CloudToken),
     /// List apps owned by the authenticated user.
     #[command(subcommand)]
     Apps(CloudApps),
@@ -1547,6 +1550,41 @@ pub(crate) enum Cloud {
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum CloudApps {
     List,
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum CloudToken {
+    Create {
+        #[arg(long)]
+        name: String,
+        /// Persist the generated token here before registration; reuse the file to retry.
+        #[arg(long)]
+        token_file: PathBuf,
+        #[arg(long, conflicts_with = "apps")]
+        global: bool,
+        #[arg(long = "apps", value_delimiter = ',', conflicts_with = "global")]
+        apps: Vec<String>,
+        /// Absolute expiry in RFC 3339 format.
+        #[arg(long)]
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        /// Operator-only issuance for this user.
+        #[arg(long)]
+        user: Option<String>,
+    },
+    List {
+        #[arg(long)]
+        user: Option<String>,
+    },
+    Get {
+        id: String,
+        #[arg(long)]
+        user: Option<String>,
+    },
+    Revoke {
+        id: String,
+        #[arg(long)]
+        user: Option<String>,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]
