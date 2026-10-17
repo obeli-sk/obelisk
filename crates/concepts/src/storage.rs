@@ -1823,9 +1823,9 @@ pub struct SystemEventFilter {
     pub code: Option<String>,
     pub deployment_id: Option<DeploymentId>,
     pub before_event_id: Option<SystemEventId>,
-    /// Inclusive lower bound, matched against the event ID's millisecond timestamp.
+    /// Inclusive lower bound of `created_at`.
     pub created_from: Option<DateTime<Utc>>,
-    /// Exclusive upper bound, matched against the event ID's millisecond timestamp.
+    /// Exclusive upper bound of `created_at`.
     pub created_to: Option<DateTime<Utc>>,
     pub limit: u32,
 }
