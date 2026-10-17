@@ -455,12 +455,23 @@ pub(crate) enum Deployment {
     Verify(DeploymentVerifyArgs),
 }
 
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+pub(crate) enum StarterTemplate {
+    /// Web dashboard that checks URLs in parallel via a workflow and a retried activity.
+    #[default]
+    UrlHealthDashboard,
+    /// One webhook calling one workflow calling one HTTP activity.
+    Minimal,
+}
+
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Generate {
-    /// Create a JS app in a new NAME directory, or in the current directory if unnamed.
+    /// Create a JS starter app in a new NAME directory, or in the current directory if unnamed.
     New {
         /// New directory and app name; defaults to the current directory with a derived slug.
         name: Option<String>,
+        #[arg(long, value_enum, default_value_t)]
+        template: StarterTemplate,
     },
     /// Calculate reviewed configuration digests for exec and secret-exposing VM activities.
     SecretConfigDigest {

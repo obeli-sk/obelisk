@@ -1,0 +1,48 @@
+[[activity_js]]
+name = "check_url"
+location = "activity/check-url.js"
+ffqn = "starter:app/activity.check-url"
+params = [{ name = "url", type = "string" }]
+return_type = """result<record {
+  status: u16,
+  status-text: string,
+  latency-ms: u32,
+  size-bytes: u32,
+  content-type: option<string>,
+  server: option<string>,
+  title: option<string>
+}, string>"""
+exec.lock_expiry.seconds = 30
+max_retries = 2
+
+[[activity_js.allowed_host]]
+pattern = "https://*"
+methods = ["GET"]
+
+[[workflow_js]]
+name = "check_batch"
+location = "workflow/check-batch.js"
+ffqn = "starter:app/workflow.check-batch"
+params = [{ name = "urls", type = "list<string>" }]
+return_type = """result<list<record {
+  url: string,
+  check: result<record {
+    status: u16,
+    status-text: string,
+    latency-ms: u32,
+    size-bytes: u32,
+    content-type: option<string>,
+    server: option<string>,
+    title: option<string>
+  }, string>
+}>>"""
+
+[[webhook_endpoint_js]]
+name = "dashboard"
+location = "webhook/dashboard.js"
+env_vars = [{ key = "WEBUI_URL", optional = true }]
+routes = [
+  { methods = ["GET"], route = "/" },
+  { methods = ["POST"], route = "/api/check" },
+  { methods = ["GET"], route = "/api/result/*" },
+]
