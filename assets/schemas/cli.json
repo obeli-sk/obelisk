@@ -2300,7 +2300,18 @@
       "subcommands": [
         {
           "name": "new",
-          "about": "Create a JS app in a new NAME directory, or in the current directory if unnamed",
+          "about": "Create a JS starter app in a new NAME directory, or in the current directory if unnamed",
+          "options": [
+            {
+              "name": "--template",
+              "accepts": {
+                "one_of": [
+                  "url-health-dashboard",
+                  "minimal"
+                ]
+              }
+            }
+          ],
           "positionals": [
             {
               "name": "name",
