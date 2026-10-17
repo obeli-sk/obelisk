@@ -1062,8 +1062,8 @@
                   }
                 },
                 {
-                  "name": "--interactive",
-                  "help": "Prompt for missing required env vars and secrets before applying configuration"
+                  "name": "--fill",
+                  "help": "Run `fill` first; otherwise missing required env vars and secrets are an error"
                 }
               ]
             },
@@ -1110,16 +1110,12 @@
             },
             {
               "name": "fill",
-              "about": "Stage declared configuration from process environment, including optional values if set",
+              "about": "Interactively stage declared env vars and secrets, offering process environment values",
               "options": [
-                {
-                  "name": "--interactive",
-                  "help": "Prompt only for missing required values; confirm forwarding from the environment"
-                },
                 {
                   "name": "--app-config",
                   "short": "a",
-                  "help": "Use this policy's declarations; otherwise read the currently staged policy",
+                  "help": "App policy path; defaults to ./app.toml if present, otherwise the staged policy is used",
                   "accepts": {
                     "path": true
                   }

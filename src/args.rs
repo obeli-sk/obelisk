@@ -1708,9 +1708,9 @@ pub(crate) enum CloudApp {
         /// Deployment manifest path.
         #[arg(short = 'd', long, default_value = "deployment.toml")]
         deployment: PathBuf,
-        /// Prompt for missing required env vars and secrets before applying configuration.
+        /// Run `fill` first; otherwise missing required env vars and secrets are an error.
         #[arg(long)]
-        interactive: bool,
+        fill: bool,
     },
     /// Apply staged configuration while respecting the app's intended running state.
     Apply {
@@ -1732,12 +1732,9 @@ pub(crate) enum CloudApp {
         #[command(flatten)]
         command_id: CloudCommandId,
     },
-    /// Stage declared configuration from process environment, including optional values if set.
+    /// Interactively stage declared env vars and secrets, offering process environment values.
     Fill {
-        /// Prompt only for missing required values; confirm forwarding from the environment.
-        #[arg(long)]
-        interactive: bool,
-        /// Use this policy's declarations; otherwise read the currently staged policy.
+        /// App policy path; defaults to ./app.toml if present, otherwise the staged policy is used.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
     },

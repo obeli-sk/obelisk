@@ -84,6 +84,19 @@ impl Summary {
             }
             Self::Status => {
                 app(&mut out, &value["app"]);
+                let status = &value["app"]["status"];
+                let machine = text(value, "machine_state", "");
+                let up = machine == "started";
+                if matches!(machine, "started" | "stopped" | "suspended")
+                    && ((status == "running" && !up) || (status == "stopped" && up))
+                {
+                    let _ = writeln!(
+                        out,
+                        "VM is {machine} although the app is {status}. Run `obelisk cloud app --app {} apply` to reconcile it.",
+                        text(&value["app"], "app_slug", ""),
+                        status = text(&value["app"], "status", "")
+                    );
+                }
                 if let Some(memory) = value["memory_mb"].as_u64() {
                     let _ = writeln!(out, "Memory: {memory} MB");
                 }
@@ -156,9 +169,16 @@ impl Summary {
                 let _ = writeln!(out, "{message} Run `{apply}` to apply changes.");
             }
             Self::Fill(apply) => {
-                let count = value["staged"].as_array().map_or(0, Vec::len);
-                let _ = writeln!(out, "Staged {count} configuration values.");
-                if count > 0 {
+                for declaration in value["declarations"].as_array().into_iter().flatten() {
+                    let kind = if declaration["kind"] == "secrets" {
+                        "secret"
+                    } else {
+                        "env"
+                    };
+                    let action = declaration["action"].as_str().unwrap_or("not set");
+                    let _ = writeln!(out, "{kind} {}: {action}", text(declaration, "name", ""));
+                }
+                if value["apply_required"] == true {
                     let _ = writeln!(out, "Run `{apply}` to apply changes.");
                 }
             }
@@ -199,7 +219,15 @@ fn app(out: &mut String, value: &Value) {
     if let Some(desired) = value["desired_state"].as_str()
         && value["status"] != desired
     {
-        let _ = writeln!(out, "Intended state: {desired}");
+        if matches!(value["status"].as_str(), Some("running" | "stopped")) {
+            let _ = writeln!(
+                out,
+                "Intended state: {desired}. Run `obelisk cloud app --app {} apply` to reach it.",
+                text(value, "app_slug", "")
+            );
+        } else {
+            let _ = writeln!(out, "Intended state: {desired}");
+        }
     }
     if let Some(url) = value["webhook_url"].as_str() {
         let _ = writeln!(out, "URL: {url}");

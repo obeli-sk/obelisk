@@ -10,7 +10,7 @@ impl CloudArgs {
                 CloudApp::Deploy {
                     app_config,
                     deployment,
-                    interactive,
+                    fill: interactive,
                 },
         }) = self.command
         else {
@@ -18,13 +18,13 @@ impl CloudArgs {
         };
         let config = policy(&app_config).await?;
         let name = app_name(app.as_deref().or(config.app_name.as_deref())).await?;
-        let desired = json!({"policy":config.policy(), "cloud":config.cloud});
+        let desired = desired_config(&config);
         let prepared = prepare_deployment_manifest_from_disk(&deployment).await?;
         let step = |command: &str, message: &str| {
             eprintln!("→ obelisk cloud app --app {name} {command}  {message}");
         };
         let mut current = if let Some(current) = client.lookup_app(&name).await? {
-            if current["policy"] != desired["policy"] || current["cloud"] != desired["cloud"] {
+            if config_differs(&current, &desired) {
                 step(
                     &format!("stage -a {}", app_config.display()),
                     "Staging app configuration",
@@ -56,19 +56,28 @@ impl CloudArgs {
                 .await?
         };
         if interactive {
-            step("fill --interactive", "Resolving missing configuration");
+            step("fill", "Resolving configuration");
         }
-        let filled = fill(
-            &client,
-            &name,
-            &desired["policy"],
-            if interactive {
-                FillMode::Interactive
-            } else {
-                FillMode::Check
-            },
-        )
-        .await?;
+        let filled = fill(&client, &name, &desired["policy"], interactive).await?;
+        let unset = filled["declarations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|declaration| declaration["action"] == "unset")
+            .map(|declaration| {
+                format!(
+                    "{} {}",
+                    kind_label(declaration["kind"].as_str().unwrap_or_default()),
+                    declaration["name"].as_str().unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>();
+        if !interactive && !unset.is_empty() {
+            eprintln!(
+                "Optional configuration not set: {}. Run `obelisk cloud app --app {name} fill` or `deploy --fill` to set it.",
+                unset.join(", ")
+            );
+        }
         let mut outcomes = Vec::new();
         if current["potentially_stale"] == true
             || current["applied_revision"] == 0

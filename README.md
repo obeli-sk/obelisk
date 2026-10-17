@@ -233,19 +233,6 @@ use NDJSON with or without `--follow`.
 
 Manage apps through an Obelisk cloud provisioner using `obelisk cloud`.
 
-`cloud app deploy` publishes the local `app.toml` and `deployment.toml`, creating the
-app if necessary. It shows each constituent command, stages changed settings, applies
-pending configuration, and activates the deployment. Code-only updates avoid a VM
-restart. Use `--interactive` to fill missing required configuration, confirming any
-forwarded environment values and hiding secret input. Explicit files use
-`deploy -a path/app.toml -d path/deployment.toml`.
-
-For separate configuration staging and activation, use `cloud app stage` followed by
-`cloud app apply`. Apply respects intended running state: explicit stops remain
-stopped, while new apps and apps intended to run start as needed. Deploy ensures the
-app runs and prints the actual cloud outcomes for apply and start. Deployment `submit`, `enqueue`, and `apply` default to
-`./deployment.toml` in both cloud and direct commands.
-
 ```sh
 export OBELISK_CLOUD_API_URL=...
 export OBELISK_CLOUD_API_TOKEN=...

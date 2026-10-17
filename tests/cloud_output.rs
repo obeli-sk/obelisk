@@ -135,6 +135,15 @@ async fn cloud_output_and_endpoint_selection() {
                 }
             }),
         )
+        .route(
+            "/v1/apps/demo/status",
+            get(|| async {
+                Json(json!({
+                    "app":{"app_slug":"demo", "status":"stopped", "desired_state":"running"},
+                    "machine_state":"started", "api_ready":false
+                }))
+            }),
+        )
         .route("/v1/tokens", get(|| async { Json(json!({"tokens":[]})) }).post(|Json(body): Json<Value>| async move {
             assert!(body["hash"].as_str().unwrap().starts_with("sha256:"));
             assert!(body["global"] == true || !body["apps"].as_array().unwrap().is_empty());
@@ -194,6 +203,18 @@ async fn cloud_output_and_endpoint_selection() {
             endpoints[key]
         );
     }
+    let status = run(&["app", "status"]).await;
+    let apply = "Run `obelisk cloud app --app demo apply`";
+    assert!(
+        status.contains(&format!("Intended state: running. {apply} to reach it.")),
+        "{status}"
+    );
+    assert!(
+        status.contains(&format!(
+            "VM is started although the app is stopped. {apply} to reconcile it."
+        )),
+        "{status}"
+    );
     for command in [
         vec!["app", "get"],
         vec!["apps", "list"],
