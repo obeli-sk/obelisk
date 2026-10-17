@@ -762,12 +762,16 @@ pub(crate) async fn list_components(
     }
     for component in components {
         let component_id = component.component_id;
-        eprintln!(
-            "{name}\t{ty}\t{sha}",
-            name = component_id.name,
-            ty = component_id.component_type,
-            sha = component_id.component_digest,
-        );
+        if client_startup.detailed_output() {
+            eprintln!(
+                "{name}\t{ty}\t{sha}",
+                name = component_id.name,
+                ty = component_id.component_type,
+                sha = component_id.component_digest,
+            );
+        } else {
+            eprintln!("{}\t{}", component_id.name, component_id.component_type);
+        }
         eprintln!("Exports:");
         print_fn_details(component.exports.unwrap_or_default());
         if verbosity > FunctionMetadataVerbosity::ExportsOnly {

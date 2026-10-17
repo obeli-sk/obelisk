@@ -108,10 +108,14 @@ impl args::Deployment {
                     return Ok(());
                 }
 
-                eprintln!(
-                    "{:<32}  {:<12}  {:<19}  {:<19}  DESCRIPTION",
-                    "ID", "STATUS", "CREATED_AT", "LAST_ACTIVE_AT"
-                );
+                if client_startup.detailed_output() {
+                    eprintln!(
+                        "{:<32}  {:<12}  {:<19}  {:<19}  DESCRIPTION",
+                        "ID", "STATUS", "CREATED_AT", "LAST_ACTIVE_AT"
+                    );
+                } else {
+                    eprintln!("{:<32}  {:<12}  DESCRIPTION", "ID", "STATUS");
+                }
                 for dep in deployments {
                     let id = dep.deployment_id;
                     let status = format_status(&dep.status);
@@ -120,10 +124,17 @@ impl args::Deployment {
                         .last_active_at
                         .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
                         .unwrap_or_default();
-                    eprintln!(
-                        "{id:<32}  {status:<12}  {created:<19}  {last_active:<19}  {}",
-                        dep.description.unwrap_or_default()
-                    );
+                    if client_startup.detailed_output() {
+                        eprintln!(
+                            "{id:<32}  {status:<12}  {created:<19}  {last_active:<19}  {}",
+                            dep.description.unwrap_or_default()
+                        );
+                    } else {
+                        eprintln!(
+                            "{id:<32}  {status:<12}  {}",
+                            dep.description.unwrap_or_default()
+                        );
+                    }
                 }
                 Ok(())
             }

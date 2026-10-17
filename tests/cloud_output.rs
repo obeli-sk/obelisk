@@ -2,6 +2,113 @@ use axum::{Json, Router, routing::get};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn cloud_app_commands_resolve_project_and_explicit_targets() {
+    use axum::extract::Path;
+    use std::sync::{Arc, Mutex};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let selected = Arc::new(Mutex::new(Vec::new()));
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let components = json!([{"component_id":{"name":"demo", "component_type":"workflow", "component_digest":digest}, "files":[], "exports":[], "imports":[]}]);
+    let router = Router::new()
+        .route(
+            "/v1/apps/{name}",
+            get({
+                let selected = selected.clone();
+                let api_url = format!("{origin}/tenant");
+                move |Path(name): Path<String>| {
+                    selected.lock().unwrap().push(name);
+                    let api_url = api_url.clone();
+                    async move { Json(json!({"api_url":api_url})) }
+                }
+            }),
+        )
+        .route(
+            "/tenant/v1/components",
+            get({
+                let components = components.clone();
+                move || {
+                    let components = components.clone();
+                    async move { Json(components) }
+                }
+            }),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("app.toml"), "app_name='from-file'\n").unwrap();
+    for (env, arguments) in [
+        (None, vec!["component", "list", "--json"]),
+        (Some("from-env"), vec!["--json", "component", "list"]),
+        (
+            Some("from-env"),
+            vec!["component", "list", "--app", "explicit", "--json"],
+        ),
+    ] {
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"));
+        command
+            .args(["cloud", "--api-url", &origin, "app"])
+            .args(arguments)
+            .current_dir(directory.path())
+            .env_remove("OBELISK_APP_NAME")
+            .env("OBELISK_CLOUD_API_TOKEN", "test-token");
+        if let Some(env) = env {
+            command.env("OBELISK_APP_NAME", env);
+        }
+        let output = command.output().await.unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+            components
+        );
+    }
+    assert_eq!(
+        *selected.lock().unwrap(),
+        vec!["from-file", "from-env", "explicit"]
+    );
+    let direct = format!("{origin}/tenant");
+    for (arguments, detailed) in [
+        (
+            vec!["cloud", "--api-url", &origin, "app", "component", "list"],
+            false,
+        ),
+        (
+            vec![
+                "cloud",
+                "--api-url",
+                &origin,
+                "app",
+                "component",
+                "list",
+                "--verbose",
+            ],
+            true,
+        ),
+        (vec!["component", "--api-url", &direct, "list"], true),
+    ] {
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"));
+        command
+            .args(arguments)
+            .current_dir(directory.path())
+            .env_remove("OBELISK_APP_NAME");
+        let output = command.output().await.unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8_lossy(&output.stderr);
+        assert!(text.contains("demo"), "{text}");
+        assert_eq!(text.contains(&digest), detailed, "{text}");
+    }
+    server.abort();
+}
+
+#[tokio::test]
 async fn cloud_output_and_endpoint_selection() {
     let app = json!({
         "app_slug":"demo", "status":"running", "hostname":"demo.example.com",
@@ -28,15 +135,30 @@ async fn cloud_output_and_endpoint_selection() {
                 }
             }),
         )
-        .route("/v1/tokens", get(|| async { Json(json!({"tokens":[]})) }));
+        .route("/v1/tokens", get(|| async { Json(json!({"tokens":[]})) }).post(|Json(body): Json<Value>| async move {
+            assert!(body["hash"].as_str().unwrap().starts_with("sha256:"));
+            assert!(body["global"] == true || !body["apps"].as_array().unwrap().is_empty());
+            Json(json!({"token_id":"T_ID", "name":body["name"], "creation":body, "revoked":false, "expires_at":null}))
+        }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("app.toml"), "invalid TOML [").unwrap();
     let run = async |args: &[&str]| {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"))
-            .args(["cloud", "--api-url", &origin, "--app", "demo"])
+            .args(["cloud", "--api-url", &origin])
             .args(args)
-            .env_remove("OBELISK_APP_API_URL")
+            .current_dir(directory.path())
+            .env(
+                "OBELISK_APP_NAME",
+                if args[0] == "token" {
+                    "invalid/name"
+                } else {
+                    "demo"
+                },
+            )
+            .env("OBELISK_APP_API_URL", "https://ignored.example.com")
             .output()
             .await
             .unwrap();
@@ -91,17 +213,29 @@ async fn cloud_output_and_endpoint_selection() {
             }
         );
     }
-    assert_eq!(
-        run(&[
-            "--app-api-url",
-            "https://saved.example.com",
-            "app",
-            "endpoint",
-            "api"
-        ])
-        .await
-        .trim(),
-        "https://saved.example.com"
-    );
+    let account = run(&[
+        "token",
+        "new",
+        "--name",
+        "laptop",
+        "--token-file",
+        "account.token",
+    ])
+    .await;
+    assert!(account.contains("scope: account-wide"), "{account}");
+    let scoped = run(&[
+        "token",
+        "new",
+        "--name",
+        "ci",
+        "--token-file",
+        "ci.token",
+        "--scope",
+        "demo",
+        "--scope",
+        "worker",
+    ])
+    .await;
+    assert!(scoped.contains("scope: demo, worker"), "{scoped}");
     server.abort();
 }

@@ -7,6 +7,7 @@ pub(crate) struct ClientStartup {
     api_token: Option<SecretString>,
     api_url: String,
     cloud: bool,
+    verbose: bool,
 }
 
 pub(crate) async fn send_json<T: DeserializeOwned>(
@@ -51,19 +52,25 @@ impl ClientStartup {
             api_token,
             api_url,
             cloud: false,
+            verbose: false,
         }
     }
 
-    pub(crate) fn cloud(api_url: String, api_token: Option<SecretString>) -> Self {
+    pub(crate) fn cloud(api_url: String, api_token: Option<SecretString>, verbose: bool) -> Self {
         Self {
             api_token,
             api_url,
             cloud: true,
+            verbose,
         }
     }
 
     pub(crate) fn api_url(&self) -> &str {
         &self.api_url
+    }
+
+    pub(crate) fn detailed_output(&self) -> bool {
+        !self.cloud || self.verbose
     }
 
     /// HTTP client for web-API calls, presenting the API token as a default header.
