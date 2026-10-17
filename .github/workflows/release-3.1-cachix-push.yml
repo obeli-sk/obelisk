@@ -1,9 +1,7 @@
-name: release-2-cachix-push
+name: release-3.1-cachix-push
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 on:
   workflow_dispatch:
@@ -13,21 +11,6 @@ on:
         required: false
         type: string
         default: "latest"
-      push_unversioned_tags:
-        description: "Push unversioned Docker tags (requires publishing the release)"
-        required: true
-        type: boolean
-        default: false
-      prerelease:
-        description: "Mark the GitHub release as a prerelease"
-        required: true
-        type: boolean
-        default: true
-      publish_release:
-        description: "Publish the GitHub release after artifacts and Docker images are uploaded"
-        required: true
-        type: boolean
-        default: true
   workflow_call:
     inputs:
       ref:
@@ -35,36 +18,13 @@ on:
         required: false
         type: string
         default: "latest"
-      push_unversioned_tags:
-        description: "Push unversioned Docker tags (requires publishing the release)"
-        required: true
-        type: boolean
-      prerelease:
-        description: "Mark the GitHub release as a prerelease"
-        required: true
-        type: boolean
-      publish_release:
-        description: "Publish the GitHub release after artifacts and Docker images are uploaded"
-        required: true
-        type: boolean
 
 defaults:
   run:
     shell: bash -xe {0}
 
 jobs:
-  validate-inputs:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Validate inputs
-        run: |
-          if [ "${{ inputs.push_unversioned_tags }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
-            echo "::error::push_unversioned_tags requires publish_release"
-            exit 1
-          fi
-
   cachix-push:
-    needs: validate-inputs
     strategy:
       fail-fast: false
       matrix:
@@ -105,13 +65,3 @@ jobs:
             musl*) package="obeliskCross-${{ matrix.arch }}-unknown-linux-${package}" ;;
           esac
           nix build ".#$package"
-
-  call_child:
-    needs: cachix-push
-    uses: ./.github/workflows/release-3-create-github-release.yml
-    secrets: inherit
-    with:
-      ref: ${{ inputs.ref }}
-      push_unversioned_tags: ${{ inputs.push_unversioned_tags }}
-      prerelease: ${{ inputs.prerelease }}
-      publish_release: ${{ inputs.publish_release }}

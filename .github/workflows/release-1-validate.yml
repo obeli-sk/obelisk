@@ -105,7 +105,7 @@ jobs:
 
   call_child:
     needs: [validate, validate-cross-dev]
-    uses: ./.github/workflows/release-2-cachix-push.yml
+    uses: ./.github/workflows/release-2-create-github-release.yml
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}

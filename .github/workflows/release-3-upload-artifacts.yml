@@ -1,4 +1,4 @@
-name: release-3.1-upload-artifacts
+name: release-3-upload-artifacts
 
 permissions:
   contents: write
@@ -184,6 +184,13 @@ jobs:
             --data-binary @archive.tar.gz \
             "https://uploads.github.com/repos/obeli-sk/obelisk/releases/${{ steps.release-info.outputs.release_id }}/assets?name=obelisk-${{ matrix.target }}.tar.gz"
 
+  cachix-push:
+    needs: validate-inputs
+    uses: ./.github/workflows/release-3.1-cachix-push.yml
+    secrets: inherit
+    with:
+      ref: ${{ inputs.ref }}
+
   verify-assets:
     needs: upload-assets
     runs-on: ubuntu-24.04
@@ -224,7 +231,7 @@ jobs:
           fi
 
   call_child:
-    needs: verify-assets
+    needs: [verify-assets, cachix-push]
     uses: ./.github/workflows/release-4-push-docker-image.yml
     secrets: inherit
     with:

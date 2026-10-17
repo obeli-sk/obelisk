@@ -1,4 +1,4 @@
-name: release-3-create-github-release
+name: release-2-create-github-release
 
 permissions:
   contents: write
@@ -182,7 +182,7 @@ jobs:
 
   call_child:
     needs: create-github-release
-    uses: ./.github/workflows/release-3.1-upload-artifacts.yml
+    uses: ./.github/workflows/release-3-upload-artifacts.yml
     secrets: inherit
     with:
       ref: ${{ needs.create-github-release.outputs.sha }}
