@@ -1260,7 +1260,11 @@ mod tests {
                 }
                 Subcommand::Cloud(args) => {
                     assert_eq!(args.api_url.as_deref(), Some("https://cloud.example.test"));
-                    let Cloud::Deployment(Deployment::Verify(verify)) = args.command else {
+                    let Cloud::Deployment(CloudSelected {
+                        command: Deployment::Verify(verify),
+                        ..
+                    }) = args.command
+                    else {
                         panic!()
                     };
                     verify
@@ -1505,20 +1509,23 @@ pub(crate) struct CloudArgs {
     /// Print machine-readable JSON instead of human-readable output.
     #[arg(long, global = true)]
     pub(crate) json: bool,
-    /// Direct tenant API URL; bypasses provisioner endpoint discovery.
-    #[arg(long, global = true, env = "OBELISK_APP_API_URL")]
-    pub(crate) app_api_url: Option<String>,
     /// Provisioner webhook URL.
     #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
     pub(crate) api_url: Option<String>,
     /// Cloud API bearer token.
     #[arg(long, global = true, env = "OBELISK_CLOUD_API_TOKEN", hide_env_values = true, value_parser = parse_secret_string)]
     pub(crate) api_token: Option<SecretString>,
+    #[command(subcommand)]
+    pub(crate) command: Cloud,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct CloudSelected<T: clap::Subcommand> {
     /// Selected app name; defaults to `app_name` in ./app.toml.
     #[arg(long, global = true, env = "OBELISK_APP_NAME", value_name = "NAME")]
     pub(crate) app: Option<String>,
     #[command(subcommand)]
-    pub(crate) command: Cloud,
+    pub(crate) command: T,
 }
 
 #[derive(Debug, clap::Args)]
@@ -1537,20 +1544,15 @@ pub(crate) enum Cloud {
     #[command(subcommand)]
     Apps(CloudApps),
     /// Manage an app lifecycle and staged configuration.
-    #[command(subcommand)]
-    App(CloudApp),
+    App(CloudSelected<CloudApp>),
     /// Manage deployments through the selected app's API.
-    #[command(subcommand)]
-    Deployment(Deployment),
+    Deployment(CloudSelected<Deployment>),
     /// Manage executions through the selected app's API.
-    #[command(subcommand)]
-    Execution(Execution),
+    Execution(CloudSelected<Execution>),
     /// Inspect components or manage OCI artifacts.
-    #[command(subcommand)]
-    Component(Component),
+    Component(CloudSelected<Component>),
     /// Perform operator-only destructive maintenance on the selected app.
-    #[command(subcommand)]
-    Admin(Admin),
+    Admin(CloudSelected<Admin>),
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -1560,36 +1562,26 @@ pub(crate) enum CloudApps {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum CloudToken {
-    Create {
+    /// Create a token; defaults to account-wide access, including future apps.
+    New {
         #[arg(long)]
         name: String,
         /// Persist the generated token here before registration; reuse the file to retry.
         #[arg(long)]
         token_file: PathBuf,
-        #[arg(long, conflicts_with = "apps")]
-        global: bool,
-        #[arg(long = "apps", value_delimiter = ',', conflicts_with = "global")]
-        apps: Vec<String>,
+        /// Restrict access to this app slug; repeat for multiple apps.
+        #[arg(long, value_name = "APP_SLUG", value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        scope: Vec<String>,
         /// Absolute expiry in RFC 3339 format.
         #[arg(long)]
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
-        /// Operator-only issuance for this user.
-        #[arg(long)]
-        user: Option<String>,
     },
-    List {
-        #[arg(long)]
-        user: Option<String>,
-    },
+    List,
     Get {
         id: String,
-        #[arg(long)]
-        user: Option<String>,
     },
     Revoke {
         id: String,
-        #[arg(long)]
-        user: Option<String>,
     },
 }
 

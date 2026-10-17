@@ -18,20 +18,12 @@
           "help": "Print machine-readable JSON instead of human-readable output"
         },
         {
-          "name": "--app-api-url",
-          "help": "Direct tenant API URL; bypasses provisioner endpoint discovery"
-        },
-        {
           "name": "--api-url",
           "help": "Provisioner webhook URL"
         },
         {
           "name": "--api-token",
           "help": "Cloud API bearer token"
-        },
-        {
-          "name": "--app",
-          "help": "Selected app name; defaults to `app_name` in ./app.toml"
         }
       ],
       "subcommands": [
@@ -40,7 +32,8 @@
           "about": "Create, inspect and revoke cloud bearer tokens",
           "subcommands": [
             {
-              "name": "create",
+              "name": "new",
+              "about": "Create a token; defaults to account-wide access, including future apps",
               "options": [
                 {
                   "name": "--name",
@@ -55,36 +48,20 @@
                   }
                 },
                 {
-                  "name": "--global"
-                },
-                {
-                  "name": "--apps"
+                  "name": "--scope",
+                  "help": "Restrict access to this app slug; repeat for multiple apps"
                 },
                 {
                   "name": "--expires-at",
                   "help": "Absolute expiry in RFC 3339 format"
-                },
-                {
-                  "name": "--user",
-                  "help": "Operator-only issuance for this user"
                 }
               ]
             },
             {
-              "name": "list",
-              "options": [
-                {
-                  "name": "--user"
-                }
-              ]
+              "name": "list"
             },
             {
               "name": "get",
-              "options": [
-                {
-                  "name": "--user"
-                }
-              ],
               "positionals": [
                 {
                   "name": "id",
@@ -94,11 +71,6 @@
             },
             {
               "name": "revoke",
-              "options": [
-                {
-                  "name": "--user"
-                }
-              ],
               "positionals": [
                 {
                   "name": "id",
@@ -120,6 +92,12 @@
         {
           "name": "app",
           "about": "Manage an app lifecycle and staged configuration",
+          "options": [
+            {
+              "name": "--app",
+              "help": "Selected app name; defaults to `app_name` in ./app.toml"
+            }
+          ],
           "subcommands": [
             {
               "name": "new",
@@ -325,6 +303,12 @@
         {
           "name": "deployment",
           "about": "Manage deployments through the selected app's API",
+          "options": [
+            {
+              "name": "--app",
+              "help": "Selected app name; defaults to `app_name` in ./app.toml"
+            }
+          ],
           "subcommands": [
             {
               "name": "submit",
@@ -527,6 +511,12 @@
         {
           "name": "execution",
           "about": "Manage executions through the selected app's API",
+          "options": [
+            {
+              "name": "--app",
+              "help": "Selected app name; defaults to `app_name` in ./app.toml"
+            }
+          ],
           "subcommands": [
             {
               "name": "list",
@@ -921,6 +911,12 @@
         {
           "name": "component",
           "about": "Inspect components or manage OCI artifacts",
+          "options": [
+            {
+              "name": "--app",
+              "help": "Selected app name; defaults to `app_name` in ./app.toml"
+            }
+          ],
           "subcommands": [
             {
               "name": "list",
@@ -1005,6 +1001,12 @@
         {
           "name": "admin",
           "about": "Perform operator-only destructive maintenance on the selected app",
+          "options": [
+            {
+              "name": "--app",
+              "help": "Selected app name; defaults to `app_name` in ./app.toml"
+            }
+          ],
           "subcommands": [
             {
               "name": "executions",

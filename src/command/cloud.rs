@@ -2,8 +2,8 @@ use super::output::{print_json, print_value};
 use crate::args::CloudToken;
 use crate::args::{
     AdminArgs, ClientConnection, Cloud, CloudApp, CloudApps, CloudArgs, CloudCommandId,
-    CloudEndpoint, CloudEnv, CloudSecrets, ComponentArgs, DeploymentArgs, ExecutionArgs,
-    Subcommand,
+    CloudEndpoint, CloudEnv, CloudSecrets, CloudSelected, ComponentArgs, DeploymentArgs,
+    ExecutionArgs, Subcommand,
 };
 use crate::client::ClientStartup;
 use crate::config::app::AppConfigToml;
@@ -18,15 +18,35 @@ fn human_output(value: &Value) -> String {
     fn render(out: &mut String, value: &Value, indent: usize) {
         match value {
             Value::Object(fields) if !fields.is_empty() => {
-                for (key, value) in fields {
-                    let label = key.replace('_', " ");
-                    let _ = write!(out, "{:indent$}{label}:", "");
-                    if value.is_object() || value.is_array() {
-                        out.push('\n');
-                        render(out, value, indent + 2);
+                for (key, value) in fields
+                    .iter()
+                    .filter(|(key, _)| key.as_str() != "apps" || !fields.contains_key("global"))
+                {
+                    if key == "global" && value.is_boolean() {
+                        let scope = if value == true {
+                            "account-wide".to_owned()
+                        } else {
+                            fields["apps"]
+                                .as_array()
+                                .map(|apps| {
+                                    apps.iter()
+                                        .filter_map(Value::as_str)
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                })
+                                .unwrap_or_default()
+                        };
+                        let _ = writeln!(out, "{:indent$}scope: {scope}", "");
                     } else {
-                        out.push(' ');
-                        render(out, value, 0);
+                        let label = key.replace('_', " ");
+                        let _ = write!(out, "{:indent$}{label}:", "");
+                        if value.is_object() || value.is_array() {
+                            out.push('\n');
+                            render(out, value, indent + 2);
+                        } else {
+                            out.push(' ');
+                            render(out, value, 0);
+                        }
                     }
                 }
             }
@@ -201,24 +221,12 @@ async fn policy(path: &Path) -> anyhow::Result<AppConfigToml> {
     toml::from_str(&text).with_context(|| format!("Invalid app policy {}", path.display()))
 }
 async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<Value> {
-    let user = match &command {
-        CloudToken::Create { user, .. }
-        | CloudToken::List { user }
-        | CloudToken::Get { user, .. }
-        | CloudToken::Revoke { user, .. } => user.as_deref(),
-    };
-    let mut path = if let Some(user) = user {
-        ensure!(dns_label(user, 40), "Invalid user name");
-        vec!["v1", "operator", "users", user, "tokens"]
-    } else {
-        vec!["v1", "tokens"]
-    };
+    let mut path = vec!["v1", "tokens"];
     match &command {
-        CloudToken::Create {
+        CloudToken::New {
             name,
             token_file,
-            global,
-            apps,
+            scope,
             expires_at,
             ..
         } => {
@@ -266,11 +274,11 @@ async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<V
                 "Token saved in {}; reuse this file and parameters to retry",
                 token_file.display()
             );
-            let mut value = client.request(Method::POST,&path,Some(json!({"hash":crate::api::token_hash(&token).to_string(),"name":name,"global":global,"apps":apps,"expires_at":expires_at})),Kind::Read).await?;
+            let mut value = client.request(Method::POST,&path,Some(json!({"hash":crate::api::token_hash(&token).to_string(),"name":name,"global":scope.is_empty(),"apps":scope,"expires_at":expires_at})),Kind::Read).await?;
             value["token_file"] = json!(token_file);
             Ok(value)
         }
-        CloudToken::List { .. } => client.request(Method::GET, &path, None, Kind::Read).await,
+        CloudToken::List => client.request(Method::GET, &path, None, Kind::Read).await,
         CloudToken::Get { id, .. } | CloudToken::Revoke { id, .. } => {
             path.push(id);
             client
@@ -289,9 +297,19 @@ async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<V
     }
 }
 impl CloudArgs {
+    fn selected_app(&self) -> Option<&str> {
+        match &self.command {
+            Cloud::App(args) => args.app.as_deref(),
+            Cloud::Deployment(args) => args.app.as_deref(),
+            Cloud::Execution(args) => args.app.as_deref(),
+            Cloud::Component(args) => args.app.as_deref(),
+            Cloud::Admin(args) => args.app.as_deref(),
+            Cloud::Apps(_) | Cloud::Token(_) => None,
+        }
+    }
     async fn endpoints(&self) -> anyhow::Result<Value> {
         let client = Client::new(self)?;
-        let name = app_name(self.app.as_deref()).await?;
+        let name = app_name(self.selected_app()).await?;
         let app = client
             .app(&name, Method::GET, &[], None, Kind::Read)
             .await?;
@@ -305,32 +323,28 @@ impl CloudArgs {
             ),
         };
         Ok(json!({
-            "api_url": self.app_api_url.as_deref().or(app["api_url"].as_str()).context("Provisioner response is missing api_url")?,
+            "api_url": app["api_url"].as_str().context("Provisioner response is missing api_url")?,
             "webhook_url": webhook,
             "webui_url": app["webui_url"].as_str().context("Provisioner response is missing webui_url")?,
         }))
     }
     async fn direct_api_url(&self) -> anyhow::Result<String> {
-        let value = if let Some(url) = &self.app_api_url {
-            url.clone()
-        } else {
-            let client = Client::new(self)?;
-            let name = app_name(self.app.as_deref()).await?;
-            let app = client
-                .app(&name, Method::GET, &[], None, Kind::Read)
-                .await?;
-            app["api_url"]
-                .as_str()
-                .context("Provisioner response is missing api_url")?
-                .to_owned()
-        };
-        Ok(api_origin(&value)?
+        let client = Client::new(self)?;
+        let name = app_name(self.selected_app()).await?;
+        let app = client
+            .app(&name, Method::GET, &[], None, Kind::Read)
+            .await?;
+        let value = app["api_url"]
             .as_str()
-            .trim_end_matches('/')
-            .to_owned())
+            .context("Provisioner response is missing api_url")?;
+        Ok(api_origin(value)?.as_str().trim_end_matches('/').to_owned())
     }
     pub(crate) async fn run(self) -> anyhow::Result<()> {
-        if let Cloud::App(CloudApp::Endpoint { command }) = &self.command {
+        if let Cloud::App(CloudSelected {
+            command: CloudApp::Endpoint { command },
+            ..
+        }) = &self.command
+        {
             if matches!(command, Some(CloudEndpoint::Api)) {
                 return print_value(&self.direct_api_url().await?, self.json);
             }
@@ -364,16 +378,22 @@ impl CloudArgs {
                 api_token: None,
             };
             let command = match self.command {
-                Cloud::Deployment(command) => {
-                    Subcommand::Deployment(DeploymentArgs { command, token })
-                }
-                Cloud::Execution(command) => {
-                    Subcommand::Execution(ExecutionArgs { command, token })
-                }
-                Cloud::Component(command) => {
-                    Subcommand::Component(ComponentArgs { command, token })
-                }
-                Cloud::Admin(command) => Subcommand::Admin(AdminArgs { command, token }),
+                Cloud::Deployment(command) => Subcommand::Deployment(DeploymentArgs {
+                    command: command.command,
+                    token,
+                }),
+                Cloud::Execution(command) => Subcommand::Execution(ExecutionArgs {
+                    command: command.command,
+                    token,
+                }),
+                Cloud::Component(command) => Subcommand::Component(ComponentArgs {
+                    command: command.command,
+                    token,
+                }),
+                Cloud::Admin(command) => Subcommand::Admin(AdminArgs {
+                    command: command.command,
+                    token,
+                }),
                 Cloud::Apps(_) | Cloud::App(_) | Cloud::Token(_) => unreachable!(),
             };
             return crate::command_future(command, Some(startup))?.await;
@@ -399,10 +419,14 @@ impl CloudArgs {
                     .request(Method::GET, &["v1", "apps"], None, Kind::Read)
                     .await
             }
-            Cloud::App(CloudApp::New {
-                name,
-                app_config,
-                command_id,
+            Cloud::App(CloudSelected {
+                app,
+                command:
+                    CloudApp::New {
+                        name,
+                        app_config,
+                        command_id,
+                    },
             }) => {
                 let config = match crate::config::app::resolve_app_config(app_config)? {
                     Some(path) => Some(policy(&path).await?),
@@ -410,7 +434,7 @@ impl CloudArgs {
                 };
                 let name = app_name(
                     name.as_deref()
-                        .or(self.app.as_deref())
+                        .or(app.as_deref())
                         .or_else(|| config.as_ref().and_then(|c| c.app_name.as_deref())),
                 )
                 .await?;
@@ -422,8 +446,8 @@ impl CloudArgs {
                     .request(Method::POST, &["v1", "apps"], Some(body), command_id.into())
                     .await
             }
-            Cloud::App(command) => {
-                let name = &app_name(self.app.as_deref()).await?;
+            Cloud::App(CloudSelected { app, command }) => {
+                let name = &app_name(app.as_deref()).await?;
                 match command {
                     CloudApp::Get => client.app(name, Method::GET, &[], None, Kind::Read).await,
                     CloudApp::Status => {
@@ -666,10 +690,9 @@ mod tests {
         let path = directory.path().join("token");
         let command = [
             "token",
-            "create",
+            "new",
             "--name",
             "laptop",
-            "--global",
             "--token-file",
             path.to_str().unwrap(),
         ];
@@ -684,6 +707,8 @@ mod tests {
         assert_eq!(state.received.len(), 2);
         assert_eq!(state.received[0], state.received[1]);
         assert_eq!(state.received[0].0, "POST /prefix/v1/tokens");
+        assert_eq!(state.received[0].1["global"], true);
+        assert_eq!(state.received[0].1["apps"], json!([]));
         assert_eq!(
             state.received[0].1["hash"],
             crate::api::token_hash(&token).to_string()
@@ -699,6 +724,77 @@ mod tests {
         }
         task.abort();
     }
+    #[tokio::test]
+    async fn cloud_token_scopes_are_explicit_app_grants() {
+        let (origin, state, task) = server().await;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("token");
+        args(
+            &origin,
+            &[
+                "token",
+                "new",
+                "--name",
+                "ci",
+                "--token-file",
+                path.to_str().unwrap(),
+                "--scope",
+                "app-1",
+                "--scope",
+                "app-2",
+            ],
+        )
+        .execute()
+        .await
+        .unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.received[0].0, "POST /prefix/v1/tokens");
+        assert_eq!(state.received[0].1["global"], false);
+        assert_eq!(state.received[0].1["apps"], json!(["app-1", "app-2"]));
+        task.abort();
+    }
+
+    #[test]
+    fn cloud_token_rejects_empty_scopes_and_unrelated_options() {
+        let base = [
+            "obelisk",
+            "cloud",
+            "token",
+            "new",
+            "--name",
+            "ci",
+            "--token-file",
+            "ci.token",
+        ];
+        for extra in [
+            vec!["--scope", ""],
+            vec!["--user", "alice"],
+            vec!["--global"],
+            vec!["--apps", "demo"],
+            vec!["--app", "demo"],
+            vec!["--app-api-url", "https://example.com"],
+        ] {
+            assert!(Args::try_parse_from(base.iter().copied().chain(extra)).is_err());
+        }
+        assert!(Args::try_parse_from(["obelisk", "cloud", "token", "create"]).is_err());
+        use clap::CommandFactory as _;
+        let mut command = Args::command();
+        let token = command
+            .find_subcommand_mut("cloud")
+            .unwrap()
+            .find_subcommand_mut("token")
+            .unwrap();
+        assert!(!token.render_long_help().to_string().contains("--app"));
+        assert!(
+            token
+                .find_subcommand_mut("new")
+                .unwrap()
+                .render_long_help()
+                .to_string()
+                .contains("including future apps")
+        );
+    }
+
     async fn handle(
         State(state): State<Arc<Mutex<Requests>>>,
         headers: HeaderMap,
@@ -795,10 +891,20 @@ mod tests {
             origin,
             "--api-token",
             "cloud-token",
-            "--app",
-            "demo",
         ];
-        args.extend_from_slice(command);
+        let position = command.iter().position(|arg| {
+            matches!(
+                *arg,
+                "app" | "deployment" | "execution" | "component" | "admin"
+            )
+        });
+        if let Some(position) = position {
+            args.extend_from_slice(&command[..=position]);
+            args.extend_from_slice(&["--app", "demo"]);
+            args.extend_from_slice(&command[position + 1..]);
+        } else {
+            args.extend_from_slice(command);
+        }
         let Subcommand::Cloud(args) = Args::try_parse_from(args).unwrap().command else {
             panic!()
         };
@@ -814,7 +920,10 @@ mod tests {
             assert!(args.json);
             assert!(matches!(
                 args.command,
-                Cloud::Admin(crate::args::Admin::NodeRunId { json: true })
+                Cloud::Admin(CloudSelected {
+                    command: crate::args::Admin::NodeRunId { json: true },
+                    ..
+                })
             ));
         }
     }
@@ -856,13 +965,14 @@ mod tests {
             ]
         );
         state.lock().unwrap().error = true;
-        let mut direct = args(&origin, &["admin", "node-run-id"]);
-        direct.api_url = None;
-        direct.app_api_url = Some(api_url.clone());
-        assert_eq!(direct.direct_api_url().await.unwrap(), api_url);
-        direct.run().await.unwrap();
-        assert_eq!(state.lock().unwrap().received.len(), 5);
-        assert_eq!(target_state.lock().unwrap().received.len(), 6);
+        assert!(
+            args(&origin, &["admin", "node-run-id"])
+                .run()
+                .await
+                .is_err()
+        );
+        assert_eq!(state.lock().unwrap().received.len(), 6);
+        assert_eq!(target_state.lock().unwrap().received.len(), 5);
         task.abort();
         target_task.abort();
     }

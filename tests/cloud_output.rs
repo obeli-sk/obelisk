@@ -28,15 +28,30 @@ async fn cloud_output_and_endpoint_selection() {
                 }
             }),
         )
-        .route("/v1/tokens", get(|| async { Json(json!({"tokens":[]})) }));
+        .route("/v1/tokens", get(|| async { Json(json!({"tokens":[]})) }).post(|Json(body): Json<Value>| async move {
+            assert!(body["hash"].as_str().unwrap().starts_with("sha256:"));
+            assert!(body["global"] == true || !body["apps"].as_array().unwrap().is_empty());
+            Json(json!({"token_id":"T_ID", "name":body["name"], "global":body["global"], "apps":body["apps"]}))
+        }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("app.toml"), "invalid TOML [").unwrap();
     let run = async |args: &[&str]| {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"))
-            .args(["cloud", "--api-url", &origin, "--app", "demo"])
+            .args(["cloud", "--api-url", &origin])
             .args(args)
-            .env_remove("OBELISK_APP_API_URL")
+            .current_dir(directory.path())
+            .env(
+                "OBELISK_APP_NAME",
+                if args[0] == "token" {
+                    "invalid/name"
+                } else {
+                    "demo"
+                },
+            )
+            .env("OBELISK_APP_API_URL", "https://ignored.example.com")
             .output()
             .await
             .unwrap();
@@ -91,17 +106,29 @@ async fn cloud_output_and_endpoint_selection() {
             }
         );
     }
-    assert_eq!(
-        run(&[
-            "--app-api-url",
-            "https://saved.example.com",
-            "app",
-            "endpoint",
-            "api"
-        ])
-        .await
-        .trim(),
-        "https://saved.example.com"
-    );
+    let account = run(&[
+        "token",
+        "new",
+        "--name",
+        "laptop",
+        "--token-file",
+        "account.token",
+    ])
+    .await;
+    assert!(account.contains("scope: account-wide"), "{account}");
+    let scoped = run(&[
+        "token",
+        "new",
+        "--name",
+        "ci",
+        "--token-file",
+        "ci.token",
+        "--scope",
+        "demo",
+        "--scope",
+        "worker",
+    ])
+    .await;
+    assert!(scoped.contains("scope: demo, worker"), "{scoped}");
     server.abort();
 }
