@@ -31,7 +31,7 @@ worker-common.workspace = true
 webpki-roots.workspace = true
 
 [dev-dependencies]
-wat = "1"
+wat.workspace = true
 wiremock.workspace = true
 
 [lints]
