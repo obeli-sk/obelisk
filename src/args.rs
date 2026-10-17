@@ -1248,8 +1248,8 @@ mod tests {
             )
             .unwrap();
             match args.command {
-                Subcommand::Deployment(DeploymentArgs { command, .. }) => command,
-                Subcommand::Cloud(CloudArgs {
+                Subcommand::Deployment(DeploymentArgs { command, .. })
+                | Subcommand::Cloud(CloudArgs {
                     command:
                         Cloud::App(CloudAppTarget {
                             command: CloudApp::Deployment(command),
@@ -1273,7 +1273,7 @@ mod tests {
                         | Deployment::Enqueue { source, empty, .. } => (
                             source.map(|source| match source {
                                 DeploymentSource::File(path) => path,
-                                _ => panic!("expected file"),
+                                DeploymentSource::Id(_) => panic!("expected file"),
                             }),
                             empty,
                         ),
