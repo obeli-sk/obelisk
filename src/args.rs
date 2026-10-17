@@ -320,7 +320,8 @@ pub(crate) enum Deployment {
         /// Path to the deployment TOML file.
         #[arg(
             value_name = "PATH",
-            required_unless_present = "empty",
+            default_value = "deployment.toml",
+            default_value_if("empty", "true", None),
             conflicts_with = "empty"
         )]
         file: Option<PathBuf>,
@@ -351,7 +352,8 @@ pub(crate) enum Deployment {
         /// Path to a deployment TOML file, or an existing deployment ID.
         #[arg(
             value_name = "PATH|ID",
-            required_unless_present = "empty",
+            default_value = "deployment.toml",
+            default_value_if("empty", "true", None),
             conflicts_with = "empty"
         )]
         source: Option<DeploymentSource>,
@@ -382,7 +384,8 @@ pub(crate) enum Deployment {
         /// Path to a deployment TOML file, or an existing deployment ID.
         #[arg(
             value_name = "PATH|ID",
-            required_unless_present = "empty",
+            default_value = "deployment.toml",
+            default_value_if("empty", "true", None),
             conflicts_with = "empty"
         )]
         source: Option<DeploymentSource>,
@@ -1232,6 +1235,87 @@ pub(crate) struct CancelCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn deployment_sources_default_to_project_file_without_overriding_empty_or_ids() {
+        use clap::Parser as _;
+        let parse = |prefix: &[&str], action: &str, suffix: &[&str]| {
+            let args = Args::try_parse_from(
+                prefix
+                    .iter()
+                    .copied()
+                    .chain([action])
+                    .chain(suffix.iter().copied()),
+            )
+            .unwrap();
+            match args.command {
+                Subcommand::Deployment(DeploymentArgs { command, .. })
+                | Subcommand::Cloud(CloudArgs {
+                    command:
+                        Cloud::App(CloudAppTarget {
+                            command: CloudApp::Deployment(command),
+                            ..
+                        }),
+                    ..
+                }) => command,
+                _ => panic!("expected deployment"),
+            }
+        };
+        for prefix in [
+            vec!["obelisk", "deployment"],
+            vec!["obelisk", "cloud", "app", "deployment"],
+        ] {
+            for action in ["submit", "enqueue", "apply"] {
+                for suffix in [vec![], vec!["--empty"], vec!["other.toml"]] {
+                    let command = parse(&prefix, action, &suffix);
+                    let (path, empty) = match command {
+                        Deployment::Submit { file, empty, .. } => (file, empty),
+                        Deployment::Apply { source, empty, .. }
+                        | Deployment::Enqueue { source, empty, .. } => (
+                            source.map(|source| match source {
+                                DeploymentSource::File(path) => path,
+                                DeploymentSource::Id(_) => panic!("expected file"),
+                            }),
+                            empty,
+                        ),
+                        _ => panic!("expected submission"),
+                    };
+                    assert_eq!(empty, suffix == ["--empty"]);
+                    assert_eq!(
+                        path,
+                        if empty {
+                            None
+                        } else {
+                            Some(PathBuf::from(
+                                suffix.first().copied().unwrap_or("deployment.toml"),
+                            ))
+                        }
+                    );
+                }
+                assert!(
+                    Args::try_parse_from(prefix.iter().copied().chain([
+                        action,
+                        "other.toml",
+                        "--empty"
+                    ]))
+                    .is_err()
+                );
+                if action != "submit" {
+                    let id = concepts::prefixed_ulid::DeploymentId::generate().to_string();
+                    let command = parse(&prefix, action, &[&id]);
+                    assert!(matches!(
+                        command,
+                        Deployment::Apply {
+                            source: Some(DeploymentSource::Id(_)),
+                            ..
+                        } | Deployment::Enqueue {
+                            source: Some(DeploymentSource::Id(_)),
+                            ..
+                        }
+                    ));
+                }
+            }
+        }
+    }
 
     #[test]
     fn cli_command_tree_is_valid() {
@@ -1609,14 +1693,26 @@ pub(crate) enum CloudApp {
     /// Inspect management, Machine and target API health.
     Status,
     /// Stage app policy and cloud settings without restarting the VM.
-    Update {
+    Stage {
         /// App policy path; defaults to ./app.toml.
         #[arg(short = 'a', long, default_value = "app.toml")]
         app_config: PathBuf,
         #[command(flatten)]
         command_id: CloudCommandId,
     },
-    /// Apply staged policy, env and secrets; start a stopped VM.
+    /// Publish the local project, creating or configuring the app and activating its deployment.
+    Deploy {
+        /// App configuration path.
+        #[arg(short = 'a', long, default_value = "app.toml")]
+        app_config: PathBuf,
+        /// Deployment manifest path.
+        #[arg(short = 'd', long, default_value = "deployment.toml")]
+        deployment: PathBuf,
+        /// Run `fill` first; otherwise missing required env vars and secrets are an error.
+        #[arg(long)]
+        fill: bool,
+    },
+    /// Apply staged configuration while respecting the app's intended running state.
     Apply {
         /// Reapply even with a clear stale flag, including uncertain secret changes.
         #[arg(long)]
@@ -1636,9 +1732,9 @@ pub(crate) enum CloudApp {
         #[command(flatten)]
         command_id: CloudCommandId,
     },
-    /// Stage declared configuration from process environment, including optional values if set.
+    /// Interactively stage declared env vars and secrets, offering process environment values.
     Fill {
-        /// Use this policy's declarations; otherwise read the currently staged policy.
+        /// App policy path; defaults to ./app.toml if present, otherwise the staged policy is used.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
     },

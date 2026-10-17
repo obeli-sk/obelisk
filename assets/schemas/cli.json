@@ -1024,7 +1024,7 @@
               "about": "Inspect management, Machine and target API health"
             },
             {
-              "name": "update",
+              "name": "stage",
               "about": "Stage app policy and cloud settings without restarting the VM",
               "options": [
                 {
@@ -1042,8 +1042,34 @@
               ]
             },
             {
+              "name": "deploy",
+              "about": "Publish the local project, creating or configuring the app and activating its deployment",
+              "options": [
+                {
+                  "name": "--app-config",
+                  "short": "a",
+                  "help": "App configuration path",
+                  "accepts": {
+                    "path": true
+                  }
+                },
+                {
+                  "name": "--deployment",
+                  "short": "d",
+                  "help": "Deployment manifest path",
+                  "accepts": {
+                    "path": true
+                  }
+                },
+                {
+                  "name": "--fill",
+                  "help": "Run `fill` first; otherwise missing required env vars and secrets are an error"
+                }
+              ]
+            },
+            {
               "name": "apply",
-              "about": "Apply staged policy, env and secrets; start a stopped VM",
+              "about": "Apply staged configuration while respecting the app's intended running state",
               "options": [
                 {
                   "name": "--force",
@@ -1084,12 +1110,12 @@
             },
             {
               "name": "fill",
-              "about": "Stage declared configuration from process environment, including optional values if set",
+              "about": "Interactively stage declared env vars and secrets, offering process environment values",
               "options": [
                 {
                   "name": "--app-config",
                   "short": "a",
-                  "help": "Use this policy's declarations; otherwise read the currently staged policy",
+                  "help": "App policy path; defaults to ./app.toml if present, otherwise the staged policy is used",
                   "accepts": {
                     "path": true
                   }

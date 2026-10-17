@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 pub(super) enum Summary {
     App(Option<&'static str>),
     Apps,
+    Lifecycle,
     Status,
     Token(Option<&'static str>),
     Tokens,
@@ -32,11 +33,11 @@ impl From<&Cloud> for Summary {
                     CloudApp::Get => Self::App(None),
                     CloudApp::Status => Self::Status,
                     CloudApp::New { .. } => Self::App(Some("App created.")),
-                    CloudApp::Apply { .. } => Self::App(Some("App applied.")),
-                    CloudApp::Start { .. } => Self::App(Some("App started.")),
-                    CloudApp::Stop { .. } => Self::App(Some("App stopped.")),
+                    CloudApp::Apply { .. } | CloudApp::Start { .. } | CloudApp::Stop { .. } => {
+                        Self::Lifecycle
+                    }
                     CloudApp::Delete { .. } => Self::Message("App deleted."),
-                    CloudApp::Update { .. } => Self::Staged("Configuration staged.", apply),
+                    CloudApp::Stage { .. } => Self::Staged("Configuration staged.", apply),
                     CloudApp::Env(CloudEnv::List) => Self::Env,
                     CloudApp::Env(CloudEnv::Set { .. } | CloudEnv::Unset { .. }) => {
                         Self::Staged("Environment staged.", apply)
@@ -47,6 +48,7 @@ impl From<&Cloud> for Summary {
                     }
                     CloudApp::Fill { .. } => Self::Fill(apply),
                     CloudApp::Endpoint { .. }
+                    | CloudApp::Deploy { .. }
                     | CloudApp::Deployment(_)
                     | CloudApp::Execution(_)
                     | CloudApp::Component(_)
@@ -67,6 +69,10 @@ impl Summary {
                 }
                 app(&mut out, value);
             }
+            Self::Lifecycle => {
+                let _ = writeln!(out, "{}", lifecycle_outcome(value));
+                app(&mut out, value);
+            }
             Self::Apps => {
                 if let Some(apps) = value["apps"].as_array().filter(|apps| !apps.is_empty()) {
                     for value in apps {
@@ -78,6 +84,19 @@ impl Summary {
             }
             Self::Status => {
                 app(&mut out, &value["app"]);
+                let status = &value["app"]["status"];
+                let machine = text(value, "machine_state", "");
+                let up = machine == "started";
+                if matches!(machine, "started" | "stopped" | "suspended")
+                    && ((status == "running" && !up) || (status == "stopped" && up))
+                {
+                    let _ = writeln!(
+                        out,
+                        "VM is {machine} although the app is {status}. Run `obelisk cloud app --app {} apply` to reconcile it.",
+                        text(&value["app"], "app_slug", ""),
+                        status = text(&value["app"], "status", "")
+                    );
+                }
                 if let Some(memory) = value["memory_mb"].as_u64() {
                     let _ = writeln!(out, "Memory: {memory} MB");
                 }
@@ -150,15 +169,40 @@ impl Summary {
                 let _ = writeln!(out, "{message} Run `{apply}` to apply changes.");
             }
             Self::Fill(apply) => {
-                let count = value["staged"].as_array().map_or(0, Vec::len);
-                let _ = writeln!(out, "Staged {count} configuration values.");
-                if count > 0 {
+                for declaration in value["declarations"].as_array().into_iter().flatten() {
+                    let kind = if declaration["kind"] == "secrets" {
+                        "secret"
+                    } else {
+                        "env"
+                    };
+                    let action = declaration["action"].as_str().unwrap_or("not set");
+                    let _ = writeln!(out, "{kind} {}: {action}", text(declaration, "name", ""));
+                }
+                if value["apply_required"] == true {
                     let _ = writeln!(out, "Run `{apply}` to apply changes.");
                 }
             }
         }
         out
     }
+}
+
+pub(super) fn lifecycle_outcome(value: &Value) -> String {
+    let configuration = match value["outcome"]["configuration"].as_str() {
+        Some("applied") => "Configuration applied. ",
+        Some("unchanged") => "Configuration already applied. ",
+        _ => "",
+    };
+    let vm = match value["outcome"]["vm"].as_str() {
+        Some("started") => "App started.",
+        Some("restarted") => "App restarted.",
+        Some("stopped") => "App stopped.",
+        Some("remained_stopped") => "App remains stopped.",
+        Some("remained_running") => "App remains running.",
+        // backcompat: 0.43.0-rc.4 cloud responses did not include lifecycle outcomes.
+        _ => "Cloud operation completed.",
+    };
+    format!("{configuration}{vm}")
 }
 
 fn text<'a>(value: &'a Value, key: &str, fallback: &'a str) -> &'a str {
@@ -172,6 +216,19 @@ fn app(out: &mut String, value: &Value) {
         text(value, "app_slug", "App"),
         text(value, "status", "unknown")
     );
+    if let Some(desired) = value["desired_state"].as_str()
+        && value["status"] != desired
+    {
+        if matches!(value["status"].as_str(), Some("running" | "stopped")) {
+            let _ = writeln!(
+                out,
+                "Intended state: {desired}. Run `obelisk cloud app --app {} apply` to reach it.",
+                text(value, "app_slug", "")
+            );
+        } else {
+            let _ = writeln!(out, "Intended state: {desired}");
+        }
+    }
     if let Some(url) = value["webhook_url"].as_str() {
         let _ = writeln!(out, "URL: {url}");
     }
