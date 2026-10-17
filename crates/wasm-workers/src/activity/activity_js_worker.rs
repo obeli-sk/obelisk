@@ -1154,6 +1154,64 @@ mod tests {
         assert_eq!(extract_string(&ok_val.value), "fetch works");
     }
 
+    /// V8 exposes the received HTTP/1 reason phrase like browsers do; Boa only sees the status
+    /// code through WASI HTTP and falls back to the canonical phrase.
+    #[rstest]
+    #[case::canonical_boa(ActivityJsRuntime::BoaWasm, "404 Not Found", r#"404 "Not Found""#)]
+    #[case::canonical_v8(ActivityJsRuntime::V8, "404 Not Found", r#"404 "Not Found""#)]
+    #[case::custom_v8(ActivityJsRuntime::V8, "200 Okay", r#"200 "Okay""#)]
+    #[case::empty_v8(ActivityJsRuntime::V8, "404 ", r#"404 """#)]
+    #[tokio::test]
+    async fn fetch_status_text(
+        #[case] runtime: ActivityJsRuntime,
+        #[case] status_line: &'static str,
+        #[case] expected: &str,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        test_utils::set_up();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 {status_line}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-fetch");
+        let js_source = format!(
+            r#"
+            export default async function do_fetch(params) {{
+                const resp = await fetch("http://127.0.0.1:{port}/hello");
+                return `${{resp.status}} ${{JSON.stringify(resp.statusText)}}`;
+            }}
+            "#
+        );
+
+        let allowed = format!("http://127.0.0.1:{port}");
+        let worker = JsWorkerBuilder::new(&js_source, ffqn.clone())
+            .with_allowed_host(&allowed)
+            .with_runtime(runtime)
+            .build()
+            .await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), expected);
+        server.await.unwrap();
+    }
+
     /// The outbound Host header must be derived from the URI authority (parity with
     /// the wasmtime path, where wasmtime-wasi-http sets it), and ordinary headers are
     /// forwarded, on both JS runtimes.

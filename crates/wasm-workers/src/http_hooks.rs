@@ -15,7 +15,14 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{Error, RequestOptions, WasiHttpHooks, default_send_request};
 
 pub type HttpClientTracesContainer = Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>;
-type NativeHttpResponse = (u16, Vec<(String, String)>, Vec<u8>);
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeHttpResponse {
+    status: u16,
+    status_text: String,
+    headers: Vec<(String, String)>,
+    body: String,
+}
 
 /// The TOML config section type for error messages.
 #[derive(Clone, Copy, Debug, derive_more::Display)]
@@ -387,7 +394,19 @@ impl HttpHooks {
                 .await
                 .map_err(|err| format!("ErrorCode::{err:?}"))?;
             let io_task = tokio::spawn(Box::into_pin(io));
-            let status = response.status().as_u16();
+            let status = response.status();
+            // hyper keeps only non-canonical HTTP/1 reason phrases; HTTP/2+ has none (Fetch: "").
+            let status_text = match response.extensions().get::<hyper::ext::ReasonPhrase>() {
+                Some(reason) => reason
+                    .as_bytes()
+                    .iter()
+                    .map(|&byte| char::from(byte))
+                    .collect(),
+                None if response.version() < hyper::Version::HTTP_2 => {
+                    status.canonical_reason().unwrap_or_default().to_owned()
+                }
+                None => String::new(),
+            };
             let headers = response
                 .headers()
                 .iter()
@@ -404,10 +423,14 @@ impl HttpHooks {
                 .collect()
                 .await
                 .map_err(|err| err.to_string())?
-                .to_bytes()
-                .to_vec();
+                .to_bytes();
             io_task.abort();
-            Ok((status, headers, body))
+            Ok(NativeHttpResponse {
+                status: status.as_u16(),
+                status_text,
+                headers,
+                body: String::from_utf8_lossy(&body).into_owned(),
+            })
         })
     }
 }

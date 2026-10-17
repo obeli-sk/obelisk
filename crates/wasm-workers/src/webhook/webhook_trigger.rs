@@ -3828,6 +3828,41 @@ pub(crate) mod tests {
             assert_eq!("Hello from JS!", resp.text().await.unwrap());
         }
 
+        /// V8 writes a custom `statusText` as the HTTP/1 reason phrase and rejects one
+        /// that would break the status line.
+        #[rstest::rstest]
+        #[case::custom(
+            r#"{ status: 404, statusText: "Gone Fishing" }"#,
+            "HTTP/1.1 404 Gone Fishing"
+        )]
+        #[case::default(r"{ status: 404 }", "HTTP/1.1 404 Not Found")]
+        #[case::invalid(
+            r#"{ status: 404, statusText: "a\r\nx-injected: 1" }"#,
+            "HTTP/1.1 500 "
+        )]
+        #[tokio::test]
+        async fn webhook_js_v8_status_text(#[case] init: &str, #[case] expected_status_line: &str) {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            test_utils::set_up();
+            let js_source =
+                format!("export default function handle() {{ return new Response('', {init}); }}");
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_runtime(&js_source, WebhookJsRuntime::V8).await;
+            let mut stream = tokio::net::TcpStream::connect(server_addr).await.unwrap();
+            stream
+                .write_all(b"GET / HTTP/1.1\r\nhost: localhost\r\nconnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).await.unwrap();
+            let status_line = response.lines().next().unwrap();
+            assert!(
+                status_line.starts_with(expected_status_line),
+                "status line: {status_line:?}"
+            );
+            assert!(!response.contains("x-injected"), "response: {response:?}");
+        }
+
         #[tokio::test]
         async fn webhook_js_url_and_search_params() {
             test_utils::set_up();
