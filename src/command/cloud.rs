@@ -484,6 +484,7 @@ impl CloudArgs {
                 let mut body = json!({"app_slug":name});
                 if let Some(config) = config {
                     body["policy"] = serde_json::to_value(config.policy())?;
+                    body["cloud"] = serde_json::to_value(config.cloud)?;
                 }
                 client
                     .request(Method::POST, &["v1", "apps"], Some(body), command_id.into())
@@ -506,12 +507,13 @@ impl CloudArgs {
                         app_config,
                         command_id,
                     } => {
+                        let config = policy(&app_config).await?;
                         client
                             .app(
                                 name,
                                 Method::PUT,
-                                &["policy"],
-                                Some(serde_json::to_value(policy(&app_config).await?.policy())?),
+                                &["config"],
+                                Some(json!({"policy":config.policy(), "cloud":config.cloud})),
                                 command_id.into(),
                             )
                             .await
@@ -1052,7 +1054,7 @@ mod tests {
         let path = directory.path().join("app.toml");
         tokio::fs::write(
             &path,
-            "app_name='from-file'\n[public_env]\nREGION={}\n[secrets]\nKEY={optional=true}\n[[outbound_http.allowed_host]]\npattern='${REGION}'\n",
+            "app_name='from-file'\n[cloud]\nmemory_mb=1024\n[public_env]\nREGION={}\n[secrets]\nKEY={optional=true}\n[[outbound_http.allowed_host]]\npattern='${REGION}'\n",
         )
         .await
         .unwrap();
@@ -1080,9 +1082,14 @@ mod tests {
         assert_eq!(received[0].0, "POST /prefix/v1/apps");
         assert_eq!(received[0].1["app_slug"], "explicit");
         assert_eq!(received[0].1["policy"]["format"], "obelisk-app-config-v1");
-        assert_eq!(received[1].0, "PUT /prefix/v1/apps/demo/policy");
+        assert_eq!(received[0].1["cloud"]["memory_mb"], 1024);
+        assert_eq!(received[1].0, "PUT /prefix/v1/apps/demo/config");
+        assert_eq!(received[1].1["cloud"]["memory_mb"], 1024);
         assert!(received[1].1.get("app_name").is_none());
-        assert_eq!(received[1].1["outbound_http"][0]["pattern"], "${REGION}");
+        assert_eq!(
+            received[1].1["policy"]["outbound_http"][0]["pattern"],
+            "${REGION}"
+        );
         assert_eq!(received[2].1, json!({"force":false}));
         assert_eq!(received[3].1, json!({"force":true}));
         assert_eq!(received[4].0, "PUT /prefix/v1/apps/demo/env/OPTIONAL");

@@ -10,6 +10,10 @@
       ],
       "default": null
     },
+    "cloud": {
+      "$ref": "#/$defs/CloudConfigToml",
+      "default": {}
+    },
     "secrets": {
       "type": "object",
       "additionalProperties": {
@@ -40,6 +44,21 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "CloudConfigToml": {
+      "type": "object",
+      "properties": {
+        "memory_mb": {
+          "description": "VM memory in MB; omission uses the cloud default.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "SecretConfigToml": {
       "description": "Source and exposure authorization for a secret in the `[secrets]` table.",
       "type": "object",

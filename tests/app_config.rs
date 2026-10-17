@@ -87,7 +87,7 @@ async fn cloud_new_and_update_load_local_policy() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("app.toml"),
-        "app_name='local-app'\n[public_env]\nREGION={}\n",
+        "app_name='local-app'\n[cloud]\nmemory_mb=512\n[public_env]\nREGION={}\n",
     )
     .unwrap();
     tokio::task::spawn_blocking(move || {
@@ -114,8 +114,10 @@ async fn cloud_new_and_update_load_local_policy() {
     assert_eq!(requests[0].1, "/v1/apps");
     assert_eq!(requests[0].2["app_slug"], "local-app");
     assert_eq!(requests[0].2["policy"]["public_env"], json!(["REGION"]));
+    assert_eq!(requests[0].2["cloud"], json!({"memory_mb":512}));
     assert_eq!(requests[1].0, "PUT");
-    assert_eq!(requests[1].1, "/v1/apps/local-app/policy");
-    assert_eq!(requests[1].2, requests[0].2["policy"]);
+    assert_eq!(requests[1].1, "/v1/apps/local-app/config");
+    assert_eq!(requests[1].2["policy"], requests[0].2["policy"]);
+    assert_eq!(requests[1].2["cloud"], requests[0].2["cloud"]);
     task.abort();
 }

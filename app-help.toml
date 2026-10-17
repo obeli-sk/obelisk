@@ -5,6 +5,10 @@
 ## Set an app name before starting the server; it selects the default SQLite directory.
 # app_name = "my-app"
 
+## Optional hosted VM settings; omitted memory uses the cloud default.
+# [cloud]
+# memory_mb = 512
+
 ## Registered secrets read same-named environment variables at startup.
 ## They are removed from the process environment before workers start.
 # [secrets]
