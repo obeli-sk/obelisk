@@ -6,6 +6,10 @@
     {
       "type": "object",
       "properties": {
+        "component_type": {
+          "type": "string",
+          "const": "activity_wasm"
+        },
         "env_vars": {
           "type": "array",
           "items": {
@@ -27,10 +31,6 @@
               "type": "null"
             }
           ]
-        },
-        "component_type": {
-          "type": "string",
-          "const": "activity_wasm"
         }
       },
       "required": [
@@ -42,6 +42,10 @@
     {
       "type": "object",
       "properties": {
+        "component_type": {
+          "type": "string",
+          "const": "activity_js"
+        },
         "env_vars": {
           "type": "array",
           "items": {
@@ -79,10 +83,6 @@
             "string",
             "null"
           ]
-        },
-        "component_type": {
-          "type": "string",
-          "const": "activity_js"
         }
       },
       "required": [
@@ -107,6 +107,10 @@
     {
       "type": "object",
       "properties": {
+        "component_type": {
+          "type": "string",
+          "const": "workflow_js"
+        },
         "lock_duration": {
           "anyOf": [
             {
@@ -132,10 +136,6 @@
             "string",
             "null"
           ]
-        },
-        "component_type": {
-          "type": "string",
-          "const": "workflow_js"
         }
       },
       "required": [
@@ -146,6 +146,10 @@
     {
       "type": "object",
       "properties": {
+        "component_type": {
+          "type": "string",
+          "const": "activity_exec"
+        },
         "env_vars": {
           "type": "array",
           "items": {
@@ -193,10 +197,6 @@
         "params_via_stdin": {
           "type": "boolean",
           "default": false
-        },
-        "component_type": {
-          "type": "string",
-          "const": "activity_exec"
         }
       },
       "required": [
@@ -209,6 +209,10 @@
     {
       "type": "object",
       "properties": {
+        "component_type": {
+          "type": "string",
+          "const": "webhook_endpoint_wasm"
+        },
         "env_vars": {
           "type": "array",
           "items": {
@@ -220,10 +224,6 @@
           "items": {
             "$ref": "#/$defs/AllowedHostToml"
           }
-        },
-        "component_type": {
-          "type": "string",
-          "const": "webhook_endpoint_wasm"
         }
       },
       "required": [
@@ -235,6 +235,10 @@
     {
       "type": "object",
       "properties": {
+        "component_type": {
+          "type": "string",
+          "const": "webhook_endpoint_js"
+        },
         "env_vars": {
           "type": "array",
           "items": {
@@ -246,10 +250,6 @@
           "items": {
             "$ref": "#/$defs/AllowedHostToml"
           }
-        },
-        "component_type": {
-          "type": "string",
-          "const": "webhook_endpoint_js"
         }
       },
       "required": [

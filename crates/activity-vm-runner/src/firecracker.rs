@@ -336,7 +336,8 @@ async fn mirror_to_guest(
         &queue,
         AddWatchFlags::IN_CLOSE_WRITE | AddWatchFlags::IN_MOVED_TO,
     )?;
-    let inotify = AsyncFd::new(InotifyFd(inotify))?;
+    // SAFETY: `Inotify` owns its fd, which stays open and unchanged until the `AsyncFd` drops.
+    let inotify = unsafe { AsyncFd::register(InotifyFd(inotify)) }?;
     let mut initial = std::fs::read_dir(&queue)?
         .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
         .collect::<std::io::Result<Vec<_>>>()?;

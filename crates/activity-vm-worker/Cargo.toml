@@ -29,7 +29,7 @@ worker-common.workspace = true
 test-utils.workspace = true
 concepts = { workspace = true, features = ["test"] }
 val-json.workspace = true
-wat = "1"
+wat.workspace = true
 
 [lints]
 workspace = true
