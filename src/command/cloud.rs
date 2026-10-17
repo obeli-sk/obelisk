@@ -234,15 +234,6 @@ impl Client {
         self.request(method, &path, body, kind).await
     }
 }
-fn dns_label(name: &str, max: usize) -> bool {
-    !name.is_empty()
-        && name.len() <= max
-        && !name.starts_with('-')
-        && !name.ends_with('-')
-        && name
-            .bytes()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
-}
 async fn app_name(name: Option<&str>) -> anyhow::Result<String> {
     let name = match name {
         Some(name) => name.to_owned(),
@@ -252,10 +243,7 @@ async fn app_name(name: Option<&str>) -> anyhow::Result<String> {
             .app_name
             .context("Set app_name in ./app.toml, --app or OBELISK_APP_NAME")?,
     };
-    ensure!(
-        dns_label(&name, 40) && name != "default" && !name.starts_with("system-"),
-        "Invalid or reserved cloud app name: {name}"
-    );
+    crate::config::app::validate_app_name(&name)?;
     Ok(name)
 }
 fn config_name(name: &str) -> anyhow::Result<()> {
@@ -527,7 +515,7 @@ impl CloudArgs {
                         .or_else(|| config.as_ref().and_then(|c| c.app_name.as_deref())),
                 )
                 .await?;
-                let mut body = json!({"app_slug":name});
+                let mut body = json!({"app_name":name});
                 if let Some(config) = config {
                     body["policy"] = serde_json::to_value(config.policy())?;
                     body["cloud"] = serde_json::to_value(config.cloud)?;
@@ -1365,7 +1353,7 @@ mod tests {
             .unwrap();
         let received = &state.lock().unwrap().received;
         assert_eq!(received[0].0, "POST /prefix/v1/apps");
-        assert_eq!(received[0].1["app_slug"], "explicit");
+        assert_eq!(received[0].1["app_name"], "explicit");
         assert_eq!(received[0].1["policy"]["format"], "obelisk-app-config-v1");
         assert_eq!(received[0].1["cloud"]["memory_mb"], 1024);
         assert_eq!(received[1].0, "PUT /prefix/v1/apps/demo/config");

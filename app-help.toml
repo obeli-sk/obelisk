@@ -3,6 +3,7 @@
 ## secrets and their exposure, public environment variables, outbound HTTP, and exec activities.
 ## Missing required inputs fail at startup so executions do not discover them at runtime.
 ## Set an app name before starting the server; it selects the default SQLite directory.
+## Names use 4-25 lowercase ASCII letters, digits, or interior hyphens.
 # app_name = "my-app"
 
 ## Optional hosted VM settings; omitted memory uses the cloud default.

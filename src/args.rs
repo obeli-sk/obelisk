@@ -1660,7 +1660,7 @@ pub(crate) enum CloudToken {
         #[arg(long)]
         token_file: PathBuf,
         /// Restrict access to this app slug; repeat for multiple apps.
-        #[arg(long, value_name = "APP_SLUG", value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        #[arg(long, value_name = "APP_NAME", value_parser = clap::builder::NonEmptyStringValueParser::new())]
         scope: Vec<String>,
         /// Absolute expiry in RFC 3339 format.
         #[arg(long)]
