@@ -1240,7 +1240,7 @@ mod tests {
 
     #[test]
     fn deployment_verify_accepts_only_deployment_inputs() {
-        for prefix in [vec!["obelisk"], vec!["obelisk", "cloud"]] {
+        for prefix in [vec!["obelisk"], vec!["obelisk", "cloud", "app"]] {
             let args = Args::try_parse_from(prefix.into_iter().chain([
                 "deployment",
                 "verify",
@@ -1260,8 +1260,8 @@ mod tests {
                 }
                 Subcommand::Cloud(args) => {
                     assert_eq!(args.api_url.as_deref(), Some("https://cloud.example.test"));
-                    let Cloud::Deployment(CloudAppTarget {
-                        command: Deployment::Verify(verify),
+                    let Cloud::App(CloudAppTarget {
+                        command: CloudApp::Deployment(Deployment::Verify(verify)),
                         ..
                     }) = args.command
                     else {
@@ -1520,12 +1520,12 @@ pub(crate) struct CloudArgs {
 }
 
 #[derive(Debug, clap::Args)]
-pub(crate) struct CloudAppTarget<T: clap::Subcommand> {
+pub(crate) struct CloudAppTarget {
     /// Selected app name; defaults to `app_name` in ./app.toml.
     #[arg(long, global = true, env = "OBELISK_APP_NAME", value_name = "NAME")]
     pub(crate) app: Option<String>,
     #[command(subcommand)]
-    pub(crate) command: T,
+    pub(crate) command: CloudApp,
 }
 
 #[derive(Debug, clap::Args)]
@@ -1543,16 +1543,8 @@ pub(crate) enum Cloud {
     /// List apps owned by the authenticated user.
     #[command(subcommand)]
     Apps(CloudApps),
-    /// Manage an app lifecycle and staged configuration.
-    App(CloudAppTarget<CloudApp>),
-    /// Manage deployments through the selected app's API.
-    Deployment(CloudAppTarget<Deployment>),
-    /// Manage executions through the selected app's API.
-    Execution(CloudAppTarget<Execution>),
-    /// Inspect components or manage OCI artifacts.
-    Component(CloudAppTarget<Component>),
-    /// Perform operator-only destructive maintenance on the selected app.
-    Admin(CloudAppTarget<Admin>),
+    /// Manage an app and its deployments, executions and configuration.
+    App(CloudAppTarget),
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -1587,6 +1579,18 @@ pub(crate) enum CloudToken {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum CloudApp {
+    /// Manage deployments through the selected app's API.
+    #[command(subcommand)]
+    Deployment(Deployment),
+    /// Manage executions through the selected app's API.
+    #[command(subcommand)]
+    Execution(Execution),
+    /// Inspect components or manage OCI artifacts.
+    #[command(subcommand)]
+    Component(Component),
+    /// Perform operator-only destructive maintenance on the selected app.
+    #[command(subcommand)]
+    Admin(Admin),
     /// Create a stopped app; apply explicitly to start it.
     New {
         /// App name; falls back to --app, the policy file's `app_name`, then ./app.toml.

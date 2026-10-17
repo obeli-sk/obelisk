@@ -2,6 +2,67 @@ use axum::{Json, Router, routing::get};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn cloud_app_commands_resolve_project_and_explicit_targets() {
+    use axum::extract::Path;
+    use std::sync::{Arc, Mutex};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let selected = Arc::new(Mutex::new(Vec::new()));
+    let router = Router::new()
+        .route(
+            "/v1/apps/{name}",
+            get({
+                let selected = selected.clone();
+                let api_url = format!("{origin}/tenant");
+                move |Path(name): Path<String>| {
+                    selected.lock().unwrap().push(name);
+                    let api_url = api_url.clone();
+                    async move { Json(json!({"api_url":api_url})) }
+                }
+            }),
+        )
+        .route("/tenant/v1/components", get(|| async { Json(json!([])) }));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("app.toml"), "app_name='from-file'\n").unwrap();
+    for (env, arguments) in [
+        (None, vec!["component", "list", "--json"]),
+        (Some("from-env"), vec!["--json", "component", "list"]),
+        (
+            Some("from-env"),
+            vec!["component", "list", "--app", "explicit", "--json"],
+        ),
+    ] {
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"));
+        command
+            .args(["cloud", "--api-url", &origin, "app"])
+            .args(arguments)
+            .current_dir(directory.path())
+            .env_remove("OBELISK_APP_NAME")
+            .env("OBELISK_CLOUD_API_TOKEN", "test-token");
+        if let Some(env) = env {
+            command.env("OBELISK_APP_NAME", env);
+        }
+        let output = command.output().await.unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+            json!([])
+        );
+    }
+    assert_eq!(
+        *selected.lock().unwrap(),
+        vec!["from-file", "from-env", "explicit"]
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn cloud_output_and_endpoint_selection() {
     let app = json!({
         "app_slug":"demo", "status":"running", "hostname":"demo.example.com",

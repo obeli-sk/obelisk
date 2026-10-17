@@ -91,7 +91,7 @@
         },
         {
           "name": "app",
-          "about": "Manage an app lifecycle and staged configuration",
+          "about": "Manage an app and its deployments, executions and configuration",
           "options": [
             {
               "name": "--app",
@@ -99,6 +99,894 @@
             }
           ],
           "subcommands": [
+            {
+              "name": "deployment",
+              "about": "Manage deployments through the selected app's API",
+              "subcommands": [
+                {
+                  "name": "submit",
+                  "about": "Submit a deployment TOML; print the deployment ID. Reuses matching active content and description unless a deployment ID is supplied",
+                  "options": [
+                    {
+                      "name": "--empty",
+                      "help": "Submit an empty deployment with no components"
+                    },
+                    {
+                      "name": "--allow-unavailable-runtime-config",
+                      "help": "Store a verified deployment while app or platform approval is pending. Allows unavailable values and approvals; activation still checks strictly"
+                    },
+                    {
+                      "name": "--description",
+                      "help": "Optional human-readable description"
+                    },
+                    {
+                      "name": "--deployment-id",
+                      "help": "Optional client-supplied deployment ID for idempotent submission"
+                    },
+                    {
+                      "name": "--json",
+                      "help": "Print the deployment ID as a JSON string"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "file",
+                      "help": "Path to the deployment TOML file",
+                      "accepts": {
+                        "path": true
+                      }
+                    }
+                  ]
+                },
+                {
+                  "name": "enqueue",
+                  "about": "Submit (if a file is given) and enqueue for next server restart. Reuses matching active content and description unless a deployment ID is supplied",
+                  "options": [
+                    {
+                      "name": "--empty",
+                      "help": "Enqueue an empty deployment with no components"
+                    },
+                    {
+                      "name": "--allow-unavailable-runtime-config",
+                      "help": "Submit and enqueue while app or platform approval is pending. Activation on restart still checks strictly"
+                    },
+                    {
+                      "name": "--description",
+                      "help": "Optional human-readable description for a newly submitted deployment"
+                    },
+                    {
+                      "name": "--deployment-id",
+                      "help": "Optional client-supplied deployment ID for idempotent submission"
+                    },
+                    {
+                      "name": "--json",
+                      "help": "Print the deployment ID as a JSON string"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "source",
+                      "help": "Path to a deployment TOML file, or an existing deployment ID"
+                    }
+                  ]
+                },
+                {
+                  "name": "apply",
+                  "about": "Submit (if a file is given) and apply immediately. Fails if not possible. Reuses matching active content and description unless a deployment ID is supplied",
+                  "options": [
+                    {
+                      "name": "--empty",
+                      "help": "Apply an empty deployment with no components"
+                    },
+                    {
+                      "name": "--description",
+                      "help": "Optional human-readable description for a newly submitted deployment"
+                    },
+                    {
+                      "name": "--deployment-id",
+                      "help": "Optional client-supplied deployment ID for idempotent submission"
+                    },
+                    {
+                      "name": "--json",
+                      "help": "Print the deployment ID as a JSON string"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "source",
+                      "help": "Path to a deployment TOML file, or an existing deployment ID"
+                    }
+                  ]
+                },
+                {
+                  "name": "list",
+                  "about": "List recent deployments",
+                  "options": [
+                    {
+                      "name": "--json",
+                      "help": "Output as JSON instead of human-readable text"
+                    }
+                  ]
+                },
+                {
+                  "name": "active",
+                  "about": "Print the ID of the currently active deployment",
+                  "options": [
+                    {
+                      "name": "--json",
+                      "help": "Output as JSON instead of plain text"
+                    }
+                  ]
+                },
+                {
+                  "name": "show",
+                  "about": "Show a deployment",
+                  "options": [
+                    {
+                      "name": "--json",
+                      "help": "Print the stored TOML manifest as JSON instead of TOML"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "id",
+                      "help": "Deployment ID",
+                      "required": true
+                    },
+                    {
+                      "name": "file",
+                      "help": "Print the content of a single source file, identified by its deployment-relative path as shown in the TOML (e.g. `scripts/run.sh`)"
+                    }
+                  ]
+                },
+                {
+                  "name": "pull",
+                  "about": "Retrieve a deployment as editable TOML without generated metadata, plus its source files",
+                  "options": [
+                    {
+                      "name": "--output",
+                      "short": "o",
+                      "help": "Directory to write `deployment.toml` and source files into. Defaults to the current directory",
+                      "accepts": {
+                        "path": true
+                      }
+                    },
+                    {
+                      "name": "--force",
+                      "short": "f",
+                      "help": "Overwrite existing files in the output directory"
+                    },
+                    {
+                      "name": "--include-generated-metadata",
+                      "help": "Keep generated content digests and JavaScript module metadata in `deployment.toml`"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "id",
+                      "help": "Deployment ID",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "verify",
+                  "about": "Alias for `server verify --skip-db --deployment <PATH>`",
+                  "options": [
+                    {
+                      "name": "--api-url"
+                    },
+                    {
+                      "name": "--clean-cache",
+                      "help": "Delete both the codegen cache and the OCI image cache before verifying"
+                    },
+                    {
+                      "name": "--clean-codegen-cache",
+                      "help": "Delete only the codegen cache before verifying; OCI image cache is kept"
+                    },
+                    {
+                      "name": "--deployment",
+                      "short": "d",
+                      "help": "Path to the local deployment TOML file",
+                      "required": true,
+                      "accepts": {
+                        "path": true
+                      }
+                    },
+                    {
+                      "name": "--suppress-type-checking-errors",
+                      "help": "Do not fail when a component's imports/exports fail type checking against the deployment"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "execution",
+              "about": "Manage executions through the selected app's API",
+              "subcommands": [
+                {
+                  "name": "list",
+                  "about": "List recent executions",
+                  "options": [
+                    {
+                      "name": "--ffqn",
+                      "help": "Filter by function FFQN prefix. Accepts any prefix of a fully-qualified function name, e.g.: `namespace:`. Short `.../ifc.fn` form is not supported"
+                    },
+                    {
+                      "name": "--execution-id",
+                      "short": "e",
+                      "help": "Filter by execution id prefix. Useful to find all child executions if --show-derived flag is enabled"
+                    },
+                    {
+                      "name": "--show-derived",
+                      "help": "Include child (derived) executions spawned by workflows. By default only top-level executions are shown"
+                    },
+                    {
+                      "name": "--hide-finished",
+                      "help": "Hide finished executions"
+                    },
+                    {
+                      "name": "--limit",
+                      "help": "Number of executions to return"
+                    },
+                    {
+                      "name": "--json",
+                      "short": "j",
+                      "help": "Output as JSON instead of human-readable text"
+                    }
+                  ]
+                },
+                {
+                  "name": "logs",
+                  "about": "Fetch structured logs for an execution",
+                  "options": [
+                    {
+                      "name": "--show-derived",
+                      "help": "Include logs from child (derived) executions"
+                    },
+                    {
+                      "name": "--level",
+                      "help": "Minimum log level: trace, debug, info, warn, error, off. `off` disables structured log output entirely"
+                    },
+                    {
+                      "name": "--stream-type",
+                      "help": "Select which stream output to show: stdout, stderr, none. If not specified, both stdout and stderr are shown. Use `none` to hide all stream output"
+                    },
+                    {
+                      "name": "--show-run-id",
+                      "help": "Show the run ID in each log line"
+                    },
+                    {
+                      "name": "--after",
+                      "help": "Only show entries created after this timestamp (RFC3339, e.g. 2026-04-14T10:00:00Z)"
+                    },
+                    {
+                      "name": "--follow",
+                      "help": "Poll for new log entries until the execution finishes"
+                    },
+                    {
+                      "name": "--limit",
+                      "help": "Number of log entries to return per request (default: 20, max: 200)"
+                    },
+                    {
+                      "name": "--json",
+                      "short": "j",
+                      "help": "Output one JSON log record per line (NDJSON)"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "execution_id",
+                      "help": "Execution ID to fetch logs for",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "events",
+                  "about": "Show the execution event log (history)",
+                  "options": [
+                    {
+                      "name": "--from",
+                      "help": "Start from this event version (inclusive)"
+                    },
+                    {
+                      "name": "--limit",
+                      "help": "Number of events to return"
+                    },
+                    {
+                      "name": "--json",
+                      "short": "j",
+                      "help": "Output as JSON instead of human-readable text"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "execution_id",
+                      "help": "Execution ID",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "responses",
+                  "about": "Show join-set responses for an execution (child results, delay completions)",
+                  "options": [
+                    {
+                      "name": "--from",
+                      "help": "Start from this response cursor (inclusive)"
+                    },
+                    {
+                      "name": "--limit",
+                      "help": "Number of responses to return"
+                    },
+                    {
+                      "name": "--json",
+                      "short": "j",
+                      "help": "Output as JSON instead of human-readable text"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "execution_id",
+                      "help": "Execution ID",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "submit",
+                  "about": "Submit a new execution and optionally follow its status stream until it finishes",
+                  "options": [
+                    {
+                      "name": "--execution-id",
+                      "short": "e",
+                      "help": "Use this explicit execution ID instead of having the server assign one. Useful for idempotency. See `obelisk generate execution-id`"
+                    },
+                    {
+                      "name": "--follow",
+                      "short": "f",
+                      "help": "Follow the stream of events until the execution finishes"
+                    },
+                    {
+                      "name": "--follow-logs",
+                      "help": "Follow logs until the execution finishes, then print its result"
+                    },
+                    {
+                      "name": "--no-reconnect",
+                      "help": "Do not attempt to reconnect on connection error while following the status stream"
+                    },
+                    {
+                      "name": "--paused",
+                      "help": "Create the execution in paused state so it won't run until explicitly unpaused or advanced"
+                    },
+                    {
+                      "name": "--json",
+                      "short": "j",
+                      "help": "Output Web API JSON, using NDJSON when following"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "ffqn",
+                      "help": "Function to invoke, either as a fully qualified name (`ns:pkg/ifc.fn`) or shortened to `.../ifc.fn` when the interface name is unambiguous",
+                      "required": true
+                    },
+                    {
+                      "name": "parameters",
+                      "value_name": "parameters",
+                      "help": "Accepted Parameter Formats:",
+                      "accepts": {
+                        "many": true
+                      }
+                    }
+                  ]
+                },
+                {
+                  "name": "stub",
+                  "about": "Write a return value or an execution error to an already created stubbed execution, unblocking any parent workflow that is awaiting it",
+                  "positionals": [
+                    {
+                      "name": "execution_id",
+                      "help": "Execution ID of the stub execution waiting for its return value",
+                      "required": true
+                    },
+                    {
+                      "name": "return_value",
+                      "help": "Stub a return value encoded as JSON",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "status",
+                  "about": "Get the current state of an execution, optionally following status changes",
+                  "options": [
+                    {
+                      "name": "--follow",
+                      "short": "f",
+                      "help": "Follow the status stream until the execution finishes"
+                    },
+                    {
+                      "name": "--no-reconnect",
+                      "help": "Do not attempt to reconnect on connection error while following the status stream"
+                    },
+                    {
+                      "name": "--json",
+                      "short": "j",
+                      "help": "Output JSON, using NDJSON when following"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "execution_id",
+                      "help": "Execution ID to look up",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "result",
+                  "about": "Get the final result of an execution",
+                  "options": [
+                    {
+                      "name": "--follow",
+                      "short": "f",
+                      "help": "Follow until the execution finishes and the final result is available"
+                    },
+                    {
+                      "name": "--no-reconnect",
+                      "help": "Do not attempt to reconnect on connection error while following the execution"
+                    },
+                    {
+                      "name": "--json",
+                      "short": "j",
+                      "help": "Output JSON, using NDJSON when following"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "execution_id",
+                      "help": "Execution ID to look up",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "cancel",
+                  "about": "Request cancellation of a running activity or pending delay",
+                  "options": [
+                    {
+                      "name": "--json",
+                      "help": "Output the outcome as JSON"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "id",
+                      "help": "Execution id of an activity (E_01...) or a delay request (Delay_01...)",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "pause",
+                  "about": "Pause a workflow execution or a pending delay",
+                  "options": [
+                    {
+                      "name": "--json",
+                      "help": "Output the outcome as JSON"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "id",
+                      "help": "Execution ID (`E_01`...) or delay ID (`Delay_01`...) to pause",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "unpause",
+                  "about": "Resume a previously paused workflow execution or delay",
+                  "options": [
+                    {
+                      "name": "--json",
+                      "help": "Output the outcome as JSON"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "id",
+                      "help": "Execution ID (`E_01`...) or delay ID (`Delay_01`...) to unpause",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "replay",
+                  "about": "Replay a workflow execution from its execution log, checking for non-determinism",
+                  "options": [
+                    {
+                      "name": "--json",
+                      "short": "j",
+                      "help": "Output as JSON instead of human-readable text"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "execution_id",
+                      "help": "Execution ID to replay",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "persist-backtraces",
+                  "about": "Replay a workflow and persist its call-site backtraces",
+                  "positionals": [
+                    {
+                      "name": "execution_id",
+                      "help": "Execution ID whose backtraces should be persisted",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "advance",
+                  "about": "Advance a paused workflow execution by replaying it and applying the next captured writes",
+                  "options": [
+                    {
+                      "name": "--json",
+                      "short": "j",
+                      "help": "Output as JSON instead of human-readable text"
+                    },
+                    {
+                      "name": "--trim",
+                      "help": "Send only the first N captured writes from replay to advance"
+                    },
+                    {
+                      "name": "--pause-all",
+                      "short": "p",
+                      "help": "Pause both replayed child executions and delay requests when applying the advance"
+                    },
+                    {
+                      "name": "--pause-submitted-executions",
+                      "help": "Rewrite replayed submitted executions so they are created paused when advance is applied"
+                    },
+                    {
+                      "name": "--pause-delays",
+                      "help": "Rewrite replayed delay requests so they are created paused when advance is applied"
+                    },
+                    {
+                      "name": "--force",
+                      "help": "Advance even if replay finishes with an execution failure, persisting it"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "execution_id",
+                      "help": "Execution ID to advance",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "upgrade",
+                  "about": "Upgrade a workflow execution to the current component version in the active deployment",
+                  "options": [
+                    {
+                      "name": "--skip-determinism-check",
+                      "help": "Skip the determinism check during upgrade"
+                    },
+                    {
+                      "name": "--json",
+                      "help": "Output the outcome as JSON"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "execution_id",
+                      "help": "Execution ID to upgrade",
+                      "required": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "component",
+              "about": "Inspect components or manage OCI artifacts",
+              "subcommands": [
+                {
+                  "name": "list",
+                  "about": "List components",
+                  "options": [
+                    {
+                      "name": "--imports",
+                      "short": "i",
+                      "help": "Show component imports"
+                    },
+                    {
+                      "name": "--json",
+                      "help": "Output as JSON instead of human-readable text"
+                    },
+                    {
+                      "name": "--extensions",
+                      "short": "e",
+                      "help": "Show auto-generated export extensions"
+                    }
+                  ]
+                },
+                {
+                  "name": "push",
+                  "about": "Push a WASM component to an OCI registry with deployment metadata",
+                  "options": [
+                    {
+                      "name": "--deployment",
+                      "short": "d",
+                      "help": "Path to the input deployment TOML file",
+                      "required": true,
+                      "accepts": {
+                        "path": true
+                      }
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "component_name",
+                      "help": "Component name in the input deployment TOML",
+                      "required": true
+                    },
+                    {
+                      "name": "location",
+                      "help": "OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`",
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "name": "add",
+                  "about": "Add a component to the deployment TOML configuration file from an OCI reference",
+                  "options": [
+                    {
+                      "name": "--deployment",
+                      "short": "d",
+                      "help": "Path to the target deployment TOML file",
+                      "required": true,
+                      "accepts": {
+                        "path": true
+                      }
+                    },
+                    {
+                      "name": "--locked",
+                      "help": "Pin the location with the manifest digest (e.g. `image:tag@sha256:...`)"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "location",
+                      "help": "OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`",
+                      "required": true
+                    },
+                    {
+                      "name": "component_name",
+                      "help": "Component name in the target deployment TOML",
+                      "required": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "admin",
+              "about": "Perform operator-only destructive maintenance on the selected app",
+              "subcommands": [
+                {
+                  "name": "executions",
+                  "subcommands": [
+                    {
+                      "name": "delete",
+                      "about": "Delete one or more terminal top-level executions and their derived trees",
+                      "options": [
+                        {
+                          "name": "--force",
+                          "help": "Delete non-terminal trees unless their roots belong to the active deployment"
+                        },
+                        {
+                          "name": "--json"
+                        }
+                      ],
+                      "positionals": [
+                        {
+                          "name": "execution_ids",
+                          "value_name": "EXECUTION_IDS",
+                          "required": true,
+                          "accepts": {
+                            "many": true
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "retain",
+                      "about": "Retain top-level execution trees by count or age",
+                      "options": [
+                        {
+                          "name": "--count"
+                        },
+                        {
+                          "name": "--max-age"
+                        },
+                        {
+                          "name": "--batch-size"
+                        },
+                        {
+                          "name": "--force",
+                          "help": "Delete non-terminal trees unless their roots belong to the active deployment"
+                        },
+                        {
+                          "name": "--dry-run"
+                        },
+                        {
+                          "name": "--json"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "deployments",
+                  "subcommands": [
+                    {
+                      "name": "delete",
+                      "about": "Delete one or more inactive deployments",
+                      "options": [
+                        {
+                          "name": "--delete-executions"
+                        },
+                        {
+                          "name": "--force",
+                          "help": "Delete non-terminal trees unless their roots belong to the active deployment"
+                        },
+                        {
+                          "name": "--json"
+                        }
+                      ],
+                      "positionals": [
+                        {
+                          "name": "deployment_ids",
+                          "value_name": "DEPLOYMENT_IDS",
+                          "required": true,
+                          "accepts": {
+                            "many": true
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "name": "retain",
+                      "about": "Retain inactive deployments by count or age; active and enqueued deployments are kept",
+                      "options": [
+                        {
+                          "name": "--count"
+                        },
+                        {
+                          "name": "--max-age"
+                        },
+                        {
+                          "name": "--delete-executions"
+                        },
+                        {
+                          "name": "--force",
+                          "help": "Delete non-terminal trees unless their roots belong to the active deployment"
+                        },
+                        {
+                          "name": "--batch-size"
+                        },
+                        {
+                          "name": "--dry-run"
+                        },
+                        {
+                          "name": "--json"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "events",
+                  "subcommands": [
+                    {
+                      "name": "get",
+                      "about": "Get one persisted system event by ID",
+                      "options": [
+                        {
+                          "name": "--json"
+                        }
+                      ],
+                      "positionals": [
+                        {
+                          "name": "event_id",
+                          "required": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "list",
+                      "about": "List persisted operator-visible system events",
+                      "options": [
+                        {
+                          "name": "--node-run-id",
+                          "help": "Only show events emitted by this node run"
+                        },
+                        {
+                          "name": "--level"
+                        },
+                        {
+                          "name": "--code"
+                        },
+                        {
+                          "name": "--from",
+                          "help": "Only show events created at or after this RFC 3339 time"
+                        },
+                        {
+                          "name": "--to",
+                          "help": "Only show events created before this RFC 3339 time"
+                        },
+                        {
+                          "name": "--limit"
+                        },
+                        {
+                          "name": "--json"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "retain",
+                      "about": "Retain system events newer than the configured maximum age",
+                      "options": [
+                        {
+                          "name": "--max-age",
+                          "required": true
+                        },
+                        {
+                          "name": "--batch-size"
+                        },
+                        {
+                          "name": "--json"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "storage",
+                  "subcommands": [
+                    {
+                      "name": "show",
+                      "about": "Show persistent storage usage and record counts",
+                      "options": [
+                        {
+                          "name": "--json"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "node-run-id",
+                  "about": "Print the ID of the current node run",
+                  "options": [
+                    {
+                      "name": "--json",
+                      "help": "Output as JSON instead of plain text"
+                    }
+                  ]
+                }
+              ]
+            },
             {
               "name": "new",
               "about": "Create a stopped app; apply explicitly to start it",
@@ -295,918 +1183,6 @@
                 },
                 {
                   "name": "webui"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "name": "deployment",
-          "about": "Manage deployments through the selected app's API",
-          "options": [
-            {
-              "name": "--app",
-              "help": "Selected app name; defaults to `app_name` in ./app.toml"
-            }
-          ],
-          "subcommands": [
-            {
-              "name": "submit",
-              "about": "Submit a deployment TOML; print the deployment ID. Reuses matching active content and description unless a deployment ID is supplied",
-              "options": [
-                {
-                  "name": "--empty",
-                  "help": "Submit an empty deployment with no components"
-                },
-                {
-                  "name": "--allow-unavailable-runtime-config",
-                  "help": "Store a verified deployment while app or platform approval is pending. Allows unavailable values and approvals; activation still checks strictly"
-                },
-                {
-                  "name": "--description",
-                  "help": "Optional human-readable description"
-                },
-                {
-                  "name": "--deployment-id",
-                  "help": "Optional client-supplied deployment ID for idempotent submission"
-                },
-                {
-                  "name": "--json",
-                  "help": "Print the deployment ID as a JSON string"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "file",
-                  "help": "Path to the deployment TOML file",
-                  "accepts": {
-                    "path": true
-                  }
-                }
-              ]
-            },
-            {
-              "name": "enqueue",
-              "about": "Submit (if a file is given) and enqueue for next server restart. Reuses matching active content and description unless a deployment ID is supplied",
-              "options": [
-                {
-                  "name": "--empty",
-                  "help": "Enqueue an empty deployment with no components"
-                },
-                {
-                  "name": "--allow-unavailable-runtime-config",
-                  "help": "Submit and enqueue while app or platform approval is pending. Activation on restart still checks strictly"
-                },
-                {
-                  "name": "--description",
-                  "help": "Optional human-readable description for a newly submitted deployment"
-                },
-                {
-                  "name": "--deployment-id",
-                  "help": "Optional client-supplied deployment ID for idempotent submission"
-                },
-                {
-                  "name": "--json",
-                  "help": "Print the deployment ID as a JSON string"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "source",
-                  "help": "Path to a deployment TOML file, or an existing deployment ID"
-                }
-              ]
-            },
-            {
-              "name": "apply",
-              "about": "Submit (if a file is given) and apply immediately. Fails if not possible. Reuses matching active content and description unless a deployment ID is supplied",
-              "options": [
-                {
-                  "name": "--empty",
-                  "help": "Apply an empty deployment with no components"
-                },
-                {
-                  "name": "--description",
-                  "help": "Optional human-readable description for a newly submitted deployment"
-                },
-                {
-                  "name": "--deployment-id",
-                  "help": "Optional client-supplied deployment ID for idempotent submission"
-                },
-                {
-                  "name": "--json",
-                  "help": "Print the deployment ID as a JSON string"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "source",
-                  "help": "Path to a deployment TOML file, or an existing deployment ID"
-                }
-              ]
-            },
-            {
-              "name": "list",
-              "about": "List recent deployments",
-              "options": [
-                {
-                  "name": "--json",
-                  "help": "Output as JSON instead of human-readable text"
-                }
-              ]
-            },
-            {
-              "name": "active",
-              "about": "Print the ID of the currently active deployment",
-              "options": [
-                {
-                  "name": "--json",
-                  "help": "Output as JSON instead of plain text"
-                }
-              ]
-            },
-            {
-              "name": "show",
-              "about": "Show a deployment",
-              "options": [
-                {
-                  "name": "--json",
-                  "help": "Print the stored TOML manifest as JSON instead of TOML"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "id",
-                  "help": "Deployment ID",
-                  "required": true
-                },
-                {
-                  "name": "file",
-                  "help": "Print the content of a single source file, identified by its deployment-relative path as shown in the TOML (e.g. `scripts/run.sh`)"
-                }
-              ]
-            },
-            {
-              "name": "pull",
-              "about": "Retrieve a deployment as editable TOML without generated metadata, plus its source files",
-              "options": [
-                {
-                  "name": "--output",
-                  "short": "o",
-                  "help": "Directory to write `deployment.toml` and source files into. Defaults to the current directory",
-                  "accepts": {
-                    "path": true
-                  }
-                },
-                {
-                  "name": "--force",
-                  "short": "f",
-                  "help": "Overwrite existing files in the output directory"
-                },
-                {
-                  "name": "--include-generated-metadata",
-                  "help": "Keep generated content digests and JavaScript module metadata in `deployment.toml`"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "id",
-                  "help": "Deployment ID",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "verify",
-              "about": "Alias for `server verify --skip-db --deployment <PATH>`",
-              "options": [
-                {
-                  "name": "--api-url"
-                },
-                {
-                  "name": "--clean-cache",
-                  "help": "Delete both the codegen cache and the OCI image cache before verifying"
-                },
-                {
-                  "name": "--clean-codegen-cache",
-                  "help": "Delete only the codegen cache before verifying; OCI image cache is kept"
-                },
-                {
-                  "name": "--deployment",
-                  "short": "d",
-                  "help": "Path to the local deployment TOML file",
-                  "required": true,
-                  "accepts": {
-                    "path": true
-                  }
-                },
-                {
-                  "name": "--suppress-type-checking-errors",
-                  "help": "Do not fail when a component's imports/exports fail type checking against the deployment"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "name": "execution",
-          "about": "Manage executions through the selected app's API",
-          "options": [
-            {
-              "name": "--app",
-              "help": "Selected app name; defaults to `app_name` in ./app.toml"
-            }
-          ],
-          "subcommands": [
-            {
-              "name": "list",
-              "about": "List recent executions",
-              "options": [
-                {
-                  "name": "--ffqn",
-                  "help": "Filter by function FFQN prefix. Accepts any prefix of a fully-qualified function name, e.g.: `namespace:`. Short `.../ifc.fn` form is not supported"
-                },
-                {
-                  "name": "--execution-id",
-                  "short": "e",
-                  "help": "Filter by execution id prefix. Useful to find all child executions if --show-derived flag is enabled"
-                },
-                {
-                  "name": "--show-derived",
-                  "help": "Include child (derived) executions spawned by workflows. By default only top-level executions are shown"
-                },
-                {
-                  "name": "--hide-finished",
-                  "help": "Hide finished executions"
-                },
-                {
-                  "name": "--limit",
-                  "help": "Number of executions to return"
-                },
-                {
-                  "name": "--json",
-                  "short": "j",
-                  "help": "Output as JSON instead of human-readable text"
-                }
-              ]
-            },
-            {
-              "name": "logs",
-              "about": "Fetch structured logs for an execution",
-              "options": [
-                {
-                  "name": "--show-derived",
-                  "help": "Include logs from child (derived) executions"
-                },
-                {
-                  "name": "--level",
-                  "help": "Minimum log level: trace, debug, info, warn, error, off. `off` disables structured log output entirely"
-                },
-                {
-                  "name": "--stream-type",
-                  "help": "Select which stream output to show: stdout, stderr, none. If not specified, both stdout and stderr are shown. Use `none` to hide all stream output"
-                },
-                {
-                  "name": "--show-run-id",
-                  "help": "Show the run ID in each log line"
-                },
-                {
-                  "name": "--after",
-                  "help": "Only show entries created after this timestamp (RFC3339, e.g. 2026-04-14T10:00:00Z)"
-                },
-                {
-                  "name": "--follow",
-                  "help": "Poll for new log entries until the execution finishes"
-                },
-                {
-                  "name": "--limit",
-                  "help": "Number of log entries to return per request (default: 20, max: 200)"
-                },
-                {
-                  "name": "--json",
-                  "short": "j",
-                  "help": "Output one JSON log record per line (NDJSON)"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "execution_id",
-                  "help": "Execution ID to fetch logs for",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "events",
-              "about": "Show the execution event log (history)",
-              "options": [
-                {
-                  "name": "--from",
-                  "help": "Start from this event version (inclusive)"
-                },
-                {
-                  "name": "--limit",
-                  "help": "Number of events to return"
-                },
-                {
-                  "name": "--json",
-                  "short": "j",
-                  "help": "Output as JSON instead of human-readable text"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "execution_id",
-                  "help": "Execution ID",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "responses",
-              "about": "Show join-set responses for an execution (child results, delay completions)",
-              "options": [
-                {
-                  "name": "--from",
-                  "help": "Start from this response cursor (inclusive)"
-                },
-                {
-                  "name": "--limit",
-                  "help": "Number of responses to return"
-                },
-                {
-                  "name": "--json",
-                  "short": "j",
-                  "help": "Output as JSON instead of human-readable text"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "execution_id",
-                  "help": "Execution ID",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "submit",
-              "about": "Submit a new execution and optionally follow its status stream until it finishes",
-              "options": [
-                {
-                  "name": "--execution-id",
-                  "short": "e",
-                  "help": "Use this explicit execution ID instead of having the server assign one. Useful for idempotency. See `obelisk generate execution-id`"
-                },
-                {
-                  "name": "--follow",
-                  "short": "f",
-                  "help": "Follow the stream of events until the execution finishes"
-                },
-                {
-                  "name": "--follow-logs",
-                  "help": "Follow logs until the execution finishes, then print its result"
-                },
-                {
-                  "name": "--no-reconnect",
-                  "help": "Do not attempt to reconnect on connection error while following the status stream"
-                },
-                {
-                  "name": "--paused",
-                  "help": "Create the execution in paused state so it won't run until explicitly unpaused or advanced"
-                },
-                {
-                  "name": "--json",
-                  "short": "j",
-                  "help": "Output Web API JSON, using NDJSON when following"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "ffqn",
-                  "help": "Function to invoke, either as a fully qualified name (`ns:pkg/ifc.fn`) or shortened to `.../ifc.fn` when the interface name is unambiguous",
-                  "required": true
-                },
-                {
-                  "name": "parameters",
-                  "value_name": "parameters",
-                  "help": "Accepted Parameter Formats:",
-                  "accepts": {
-                    "many": true
-                  }
-                }
-              ]
-            },
-            {
-              "name": "stub",
-              "about": "Write a return value or an execution error to an already created stubbed execution, unblocking any parent workflow that is awaiting it",
-              "positionals": [
-                {
-                  "name": "execution_id",
-                  "help": "Execution ID of the stub execution waiting for its return value",
-                  "required": true
-                },
-                {
-                  "name": "return_value",
-                  "help": "Stub a return value encoded as JSON",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "status",
-              "about": "Get the current state of an execution, optionally following status changes",
-              "options": [
-                {
-                  "name": "--follow",
-                  "short": "f",
-                  "help": "Follow the status stream until the execution finishes"
-                },
-                {
-                  "name": "--no-reconnect",
-                  "help": "Do not attempt to reconnect on connection error while following the status stream"
-                },
-                {
-                  "name": "--json",
-                  "short": "j",
-                  "help": "Output JSON, using NDJSON when following"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "execution_id",
-                  "help": "Execution ID to look up",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "result",
-              "about": "Get the final result of an execution",
-              "options": [
-                {
-                  "name": "--follow",
-                  "short": "f",
-                  "help": "Follow until the execution finishes and the final result is available"
-                },
-                {
-                  "name": "--no-reconnect",
-                  "help": "Do not attempt to reconnect on connection error while following the execution"
-                },
-                {
-                  "name": "--json",
-                  "short": "j",
-                  "help": "Output JSON, using NDJSON when following"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "execution_id",
-                  "help": "Execution ID to look up",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "cancel",
-              "about": "Request cancellation of a running activity or pending delay",
-              "options": [
-                {
-                  "name": "--json",
-                  "help": "Output the outcome as JSON"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "id",
-                  "help": "Execution id of an activity (E_01...) or a delay request (Delay_01...)",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "pause",
-              "about": "Pause a workflow execution or a pending delay",
-              "options": [
-                {
-                  "name": "--json",
-                  "help": "Output the outcome as JSON"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "id",
-                  "help": "Execution ID (`E_01`...) or delay ID (`Delay_01`...) to pause",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "unpause",
-              "about": "Resume a previously paused workflow execution or delay",
-              "options": [
-                {
-                  "name": "--json",
-                  "help": "Output the outcome as JSON"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "id",
-                  "help": "Execution ID (`E_01`...) or delay ID (`Delay_01`...) to unpause",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "replay",
-              "about": "Replay a workflow execution from its execution log, checking for non-determinism",
-              "options": [
-                {
-                  "name": "--json",
-                  "short": "j",
-                  "help": "Output as JSON instead of human-readable text"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "execution_id",
-                  "help": "Execution ID to replay",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "persist-backtraces",
-              "about": "Replay a workflow and persist its call-site backtraces",
-              "positionals": [
-                {
-                  "name": "execution_id",
-                  "help": "Execution ID whose backtraces should be persisted",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "advance",
-              "about": "Advance a paused workflow execution by replaying it and applying the next captured writes",
-              "options": [
-                {
-                  "name": "--json",
-                  "short": "j",
-                  "help": "Output as JSON instead of human-readable text"
-                },
-                {
-                  "name": "--trim",
-                  "help": "Send only the first N captured writes from replay to advance"
-                },
-                {
-                  "name": "--pause-all",
-                  "short": "p",
-                  "help": "Pause both replayed child executions and delay requests when applying the advance"
-                },
-                {
-                  "name": "--pause-submitted-executions",
-                  "help": "Rewrite replayed submitted executions so they are created paused when advance is applied"
-                },
-                {
-                  "name": "--pause-delays",
-                  "help": "Rewrite replayed delay requests so they are created paused when advance is applied"
-                },
-                {
-                  "name": "--force",
-                  "help": "Advance even if replay finishes with an execution failure, persisting it"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "execution_id",
-                  "help": "Execution ID to advance",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "upgrade",
-              "about": "Upgrade a workflow execution to the current component version in the active deployment",
-              "options": [
-                {
-                  "name": "--skip-determinism-check",
-                  "help": "Skip the determinism check during upgrade"
-                },
-                {
-                  "name": "--json",
-                  "help": "Output the outcome as JSON"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "execution_id",
-                  "help": "Execution ID to upgrade",
-                  "required": true
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "name": "component",
-          "about": "Inspect components or manage OCI artifacts",
-          "options": [
-            {
-              "name": "--app",
-              "help": "Selected app name; defaults to `app_name` in ./app.toml"
-            }
-          ],
-          "subcommands": [
-            {
-              "name": "list",
-              "about": "List components",
-              "options": [
-                {
-                  "name": "--imports",
-                  "short": "i",
-                  "help": "Show component imports"
-                },
-                {
-                  "name": "--json",
-                  "help": "Output as JSON instead of human-readable text"
-                },
-                {
-                  "name": "--extensions",
-                  "short": "e",
-                  "help": "Show auto-generated export extensions"
-                }
-              ]
-            },
-            {
-              "name": "push",
-              "about": "Push a WASM component to an OCI registry with deployment metadata",
-              "options": [
-                {
-                  "name": "--deployment",
-                  "short": "d",
-                  "help": "Path to the input deployment TOML file",
-                  "required": true,
-                  "accepts": {
-                    "path": true
-                  }
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "component_name",
-                  "help": "Component name in the input deployment TOML",
-                  "required": true
-                },
-                {
-                  "name": "location",
-                  "help": "OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`",
-                  "required": true
-                }
-              ]
-            },
-            {
-              "name": "add",
-              "about": "Add a component to the deployment TOML configuration file from an OCI reference",
-              "options": [
-                {
-                  "name": "--deployment",
-                  "short": "d",
-                  "help": "Path to the target deployment TOML file",
-                  "required": true,
-                  "accepts": {
-                    "path": true
-                  }
-                },
-                {
-                  "name": "--locked",
-                  "help": "Pin the location with the manifest digest (e.g. `image:tag@sha256:...`)"
-                }
-              ],
-              "positionals": [
-                {
-                  "name": "location",
-                  "help": "OCI reference with `oci://` prefix. Example: `oci://docker.io/repo/image:tag`",
-                  "required": true
-                },
-                {
-                  "name": "component_name",
-                  "help": "Component name in the target deployment TOML",
-                  "required": true
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "name": "admin",
-          "about": "Perform operator-only destructive maintenance on the selected app",
-          "options": [
-            {
-              "name": "--app",
-              "help": "Selected app name; defaults to `app_name` in ./app.toml"
-            }
-          ],
-          "subcommands": [
-            {
-              "name": "executions",
-              "subcommands": [
-                {
-                  "name": "delete",
-                  "about": "Delete one or more terminal top-level executions and their derived trees",
-                  "options": [
-                    {
-                      "name": "--force",
-                      "help": "Delete non-terminal trees unless their roots belong to the active deployment"
-                    },
-                    {
-                      "name": "--json"
-                    }
-                  ],
-                  "positionals": [
-                    {
-                      "name": "execution_ids",
-                      "value_name": "EXECUTION_IDS",
-                      "required": true,
-                      "accepts": {
-                        "many": true
-                      }
-                    }
-                  ]
-                },
-                {
-                  "name": "retain",
-                  "about": "Retain top-level execution trees by count or age",
-                  "options": [
-                    {
-                      "name": "--count"
-                    },
-                    {
-                      "name": "--max-age"
-                    },
-                    {
-                      "name": "--batch-size"
-                    },
-                    {
-                      "name": "--force",
-                      "help": "Delete non-terminal trees unless their roots belong to the active deployment"
-                    },
-                    {
-                      "name": "--dry-run"
-                    },
-                    {
-                      "name": "--json"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "name": "deployments",
-              "subcommands": [
-                {
-                  "name": "delete",
-                  "about": "Delete one or more inactive deployments",
-                  "options": [
-                    {
-                      "name": "--delete-executions"
-                    },
-                    {
-                      "name": "--force",
-                      "help": "Delete non-terminal trees unless their roots belong to the active deployment"
-                    },
-                    {
-                      "name": "--json"
-                    }
-                  ],
-                  "positionals": [
-                    {
-                      "name": "deployment_ids",
-                      "value_name": "DEPLOYMENT_IDS",
-                      "required": true,
-                      "accepts": {
-                        "many": true
-                      }
-                    }
-                  ]
-                },
-                {
-                  "name": "retain",
-                  "about": "Retain inactive deployments by count or age; active and enqueued deployments are kept",
-                  "options": [
-                    {
-                      "name": "--count"
-                    },
-                    {
-                      "name": "--max-age"
-                    },
-                    {
-                      "name": "--delete-executions"
-                    },
-                    {
-                      "name": "--force",
-                      "help": "Delete non-terminal trees unless their roots belong to the active deployment"
-                    },
-                    {
-                      "name": "--batch-size"
-                    },
-                    {
-                      "name": "--dry-run"
-                    },
-                    {
-                      "name": "--json"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "name": "events",
-              "subcommands": [
-                {
-                  "name": "get",
-                  "about": "Get one persisted system event by ID",
-                  "options": [
-                    {
-                      "name": "--json"
-                    }
-                  ],
-                  "positionals": [
-                    {
-                      "name": "event_id",
-                      "required": true
-                    }
-                  ]
-                },
-                {
-                  "name": "list",
-                  "about": "List persisted operator-visible system events",
-                  "options": [
-                    {
-                      "name": "--node-run-id",
-                      "help": "Only show events emitted by this node run"
-                    },
-                    {
-                      "name": "--level"
-                    },
-                    {
-                      "name": "--code"
-                    },
-                    {
-                      "name": "--from",
-                      "help": "Only show events created at or after this RFC 3339 time"
-                    },
-                    {
-                      "name": "--to",
-                      "help": "Only show events created before this RFC 3339 time"
-                    },
-                    {
-                      "name": "--limit"
-                    },
-                    {
-                      "name": "--json"
-                    }
-                  ]
-                },
-                {
-                  "name": "retain",
-                  "about": "Retain system events newer than the configured maximum age",
-                  "options": [
-                    {
-                      "name": "--max-age",
-                      "required": true
-                    },
-                    {
-                      "name": "--batch-size"
-                    },
-                    {
-                      "name": "--json"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "name": "storage",
-              "subcommands": [
-                {
-                  "name": "show",
-                  "about": "Show persistent storage usage and record counts",
-                  "options": [
-                    {
-                      "name": "--json"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "name": "node-run-id",
-              "about": "Print the ID of the current node run",
-              "options": [
-                {
-                  "name": "--json",
-                  "help": "Output as JSON instead of plain text"
                 }
               ]
             }

@@ -300,10 +300,6 @@ impl CloudArgs {
     fn selected_app(&self) -> Option<&str> {
         match &self.command {
             Cloud::App(args) => args.app.as_deref(),
-            Cloud::Deployment(args) => args.app.as_deref(),
-            Cloud::Execution(args) => args.app.as_deref(),
-            Cloud::Component(args) => args.app.as_deref(),
-            Cloud::Admin(args) => args.app.as_deref(),
             Cloud::Apps(_) | Cloud::Token(_) => None,
         }
     }
@@ -369,7 +365,13 @@ impl CloudArgs {
         }
         if matches!(
             self.command,
-            Cloud::Deployment(_) | Cloud::Execution(_) | Cloud::Component(_) | Cloud::Admin(_)
+            Cloud::App(CloudAppTarget {
+                command: CloudApp::Deployment(_)
+                    | CloudApp::Execution(_)
+                    | CloudApp::Component(_)
+                    | CloudApp::Admin(_),
+                ..
+            })
         ) {
             let api_url = self.direct_api_url().await?;
             let startup = ClientStartup::cloud(api_url.clone(), self.api_token);
@@ -378,22 +380,22 @@ impl CloudArgs {
                 api_token: None,
             };
             let command = match self.command {
-                Cloud::Deployment(command) => Subcommand::Deployment(DeploymentArgs {
-                    command: command.command,
-                    token,
-                }),
-                Cloud::Execution(command) => Subcommand::Execution(ExecutionArgs {
-                    command: command.command,
-                    token,
-                }),
-                Cloud::Component(command) => Subcommand::Component(ComponentArgs {
-                    command: command.command,
-                    token,
-                }),
-                Cloud::Admin(command) => Subcommand::Admin(AdminArgs {
-                    command: command.command,
-                    token,
-                }),
+                Cloud::App(CloudAppTarget {
+                    command: CloudApp::Deployment(command),
+                    ..
+                }) => Subcommand::Deployment(DeploymentArgs { command, token }),
+                Cloud::App(CloudAppTarget {
+                    command: CloudApp::Execution(command),
+                    ..
+                }) => Subcommand::Execution(ExecutionArgs { command, token }),
+                Cloud::App(CloudAppTarget {
+                    command: CloudApp::Component(command),
+                    ..
+                }) => Subcommand::Component(ComponentArgs { command, token }),
+                Cloud::App(CloudAppTarget {
+                    command: CloudApp::Admin(command),
+                    ..
+                }) => Subcommand::Admin(AdminArgs { command, token }),
                 Cloud::Apps(_) | Cloud::App(_) | Cloud::Token(_) => unreachable!(),
             };
             return crate::command_future(command, Some(startup))?.await;
@@ -411,9 +413,6 @@ impl CloudArgs {
         let client = Client::new(&self)?;
         match self.command {
             Cloud::Token(command) => token_command(&client, command).await,
-            Cloud::Deployment(_) | Cloud::Execution(_) | Cloud::Component(_) | Cloud::Admin(_) => {
-                unreachable!("API commands are dispatched in run")
-            }
             Cloud::Apps(CloudApps::List) => {
                 client
                     .request(Method::GET, &["v1", "apps"], None, Kind::Read)
@@ -449,6 +448,10 @@ impl CloudArgs {
             Cloud::App(CloudAppTarget { app, command }) => {
                 let name = &app_name(app.as_deref()).await?;
                 match command {
+                    CloudApp::Deployment(_)
+                    | CloudApp::Execution(_)
+                    | CloudApp::Component(_)
+                    | CloudApp::Admin(_) => unreachable!("API commands are dispatched in run"),
                     CloudApp::Get => client.app(name, Method::GET, &[], None, Kind::Read).await,
                     CloudApp::Status => {
                         client
@@ -892,12 +895,7 @@ mod tests {
             "--api-token",
             "cloud-token",
         ];
-        let position = command.iter().position(|arg| {
-            matches!(
-                *arg,
-                "app" | "deployment" | "execution" | "component" | "admin"
-            )
-        });
+        let position = command.iter().position(|arg| *arg == "app");
         if let Some(position) = position {
             args.extend_from_slice(&command[..=position]);
             args.extend_from_slice(&["--app", "demo"]);
@@ -913,15 +911,15 @@ mod tests {
     #[test]
     fn cloud_json_flag_reaches_tenant_commands() {
         for command in [
-            vec!["--json", "admin", "node-run-id"],
-            vec!["admin", "node-run-id", "--json"],
+            vec!["--json", "app", "admin", "node-run-id"],
+            vec!["app", "admin", "node-run-id", "--json"],
         ] {
             let args = args("https://cloud.example.com", &command);
             assert!(args.json);
             assert!(matches!(
                 args.command,
-                Cloud::Admin(CloudAppTarget {
-                    command: crate::args::Admin::NodeRunId { json: true },
+                Cloud::App(CloudAppTarget {
+                    command: CloudApp::Admin(crate::args::Admin::NodeRunId { json: true }),
                     ..
                 })
             ));
@@ -935,11 +933,11 @@ mod tests {
         state.lock().unwrap().api_url = Some(api_url.clone());
         let execution_id = concepts::ExecutionId::generate().to_string();
         for command in [
-            vec!["deployment", "active"],
-            vec!["execution", "pause", &execution_id],
-            vec!["execution", "cancel", &execution_id],
-            vec!["component", "list", "--imports"],
-            vec!["admin", "node-run-id"],
+            vec!["app", "deployment", "active"],
+            vec!["app", "execution", "pause", &execution_id],
+            vec!["app", "execution", "cancel", &execution_id],
+            vec!["app", "component", "list", "--imports"],
+            vec!["app", "admin", "node-run-id"],
         ] {
             args(&origin, &command).run().await.unwrap();
         }
@@ -966,7 +964,7 @@ mod tests {
         );
         state.lock().unwrap().error = true;
         assert!(
-            args(&origin, &["admin", "node-run-id"])
+            args(&origin, &["app", "admin", "node-run-id"])
                 .run()
                 .await
                 .is_err()
@@ -981,7 +979,7 @@ mod tests {
     async fn cloud_api_commands_do_not_follow_redirects() {
         let (origin, state, task) = server().await;
         state.lock().unwrap().redirect = true;
-        let error = args(&origin, &["deployment", "active"])
+        let error = args(&origin, &["app", "deployment", "active"])
             .run()
             .await
             .unwrap_err();
@@ -992,7 +990,7 @@ mod tests {
         state.lock().unwrap().api_url = Some(format!("{target}tenant"));
         target_state.lock().unwrap().redirect = true;
         assert!(
-            args(&origin, &["deployment", "active"])
+            args(&origin, &["app", "deployment", "active"])
                 .run()
                 .await
                 .unwrap_err()
