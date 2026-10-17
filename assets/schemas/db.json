@@ -435,12 +435,12 @@
         {
           "type": "object",
           "properties": {
-            "reason": {
-              "$ref": "#/$defs/ComponentUpgradeReason"
-            },
             "type": {
               "type": "string",
               "const": "success"
+            },
+            "reason": {
+              "$ref": "#/$defs/ComponentUpgradeReason"
             }
           },
           "required": [
@@ -451,12 +451,12 @@
         {
           "type": "object",
           "properties": {
-            "reason": {
-              "type": "string"
-            },
             "type": {
               "type": "string",
               "const": "failed"
+            },
+            "reason": {
+              "type": "string"
             }
           },
           "required": [
@@ -484,12 +484,12 @@
         {
           "type": "object",
           "properties": {
-            "force": {
-              "type": "boolean"
-            },
             "type": {
               "type": "string",
               "const": "manual"
+            },
+            "force": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -1070,6 +1070,10 @@
           "description": "Persist a generated pseudorandom value.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "persist"
+            },
             "value": {
               "type": [
                 "array",
@@ -1090,10 +1094,6 @@
             },
             "kind": {
               "$ref": "#/$defs/PersistKind"
-            },
-            "type": {
-              "type": "string",
-              "const": "persist"
             }
           },
           "required": [
@@ -1104,12 +1104,12 @@
         {
           "type": "object",
           "properties": {
-            "join_set_id": {
-              "type": "string"
-            },
             "type": {
               "type": "string",
               "const": "join_set_create"
+            },
+            "join_set_id": {
+              "type": "string"
             }
           },
           "required": [
@@ -1120,15 +1120,15 @@
         {
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "join_set_request"
+            },
             "join_set_id": {
               "type": "string"
             },
             "request": {
               "$ref": "#/$defs/JoinSetRequest"
-            },
-            "type": {
-              "type": "string",
-              "const": "join_set_request"
             }
           },
           "required": [
@@ -1141,6 +1141,10 @@
           "description": "Sets the pending state to [`PendingState::BlockedByJoinSet`].\nWhen the response arrives at `resp_time`:\nThe execution is [`PendingState::PendingAt`]`(max(resp_time, lock_expires_at)`, so that the\noriginal executor can continue. After the expiry any executor can continue without\nmarking the execution as timed out.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "join_next"
+            },
             "join_set_id": {
               "type": "string"
             },
@@ -1159,10 +1163,6 @@
             "closing": {
               "description": "Closing request must never set `requested_ffqn` and is ignored by determinism checks.",
               "type": "boolean"
-            },
-            "type": {
-              "type": "string",
-              "const": "join_next"
             }
           },
           "required": [
@@ -1176,15 +1176,15 @@
           "description": "Attempt to process next response without changing the pending state.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "join_next_try"
+            },
             "join_set_id": {
               "type": "string"
             },
             "outcome": {
               "$ref": "#/$defs/JoinNextTryOutcome"
-            },
-            "type": {
-              "type": "string",
-              "const": "join_next_try"
             }
           },
           "required": [
@@ -1197,6 +1197,10 @@
           "description": "Records the fact that a join set was awaited more times than its submission count.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "join_next_too_many"
+            },
             "join_set_id": {
               "type": "string"
             },
@@ -1206,10 +1210,6 @@
                 "string",
                 "null"
               ]
-            },
-            "type": {
-              "type": "string",
-              "const": "join_next_too_many"
             }
           },
           "required": [
@@ -1220,6 +1220,10 @@
         {
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "schedule"
+            },
             "execution_id": {
               "type": "string"
             },
@@ -1235,10 +1239,6 @@
             },
             "result": {
               "$ref": "#/$defs/Result_of_null_or_ScheduleRequestError"
-            },
-            "type": {
-              "type": "string",
-              "const": "schedule"
             }
           },
           "required": [
@@ -1251,6 +1251,10 @@
         {
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "stub"
+            },
             "target_execution_id": {
               "type": "string"
             },
@@ -1259,10 +1263,6 @@
             },
             "result": {
               "$ref": "#/$defs/Result_of_null_or_StubError"
-            },
-            "type": {
-              "type": "string",
-              "const": "stub"
             }
           },
           "required": [
@@ -1279,6 +1279,10 @@
         {
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "random_u64"
+            },
             "min": {
               "type": "integer",
               "format": "uint64",
@@ -1288,10 +1292,6 @@
               "type": "integer",
               "format": "uint64",
               "minimum": 0
-            },
-            "type": {
-              "type": "string",
-              "const": "random_u64"
             }
           },
           "required": [
@@ -1303,6 +1303,10 @@
         {
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "random_string"
+            },
             "min_length": {
               "type": "integer",
               "format": "uint64",
@@ -1312,10 +1316,6 @@
               "type": "integer",
               "format": "uint64",
               "minimum": 0
-            },
-            "type": {
-              "type": "string",
-              "const": "random_string"
             }
           },
           "required": [
@@ -1343,6 +1343,10 @@
         {
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "delay_request"
+            },
             "delay_id": {
               "$ref": "#/$defs/DelayId"
             },
@@ -1356,10 +1360,6 @@
             "paused": {
               "type": "boolean",
               "default": false
-            },
-            "type": {
-              "type": "string",
-              "const": "delay_request"
             }
           },
           "required": [
@@ -1372,6 +1372,10 @@
         {
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "child_execution_request"
+            },
             "child_execution_id": {
               "type": "string"
             },
@@ -1390,10 +1394,6 @@
             },
             "result": {
               "$ref": "#/$defs/Result_of_null_or_ChildExecutionRequestError"
-            },
-            "type": {
-              "type": "string",
-              "const": "child_execution_request"
             }
           },
           "required": [
@@ -2018,15 +2018,15 @@
         {
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "delay_finished"
+            },
             "delay_id": {
               "$ref": "#/$defs/DelayId"
             },
             "result": {
               "$ref": "#/$defs/Result_of_null_or_null"
-            },
-            "type": {
-              "type": "string",
-              "const": "delay_finished"
             }
           },
           "required": [
@@ -2038,6 +2038,10 @@
         {
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "child_execution_finished"
+            },
             "child_execution_id": {
               "type": "string"
             },
@@ -2048,10 +2052,6 @@
             },
             "result": {
               "$ref": "#/$defs/SupportedFunctionReturnValue"
-            },
-            "type": {
-              "type": "string",
-              "const": "child_execution_finished"
             }
           },
           "required": [

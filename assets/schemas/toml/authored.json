@@ -1165,15 +1165,15 @@
         {
           "type": "object",
           "properties": {
+            "kind": {
+              "type": "string",
+              "const": "await"
+            },
             "non_blocking_event_batching": {
               "type": "integer",
               "format": "uint32",
               "minimum": 0,
               "default": 100
-            },
-            "kind": {
-              "type": "string",
-              "const": "await"
             }
           },
           "additionalProperties": false,
