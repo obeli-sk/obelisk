@@ -326,7 +326,7 @@ insta = { version = "1.49.0", features = ["json"] }
 itertools = "0.15"
 jsonwebtoken = { version = "10", default-features = false } # keep in sync with oci-client's jsonwebtoken
 lazy_static = "1.5"
-libc = "0.2.190"
+libc = "0.2.191"
 lzma-rs = "0.3"
 oci-client = { version = "0.17.0", default-features = false }
 oci-wasm = { version = "0.6.0", default-features = false } # Dependent on matching oci-client
@@ -359,14 +359,14 @@ rusqlite = { version = "0.40.2", features = [
     "chrono",
     "serde_json",
 ] }
-schemars = { version = "1.2.2", features = ["indexmap2", "chrono04"] }
+schemars = { version = "1.2.3", features = ["indexmap2", "chrono04"] }
 secrecy = "0.10.3"
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.151", features = ["preserve_order"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
 serde_with = "3.24.0"
 hmac = "0.13.0"
-sha2 = "0.11.0"
+sha2 = "0.11.1"
 subtle = "2.6.1"
 tar = "0.4"
 strum = { version = "0.28.0", features = ["derive"] }
