@@ -1,6 +1,9 @@
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::de::DeserializeOwned;
 
+pub(crate) const USER_AGENT: &str =
+    const_format::concatcp!("obelisk/", crate::args::shadow::PKG_VERSION);
+
 /// Holds the API token and builds web-API clients that inject it.
 #[derive(Clone, Default)]
 pub(crate) struct ClientStartup {
@@ -89,7 +92,9 @@ impl ClientStartup {
             value.set_sensitive(true);
             headers.insert(reqwest::header::AUTHORIZATION, value);
         }
-        let builder = reqwest::Client::builder().default_headers(headers);
+        let builder = reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .default_headers(headers);
         Ok(if self.cloud {
             builder.redirect(reqwest::redirect::Policy::none())
         } else {
