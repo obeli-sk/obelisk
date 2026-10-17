@@ -1712,7 +1712,7 @@ pub(crate) enum CloudApp {
         #[arg(long)]
         interactive: bool,
     },
-    /// Apply staged policy, env and secrets; start a stopped VM.
+    /// Apply staged configuration while respecting the app's intended running state.
     Apply {
         /// Reapply even with a clear stale flag, including uncertain secret changes.
         #[arg(long)]

@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 pub(super) enum Summary {
     App(Option<&'static str>),
     Apps,
+    Lifecycle,
     Status,
     Token(Option<&'static str>),
     Tokens,
@@ -32,9 +33,9 @@ impl From<&Cloud> for Summary {
                     CloudApp::Get => Self::App(None),
                     CloudApp::Status => Self::Status,
                     CloudApp::New { .. } => Self::App(Some("App created.")),
-                    CloudApp::Apply { .. } => Self::App(Some("App applied.")),
-                    CloudApp::Start { .. } => Self::App(Some("App started.")),
-                    CloudApp::Stop { .. } => Self::App(Some("App stopped.")),
+                    CloudApp::Apply { .. } | CloudApp::Start { .. } | CloudApp::Stop { .. } => {
+                        Self::Lifecycle
+                    }
                     CloudApp::Delete { .. } => Self::Message("App deleted."),
                     CloudApp::Stage { .. } => Self::Staged("Configuration staged.", apply),
                     CloudApp::Env(CloudEnv::List) => Self::Env,
@@ -66,6 +67,10 @@ impl Summary {
                 if let Some(message) = message {
                     let _ = writeln!(out, "{message}");
                 }
+                app(&mut out, value);
+            }
+            Self::Lifecycle => {
+                let _ = writeln!(out, "{}", lifecycle_outcome(value));
                 app(&mut out, value);
             }
             Self::Apps => {
@@ -162,6 +167,24 @@ impl Summary {
     }
 }
 
+pub(super) fn lifecycle_outcome(value: &Value) -> String {
+    let configuration = match value["outcome"]["configuration"].as_str() {
+        Some("applied") => "Configuration applied. ",
+        Some("unchanged") => "Configuration already applied. ",
+        _ => "",
+    };
+    let vm = match value["outcome"]["vm"].as_str() {
+        Some("started") => "App started.",
+        Some("restarted") => "App restarted.",
+        Some("stopped") => "App stopped.",
+        Some("remained_stopped") => "App remains stopped.",
+        Some("remained_running") => "App remains running.",
+        // backcompat: 0.43.0-rc.4 cloud responses did not include lifecycle outcomes.
+        _ => "Cloud operation completed.",
+    };
+    format!("{configuration}{vm}")
+}
+
 fn text<'a>(value: &'a Value, key: &str, fallback: &'a str) -> &'a str {
     value[key].as_str().unwrap_or(fallback)
 }
@@ -173,6 +196,11 @@ fn app(out: &mut String, value: &Value) {
         text(value, "app_slug", "App"),
         text(value, "status", "unknown")
     );
+    if let Some(desired) = value["desired_state"].as_str()
+        && value["status"] != desired
+    {
+        let _ = writeln!(out, "Intended state: {desired}");
+    }
     if let Some(url) = value["webhook_url"].as_str() {
         let _ = writeln!(out, "URL: {url}");
     }

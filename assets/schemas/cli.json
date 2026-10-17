@@ -1069,7 +1069,7 @@
             },
             {
               "name": "apply",
-              "about": "Apply staged policy, env and secrets; start a stopped VM",
+              "about": "Apply staged configuration while respecting the app's intended running state",
               "options": [
                 {
                   "name": "--force",

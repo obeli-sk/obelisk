@@ -69,14 +69,12 @@ impl CloudArgs {
             },
         )
         .await?;
+        let mut outcomes = Vec::new();
         if current["potentially_stale"] == true
             || current["applied_revision"] == 0
             || filled["apply_required"] == true
         {
-            step(
-                "apply",
-                "Applying configuration and starting VM (restarts a running VM)",
-            );
+            step("apply", "Applying staged configuration");
             current = client
                 .app(
                     &name,
@@ -86,11 +84,20 @@ impl CloudArgs {
                     Kind::Command(None),
                 )
                 .await?;
-        } else if current["status"] == "stopped" {
+            eprintln!("{}", output::lifecycle_outcome(&current));
+            if let Some(outcome) = current.get("outcome") {
+                outcomes.push(outcome.clone());
+            }
+        }
+        if current["status"] == "stopped" {
             step("start", "Starting VM");
             current = client
                 .app(&name, Method::POST, &["start"], None, Kind::Command(None))
                 .await?;
+            eprintln!("{}", output::lifecycle_outcome(&current));
+            if let Some(outcome) = current.get("outcome") {
+                outcomes.push(outcome.clone());
+            }
         }
         ensure!(
             current["status"] == "running",
@@ -113,7 +120,7 @@ impl CloudArgs {
         );
         let id = crate::command::deployment::apply_prepared(&startup, prepared).await
             .with_context(|| format!("Deployment did not complete; inspect `obelisk cloud app --app {name} deployment active` to see what is serving, then retry `obelisk cloud app --app {name} deploy -a {} -d {}`", app_config.display(), deployment.display()))?;
-        let result = json!({"app":current,"deployment_id":id});
+        let result = json!({"app":current,"deployment_id":id,"outcomes":outcomes});
         if self.json {
             print_json(&result)
         } else {
@@ -167,6 +174,7 @@ mod tests {
                 app["status"] = json!("stopped");
                 app["potentially_stale"] = json!(false);
                 app["applied_revision"] = json!(0);
+                app["desired_state"] = json!("running");
                 state.app = Some(app.clone());
                 app
             }
@@ -179,7 +187,15 @@ mod tests {
             }
             (Method::POST, "/v1/apps/demo/apply" | "/v1/apps/demo/start") => {
                 let app = state.app.as_mut().unwrap();
-                app["status"] = json!("running");
+                if path.ends_with("/start") {
+                    app["desired_state"] = json!("running");
+                }
+                let running = app["desired_state"] == "running";
+                app["status"] = json!(if running { "running" } else { "stopped" });
+                app["outcome"] = json!({"vm":if running { "started" } else { "remained_stopped" }});
+                if path.ends_with("/apply") {
+                    app["outcome"]["configuration"] = json!("applied");
+                }
                 app["potentially_stale"] = json!(false);
                 app["applied_revision"] = json!(1);
                 app.clone()
@@ -220,6 +236,7 @@ mod tests {
             "code-only",
             "config",
             "stopped",
+            "stopped-config",
             "pending",
             "missing",
             "invalid",
@@ -246,12 +263,13 @@ mod tests {
             let desired = policy(&app_path).await.unwrap();
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", listener.local_addr().unwrap());
-            let mut app = json!({"policy":desired.policy(),"cloud":{},"status":"running","potentially_stale":false,"applied_revision":1,"api_url":format!("{origin}/tenant")});
-            if scenario == "config" {
+            let mut app = json!({"policy":desired.policy(),"cloud":{},"status":"running","desired_state":"running","potentially_stale":false,"applied_revision":1,"api_url":format!("{origin}/tenant")});
+            if matches!(scenario, "config" | "stopped-config") {
                 app["cloud"] = json!({"memory_mb":512});
             }
-            if scenario == "stopped" {
+            if matches!(scenario, "stopped" | "stopped-config") {
                 app["status"] = json!("stopped");
+                app["desired_state"] = json!("stopped");
             }
             if scenario == "pending" {
                 app["potentially_stale"] = json!(true);
@@ -309,15 +327,15 @@ mod tests {
                 );
                 assert_eq!(
                     state.calls.contains(&"PUT /v1/apps/demo/config".to_owned()),
-                    scenario == "config"
+                    matches!(scenario, "config" | "stopped-config")
                 );
                 assert_eq!(
                     state.calls.contains(&"POST /v1/apps/demo/apply".to_owned()),
-                    matches!(scenario, "new" | "config" | "pending")
+                    matches!(scenario, "new" | "config" | "pending" | "stopped-config")
                 );
                 assert_eq!(
                     state.calls.contains(&"POST /v1/apps/demo/start".to_owned()),
-                    scenario == "stopped"
+                    matches!(scenario, "stopped" | "stopped-config")
                 );
                 assert!(
                     state
