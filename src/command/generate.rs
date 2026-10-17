@@ -1,5 +1,5 @@
-use crate::args::Generate;
 use crate::args::shadow::PKG_VERSION;
+use crate::args::{Generate, StarterTemplate};
 use crate::command::server::{
     PrepareDirsParams, RuntimeConfigAvailability, VerifyParams, create_engines,
     deployment_compile_link, deployment_verify_config, prepare_dirs, server_verify,
@@ -34,32 +34,37 @@ use toml_edit::{DocumentMut, Item};
 use utils::{wasm_tools::WasmComponent, wit};
 use wasm_workers::registry::WitOrigin;
 
-const JS_HTTP_STARTER_FILES: &[(&str, &str)] = &[
-    (
-        "app.toml",
-        include_str!("../../examples/templates/js-http/app.toml"),
-    ),
-    (
-        "deployment.toml",
-        include_str!("../../examples/templates/js-http/deployment.toml"),
-    ),
-    (
-        "activity/fetch-status.js",
-        include_str!("../../examples/templates/js-http/activity/fetch-status.js"),
-    ),
-    (
-        "workflow/run.js",
-        include_str!("../../examples/templates/js-http/workflow/run.js"),
-    ),
-    (
-        "webhook/handle.js",
-        include_str!("../../examples/templates/js-http/webhook/handle.js"),
-    ),
-    (
-        "README.md",
-        include_str!("../../examples/templates/js-http/README.md"),
-    ),
-];
+macro_rules! starter_files {
+    ($template:literal: $($path:literal),+ $(,)?) => {
+        &[$((
+            $path,
+            include_str!(concat!("../../examples/templates/", $template, "/", $path)),
+        )),+]
+    };
+}
+
+impl StarterTemplate {
+    fn files(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            StarterTemplate::UrlHealthDashboard => starter_files!("url-health-dashboard":
+                "app.toml",
+                "deployment.toml",
+                "activity/check-url.js",
+                "workflow/check-batch.js",
+                "webhook/dashboard.js",
+                "README.md",
+            ),
+            StarterTemplate::Minimal => starter_files!("minimal":
+                "app.toml",
+                "deployment.toml",
+                "activity/fetch-status.js",
+                "workflow/run.js",
+                "webhook/handle.js",
+                "README.md",
+            ),
+        }
+    }
+}
 
 impl Generate {
     pub(crate) async fn run(
@@ -67,8 +72,8 @@ impl Generate {
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<(), anyhow::Error> {
         match self {
-            Generate::New { name } => {
-                generate_new(&std::env::current_dir()?, name.as_deref()).await
+            Generate::New { name, template } => {
+                generate_new(&std::env::current_dir()?, name.as_deref(), template).await
             }
             Generate::SecretConfigDigest {
                 deployment,
@@ -291,7 +296,12 @@ impl Generate {
     }
 }
 
-async fn generate_new(directory: &Path, name: Option<&str>) -> anyhow::Result<()> {
+async fn generate_new(
+    directory: &Path,
+    name: Option<&str>,
+    template: StarterTemplate,
+) -> anyhow::Result<()> {
+    let files = template.files();
     let app_name = if let Some(name) = name {
         name.to_owned()
     } else {
@@ -313,7 +323,7 @@ async fn generate_new(directory: &Path, name: Option<&str>) -> anyhow::Result<()
         directory.to_path_buf()
     };
 
-    for (relative_path, _) in JS_HTTP_STARTER_FILES {
+    for (relative_path, _) in files {
         let path = output_directory.join(relative_path);
         ensure!(
             !path.exists(),
@@ -321,8 +331,8 @@ async fn generate_new(directory: &Path, name: Option<&str>) -> anyhow::Result<()
         );
     }
 
-    let mut generated = Vec::with_capacity(JS_HTTP_STARTER_FILES.len());
-    for (relative_path, template) in JS_HTTP_STARTER_FILES {
+    let mut generated = Vec::with_capacity(files.len());
+    for (relative_path, template) in files {
         let path = output_directory.join(relative_path);
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent)
@@ -1276,8 +1286,8 @@ fn has_obelisk_wit_header(content: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        OBELISK_WIT_HEADER, add_token_hash, generate_app_config_schema, generate_app_policy_schema,
-        generate_authored_schema, generate_cli_schema,
+        OBELISK_WIT_HEADER, StarterTemplate, add_token_hash, generate_app_config_schema,
+        generate_app_policy_schema, generate_authored_schema, generate_cli_schema,
         generate_component_metadata_annotation_schema, generate_db_schema, generate_new,
         generate_openapi_schema, generate_server_audit_schema, generate_server_config_schema,
         split_config, write_wit_deps,
@@ -1291,29 +1301,41 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().join("My Cool_App");
         std::fs::create_dir(&directory).unwrap();
-        generate_new(&directory, None).await.unwrap();
+        generate_new(&directory, None, StarterTemplate::default())
+            .await
+            .unwrap();
         let app = std::fs::read_to_string(directory.join("app.toml")).unwrap();
         let parsed: crate::config::app::AppConfigToml = toml::from_str(&app).unwrap();
         assert_eq!(parsed.app_name.as_deref(), Some("my-cool-app"));
         let deployment = std::fs::read_to_string(directory.join("deployment.toml")).unwrap();
-        assert!(deployment.contains("starter:app/activity.fetch-status"));
-        assert!(directory.join("activity/fetch-status.js").exists());
-        assert!(directory.join("workflow/run.js").exists());
-        assert!(directory.join("webhook/handle.js").exists());
+        assert!(deployment.contains("starter:app/activity.check-url"));
+        assert!(directory.join("activity/check-url.js").exists());
+        assert!(directory.join("workflow/check-batch.js").exists());
+        assert!(directory.join("webhook/dashboard.js").exists());
         assert!(directory.join("README.md").exists());
-        assert!(generate_new(&directory, None).await.is_err());
+        assert!(
+            generate_new(&directory, None, StarterTemplate::default())
+                .await
+                .is_err()
+        );
         assert_eq!(
             std::fs::read_to_string(directory.join("app.toml")).unwrap(),
             app
         );
 
-        generate_new(root.path(), Some("chosen-app")).await.unwrap();
+        generate_new(root.path(), Some("chosen-app"), StarterTemplate::default())
+            .await
+            .unwrap();
         let new_directory = root.path().join("chosen-app");
         let named_app = std::fs::read_to_string(new_directory.join("app.toml")).unwrap();
         assert!(named_app.starts_with("app_name = \"chosen-app\""));
-        assert!(new_directory.join("webhook/handle.js").exists());
+        assert!(new_directory.join("webhook/dashboard.js").exists());
         assert!(!root.path().join("app.toml").exists());
-        assert!(generate_new(root.path(), Some("chosen-app")).await.is_err());
+        assert!(
+            generate_new(root.path(), Some("chosen-app"), StarterTemplate::default())
+                .await
+                .is_err()
+        );
         assert_eq!(
             std::fs::read_to_string(new_directory.join("app.toml")).unwrap(),
             named_app
@@ -1321,11 +1343,19 @@ mod tests {
 
         let invalid = root.path().join("invalid");
         std::fs::create_dir(&invalid).unwrap();
-        assert!(generate_new(&invalid, Some("Invalid Name")).await.is_err());
+        assert!(
+            generate_new(&invalid, Some("Invalid Name"), StarterTemplate::default())
+                .await
+                .is_err()
+        );
         assert!(!invalid.join("app.toml").exists());
 
         std::fs::write(invalid.join("README.md"), "keep me").unwrap();
-        assert!(generate_new(&invalid, None).await.is_err());
+        assert!(
+            generate_new(&invalid, None, StarterTemplate::default())
+                .await
+                .is_err()
+        );
         assert!(!invalid.join("app.toml").exists());
         assert_eq!(
             std::fs::read_to_string(invalid.join("README.md")).unwrap(),
