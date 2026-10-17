@@ -1,8 +1,8 @@
 use super::output::{print_json, print_value};
 use crate::args::CloudToken;
 use crate::args::{
-    AdminArgs, ClientConnection, Cloud, CloudApp, CloudApps, CloudArgs, CloudCommandId,
-    CloudEndpoint, CloudEnv, CloudSecrets, CloudSelected, ComponentArgs, DeploymentArgs,
+    AdminArgs, ClientConnection, Cloud, CloudApp, CloudAppTarget, CloudApps, CloudArgs,
+    CloudCommandId, CloudEndpoint, CloudEnv, CloudSecrets, ComponentArgs, DeploymentArgs,
     ExecutionArgs, Subcommand,
 };
 use crate::client::ClientStartup;
@@ -340,7 +340,7 @@ impl CloudArgs {
         Ok(api_origin(value)?.as_str().trim_end_matches('/').to_owned())
     }
     pub(crate) async fn run(self) -> anyhow::Result<()> {
-        if let Cloud::App(CloudSelected {
+        if let Cloud::App(CloudAppTarget {
             command: CloudApp::Endpoint { command },
             ..
         }) = &self.command
@@ -419,7 +419,7 @@ impl CloudArgs {
                     .request(Method::GET, &["v1", "apps"], None, Kind::Read)
                     .await
             }
-            Cloud::App(CloudSelected {
+            Cloud::App(CloudAppTarget {
                 app,
                 command:
                     CloudApp::New {
@@ -446,7 +446,7 @@ impl CloudArgs {
                     .request(Method::POST, &["v1", "apps"], Some(body), command_id.into())
                     .await
             }
-            Cloud::App(CloudSelected { app, command }) => {
+            Cloud::App(CloudAppTarget { app, command }) => {
                 let name = &app_name(app.as_deref()).await?;
                 match command {
                     CloudApp::Get => client.app(name, Method::GET, &[], None, Kind::Read).await,
@@ -920,7 +920,7 @@ mod tests {
             assert!(args.json);
             assert!(matches!(
                 args.command,
-                Cloud::Admin(CloudSelected {
+                Cloud::Admin(CloudAppTarget {
                     command: crate::args::Admin::NodeRunId { json: true },
                     ..
                 })

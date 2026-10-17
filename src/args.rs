@@ -1260,7 +1260,7 @@ mod tests {
                 }
                 Subcommand::Cloud(args) => {
                     assert_eq!(args.api_url.as_deref(), Some("https://cloud.example.test"));
-                    let Cloud::Deployment(CloudSelected {
+                    let Cloud::Deployment(CloudAppTarget {
                         command: Deployment::Verify(verify),
                         ..
                     }) = args.command
@@ -1520,7 +1520,7 @@ pub(crate) struct CloudArgs {
 }
 
 #[derive(Debug, clap::Args)]
-pub(crate) struct CloudSelected<T: clap::Subcommand> {
+pub(crate) struct CloudAppTarget<T: clap::Subcommand> {
     /// Selected app name; defaults to `app_name` in ./app.toml.
     #[arg(long, global = true, env = "OBELISK_APP_NAME", value_name = "NAME")]
     pub(crate) app: Option<String>,
@@ -1544,15 +1544,15 @@ pub(crate) enum Cloud {
     #[command(subcommand)]
     Apps(CloudApps),
     /// Manage an app lifecycle and staged configuration.
-    App(CloudSelected<CloudApp>),
+    App(CloudAppTarget<CloudApp>),
     /// Manage deployments through the selected app's API.
-    Deployment(CloudSelected<Deployment>),
+    Deployment(CloudAppTarget<Deployment>),
     /// Manage executions through the selected app's API.
-    Execution(CloudSelected<Execution>),
+    Execution(CloudAppTarget<Execution>),
     /// Inspect components or manage OCI artifacts.
-    Component(CloudSelected<Component>),
+    Component(CloudAppTarget<Component>),
     /// Perform operator-only destructive maintenance on the selected app.
-    Admin(CloudSelected<Admin>),
+    Admin(CloudAppTarget<Admin>),
 }
 
 #[derive(Debug, clap::Subcommand)]
