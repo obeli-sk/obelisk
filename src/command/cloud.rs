@@ -14,6 +14,9 @@ use secrecy::ExposeSecret as _;
 use serde_json::{Value, json};
 use std::{fmt::Write as _, io::Read as _, path::Path, time::Duration};
 
+mod output;
+use output::Summary;
+
 fn human_output(value: &Value) -> String {
     fn render(out: &mut String, value: &Value, indent: usize) {
         match value {
@@ -89,6 +92,7 @@ impl From<CloudCommandId> for Kind {
 struct Client {
     http: reqwest::Client,
     origin: Url,
+    verbose: bool,
 }
 fn api_origin(value: &str) -> anyhow::Result<Url> {
     let origin = value.parse::<Url>()?;
@@ -129,6 +133,7 @@ impl Client {
                 .timeout(Duration::from_secs(360))
                 .build()?,
             origin,
+            verbose: args.verbose,
         })
     }
     fn url(&self, path: &[&str]) -> anyhow::Result<Url> {
@@ -147,24 +152,51 @@ impl Client {
         kind: Kind,
     ) -> anyhow::Result<Value> {
         let mut request = self.http.request(method, self.url(path)?);
-        if let Kind::Command(id) = kind {
+        let command_id = if let Kind::Command(id) = kind {
             let id = id.unwrap_or_else(ExecutionIdTopLevel::generate);
-            eprintln!("Cloud command execution ID: {id}");
+            if self.verbose {
+                eprintln!("Cloud command execution ID: {id}");
+            }
             request = request.header("Idempotency-Key", id.to_string());
-        }
+            Some(id)
+        } else {
+            None
+        };
         if let Some(body) = body {
             request = request.json(&body);
         }
-        let response = request.send().await.map_err(reqwest::Error::without_url)?;
+        let response = request
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .with_context(|| {
+                command_id.map_or_else(
+                    || "Cloud request failed".to_owned(),
+                    |id| {
+                        format!(
+                            "Cloud request failed; retry the same command with --command-id {id}"
+                        )
+                    },
+                )
+            })?;
         let status = response.status();
         if !status.is_success() {
             if matches!(kind, Kind::Secret) {
                 bail!("Cloud secret operation failed: HTTP {status}");
             }
             let body = response.text().await.unwrap_or_default();
+            if !self.verbose {
+                let message = output::error_message(&body);
+                if let Some(id) = command_id {
+                    bail!("{message} (HTTP {status}). Command ID: {id}");
+                }
+                bail!("{message} (HTTP {status})");
+            }
             bail!("Cloud API returned {status}: {body}");
         }
-        Ok(response.json().await?)
+        response.json().await.map_err(reqwest::Error::without_url).with_context(|| {
+            command_id.map_or_else(|| "Cannot read cloud response".to_owned(), |id| format!("Cannot read cloud response; retry the same command with --command-id {id}"))
+        })
     }
     async fn app(
         &self,
@@ -270,11 +302,14 @@ async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<V
                 .map(|date| u64::try_from(date.timestamp()))
                 .transpose()
                 .context("Expiry must be after the Unix epoch")?;
-            eprintln!(
-                "Token saved in {}; reuse this file and parameters to retry",
-                token_file.display()
-            );
-            let mut value = client.request(Method::POST,&path,Some(json!({"hash":crate::api::token_hash(&token).to_string(),"name":name,"global":scope.is_empty(),"apps":scope,"expires_at":expires_at})),Kind::Read).await?;
+            if client.verbose {
+                eprintln!(
+                    "Token saved in {}; reuse this file and parameters to retry",
+                    token_file.display()
+                );
+            }
+            let mut value = client.request(Method::POST,&path,Some(json!({"hash":crate::api::token_hash(&token).to_string(),"name":name,"global":scope.is_empty(),"apps":scope,"expires_at":expires_at})),Kind::Read).await
+                .with_context(|| format!("Token saved in {}; reuse this file and parameters to retry", token_file.display()))?;
             value["token_file"] = json!(token_file);
             Ok(value)
         }
@@ -374,7 +409,7 @@ impl CloudArgs {
             })
         ) {
             let api_url = self.direct_api_url().await?;
-            let startup = ClientStartup::cloud(api_url.clone(), self.api_token);
+            let startup = ClientStartup::cloud(api_url.clone(), self.api_token, self.verbose);
             let token = ClientConnection {
                 api_url,
                 api_token: None,
@@ -401,11 +436,20 @@ impl CloudArgs {
             return crate::command_future(command, Some(startup))?.await;
         }
         let json = self.json;
+        let verbose = self.verbose;
+        let summary = Summary::from(&self.command);
         let value = self.execute().await?;
         if json {
             print_json(&value)
         } else {
-            print!("{}", human_output(&value));
+            print!(
+                "{}",
+                if verbose {
+                    human_output(&value)
+                } else {
+                    summary.render(&value)
+                }
+            );
             Ok(())
         }
     }

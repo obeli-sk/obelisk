@@ -18,6 +18,10 @@
           "help": "Print machine-readable JSON instead of human-readable output"
         },
         {
+          "name": "--verbose",
+          "help": "Show detailed metadata and command diagnostics"
+        },
+        {
           "name": "--api-url",
           "help": "Provisioner webhook URL"
         },

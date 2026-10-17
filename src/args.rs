@@ -1509,6 +1509,9 @@ pub(crate) struct CloudArgs {
     /// Print machine-readable JSON instead of human-readable output.
     #[arg(long, global = true)]
     pub(crate) json: bool,
+    /// Show detailed metadata and command diagnostics.
+    #[arg(long, global = true)]
+    pub(crate) verbose: bool,
     /// Provisioner webhook URL.
     #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
     pub(crate) api_url: Option<String>,

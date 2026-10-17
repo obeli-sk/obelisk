@@ -1083,13 +1083,22 @@ async fn execution_list(
         print_json(&executions)
     } else {
         for execution in executions {
-            eprintln!(
-                "{} `{}` {} `{}`",
-                execution.execution_id,
-                execution.pending_state,
-                execution.ffqn,
-                execution.first_scheduled_at,
-            );
+            if client_startup.detailed_output() {
+                eprintln!(
+                    "{} `{}` {} `{}`",
+                    execution.execution_id,
+                    execution.pending_state,
+                    execution.ffqn,
+                    execution.first_scheduled_at,
+                );
+            } else {
+                let status = match &execution.pending_state {
+                    concepts::storage::PendingState::Locked(_) => "Running".to_owned(),
+                    concepts::storage::PendingState::BlockedByJoinSet(_) => "Waiting".to_owned(),
+                    state => format_execution_status_text(state),
+                };
+                eprintln!("{} `{}` {}", execution.execution_id, status, execution.ffqn);
+            }
         }
         Ok(())
     }
