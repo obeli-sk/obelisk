@@ -78,7 +78,7 @@ impl OidcVerifier {
         }
         let http = reqwest::Client::builder()
             .timeout(FETCH_TIMEOUT)
-            .user_agent(concat!("obelisk/", env!("CARGO_PKG_VERSION")))
+            .user_agent(crate::client::USER_AGENT)
             .build()?;
         let issuers = issuers.into_iter().map(Arc::new).collect();
         Ok(Some(Arc::new(Self { issuers, http })))

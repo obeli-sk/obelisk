@@ -129,6 +129,7 @@ impl Client {
         }
         Ok(Self {
             http: reqwest::Client::builder()
+                .user_agent(crate::client::USER_AGENT)
                 .default_headers(headers)
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(360))

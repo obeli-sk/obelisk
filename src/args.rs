@@ -64,7 +64,7 @@ impl FromStr for DeploymentSource {
 }
 
 pub(crate) mod shadow {
-    pub(crate) const PKG_VERSION: &str = env!("PKG_VERSION");
+    pub(crate) const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 }
 
 #[derive(Parser, Debug)]
