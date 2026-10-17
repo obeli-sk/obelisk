@@ -29,6 +29,8 @@ pub(crate) struct AppConfigToml {
     #[serde(default)]
     pub(crate) app_name: Option<String>,
     #[serde(default)]
+    pub(crate) cloud: CloudConfigToml,
+    #[serde(default)]
     pub(crate) secrets: SecretsToml,
     #[serde(default)]
     pub(crate) public_env: PublicEnvToml,
@@ -36,6 +38,14 @@ pub(crate) struct AppConfigToml {
     pub(crate) allowed_exec_activities: AllowExecActivities,
     #[serde(default)]
     pub(crate) outbound_http: OutboundHttpToml,
+}
+
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CloudConfigToml {
+    /// VM memory in MB; omission uses the cloud default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) memory_mb: Option<std::num::NonZeroU32>,
 }
 
 #[derive(Debug, Default, Clone, JsonSchema, Serialize)]
@@ -186,6 +196,8 @@ mod tests {
         let first: AppConfigToml = toml::from_str(
             r#"
             app_name = "one"
+            [cloud]
+            memory_mb = 512
             [public_env]
             B = {}
             A = {}
@@ -199,6 +211,8 @@ mod tests {
             r#"
             # Same policy for another app.
             app_name = "two"
+            [cloud]
+            memory_mb = 1024
             [secrets]
             TOKEN = {}
             [public_env]

@@ -1025,7 +1025,7 @@
             },
             {
               "name": "update",
-              "about": "Stage the app policy without restarting the VM",
+              "about": "Stage app policy and cloud settings without restarting the VM",
               "options": [
                 {
                   "name": "--app-config",

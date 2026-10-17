@@ -36,7 +36,7 @@ impl From<&Cloud> for Summary {
                     CloudApp::Start { .. } => Self::App(Some("App started.")),
                     CloudApp::Stop { .. } => Self::App(Some("App stopped.")),
                     CloudApp::Delete { .. } => Self::Message("App deleted."),
-                    CloudApp::Update { .. } => Self::Staged("Policy staged.", apply),
+                    CloudApp::Update { .. } => Self::Staged("Configuration staged.", apply),
                     CloudApp::Env(CloudEnv::List) => Self::Env,
                     CloudApp::Env(CloudEnv::Set { .. } | CloudEnv::Unset { .. }) => {
                         Self::Staged("Environment staged.", apply)
@@ -78,6 +78,9 @@ impl Summary {
             }
             Self::Status => {
                 app(&mut out, &value["app"]);
+                if let Some(memory) = value["memory_mb"].as_u64() {
+                    let _ = writeln!(out, "Memory: {memory} MB");
+                }
                 let _ = writeln!(
                     out,
                     "API: {}",

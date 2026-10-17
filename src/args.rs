@@ -1608,7 +1608,7 @@ pub(crate) enum CloudApp {
     Get,
     /// Inspect management, Machine and target API health.
     Status,
-    /// Stage the app policy without restarting the VM.
+    /// Stage app policy and cloud settings without restarting the VM.
     Update {
         /// App policy path; defaults to ./app.toml.
         #[arg(short = 'a', long, default_value = "app.toml")]
