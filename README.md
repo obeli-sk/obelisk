@@ -233,24 +233,35 @@ use NDJSON with or without `--follow`.
 
 Manage apps through an Obelisk cloud provisioner using `obelisk cloud`.
 
+`cloud app deploy` publishes the local `app.toml` and `deployment.toml`, creating the
+app if necessary. It shows each constituent command, stages changed settings, applies
+pending configuration, and activates the deployment. Code-only updates avoid a VM
+restart. Use `--interactive` to fill missing required configuration, confirming any
+forwarded environment values and hiding secret input. Explicit files use
+`deploy -a path/app.toml -d path/deployment.toml`.
+
+For separate configuration staging and activation, use `cloud app stage` followed by
+`cloud app apply`. Deployment `submit`, `enqueue`, and `apply` default to
+`./deployment.toml` in both cloud and direct commands.
+
 ```sh
 export OBELISK_CLOUD_API_URL=...
 export OBELISK_CLOUD_API_TOKEN=...
 obelisk generate new
-obelisk cloud app new
-obelisk cloud app apply
+obelisk cloud app deploy
 obelisk cloud app status
 obelisk cloud app endpoint
-obelisk cloud deployment apply deployment.toml
-obelisk cloud execution list
-obelisk cloud component list
+obelisk cloud app deployment apply
+obelisk cloud app execution list
+obelisk cloud app component list
 ```
 
-`cloud deployment`, `cloud execution`, `cloud component`, and `cloud admin`
+`cloud app deployment`, `cloud app execution`, `cloud app component`, and `cloud app admin`
 share the direct API commands and output formats. They use
 `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_API_TOKEN`, with the app selected by
 `--app`, `OBELISK_APP_NAME`, or `app_name` in `./app.toml`, in that order.
-Requests go through the provisioner's `/proxy/<app>` facade.
+The CLI discovers the app's API URL through the provisioner, then connects directly
+with the cloud bearer token.
 
 ### Web UI
 Visit [localhost:8080](http://127.0.0.1:8080) to manage components, functions and execution history.

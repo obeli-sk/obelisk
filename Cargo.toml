@@ -63,6 +63,7 @@ prost.workspace = true
 rand.workspace = true
 regex.workspace = true
 reqwest.workspace = true
+rpassword.workspace = true
 ring.workspace = true
 ruzstd.workspace = true
 rustls.workspace = true # Enable ring crypto provider for rustls (instead of aws-lc-rs)
@@ -326,6 +327,7 @@ insta = { version = "1.49.0", features = ["json"] }
 itertools = "0.15"
 jsonwebtoken = { version = "10", default-features = false } # keep in sync with oci-client's jsonwebtoken
 lazy_static = "1.5"
+rpassword = "7.5.4"
 libc = "0.2.191"
 lzma-rs = "0.3"
 oci-client = { version = "0.17.0", default-features = false }

@@ -293,6 +293,35 @@ async fn submit_deployment(
         Some(DeploymentSource::File(path)) => prepare_deployment_manifest_from_disk(&path).await?,
         None => prepare_manifest_from_file_or_empty(None, empty).await?,
     };
+    submit_prepared(
+        client_startup,
+        api_url,
+        prepared,
+        allow_unavailable_runtime_config,
+        description,
+        deployment_id,
+    )
+    .await
+}
+
+pub(super) async fn apply_prepared(
+    client_startup: &ClientStartup,
+    prepared: PreparedDeploymentManifest,
+) -> anyhow::Result<DeploymentId> {
+    let api_url = client_startup.api_url();
+    let id = submit_prepared(client_startup, api_url, prepared, false, None, None).await?;
+    switch_deployment(client_startup, api_url, id, false, SwitchCommand::Apply).await?;
+    Ok(id)
+}
+
+async fn submit_prepared(
+    client_startup: &ClientStartup,
+    api_url: &str,
+    prepared: PreparedDeploymentManifest,
+    allow_unavailable_runtime_config: bool,
+    description: Option<String>,
+    deployment_id: Option<DeploymentId>,
+) -> anyhow::Result<DeploymentId> {
     if deployment_id.is_none() {
         let client = client_startup.web_api_client()?;
         let active_id: DeploymentId = send_json(

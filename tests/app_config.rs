@@ -61,7 +61,7 @@ fn server_app_discovery_preserves_explicit_paths_and_rejects_invalid_files() {
 }
 
 #[tokio::test]
-async fn cloud_new_and_update_load_local_policy() {
+async fn cloud_new_and_stage_load_local_policy() {
     use axum::{Json, body::Bytes, routing::any};
     use serde_json::{Value, json};
     use std::sync::{Arc, Mutex};
@@ -91,7 +91,7 @@ async fn cloud_new_and_update_load_local_policy() {
     )
     .unwrap();
     tokio::task::spawn_blocking(move || {
-        for command in ["new", "update"] {
+        for command in ["new", "stage"] {
             assert_success(&cli(
                 dir.path(),
                 &[

@@ -36,7 +36,7 @@ impl From<&Cloud> for Summary {
                     CloudApp::Start { .. } => Self::App(Some("App started.")),
                     CloudApp::Stop { .. } => Self::App(Some("App stopped.")),
                     CloudApp::Delete { .. } => Self::Message("App deleted."),
-                    CloudApp::Update { .. } => Self::Staged("Configuration staged.", apply),
+                    CloudApp::Stage { .. } => Self::Staged("Configuration staged.", apply),
                     CloudApp::Env(CloudEnv::List) => Self::Env,
                     CloudApp::Env(CloudEnv::Set { .. } | CloudEnv::Unset { .. }) => {
                         Self::Staged("Environment staged.", apply)
@@ -47,6 +47,7 @@ impl From<&Cloud> for Summary {
                     }
                     CloudApp::Fill { .. } => Self::Fill(apply),
                     CloudApp::Endpoint { .. }
+                    | CloudApp::Deploy { .. }
                     | CloudApp::Deployment(_)
                     | CloudApp::Execution(_)
                     | CloudApp::Component(_)
