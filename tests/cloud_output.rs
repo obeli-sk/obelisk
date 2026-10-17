@@ -111,7 +111,7 @@ async fn cloud_app_commands_resolve_project_and_explicit_targets() {
 #[tokio::test]
 async fn cloud_output_and_endpoint_selection() {
     let app = json!({
-        "app_slug":"demo", "status":"running", "hostname":"demo.example.com",
+        "app_name":"demo", "status":"running", "hostname":"demo.example.com",
         "api_url":"https://demo.example.com:5005", "webui_url":"https://demo.example.com:8080"
     });
     let router = Router::new()
@@ -139,7 +139,7 @@ async fn cloud_output_and_endpoint_selection() {
             "/v1/apps/demo/status",
             get(|| async {
                 Json(json!({
-                    "app":{"app_slug":"demo", "status":"stopped", "desired_state":"running"},
+                    "app":{"app_name":"demo", "status":"stopped", "desired_state":"running"},
                     "machine_state":"started", "api_ready":false
                 }))
             }),

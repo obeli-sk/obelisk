@@ -93,7 +93,7 @@ impl Summary {
                     let _ = writeln!(
                         out,
                         "VM is {machine} although the app is {status}. Run `obelisk cloud app --app {} apply` to reconcile it.",
-                        text(&value["app"], "app_slug", ""),
+                        text(&value["app"], "app_name", ""),
                         status = text(&value["app"], "status", "")
                     );
                 }
@@ -123,7 +123,7 @@ impl Summary {
                 {
                     for app in apps {
                         if app["status"] == "waiting_for_start" {
-                            let name = text(app, "app_slug", "app");
+                            let name = text(app, "app_name", "app");
                             let _ = writeln!(out, "{name}: changes take effect on next start.");
                         }
                     }
@@ -213,7 +213,7 @@ fn app(out: &mut String, value: &Value) {
     let _ = writeln!(
         out,
         "{}: {}",
-        text(value, "app_slug", "App"),
+        text(value, "app_name", "App"),
         text(value, "status", "unknown")
     );
     if let Some(desired) = value["desired_state"].as_str()
@@ -223,7 +223,7 @@ fn app(out: &mut String, value: &Value) {
             let _ = writeln!(
                 out,
                 "Intended state: {desired}. Run `obelisk cloud app --app {} apply` to reach it.",
-                text(value, "app_slug", "")
+                text(value, "app_name", "")
             );
         } else {
             let _ = writeln!(out, "Intended state: {desired}");
@@ -233,7 +233,7 @@ fn app(out: &mut String, value: &Value) {
         let _ = writeln!(out, "URL: {url}");
     }
     if value["potentially_stale"] == true {
-        let name = text(value, "app_slug", "");
+        let name = text(value, "app_name", "");
         let _ = writeln!(
             out,
             "Pending changes. Run `obelisk cloud app --app {name} apply` to apply them."

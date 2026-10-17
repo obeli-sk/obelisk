@@ -60,6 +60,57 @@ fn server_app_discovery_preserves_explicit_paths_and_rejects_invalid_files() {
     assert!(!dir.path().join("app.toml").exists());
 }
 
+#[test]
+fn server_and_cloud_enforce_the_same_app_names() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("deployment.toml"), "").unwrap();
+    for name in [
+        "abc",
+        "abcdefghijklmnopqrstuvwxyz",
+        "-demo",
+        "demo-",
+        "Demo",
+        "a.b",
+        "café",
+    ] {
+        std::fs::write(dir.path().join("app.toml"), format!("app_name='{name}'\n")).unwrap();
+        for args in [
+            vec!["server", "verify", "--skip-db", "-d", "deployment.toml"],
+            vec![
+                "cloud",
+                "--api-url",
+                "http://127.0.0.1:1",
+                "--api-token",
+                "test",
+                "app",
+                "status",
+            ],
+        ] {
+            let output = cli(dir.path(), &args);
+            assert!(!output.status.success(), "{name}");
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("invalid app name"),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+    for name in [
+        "demo",
+        "1234",
+        "app--name",
+        "abcdefghijklmnopqrstuvwxy",
+        "system-provisioner",
+        "default",
+    ] {
+        std::fs::write(dir.path().join("app.toml"), format!("app_name='{name}'\n")).unwrap();
+        assert_success(&cli(
+            dir.path(),
+            &["server", "verify", "--skip-db", "-d", "deployment.toml"],
+        ));
+    }
+}
+
 #[tokio::test]
 async fn cloud_new_and_stage_load_local_policy() {
     use axum::{Json, body::Bytes, routing::any};
@@ -112,7 +163,7 @@ async fn cloud_new_and_stage_load_local_policy() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].0, "POST");
     assert_eq!(requests[0].1, "/v1/apps");
-    assert_eq!(requests[0].2["app_slug"], "local-app");
+    assert_eq!(requests[0].2["app_name"], "local-app");
     assert_eq!(requests[0].2["policy"]["public_env"], json!(["REGION"]));
     assert_eq!(requests[0].2["cloud"], json!({"memory_mb":512}));
     assert_eq!(requests[1].0, "PUT");

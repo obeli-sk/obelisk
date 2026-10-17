@@ -45,7 +45,7 @@ impl CloudArgs {
         } else {
             step(&format!("new -a {}", app_config.display()), "Creating app");
             let mut body = desired.clone();
-            body["app_slug"] = json!(name);
+            body["app_name"] = json!(name);
             client
                 .request(
                     Method::POST,

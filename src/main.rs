@@ -392,7 +392,7 @@ mod app_policy_tests {
         let digest = "sha256:abababababababababababababababababababababababababababababababab";
         std::fs::write(
             &app,
-            format!("app_name='foo'\n[allowed_exec_activities]\nworker = '{digest}'\n"),
+            format!("app_name='example'\n[allowed_exec_activities]\nworker = '{digest}'\n"),
         )
         .unwrap();
         std::fs::write(&server, "").unwrap();
@@ -427,7 +427,7 @@ mod app_policy_tests {
         let server = dir.path().join("server.toml");
         let app = dir.path().join("app.toml");
         std::fs::write(&server, "").unwrap();
-        std::fs::write(&app, "app_name='foo'\n").unwrap();
+        std::fs::write(&app, "app_name='example'\n").unwrap();
         let startup = prepare_server_startup(
             Some(server.clone()),
             Some(app.clone()),

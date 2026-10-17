@@ -27,6 +27,10 @@ pub(crate) fn resolve_app_config(
 #[serde(deny_unknown_fields)]
 pub(crate) struct AppConfigToml {
     #[serde(default)]
+    #[schemars(
+        length(min = 4, max = 25),
+        regex(pattern = "^[a-z0-9][a-z0-9-]{2,23}[a-z0-9]$")
+    )]
     pub(crate) app_name: Option<String>,
     #[serde(default)]
     pub(crate) cloud: CloudConfigToml,
@@ -67,14 +71,13 @@ enum AppPolicyFormatV1 {
 
 pub(crate) fn validate_app_name(name: &str) -> anyhow::Result<()> {
     ensure!(
-        name.len() <= 63
-            && !name.is_empty()
+        (4..=25).contains(&name.len())
             && !name.starts_with('-')
             && !name.ends_with('-')
             && name
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-        "invalid app name `{name}`: expected a DNS label (1-63 lowercase ASCII letters, digits, or interior hyphens)"
+        "invalid app name `{name}`: expected a DNS label (4-25 lowercase ASCII letters, digits, or interior hyphens)"
     );
     Ok(())
 }
@@ -195,7 +198,7 @@ mod tests {
     fn digest_is_stable_for_name_order_and_comments() {
         let first: AppConfigToml = toml::from_str(
             r#"
-            app_name = "one"
+            app_name = "first"
             [cloud]
             memory_mb = 512
             [public_env]
@@ -210,7 +213,7 @@ mod tests {
         let second: AppConfigToml = toml::from_str(
             r#"
             # Same policy for another app.
-            app_name = "two"
+            app_name = "second"
             [cloud]
             memory_mb = 1024
             [secrets]
