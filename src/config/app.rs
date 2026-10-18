@@ -83,17 +83,16 @@ pub(crate) fn validate_app_name(name: &str) -> anyhow::Result<()> {
 }
 
 #[derive(Debug, Clone, JsonSchema, Serialize)]
-#[serde(deny_unknown_fields)]
-struct AppPolicySecretV1 {
-    // backcompat: 0.42 policies without a secret type are env-backed.
-    #[serde(
-        default,
-        rename = "type",
-        skip_serializing_if = "crate::config::secret_registry::SecretSource::is_env"
-    )]
-    source: crate::config::secret_registry::SecretSource,
-    optional: bool,
-    exposed_to: std::collections::BTreeMap<String, Vec<String>>,
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+enum AppPolicySecretV1 {
+    Internal {
+        exposed_to: std::collections::BTreeMap<String, Vec<String>>,
+    },
+    #[serde(untagged)]
+    Env {
+        optional: bool,
+        exposed_to: std::collections::BTreeMap<String, Vec<String>>,
+    },
 }
 
 impl AppConfigToml {
@@ -133,23 +132,28 @@ impl AppConfigToml {
                 .secrets
                 .iter()
                 .map(|(name, secret)| {
-                    (
-                        name.clone(),
-                        AppPolicySecretV1 {
-                            source: secret.source,
-                            optional: secret.optional,
-                            exposed_to: secret
-                                .exposed_to
-                                .iter()
-                                .map(|(component, digests)| {
-                                    let mut values =
-                                        digests.iter().map(ToString::to_string).collect::<Vec<_>>();
-                                    values.sort();
-                                    (component.clone(), values)
-                                })
-                                .collect(),
-                        },
-                    )
+                    let exposed_to = secret
+                        .exposed_to()
+                        .iter()
+                        .map(|(component, digests)| {
+                            let mut values =
+                                digests.iter().map(ToString::to_string).collect::<Vec<_>>();
+                            values.sort();
+                            (component.clone(), values)
+                        })
+                        .collect();
+                    let secret = match secret {
+                        crate::config::secret_registry::SecretConfigToml::Env(config) => {
+                            AppPolicySecretV1::Env {
+                                optional: config.optional,
+                                exposed_to,
+                            }
+                        }
+                        crate::config::secret_registry::SecretConfigToml::Internal(_) => {
+                            AppPolicySecretV1::Internal { exposed_to }
+                        }
+                    };
+                    (name.clone(), secret)
                 })
                 .collect(),
             public_env: {
@@ -201,6 +205,31 @@ pub(crate) struct AppConfigDigest(Digest);
 #[cfg(test)]
 mod tests {
     use super::AppConfigToml;
+
+    #[test]
+    fn secret_types_default_to_env_and_internal_rejects_optional() {
+        let config: AppConfigToml = toml::from_str(
+            "[secrets]\nDEFAULT = {}\nEXPLICIT = { type = 'env', optional = true }\nINTERNAL = { type = 'internal' }",
+        ).unwrap();
+        let policy = serde_json::to_value(config.policy()).unwrap();
+        assert_eq!(
+            policy["secrets"]["DEFAULT"],
+            serde_json::json!({"optional": false, "exposed_to": {}})
+        );
+        assert_eq!(
+            policy["secrets"]["EXPLICIT"],
+            serde_json::json!({"optional": true, "exposed_to": {}})
+        );
+        assert_eq!(
+            policy["secrets"]["INTERNAL"],
+            serde_json::json!({"type": "internal", "exposed_to": {}})
+        );
+        for optional in [false, true] {
+            let config =
+                format!("[secrets]\nTOKEN = {{ type = 'internal', optional = {optional} }}");
+            assert!(toml::from_str::<AppConfigToml>(&config).is_err());
+        }
+    }
 
     #[test]
     fn digest_is_stable_for_name_order_and_comments() {
@@ -257,9 +286,7 @@ mod tests {
 
     #[test]
     fn rejects_secret_source_alias() {
-        let err =
-            toml::from_str::<AppConfigToml>("[secrets]\nTOKEN = { env = 'OTHER' }").unwrap_err();
-        assert!(err.to_string().contains("unknown field `env`"));
+        assert!(toml::from_str::<AppConfigToml>("[secrets]\nTOKEN = { env = 'OTHER' }").is_err());
     }
 
     #[test]

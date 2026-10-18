@@ -1686,7 +1686,10 @@ mod tests {
             );
             let app: crate::config::app::AppConfigToml = toml::from_str(&app_toml).unwrap();
             assert_eq!(app.allowed_exec_activities["worker"].iter().count(), 2);
-            assert_eq!(app.secrets["TOKEN"].exposed_to["worker"].iter().count(), 2);
+            assert_eq!(
+                app.secrets["TOKEN"].exposed_to()["worker"].iter().count(),
+                2
+            );
             assert!(toml::from_str::<ServerConfigToml>("allowed_exec_activities = true").is_err());
             assert!(toml::from_str::<ServerConfigToml>("allowed_exec_activities = 'all'").is_err());
         }

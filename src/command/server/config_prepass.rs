@@ -1235,18 +1235,19 @@ mod tests {
     fn required_reference_to_unset_optional_secret_fails_verification() {
         use crate::config::env_var::StartupEnvVars;
         use crate::config::secret_registry::{
-            EnvVarSecretsCleanup, PublicEnvToml, SecretConfigToml, SecretsToml,
+            EnvSecretConfigToml, EnvSecretType, EnvVarSecretsCleanup, PublicEnvToml,
+            SecretConfigToml, SecretsToml,
         };
         const NAME: &str = "GITHUB_TOKEN";
         let mut secrets = SecretsToml::new();
         secrets.insert(
             NAME.to_string(),
-            SecretConfigToml {
-                source: crate::config::secret_registry::SecretSource::Env,
+            SecretConfigToml::Env(EnvSecretConfigToml {
+                _source: EnvSecretType::Env,
                 env: "OBELISK_TEST_DEFINITELY_UNSET_5F2B".to_string(),
                 optional: true,
                 exposed_to: BTreeMap::new(),
-            },
+            }),
         );
         let registry = SecretRegistry::resolve(
             secrets,

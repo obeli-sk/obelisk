@@ -50,35 +50,52 @@
       ]
     },
     "AppPolicySecretV1": {
-      "type": "object",
-      "properties": {
-        "type": {
-          "$ref": "#/$defs/SecretSource"
-        },
-        "optional": {
-          "type": "boolean"
-        },
-        "exposed_to": {
+      "anyOf": [
+        {
           "type": "object",
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "string"
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "internal"
+            },
+            "exposed_to": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
-          }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "exposed_to"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "optional": {
+              "type": "boolean"
+            },
+            "exposed_to": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "optional",
+            "exposed_to"
+          ]
         }
-      },
-      "additionalProperties": false,
-      "required": [
-        "optional",
-        "exposed_to"
-      ]
-    },
-    "SecretSource": {
-      "type": "string",
-      "enum": [
-        "env",
-        "internal"
       ]
     },
     "PublicEnvRef": {

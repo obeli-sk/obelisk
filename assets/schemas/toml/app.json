@@ -64,13 +64,24 @@
     },
     "SecretConfigToml": {
       "description": "Source and exposure authorization for a secret in the `[secrets]` table.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EnvSecretConfigToml"
+        },
+        {
+          "$ref": "#/$defs/InternalSecretConfigToml"
+        }
+      ]
+    },
+    "EnvSecretConfigToml": {
       "type": "object",
       "properties": {
         "type": {
-          "$ref": "#/$defs/SecretSource"
+          "$ref": "#/$defs/EnvSecretType",
+          "writeOnly": true
         },
         "optional": {
-          "description": "Allow `env` to be unset; the secret is then absent and only optional references accept it.",
+          "description": "Allow the environment source to be absent.",
           "type": "boolean"
         },
         "exposed_to": {
@@ -83,11 +94,10 @@
       },
       "additionalProperties": false
     },
-    "SecretSource": {
+    "EnvSecretType": {
       "type": "string",
       "enum": [
-        "env",
-        "internal"
+        "env"
       ]
     },
     "SecretExposureDigests": {
@@ -101,6 +111,31 @@
             "type": "string"
           }
         }
+      ]
+    },
+    "InternalSecretConfigToml": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/InternalSecretType"
+        },
+        "exposed_to": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretExposureDigests"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ]
+    },
+    "InternalSecretType": {
+      "type": "string",
+      "enum": [
+        "internal"
       ]
     },
     "PublicEnvConfigToml": {

@@ -17,7 +17,7 @@
 # OPENAI_API_KEY = {}
 # GITHUB_TOKEN = { optional = true }
 ## Internal secrets use the generated startup token, grant full API access and rotate on restart.
-## They require an enabled authenticated API; existing exposure grants still apply.
+## They require an enabled authenticated API and reject optional; existing exposure grants still apply.
 # INTERNAL_TOKEN = { type = "internal" }
 ## Exposed plaintext requires a reviewed component digest.
 # [secrets.OPENAI_API_KEY.exposed_to]
