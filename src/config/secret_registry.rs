@@ -15,7 +15,18 @@ use std::sync::Arc;
 use worker_common::SecretResolver;
 
 pub(crate) const API_TOKEN: &str = "OBELISK_API_TOKEN";
-pub(crate) const API_TOKEN_LEGACY: &str = "OBELISK__API__TOKEN";
+#[derive(Debug, Default, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum EnvSecretType {
+    #[default]
+    Env,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum InternalSecretType {
+    Internal,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct SecretExposureDigests(Vec<SecretExposureDigest>);
@@ -100,17 +111,44 @@ impl Serialize for SecretExposureDigests {
 
 /// Source and exposure authorization for a secret in the `[secrets]` table.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub(crate) enum SecretConfigToml {
+    Env(EnvSecretConfigToml),
+    Internal(InternalSecretConfigToml),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SecretConfigToml {
+pub(crate) struct EnvSecretConfigToml {
+    #[serde(default, rename = "type", skip_serializing)]
+    pub(crate) _source: EnvSecretType,
     /// Internal source override used by older tests; app.toml always uses the secret name.
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) env: String,
-    /// Allow `env` to be unset; the secret is then absent and only optional references accept it.
+    /// Allow the environment source to be absent.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) optional: bool,
     #[serde(default)]
     pub(crate) exposed_to: BTreeMap<String, SecretExposureDigests>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InternalSecretConfigToml {
+    #[serde(rename = "type")]
+    pub(crate) source: InternalSecretType,
+    #[serde(default)]
+    pub(crate) exposed_to: BTreeMap<String, SecretExposureDigests>,
+}
+
+impl SecretConfigToml {
+    pub(crate) fn exposed_to(&self) -> &BTreeMap<String, SecretExposureDigests> {
+        match self {
+            Self::Env(config) => &config.exposed_to,
+            Self::Internal(config) => &config.exposed_to,
+        }
+    }
 }
 
 /// The `[secrets]` table: logical name -> source and exposure authorization.
@@ -159,6 +197,7 @@ pub(crate) enum PublicEnvViolation {
 pub(crate) struct SecretRegistry {
     /// Logical secret name -> resolved value.
     values: HashMap<String, SecretString>,
+    internal: HashSet<String>,
     /// Optional secrets whose source was unset at startup.
     absent: HashSet<String>,
     /// Used to reject `public_env_lookup`, contains both logical and `env` names.
@@ -183,6 +222,7 @@ impl SecretRegistry {
     pub(crate) fn empty() -> Self {
         SecretRegistry {
             values: HashMap::default(),
+            internal: HashSet::default(),
             absent: HashSet::default(),
             sensitive: HashSet::default(),
             public_allowed: HashSet::default(),
@@ -275,6 +315,7 @@ impl SecretRegistry {
         let sensitive = values.keys().cloned().collect();
         Self {
             values,
+            internal: HashSet::default(),
             absent: HashSet::default(),
             sensitive,
             public_allowed: HashSet::default(),
@@ -332,7 +373,7 @@ impl SecretRegistry {
     pub(crate) fn with_exposure_config(mut self, secrets: &SecretsToml) -> Self {
         self.exposure_grants = secrets
             .iter()
-            .map(|(name, config)| (name.clone(), config.exposed_to.clone()))
+            .map(|(name, config)| (name.clone(), config.exposed_to().clone()))
             .collect();
         self
     }
@@ -351,24 +392,42 @@ impl SecretRegistry {
         let mut values = HashMap::new();
         let mut absent = HashSet::new();
 
-        // Always sensitive, even when the operator did not register them as secrets.
-        let mut sensitive = HashSet::from([API_TOKEN_LEGACY.to_string(), API_TOKEN.to_string()]);
+        let mut sensitive = HashSet::new();
+        let mut sources: HashSet<String> = HashSet::from([API_TOKEN.to_string()]);
+        let mut internal = HashSet::new();
 
         let mut missing_env_vars = BTreeSet::new();
         let mut secret_audit = std::collections::BTreeMap::new();
         let mut exposure_grants = HashMap::new();
         for (logical_name, config) in secrets {
-            let SecretConfigToml {
-                env,
-                optional,
-                exposed_to,
-            } = config;
-            let env = if env.is_empty() {
-                logical_name.clone()
-            } else {
-                env
+            let exposed_to = config.exposed_to().clone();
+            let (present, optional) = match config {
+                SecretConfigToml::Internal(_) => {
+                    internal.insert(logical_name.clone());
+                    values.insert(logical_name.clone(), SecretString::from(String::new()));
+                    (true, false)
+                }
+                SecretConfigToml::Env(config) => {
+                    let env = if config.env.is_empty() {
+                        logical_name.clone()
+                    } else {
+                        config.env
+                    };
+                    let value = env_vars.lookup(&env);
+                    let present = value.is_some();
+                    if let Some(value) = value {
+                        values.insert(logical_name.clone(), SecretString::from(value));
+                    } else if config.optional {
+                        absent.insert(logical_name.clone());
+                    } else {
+                        missing_env_vars.insert(logical_name.clone());
+                        values.insert(logical_name.clone(), SecretString::from(String::new()));
+                    }
+                    sources.insert(env_vars.source_name(&env));
+                    sensitive.insert(env);
+                    (present, config.optional)
+                }
             };
-            let present = env_vars.lookup(&env).is_some();
             secret_audit.insert(
                 logical_name.clone(),
                 serde_json::json!({
@@ -377,16 +436,7 @@ impl SecretRegistry {
                     "exposed_to": exposed_to,
                 }),
             );
-            if let Some(value) = env_vars.lookup(&env) {
-                values.insert(logical_name.clone(), SecretString::from(value));
-            } else if optional {
-                absent.insert(logical_name.clone());
-            } else {
-                missing_env_vars.insert(env.clone());
-                values.insert(logical_name.clone(), SecretString::from(String::new()));
-            }
             exposure_grants.insert(logical_name.clone(), exposed_to);
-            sensitive.insert(env);
             sensitive.insert(logical_name);
         }
         if runtime_config_availability == RuntimeConfigAvailability::Strict
@@ -395,7 +445,7 @@ impl SecretRegistry {
             bail!("secrets sourced from environment variables are not set: {missing_env_vars:?}");
         }
         if env_var_cleanup == EnvVarSecretsCleanup::Wipe {
-            for src in &sensitive {
+            for src in &sources {
                 // SAFETY: `resolve_and_wipe` runs during single-threaded startup, before the
                 // tokio runtime is constructed, so there are no concurrent environment readers.
                 unsafe { std::env::remove_var(src) };
@@ -428,6 +478,7 @@ impl SecretRegistry {
             .collect();
         Ok(Self {
             values,
+            internal,
             absent,
             sensitive,
             public_allowed,
@@ -439,6 +490,21 @@ impl SecretRegistry {
                 "secrets": secret_audit,
             }),
         })
+    }
+
+    pub(crate) fn with_internal_token(&self, token: Option<&SecretString>) -> anyhow::Result<Self> {
+        let mut registry = self.clone();
+        if !self.internal.is_empty() {
+            let token = token.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "internal secrets require an enabled API listener and API authentication"
+                )
+            })?;
+            for name in &self.internal {
+                registry.values.insert(name.clone(), token.clone());
+            }
+        }
+        Ok(registry)
     }
 
     pub(crate) fn exposure_allowed(
@@ -497,7 +563,119 @@ mod tests {
     use crate::config::env_var::StartupEnvVars;
     use secrecy::ExposeSecret as _;
 
-    // Security: Default server.toml does not make the obelisk token available.
+    #[test]
+    fn prefixed_sources_isolate_admin_values_and_wipe_only_physical_secrets() {
+        const NAME: &str = "OBELISK_TEST_ISOLATED_813C";
+        const PREFIX: &str = "TEST_APP_813C_";
+        let physical = format!("{PREFIX}{NAME}");
+        // SAFETY: test-only, unique variable names.
+        unsafe {
+            std::env::set_var(NAME, "admin");
+        }
+        // SAFETY: test-only, unique variable names.
+        unsafe {
+            std::env::set_var(&physical, "app");
+        }
+        let env = StartupEnvVars::capture().prefixed(PREFIX);
+        let secrets = toml::from_str::<crate::config::app::AppConfigToml>(&format!(
+            "[secrets]\n{NAME} = {{}}"
+        ))
+        .unwrap()
+        .secrets;
+        let registry = SecretRegistry::resolve(
+            secrets,
+            PublicEnvToml::default(),
+            EnvVarSecretsCleanup::Wipe,
+            RuntimeConfigAvailability::Strict,
+            &env,
+        )
+        .unwrap();
+        assert_eq!(registry.secret_lookup(NAME).unwrap().expose_secret(), "app");
+        assert_eq!(std::env::var(NAME).unwrap(), "admin");
+        assert!(std::env::var(&physical).is_err());
+        assert!(registry.public_env_lookup(NAME).is_err());
+        let public = PublicEnvToml::from([(NAME.to_owned(), PublicEnvConfigToml::default())]);
+        assert!(
+            SecretRegistry::resolve(
+                SecretsToml::new(),
+                public.clone(),
+                EnvVarSecretsCleanup::Noop,
+                RuntimeConfigAvailability::Strict,
+                &StartupEnvVars::capture().prefixed(PREFIX)
+            )
+            .is_err()
+        );
+        let registry = SecretRegistry::resolve(
+            SecretsToml::new(),
+            public,
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+            &env,
+        )
+        .unwrap();
+        assert_eq!(
+            registry.public_env_lookup(NAME).unwrap().as_deref(),
+            Some("app")
+        );
+        // SAFETY: test-only, unique variable name.
+        unsafe { std::env::remove_var(NAME) };
+    }
+
+    #[test]
+    fn internal_sources_ignore_env_and_preserve_component_restrictions() {
+        let app: crate::config::app::AppConfigToml =
+            toml::from_str("[secrets]\nPATH = { type = 'internal' }").unwrap();
+        let registry = SecretRegistry::resolve(
+            app.secrets,
+            PublicEnvToml::default(),
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+            &StartupEnvVars::capture(),
+        )
+        .unwrap();
+        assert!(registry.with_internal_token(None).is_err());
+        let auth =
+            crate::server::auth::ApiAuth::new(&crate::config::server::ApiConfig::default(), None)
+                .unwrap();
+        let registry = Arc::new(
+            registry
+                .with_internal_token(Some(auth.startup_token()))
+                .unwrap(),
+        );
+        assert_eq!(
+            registry.secret_lookup("PATH").unwrap().expose_secret(),
+            auth.startup_token().expose_secret()
+        );
+        assert!(registry.public_env_lookup("PATH").is_err());
+        assert!(
+            RestrictedSecretRegistry::new(registry.clone(), [])
+                .secret_lookup("PATH")
+                .is_none()
+        );
+        assert!(
+            RestrictedSecretRegistry::new(registry, ["PATH".to_owned()])
+                .secret_lookup("PATH")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn explicitly_declared_public_token_name_is_allowed() {
+        let env = StartupEnvVars::capture();
+        let registry = SecretRegistry::resolve(
+            SecretsToml::new(),
+            PublicEnvToml::from([(API_TOKEN.to_owned(), PublicEnvConfigToml { optional: true })]),
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+            &env,
+        )
+        .unwrap();
+        assert_eq!(
+            registry.public_env_lookup(API_TOKEN).unwrap(),
+            env.lookup(API_TOKEN)
+        );
+    }
+
     #[test]
     fn default_does_not_make_token_available() {
         let env_vars = StartupEnvVars::capture();
@@ -511,10 +689,7 @@ mod tests {
         .unwrap();
 
         assert!(registry.values.is_empty());
-        assert_eq!(
-            HashSet::from([API_TOKEN_LEGACY.to_string(), API_TOKEN.to_string()]),
-            registry.sensitive
-        );
+        assert!(registry.sensitive.is_empty());
     }
 
     #[test]
@@ -528,11 +703,12 @@ mod tests {
         let mut secrets = SecretsToml::new();
         secrets.insert(
             "LOGICAL".to_string(),
-            SecretConfigToml {
+            SecretConfigToml::Env(EnvSecretConfigToml {
+                _source: EnvSecretType::Env,
                 env: SRC.to_string(),
                 optional: false,
                 exposed_to: BTreeMap::new(),
-            },
+            }),
         );
         let registry = SecretRegistry::resolve(
             secrets,
@@ -579,11 +755,12 @@ mod tests {
         let mut secrets = SecretsToml::new();
         secrets.insert(
             "LOGICAL".to_string(),
-            SecretConfigToml {
+            SecretConfigToml::Env(EnvSecretConfigToml {
+                _source: EnvSecretType::Env,
                 env: "OBELISK_TEST_DEFINITELY_UNSET_2B9C".to_string(),
                 optional: false,
                 exposed_to: BTreeMap::new(),
-            },
+            }),
         );
         let err = SecretRegistry::resolve(
             secrets,
@@ -595,10 +772,7 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("not set"), "unexpected error: {err}");
-        assert!(
-            err.contains("OBELISK_TEST_DEFINITELY_UNSET_2B9C"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("LOGICAL"), "unexpected error: {err}");
     }
 
     #[test]
@@ -612,11 +786,12 @@ mod tests {
         for name in [OPTIONAL, EMPTY] {
             secrets.insert(
                 name.to_string(),
-                SecretConfigToml {
+                SecretConfigToml::Env(EnvSecretConfigToml {
+                    _source: EnvSecretType::Env,
                     env: name.to_string(),
                     optional: true,
                     exposed_to: BTreeMap::new(),
-                },
+                }),
             );
         }
         let registry = SecretRegistry::resolve(

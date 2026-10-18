@@ -10,11 +10,15 @@
 # [cloud]
 # memory_mb = 512
 
-## Registered secrets read same-named environment variables at startup.
+## Registered secrets default to type = "env", reading app environment at startup.
+## server.toml app_env_prefix is prepended to environment source names.
 ## They are removed from the process environment before workers start.
 # [secrets]
 # OPENAI_API_KEY = {}
 # GITHUB_TOKEN = { optional = true }
+## Internal secrets use the generated startup token, grant full API access and rotate on restart.
+## They require an enabled authenticated API and reject optional; existing exposure grants still apply.
+# INTERNAL_TOKEN = { type = "internal" }
 ## Exposed plaintext requires a reviewed component digest.
 # [secrets.OPENAI_API_KEY.exposed_to]
 # worker = "sha256:..."

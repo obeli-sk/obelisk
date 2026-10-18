@@ -11,6 +11,10 @@
 # external.listening_addr = "127.0.0.1:9090"     # Address and port on which the external HTTP server will listen.
 # Note: the external HTTP server (webhooks) has no auth; listening on all interfaces using [::]:port is not advised.
 
+## Prefix app public env and env-backed secrets at their process environment source.
+## Empty preserves local same-name lookup; prefixed lookup never falls back to admin env.
+# app_env_prefix = ""
+
 ## API authentication. The API port denies requests without a valid `Authorization: Bearer <token>` header.
 ## An ephemeral startup token is always generated and printed to the console.
 ## Persistent tokens are configured as sha256 hashes of the token text. Only hashes of high-entropy

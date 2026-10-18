@@ -278,7 +278,7 @@ mod tests {
     /// substitute the real value for a request matching EITHER entry.
     #[test]
     fn shared_secret_across_two_allowed_hosts_substitutes_for_either_entry() {
-        const ENV_KEY: &str = "OBELISK__API__TOKEN";
+        const ENV_KEY: &str = "INTERNAL_TOKEN";
         const REAL_VALUE: &str = "real-token-value";
 
         let allowed_hosts = vec![

@@ -5,13 +5,25 @@ available, and short bearer tokens remain accepted with a warning.
 
 ## API token environment variable
 
-Replace `OBELISK__API__TOKEN` with `OBELISK_API_TOKEN` and unset the old variable.
-The CLI no longer reads the old variable as an authentication fallback, and server
-startup rejects it. `--api-token` and persistent server `api.token_hashes` remain
-supported. The old variable name remains reserved as sensitive.
+Use `OBELISK_API_TOKEN` for CLI authentication. `--api-token` and persistent
+server `api.token_hashes` remain supported.
 
-This removes compatibility earlier than the previously announced after-0.43
-timeline. Update startup environments before upgrading.
+Apps needing their server's API credential should declare an internal secret:
+
+```toml
+[secrets]
+INTERNAL_TOKEN = { type = "internal" }
+```
+
+Replace deployment secret references to the operator token with `INTERNAL_TOKEN`
+and review its exposure grants as usual. Obelisk supplies its startup token,
+which grants full API access and changes on restart. Internal secrets require an
+enabled authenticated API and need no environment value or cloud upload.
+
+Platform admins can set `app_env_prefix` in server.toml to isolate app public env
+and env-backed secrets from admin variables. The default is empty for local use.
+When set, source lookup prepends the prefix and never falls back to an unprefixed
+value. App and deployment names remain unchanged.
 
 ## Unauthenticated server startup
 

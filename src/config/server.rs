@@ -30,6 +30,9 @@ use std::time::Duration;
 #[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ServerConfigToml {
+    /// Prefix for app-owned environment sources; server environment stays unprefixed.
+    #[serde(default)]
+    pub(crate) app_env_prefix: String,
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) app_name: String,
@@ -1683,7 +1686,10 @@ mod tests {
             );
             let app: crate::config::app::AppConfigToml = toml::from_str(&app_toml).unwrap();
             assert_eq!(app.allowed_exec_activities["worker"].iter().count(), 2);
-            assert_eq!(app.secrets["TOKEN"].exposed_to["worker"].iter().count(), 2);
+            assert_eq!(
+                app.secrets["TOKEN"].exposed_to()["worker"].iter().count(),
+                2
+            );
             assert!(toml::from_str::<ServerConfigToml>("allowed_exec_activities = true").is_err());
             assert!(toml::from_str::<ServerConfigToml>("allowed_exec_activities = 'all'").is_err());
         }

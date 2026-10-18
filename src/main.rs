@@ -297,7 +297,8 @@ fn prepare_server_startup_with_exec_policy(
     let js_runtime = parse_js_runtime_from_env(&env_vars)?;
     let activity_vm_runtime = parse_activity_vm_runtime_from_env(&env_vars)?;
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
-    app.resolve_env_vars(&env_vars)?;
+    let app_env_vars = env_vars.prefixed(&config.app_env_prefix);
+    app.resolve_env_vars(&app_env_vars)?;
     if check_exec_policy {
         match &config.platform_exec_activities {
             PlatformExecActivities::Disabled => {
@@ -336,7 +337,7 @@ fn prepare_server_startup_with_exec_policy(
         config.public_env.clone(),
         env_var_cleanup,
         runtime_config_availability,
-        &env_vars,
+        &app_env_vars,
     )?);
     Ok(ServerStartup {
         config_holder,

@@ -2156,6 +2156,10 @@ pub(crate) async fn run_internal(
         ServerAuth::Auth { .. } | ServerAuth::NoAuth => None,
     };
 
+    let secret_registry = Arc::new(
+        secret_registry.with_internal_token(api_auth.as_ref().map(|auth| auth.startup_token()))?,
+    );
+
     let token_reload = api_auth.as_ref().map(|auth| {
         crate::server::auth::reload::TokenHashReload::new(
             auth.clone(),
@@ -8025,7 +8029,7 @@ mod tests {
         let config = toml::from_str::<crate::config::app::AppConfigToml>(&fixed)?;
         assert_eq!(config.allowed_exec_activities["worker"].iter().count(), 2);
         assert!(config.allowed_exec_activities["worker"].contains(&new));
-        assert!(config.secrets["TOKEN"].exposed_to["worker"].contains(&new));
+        assert!(config.secrets["TOKEN"].exposed_to()["worker"].contains(&new));
         Ok(())
     }
 

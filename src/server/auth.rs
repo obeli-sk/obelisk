@@ -202,3 +202,41 @@ fn deny_response(headers: &HeaderMap) -> Response {
 fn hash_prefix_label(digest: &concepts::component_id::Digest) -> String {
     format!("token:{}", &digest.to_string()["sha256:".len()..][..8])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::server::RuntimeConfigAvailability;
+    use crate::config::{
+        app::AppConfigToml,
+        env_var::StartupEnvVars,
+        secret_registry::{EnvVarSecretsCleanup, PublicEnvToml, SecretRegistry},
+    };
+
+    #[tokio::test]
+    async fn internal_secret_authenticates_without_an_operator_token() {
+        let app: AppConfigToml =
+            toml::from_str("[secrets]\nINTERNAL_TOKEN = { type = 'internal' }").unwrap();
+        let registry = SecretRegistry::resolve(
+            app.secrets,
+            PublicEnvToml::default(),
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+            &StartupEnvVars::capture(),
+        )
+        .unwrap();
+        let auth = ApiAuth::new(&ApiConfig::default(), None).unwrap();
+        let registry = registry
+            .with_internal_token(Some(auth.startup_token()))
+            .unwrap();
+        let token = registry.secret_lookup("INTERNAL_TOKEN").unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {}", token.expose_secret()).parse().unwrap(),
+        );
+        assert_eq!(auth.check(&headers).await.unwrap(), "startup-token");
+        let restarted = ApiAuth::new(&ApiConfig::default(), None).unwrap();
+        assert!(restarted.check(&headers).await.is_err());
+    }
+}
