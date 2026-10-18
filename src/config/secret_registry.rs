@@ -571,6 +571,9 @@ mod tests {
         // SAFETY: test-only, unique variable names.
         unsafe {
             std::env::set_var(NAME, "admin");
+        }
+        // SAFETY: test-only, unique variable names.
+        unsafe {
             std::env::set_var(&physical, "app");
         }
         let env = StartupEnvVars::capture().prefixed(PREFIX);
