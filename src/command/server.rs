@@ -2156,6 +2156,10 @@ pub(crate) async fn run_internal(
         ServerAuth::Auth { .. } | ServerAuth::NoAuth => None,
     };
 
+    let secret_registry = Arc::new(
+        secret_registry.with_internal_token(api_auth.as_ref().map(|auth| auth.startup_token()))?,
+    );
+
     let token_reload = api_auth.as_ref().map(|auth| {
         crate::server::auth::reload::TokenHashReload::new(
             auth.clone(),

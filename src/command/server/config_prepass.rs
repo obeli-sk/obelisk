@@ -1242,6 +1242,7 @@ mod tests {
         secrets.insert(
             NAME.to_string(),
             SecretConfigToml {
+                source: crate::config::secret_registry::SecretSource::Env,
                 env: "OBELISK_TEST_DEFINITELY_UNSET_5F2B".to_string(),
                 optional: true,
                 exposed_to: BTreeMap::new(),

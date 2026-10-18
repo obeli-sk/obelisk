@@ -85,6 +85,13 @@ pub(crate) fn validate_app_name(name: &str) -> anyhow::Result<()> {
 #[derive(Debug, Clone, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 struct AppPolicySecretV1 {
+    // backcompat: 0.42 policies without a secret type are env-backed.
+    #[serde(
+        default,
+        rename = "type",
+        skip_serializing_if = "crate::config::secret_registry::SecretSource::is_env"
+    )]
+    source: crate::config::secret_registry::SecretSource,
     optional: bool,
     exposed_to: std::collections::BTreeMap<String, Vec<String>>,
 }
@@ -129,6 +136,7 @@ impl AppConfigToml {
                     (
                         name.clone(),
                         AppPolicySecretV1 {
+                            source: secret.source,
                             optional: secret.optional,
                             exposed_to: secret
                                 .exposed_to

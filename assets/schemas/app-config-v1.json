@@ -52,6 +52,9 @@
     "AppPolicySecretV1": {
       "type": "object",
       "properties": {
+        "type": {
+          "$ref": "#/$defs/SecretSource"
+        },
         "optional": {
           "type": "boolean"
         },
@@ -69,6 +72,13 @@
       "required": [
         "optional",
         "exposed_to"
+      ]
+    },
+    "SecretSource": {
+      "type": "string",
+      "enum": [
+        "env",
+        "internal"
       ]
     },
     "PublicEnvRef": {

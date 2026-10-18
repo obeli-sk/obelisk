@@ -66,6 +66,9 @@
       "description": "Source and exposure authorization for a secret in the `[secrets]` table.",
       "type": "object",
       "properties": {
+        "type": {
+          "$ref": "#/$defs/SecretSource"
+        },
         "optional": {
           "description": "Allow `env` to be unset; the secret is then absent and only optional references accept it.",
           "type": "boolean"
@@ -79,6 +82,13 @@
         }
       },
       "additionalProperties": false
+    },
+    "SecretSource": {
+      "type": "string",
+      "enum": [
+        "env",
+        "internal"
+      ]
     },
     "SecretExposureDigests": {
       "anyOf": [

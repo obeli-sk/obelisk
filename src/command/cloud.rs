@@ -864,13 +864,15 @@ async fn fill_with_prompt(
         .as_object()
         .context("Invalid policy secret declarations")?
     {
-        declarations.push((
-            "secrets",
-            name.as_str(),
-            declaration["optional"] == true,
-            secret_values.iter().any(|s| s["name"] == *name),
-            None,
-        ));
+        if declaration["type"] != "internal" {
+            declarations.push((
+                "secrets",
+                name.as_str(),
+                declaration["optional"] == true,
+                secret_values.iter().any(|s| s["name"] == *name),
+                None,
+            ));
+        }
     }
     let mut pending = Vec::new();
     let mut report = Vec::new();
@@ -1399,7 +1401,7 @@ mod tests {
         let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
         let policy = json!({
             "public_env":["PATH", "ALREADY_SET", {"name":"HOME", "optional":true}, {"name":"CLOUD_TEST_EMPTY", "optional":true}],
-            "secrets":{"CLOUD_TEST_PROMPT_SECRET":{},"ALREADY_SET":{},"HOME":{"optional":true}}
+            "secrets":{"CLOUD_TEST_PROMPT_SECRET":{},"ALREADY_SET":{},"HOME":{"optional":true},"INTERNAL_TOKEN":{"type":"internal"}}
         });
         let path_value = std::env::var("PATH").unwrap();
         let home_value = std::env::var("HOME").unwrap();

@@ -3,6 +3,11 @@
   "title": "ServerConfigToml",
   "type": "object",
   "properties": {
+    "app_env_prefix": {
+      "description": "Prefix for app-owned environment sources; server environment stays unprefixed.",
+      "type": "string",
+      "default": ""
+    },
     "obelisk-version": {
       "type": [
         "string",

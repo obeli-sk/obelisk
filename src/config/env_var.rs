@@ -3,15 +3,39 @@ use secrecy::SecretString;
 use std::collections::HashMap;
 
 /// Snapshot of the process environment taken during single-threaded startup.
-pub(crate) struct StartupEnvVars(HashMap<String, String>);
+pub(crate) struct StartupEnvVars {
+    values: HashMap<String, String>,
+    prefix: String,
+}
 
 impl StartupEnvVars {
     pub(crate) fn capture() -> Self {
-        Self(std::env::vars().collect())
+        Self {
+            values: std::env::vars().collect(),
+            prefix: String::new(),
+        }
+    }
+
+    pub(crate) fn prefixed(&self, prefix: &str) -> Self {
+        Self {
+            values: self
+                .values
+                .iter()
+                .filter_map(|(key, value)| {
+                    key.strip_prefix(prefix)
+                        .map(|name| (name.to_owned(), value.clone()))
+                })
+                .collect(),
+            prefix: prefix.to_owned(),
+        }
+    }
+
+    pub(crate) fn source_name(&self, name: &str) -> String {
+        format!("{}{name}", self.prefix)
     }
 
     pub(crate) fn lookup(&self, key: &str) -> Option<String> {
-        self.0.get(key).cloned()
+        self.values.get(key).cloned()
     }
 }
 
