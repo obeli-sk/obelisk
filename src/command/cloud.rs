@@ -251,9 +251,8 @@ fn config_name(name: &str) -> anyhow::Result<()> {
         !name.is_empty()
             && name.len() <= 128
             && !name.as_bytes()[0].is_ascii_digit()
-            && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
-            && !name.starts_with("OBELISK_"),
-        "Invalid or reserved configuration name"
+            && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_'),
+        "Invalid configuration name: {name}"
     );
     Ok(())
 }
@@ -1349,7 +1348,7 @@ mod tests {
             .execute()
             .await
             .unwrap();
-        args(&origin, &["app", "env", "set", "OPTIONAL", "value"])
+        args(&origin, &["app", "env", "set", "OBELISK_API_URL", "value"])
             .execute()
             .await
             .unwrap();
@@ -1367,7 +1366,10 @@ mod tests {
         );
         assert_eq!(received[2].1, json!({"force":false}));
         assert_eq!(received[3].1, json!({"force":true}));
-        assert_eq!(received[4].0, "PUT /prefix/v1/apps/demo/env/OPTIONAL");
+        assert_eq!(
+            received[4].0,
+            "PUT /prefix/v1/apps/demo/env/OBELISK_API_URL"
+        );
         task.abort();
     }
     #[tokio::test]
@@ -1375,7 +1377,14 @@ mod tests {
         let (origin, state, task) = server().await;
         args(
             &origin,
-            &["app", "secrets", "set", "KEY", "--from-env", "PATH"],
+            &[
+                "app",
+                "secrets",
+                "set",
+                "OBELISK_API_TOKEN",
+                "--from-env",
+                "PATH",
+            ],
         )
         .execute()
         .await
@@ -1388,7 +1397,7 @@ mod tests {
                 .received
                 .iter()
                 .any(
-                    |(route, body)| route == "PUT /prefix/v1/apps/demo/secrets/KEY"
+                    |(route, body)| route == "PUT /prefix/v1/apps/demo/secrets/OBELISK_API_TOKEN"
                         && body["value"] == path_value
                 )
         );
@@ -1400,8 +1409,8 @@ mod tests {
         state.lock().unwrap().existing_config = true;
         let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
         let policy = json!({
-            "public_env":["PATH", "ALREADY_SET", {"name":"HOME", "optional":true}, {"name":"CLOUD_TEST_EMPTY", "optional":true}],
-            "secrets":{"CLOUD_TEST_PROMPT_SECRET":{},"ALREADY_SET":{},"HOME":{"optional":true},"INTERNAL_TOKEN":{"type":"internal"}}
+            "public_env":["PATH", "ALREADY_SET", {"name":"HOME", "optional":true}, {"name":"OBELISK_CLOUD_TEST_EMPTY", "optional":true}],
+            "secrets":{"OBELISK_CLOUD_TEST_PROMPT_SECRET":{},"ALREADY_SET":{},"HOME":{"optional":true},"OBELISK_API_TOKEN":{"type":"internal"}}
         });
         let path_value = std::env::var("PATH").unwrap();
         let home_value = std::env::var("HOME").unwrap();
@@ -1427,13 +1436,13 @@ mod tests {
             ),
             ("  Value: ".to_owned(), Some(false), "replaced"),
             (
-                "env CLOUD_TEST_EMPTY (optional): cloud not set, environment not set\n  [S]kip/[t]ype? ".to_owned(),
+                "env OBELISK_CLOUD_TEST_EMPTY (optional): cloud not set, environment not set\n  [S]kip/[t]ype? ".to_owned(),
                 None,
                 "type",
             ),
             ("  Value: ".to_owned(), Some(false), ""),
             (
-                "secret CLOUD_TEST_PROMPT_SECRET (required): cloud not set, environment not set\n  Value: ".to_owned(),
+                "secret OBELISK_CLOUD_TEST_PROMPT_SECRET (required): cloud not set, environment not set\n  Value: ".to_owned(),
                 Some(true),
                 "typed-secret",
             ),
@@ -1448,7 +1457,7 @@ mod tests {
                 "e",
             ),
             (
-                "Will stage:\n  env PATH from environment\n  env ALREADY_SET typed\n  env CLOUD_TEST_EMPTY typed\n  secret CLOUD_TEST_PROMPT_SECRET typed\n  secret HOME from environment\nStage 5 values [Y]es/[n]o? ".to_owned(),
+                "Will stage:\n  env PATH from environment\n  env ALREADY_SET typed\n  env OBELISK_CLOUD_TEST_EMPTY typed\n  secret OBELISK_CLOUD_TEST_PROMPT_SECRET typed\n  secret HOME from environment\nStage 5 values [Y]es/[n]o? ".to_owned(),
                 None,
                 "",
             ),
@@ -1494,13 +1503,13 @@ mod tests {
             staged,
             [
                 ("PUT /prefix/v1/apps/demo/env/ALREADY_SET", "replaced"),
-                ("PUT /prefix/v1/apps/demo/env/CLOUD_TEST_EMPTY", ""),
+                ("PUT /prefix/v1/apps/demo/env/OBELISK_CLOUD_TEST_EMPTY", ""),
                 ("PUT /prefix/v1/apps/demo/env/PATH", path_value.as_str()),
+                ("PUT /prefix/v1/apps/demo/secrets/HOME", home_value.as_str()),
                 (
-                    "PUT /prefix/v1/apps/demo/secrets/CLOUD_TEST_PROMPT_SECRET",
+                    "PUT /prefix/v1/apps/demo/secrets/OBELISK_CLOUD_TEST_PROMPT_SECRET",
                     "typed-secret"
                 ),
-                ("PUT /prefix/v1/apps/demo/secrets/HOME", home_value.as_str()),
             ]
             .map(|(route, value)| (route.to_owned(), value.to_owned()))
         );
