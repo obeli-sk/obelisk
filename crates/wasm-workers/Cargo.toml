@@ -36,7 +36,7 @@ js-crypto.workspace = true
 futures-util.workspace = true
 http-body-util.workspace = true
 hyper-util.workspace = true
-hyper.workspace = true
+hyper = { workspace = true, features = ["http1"] }
 indexmap.workspace = true
 itertools.workspace = true
 libc.workspace = true

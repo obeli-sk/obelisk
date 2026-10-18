@@ -12,7 +12,7 @@ use deno_core::{
 use deno_error::JsErrorBox;
 use http_body_util::combinators::UnsyncBoxBody;
 use hyper::{HeaderMap, Response, StatusCode, body::Bytes};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -30,8 +30,11 @@ pub(super) struct NativeRequest {
     pub body: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct NativeResponse {
     pub status: u16,
+    pub status_text: String,
     pub headers: Vec<(String, String)>,
     pub body: String,
 }
@@ -108,13 +111,6 @@ struct FetchRequest {
     body: Option<String>,
 }
 
-#[derive(Serialize)]
-struct FetchResponse {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: String,
-}
-
 #[derive(Deserialize)]
 struct HostRequest {
     op: String,
@@ -181,7 +177,7 @@ async fn op_webhook_sleep(
 async fn op_webhook_fetch(
     state: Rc<RefCell<OpState>>,
     #[serde] request: FetchRequest,
-) -> Result<FetchResponse, JsErrorBox> {
+) -> Result<crate::http_hooks::NativeHttpResponse, JsErrorBox> {
     let panic = state.borrow().borrow::<HostState>().panic.clone();
     panic
         .catch_async(op_webhook_fetch_inner(state, request))
@@ -191,7 +187,7 @@ async fn op_webhook_fetch(
 async fn op_webhook_fetch_inner(
     state: Rc<RefCell<OpState>>,
     request: FetchRequest,
-) -> Result<FetchResponse, JsErrorBox> {
+) -> Result<crate::http_hooks::NativeHttpResponse, JsErrorBox> {
     let method = request
         .method
         .parse()
@@ -213,12 +209,7 @@ async fn op_webhook_fetch_inner(
             )
             .map_err(JsErrorBox::generic)?
     };
-    let (status, headers, body) = pending_request.await.map_err(JsErrorBox::generic)?;
-    Ok(FetchResponse {
-        status,
-        headers,
-        body: String::from_utf8_lossy(&body).into_owned(),
-    })
+    pending_request.await.map_err(JsErrorBox::generic)
 }
 
 #[op2]
@@ -394,24 +385,10 @@ async fn execute_inner(
     let value = runtime
         .execute_script("obelisk:webhook-response", "globalThis.__obeliskResponse")
         .map_err(|err| NativeWebhookFailure::Execution(err.to_string()))?;
-    let response = {
-        deno_core::scope!(scope, runtime);
-        let local = deno_core::v8::Local::new(scope, value);
-        deno_core::serde_v8::from_v8::<NativeResponseSerde>(scope, local)
-            .map_err(|err| NativeWebhookFailure::Execution(err.to_string()))?
-    };
-    Ok(NativeResponse {
-        status: response.status,
-        headers: response.headers,
-        body: response.body,
-    })
-}
-
-#[derive(Deserialize)]
-struct NativeResponseSerde {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: String,
+    deno_core::scope!(scope, runtime);
+    let local = deno_core::v8::Local::new(scope, value);
+    deno_core::serde_v8::from_v8::<NativeResponse>(scope, local)
+        .map_err(|err| NativeWebhookFailure::Execution(err.to_string()))
 }
 
 fn request_to_json(request: NativeRequest) -> Value {
@@ -440,7 +417,18 @@ pub(super) fn into_hyper_response(
         http_body_util::Full::new(Bytes::from(response.body)),
         |_| unreachable!(),
     )));
-    *result.status_mut() = StatusCode::from_u16(response.status).map_err(|e| e.to_string())?;
+    let status = StatusCode::from_u16(response.status).map_err(|e| e.to_string())?;
+    // `""` is the Fetch default, so treat it as unset and let hyper write the canonical phrase.
+    if !response.status_text.is_empty() {
+        let reason = response
+            .status_text
+            .chars()
+            .map(|char| u8::try_from(char).map_err(|_| "statusText must be a ByteString"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let reason = hyper::ext::ReasonPhrase::try_from(reason).map_err(|e| e.to_string())?;
+        result.extensions_mut().insert(reason);
+    }
+    *result.status_mut() = status;
     *result.headers_mut() = headers;
     Ok(result)
 }
@@ -837,8 +825,8 @@ class Headers { constructor(init = []) { this.entries = init instanceof Headers 
 globalThis.Headers = Headers;
 class Request { constructor(input, options = {}) { if (typeof input === 'object' && input.__native) { Object.assign(this,input); this.headers=new Headers(input.headers); } else { this.url=String(input); this.method=options.method||'GET'; this.headers=new Headers(options.headers); this._body=options.body??''; } } async text(){return this._body??this.body??'';} async json(){return JSON.parse(await this.text());} async formData(){return Object.fromEntries(new URLSearchParams(await this.text()));} }
 globalThis.Request = Request;
-class Response { constructor(body = '', options = {}) { this._body=body == null ? '' : String(body); this.status=options.status??200; this.ok=this.status>=200&&this.status<300; this.headers=new Headers(options.headers); } async text(){return this._body;} async json(){return JSON.parse(this._body);} static json(value, options = {}) { const response=new Response(JSON.stringify(value),options); if(!response.headers.has('content-type')) response.headers.set('content-type','application/json'); return response; } }
+class Response { constructor(body = '', options = {}) { this._body=body == null ? '' : String(body); this.status=options.status??200; this.statusText=options.statusText===undefined?'':String(options.statusText); if(!/^[\t\x20-\x7e\x80-\xff]*$/.test(this.statusText)) throw new TypeError(`Invalid statusText: ${JSON.stringify(this.statusText)}`); this.ok=this.status>=200&&this.status<300; this.headers=new Headers(options.headers); } async text(){return this._body;} async json(){return JSON.parse(this._body);} static json(value, options = {}) { const response=new Response(JSON.stringify(value),options); if(!response.headers.has('content-type')) response.headers.set('content-type','application/json'); return response; } }
 globalThis.Response = Response;
-globalThis.fetch = async (input, options = {}) => { const request=input instanceof Request?input:new Request(input,options); const data=await Deno.core.ops.op_webhook_fetch({url:request.url,method:request.method,headers:[...request.headers],body:request._body}); return new Response(data.body,{status:data.status,headers:data.headers}); };
-globalThis.__obeliskInvoke = async (handler, data) => { const request=new Request({__native:true,url:data.url,method:data.method,headers:data.headers,_body:data.body}); const response=await handler(request); if(!(response instanceof Response)) throw new TypeError('handler must return a Response (e.g. `new Response(...)` or `Response.json(...)`)'); return {status:response.status,headers:[...response.headers],body:await response.text()}; };
+globalThis.fetch = async (input, options = {}) => { const request=input instanceof Request?input:new Request(input,options); const data=await Deno.core.ops.op_webhook_fetch({url:request.url,method:request.method,headers:[...request.headers],body:request._body}); return new Response(data.body,{status:data.status,statusText:data.statusText,headers:data.headers}); };
+globalThis.__obeliskInvoke = async (handler, data) => { const request=new Request({__native:true,url:data.url,method:data.method,headers:data.headers,_body:data.body}); const response=await handler(request); if(!(response instanceof Response)) throw new TypeError('handler must return a Response (e.g. `new Response(...)` or `Response.json(...)`)'); return {status:response.status,statusText:response.statusText,headers:[...response.headers],body:await response.text()}; };
 ";

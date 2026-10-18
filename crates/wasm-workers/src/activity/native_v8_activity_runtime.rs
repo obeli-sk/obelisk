@@ -10,7 +10,7 @@ use deno_core::{
     RuntimeOptions, op2, resolve_import,
 };
 use deno_error::JsErrorBox;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -38,13 +38,6 @@ struct FetchRequest {
     #[serde(default)]
     headers: Vec<(String, String)>,
     body: Option<String>,
-}
-
-#[derive(Serialize)]
-struct FetchResponse {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: String,
 }
 
 struct HostState {
@@ -108,7 +101,7 @@ async fn op_activity_sleep(
 async fn op_activity_fetch(
     state: Rc<RefCell<OpState>>,
     #[serde] request: FetchRequest,
-) -> Result<FetchResponse, JsErrorBox> {
+) -> Result<crate::http_hooks::NativeHttpResponse, JsErrorBox> {
     let panic = state.borrow().borrow::<HostState>().panic.clone();
     panic
         .catch_async(op_activity_fetch_inner(state, request))
@@ -118,7 +111,7 @@ async fn op_activity_fetch(
 async fn op_activity_fetch_inner(
     state: Rc<RefCell<OpState>>,
     request: FetchRequest,
-) -> Result<FetchResponse, JsErrorBox> {
+) -> Result<crate::http_hooks::NativeHttpResponse, JsErrorBox> {
     let activity = state.borrow().borrow::<HostState>().activity.clone();
     let method = request
         .method
@@ -129,7 +122,7 @@ async fn op_activity_fetch_inner(
         .parse()
         .map_err(|err| JsErrorBox::type_error(format!("invalid URL: {err}")))?;
     let mut activity = activity.lock().await;
-    let (status, headers, body) = activity
+    activity
         .http_hooks
         .send_native_request(
             method,
@@ -139,12 +132,7 @@ async fn op_activity_fetch_inner(
         )
         .map_err(JsErrorBox::generic)?
         .await
-        .map_err(JsErrorBox::generic)?;
-    Ok(FetchResponse {
-        status,
-        headers,
-        body: String::from_utf8_lossy(&body).into_owned(),
-    })
+        .map_err(JsErrorBox::generic)
 }
 
 deno_core::extension!(
@@ -399,7 +387,7 @@ class TextDecoder { decode(value = new Uint8Array()) { const bytes = value insta
 globalThis.TextEncoder = TextEncoder;
 globalThis.TextDecoder = TextDecoder;
 class Response {
-  constructor(data) { this.status = data.status; this.ok = data.status >= 200 && data.status < 300; this.headers = new Map(data.headers); this._body = data.body; }
+  constructor(data) { this.status = data.status; this.statusText = data.statusText; this.ok = data.status >= 200 && data.status < 300; this.headers = new Map(data.headers); this._body = data.body; }
   async text() { return this._body; }
   async json() { return JSON.parse(this._body); }
 }
