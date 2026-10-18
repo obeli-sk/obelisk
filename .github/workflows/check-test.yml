@@ -72,6 +72,12 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
+      # Wasmtime's codegen cache key includes the host CPU features, which differ across runner SKUs.
+      - id: cpu
+        run: |
+          grep -m1 '^model name' /proc/cpuinfo
+          echo "flags=$(grep -m1 '^flags' /proc/cpuinfo | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
       # Test WASMs and the native QEMU and Firecracker bundles are content-addressed and don't change often.
       - id: wasm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -80,8 +86,9 @@ jobs:
             target/wasm-cache
             test-codegen-cache
             test-wasm-cache
-          key: wasm-cache-${{ matrix.report }}-${{ runner.os }}-${{ github.run_id }}
+          key: wasm-cache-${{ matrix.report }}-${{ runner.os }}-${{ steps.cpu.outputs.flags }}-${{ github.run_id }}
           restore-keys: |
+            wasm-cache-${{ matrix.report }}-${{ runner.os }}-${{ steps.cpu.outputs.flags }}-
             wasm-cache-${{ matrix.report }}-${{ runner.os }}-
 
       - uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # main, post-v1: adds pr-comment input
@@ -93,7 +100,7 @@ jobs:
 
       - name: Build tests
         id: build-tests
-        run: nix develop --command cargo nextest run --workspace --no-run
+        run: nix develop --command cargo nextest run --workspace --no-run ${{ matrix.features }}
 
       - name: Enable KVM access
         if: ${{ matrix.activity_vm_runtime == 'qemu-kvm' || matrix.activity_vm_runtime == 'firecracker' }}
