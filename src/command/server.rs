@@ -2160,14 +2160,6 @@ pub(crate) async fn run_internal(
         secret_registry.with_internal_token(api_auth.as_ref().map(|auth| auth.startup_token()))?,
     );
 
-    let token_reload = api_auth.as_ref().map(|auth| {
-        crate::server::auth::reload::TokenHashReload::new(
-            auth.clone(),
-            config.source_path.clone(),
-            config.api.token_hashes.clone(),
-        )
-    });
-
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
     let maintenance_gc_config = config.maintenance.gc;
@@ -2548,24 +2540,10 @@ pub(crate) async fn run_internal(
         info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
         obelisk_is_ready();
 
-        let token_reload_task = token_reload.map(|reload| {
-            let db_pool = server_init.db_pool.clone();
-            utils::spawn::spawn_named("api_token_hash_reload", async move {
-                reload.run(db_pool.as_ref()).await;
-            })
-        });
-        let _token_reload_abort = token_reload_task
-            .as_ref()
-            .map(|task| AbortOnDropHandle::new(task.abort_handle()));
-
         let server_result = tokio::select! {
             server_result = &mut http_server => Some(server_result),
             _ = termination_watcher.changed() => None,
         };
-        if let Some(task) = token_reload_task {
-            task.abort();
-            let _ = task.await;
-        }
         if let Some(server_result) = server_result {
             server_init.close().await;
             server_result

@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(auth)* API token hashes in `server.toml` are loaded at startup and require a restart
+  to change. Removed live token-file reload and its loaded/changed system events.
+  OIDC signing-key refresh remains supported.
+
 ## [0.43.0-rc.6](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.5...v0.43.0-rc.6)
 
 This release candidate adds internal secrets carrying the server's startup API token, lets the
