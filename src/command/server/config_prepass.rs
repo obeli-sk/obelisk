@@ -1193,7 +1193,13 @@ mod tests {
         const VAR: &str = "OBELISK_TEST_OPTIONAL_APP_ENV_36A7";
         let registry = SecretRegistry::resolve(
             SecretsToml::new(),
-            PublicEnvToml::from([(VAR.to_string(), PublicEnvConfigToml { optional: true })]),
+            PublicEnvToml::from([(
+                VAR.to_string(),
+                PublicEnvConfigToml::Env(crate::config::secret_registry::EnvPublicEnvConfigToml {
+                    optional: true,
+                    ..Default::default()
+                }),
+            )]),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
             &StartupEnvVars::capture(),

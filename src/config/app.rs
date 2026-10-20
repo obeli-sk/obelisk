@@ -1,7 +1,9 @@
 use crate::config::env_var::{
     StartupEnvVars, collect_env_var_references, interpolate_startup_env_vars,
 };
-use crate::config::secret_registry::{PublicEnvRef, PublicEnvToml, SecretsToml};
+use crate::config::secret_registry::{
+    PublicEnvConfigToml, PublicEnvRef, PublicEnvToml, SecretsToml,
+};
 use crate::config::server::{AllowExecActivities, OutboundHttpToml};
 use anyhow::{Context as _, ensure};
 use concepts::component_id::Digest;
@@ -160,15 +162,19 @@ impl AppConfigToml {
                 let mut allowed: Vec<_> = self
                     .public_env
                     .iter()
-                    .map(|(name, config)| {
-                        if config.optional {
+                    .map(|(name, config)| match config {
+                        PublicEnvConfigToml::Internal(config) => PublicEnvRef::Internal {
+                            name: name.to_owned(),
+                            kind: config.kind,
+                            source: config.source,
+                        },
+                        PublicEnvConfigToml::Env(config) if config.optional => {
                             PublicEnvRef::Config {
                                 name: name.to_owned(),
                                 optional: true,
                             }
-                        } else {
-                            PublicEnvRef::Required(name.to_owned())
                         }
+                        PublicEnvConfigToml::Env(_) => PublicEnvRef::Required(name.to_owned()),
                     })
                     .collect();
                 allowed.sort_by(|a, b| a.name().cmp(b.name()));

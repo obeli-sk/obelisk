@@ -118,7 +118,40 @@
             "name",
             "optional"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "$ref": "#/$defs/InternalSecretType"
+            },
+            "source": {
+              "$ref": "#/$defs/InternalPublicEnvSource"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "type",
+            "source"
+          ]
         }
+      ]
+    },
+    "InternalSecretType": {
+      "type": "string",
+      "enum": [
+        "internal"
+      ]
+    },
+    "InternalPublicEnvSource": {
+      "type": "string",
+      "enum": [
+        "api-url",
+        "webui-url"
       ]
     },
     "AllowedHostToml": {

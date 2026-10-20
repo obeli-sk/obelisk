@@ -126,6 +126,49 @@ const fn default_v8_thread_stack_size() -> ByteSizeConfig {
     ByteSizeConfig::Mib(4)
 }
 impl ServerConfigToml {
+    pub(crate) fn internal_public_env(
+        &self,
+        source: crate::config::secret_registry::InternalPublicEnvSource,
+    ) -> anyhow::Result<String> {
+        use crate::config::secret_registry::InternalPublicEnvSource;
+        let address = match source {
+            InternalPublicEnvSource::ApiUrl => {
+                anyhow::ensure!(self.api.enabled, "api-url requires an enabled API listener");
+                self.api.listening_addr
+            }
+            InternalPublicEnvSource::WebuiUrl => {
+                anyhow::ensure!(
+                    self.webui.enabled,
+                    "webui-url requires an enabled Web UI listener"
+                );
+                if let Some(url) = &self.webui.public_url {
+                    let parsed = reqwest::Url::parse(url)?;
+                    anyhow::ensure!(
+                        matches!(parsed.scheme(), "http" | "https")
+                            && parsed.host_str().is_some()
+                            && parsed.username().is_empty()
+                            && parsed.password().is_none()
+                            && parsed.query().is_none()
+                            && parsed.fragment().is_none(),
+                        "webui.public_url must be an HTTP(S) URL without credentials, query or fragment"
+                    );
+                    return Ok(parsed.as_str().trim_end_matches('/').to_owned());
+                }
+                self.webui.listening_addr.parse::<SocketAddr>()?
+            }
+        };
+        anyhow::ensure!(
+            address.port() != 0,
+            "internal URLs require a fixed listener port"
+        );
+        let ip = match address.ip() {
+            std::net::IpAddr::V4(ip) if ip.is_unspecified() => std::net::Ipv4Addr::LOCALHOST.into(),
+            std::net::IpAddr::V6(ip) if ip.is_unspecified() => std::net::Ipv6Addr::LOCALHOST.into(),
+            ip => ip,
+        };
+        Ok(format!("http://{}", SocketAddr::new(ip, address.port())))
+    }
+
     pub(crate) fn resolve_env_vars(
         &mut self,
         path_prefixes: &PathPrefixes,
@@ -794,6 +837,8 @@ pub(crate) struct WebUIConfig {
     pub(crate) enabled: bool,
     #[serde(default = "default_webui_listening_addr")]
     pub(crate) listening_addr: String,
+    #[serde(default)]
+    pub(crate) public_url: Option<String>,
 }
 
 impl Default for WebUIConfig {
@@ -801,6 +846,7 @@ impl Default for WebUIConfig {
         Self {
             enabled: true,
             listening_addr: default_webui_listening_addr(),
+            public_url: None,
         }
     }
 }

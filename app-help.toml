@@ -28,6 +28,11 @@
 # [public_env]
 # REGION = {}
 # TRACE_ID = { optional = true }
+## Internal entries ignore process environment values and require an available source.
+## API URLs use the listener address, replacing wildcard binds with loopback.
+## Web UI URLs use webui.public_url when configured, otherwise its local listener.
+# OBELISK_API_URL = { type = "internal", source = "api-url" }
+# OBELISK_UI_URL = { type = "internal", source = "webui-url" }
 
 ## App-reviewed exec components. Both app and platform admins must approve each digest.
 ## Use a digest array during migrations; the platform must cover each digest.
