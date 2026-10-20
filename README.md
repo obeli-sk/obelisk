@@ -277,31 +277,6 @@ cargo run --release
 See [DEVELOPMENT.md](DEVELOPMENT.md) for repository structure, build instructions,
 testing, code patterns, and contribution conventions.
 
-## Cloud app endpoints
-
-Cloud app names are unique within each environment. Tenant-native commands derive
-HTTPS endpoints locally: `<app>.obelisk.works` for webhooks, `api--<app>` for the
-API and `webui--<app>` for Web UI. They do not query the provisioner for routing.
-App/token/lifecycle management still uses `OBELISK_CLOUD_API_URL`.
-
-Select an app with `--app`, then `OBELISK_APP_NAME`, or the `app_name` in local
-`app.toml`, in that order. Names contain 4-20 lowercase letters, digits or single
-interior hyphens. Flags and environment overrides do not rewrite `app.toml`.
-For development, configure the tenant domain independently of the cloud API:
-
-```sh
-export OBELISK_CLOUD_API_URL=https://cloud.dev.obeli.sk
-export OBELISK_CLOUD_APPS_DOMAIN=dev.obelisk.works
-obelisk cloud app --app myapp endpoint
-obelisk cloud app --app myapp deployment active
-```
-
-`--apps-domain` overrides the environment; the default is `obelisk.works`.
-When a cloned project's app name is taken, interactive `cloud app deploy` offers
-an alternative. After creation succeeds, it saves the replacement in `app.toml`
-if the original name came from that file. Noninteractive and JSON commands return
-a conflict error; use `--app` or `OBELISK_APP_NAME` to choose another name.
-
 ## Running Tests
 Postgres must be running. See `.envrc-example` for how to set up the environment variables.
 Quick start:
