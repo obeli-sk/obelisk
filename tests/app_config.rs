@@ -66,7 +66,7 @@ fn server_and_cloud_enforce_the_same_app_names() {
     std::fs::write(dir.path().join("deployment.toml"), "").unwrap();
     for name in [
         "abc",
-        "abcdefghijklmnopqrstuvwxyz",
+        "abcdefghijklmnopqrstu",
         "-demo",
         "demo-",
         "Demo",
@@ -99,7 +99,7 @@ fn server_and_cloud_enforce_the_same_app_names() {
         "demo",
         "1234",
         "app--name",
-        "abcdefghijklmnopqrstuvwxy",
+        "abcdefghijklmnopqrst",
         "system-provisioner",
         "default",
     ] {

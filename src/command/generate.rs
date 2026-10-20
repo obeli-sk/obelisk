@@ -365,7 +365,7 @@ async fn generate_new(
 fn slugify_app_name(name: &str) -> String {
     let mut slug = String::new();
     for character in name.chars() {
-        if slug.len() == 25 {
+        if slug.len() == 20 {
             break;
         }
         if character.is_ascii_alphanumeric() {

@@ -71,13 +71,13 @@ enum AppPolicyFormatV1 {
 
 pub(crate) fn validate_app_name(name: &str) -> anyhow::Result<()> {
     ensure!(
-        (4..=25).contains(&name.len())
+        (4..=20).contains(&name.len())
             && !name.starts_with('-')
             && !name.ends_with('-')
             && name
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-        "invalid app name `{name}`: expected a DNS label (4-25 lowercase ASCII letters, digits, or interior hyphens)"
+        "invalid app name `{name}`: expected a DNS label (4-20 lowercase ASCII letters, digits, or interior hyphens)"
     );
     Ok(())
 }
