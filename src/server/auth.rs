@@ -5,7 +5,6 @@
 //! once at stream open. See `meta/designs/server-security-guard.md` (v1).
 
 pub(crate) mod oidc;
-pub(crate) mod reload;
 
 use crate::config::server::ApiConfig;
 use axum::{
@@ -19,7 +18,7 @@ use secrecy::{ExposeSecret as _, SecretString};
 use std::{
     borrow::Cow,
     sync::{
-        Arc, RwLock,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -28,7 +27,6 @@ use tracing::{trace, warn};
 
 pub(crate) struct ApiAuth {
     accepted: Vec<AcceptedToken>,
-    configured: RwLock<Vec<AcceptedToken>>,
     /// Recovery token, printed to the console, valid until shutdown.
     startup_token: SecretString,
     oidc: Option<Arc<oidc::OidcVerifier>>,
@@ -82,28 +80,21 @@ impl ApiAuth {
             let digest = crate::api::token_hash(token.expose_secret());
             accepted.push(AcceptedToken::new(digest.0, hash_prefix_label(&digest)));
         }
+        accepted.extend(
+            config
+                .token_hashes
+                .iter()
+                .map(|digest| AcceptedToken::new(digest.0, hash_prefix_label(digest))),
+        );
         let oidc = oidc::OidcVerifier::new(&config.oidc)?;
         if let Some(oidc) = &oidc {
             oidc.spawn_prefetch();
         }
         Ok(Self {
             accepted,
-            configured: RwLock::new(Self::configured_tokens(&config.token_hashes)),
             startup_token,
             oidc,
         })
-    }
-
-    fn configured_tokens(hashes: &[concepts::component_id::Digest]) -> Vec<AcceptedToken> {
-        hashes
-            .iter()
-            .map(|digest| AcceptedToken::new(digest.0, hash_prefix_label(digest)))
-            .collect()
-    }
-
-    fn replace_configured(&self, hashes: &[concepts::component_id::Digest]) {
-        let configured = Self::configured_tokens(hashes);
-        *self.configured.write().unwrap() = configured;
     }
 
     pub(crate) fn startup_token(&self) -> &SecretString {
@@ -129,14 +120,7 @@ impl ApiAuth {
         let identity = self
             .accepted
             .iter()
-            .find_map(|accepted| accepted.check(&digest, token.len()))
-            .or_else(|| {
-                self.configured
-                    .read()
-                    .unwrap()
-                    .iter()
-                    .find_map(|accepted| accepted.check(&digest, token.len()))
-            });
+            .find_map(|accepted| accepted.check(&digest, token.len()));
         if let Some(identity) = identity {
             Ok(identity)
         } else {

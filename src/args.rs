@@ -594,7 +594,7 @@ pub(crate) enum Generate {
     /// `OBELISK_API_TOKEN=$(obelisk generate token)`. When run interactively,
     /// the token's `api.token_hashes` entry is also printed to stderr.
     /// The plaintext token is printed once and never stored; revoke it by
-    /// deleting its `api.token_hashes` entry (reloaded within about one second).
+    /// deleting its `api.token_hashes` entry and restarting the server.
     Token {
         /// Output the token and its `sha256:` hash as JSON instead of plain text.
         #[arg(short, long)]

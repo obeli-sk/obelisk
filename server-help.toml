@@ -21,10 +21,7 @@
 ## random tokens are safe to commit: SHA-256 is fast and unsalted, so passwords and other guessable
 ## tokens are vulnerable to offline guessing. Tokens should contain at least 32 characters; shorter
 ## tokens currently produce a compatibility warning and will be rejected in a future release.
-## Changes to api.token_hashes in this file are reloaded about once per second, including atomic replacements.
-## An empty list revokes all configured hashes; startup and CLI/environment tokens and OIDC remain valid.
-## Invalid or unreadable files retain the last valid set. Existing streams remain open.
-## Other server settings and app.toml still require a restart.
+## Changes to server.toml require a server restart. Existing streams remain open until shutdown.
 ## Always create tokens with
 ## `obelisk generate token --server-config <this file>`, which prints the token to stdout.
 # api.token_hashes = [

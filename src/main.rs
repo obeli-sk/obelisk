@@ -436,7 +436,7 @@ mod app_policy_tests {
             RuntimeConfigAvailability::AllowUnavailable,
         )
         .unwrap();
-        // The API token-hash reload watches `source_path`.
+        // Server diagnostics retain `source_path`.
         assert_eq!(Some(server), startup.config.source_path);
         assert_eq!(Some(app), startup.config.app_source_path);
     }
