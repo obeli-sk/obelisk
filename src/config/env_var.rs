@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub(crate) struct StartupEnvVars {
     values: HashMap<String, String>,
     prefix: String,
+    internal_values: HashMap<String, String>,
 }
 
 impl StartupEnvVars {
@@ -13,6 +14,7 @@ impl StartupEnvVars {
         Self {
             values: std::env::vars().collect(),
             prefix: String::new(),
+            internal_values: HashMap::new(),
         }
     }
 
@@ -27,6 +29,7 @@ impl StartupEnvVars {
                 })
                 .collect(),
             prefix: prefix.to_owned(),
+            internal_values: HashMap::new(),
         }
     }
 
@@ -36,6 +39,29 @@ impl StartupEnvVars {
 
     pub(crate) fn lookup(&self, key: &str) -> Option<String> {
         self.values.get(key).cloned()
+    }
+
+    pub(crate) fn internal_lookup(&self, key: &str) -> Option<String> {
+        self.internal_values.get(key).cloned()
+    }
+
+    pub(crate) fn with_internal_public_env(
+        mut self,
+        declarations: &crate::config::secret_registry::PublicEnvToml,
+        server: &crate::config::server::ServerConfigToml,
+    ) -> anyhow::Result<Self> {
+        for (name, declaration) in declarations {
+            if let crate::config::secret_registry::PublicEnvConfigToml::Internal(config) =
+                declaration
+            {
+                let value = server.internal_public_env(config.source).map_err(|error| {
+                    anyhow::anyhow!("internal public environment `{name}`: {error}")
+                })?;
+                self.values.insert(name.clone(), value.clone());
+                self.internal_values.insert(name.clone(), value);
+            }
+        }
+        Ok(self)
     }
 }
 

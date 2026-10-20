@@ -866,20 +866,22 @@ async fn fill_with_prompt(
         .as_array()
         .context("Invalid policy public_env declarations")?
     {
-        let name = declaration
-            .as_str()
-            .or_else(|| declaration["name"].as_str())
-            .context("Invalid env declaration")?;
-        let current = env_values
-            .get(name)
-            .map(|value| value.as_str().unwrap_or_default());
-        declarations.push((
-            "env",
-            name,
-            declaration["optional"] == true,
-            current.is_some(),
-            current,
-        ));
+        if declaration["type"] != "internal" {
+            let name = declaration
+                .as_str()
+                .or_else(|| declaration["name"].as_str())
+                .context("Invalid env declaration")?;
+            let current = env_values
+                .get(name)
+                .map(|value| value.as_str().unwrap_or_default());
+            declarations.push((
+                "env",
+                name,
+                declaration["optional"] == true,
+                current.is_some(),
+                current,
+            ));
+        }
     }
     for (name, declaration) in policy["secrets"]
         .as_object()
@@ -1445,7 +1447,7 @@ mod tests {
         state.lock().unwrap().existing_config = true;
         let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
         let policy = json!({
-            "public_env":["PATH", "ALREADY_SET", {"name":"HOME", "optional":true}, {"name":"OBELISK_CLOUD_TEST_EMPTY", "optional":true}],
+            "public_env":["PATH", "ALREADY_SET", {"name":"HOME", "optional":true}, {"name":"OBELISK_CLOUD_TEST_EMPTY", "optional":true}, {"name":"SELF_API", "type":"internal", "source":"api-url"}, {"name":"BROWSER_UI", "type":"internal", "source":"webui-url"}],
             "secrets":{"OBELISK_CLOUD_TEST_PROMPT_SECRET":{},"ALREADY_SET":{},"HOME":{"optional":true},"OBELISK_API_TOKEN":{"type":"internal"}}
         });
         let path_value = std::env::var("PATH").unwrap();

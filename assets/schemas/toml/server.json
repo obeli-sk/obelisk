@@ -640,6 +640,13 @@
         "listening_addr": {
           "type": "string",
           "default": "127.0.0.1:8080"
+        },
+        "public_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
       "additionalProperties": false

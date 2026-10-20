@@ -140,14 +140,51 @@
     },
     "PublicEnvConfigToml": {
       "description": "Configuration for one public environment variable.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EnvPublicEnvConfigToml"
+        },
+        {
+          "$ref": "#/$defs/InternalPublicEnvConfigToml"
+        }
+      ]
+    },
+    "EnvPublicEnvConfigToml": {
       "type": "object",
       "properties": {
+        "type": {
+          "$ref": "#/$defs/EnvSecretType",
+          "writeOnly": true
+        },
         "optional": {
           "type": "boolean",
           "default": false
         }
       },
       "additionalProperties": false
+    },
+    "InternalPublicEnvConfigToml": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/InternalSecretType"
+        },
+        "source": {
+          "$ref": "#/$defs/InternalPublicEnvSource"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "source"
+      ]
+    },
+    "InternalPublicEnvSource": {
+      "type": "string",
+      "enum": [
+        "api-url",
+        "webui-url"
+      ]
     },
     "OutboundHttpToml": {
       "type": "object",

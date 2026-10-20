@@ -22,7 +22,7 @@ pub(crate) enum EnvSecretType {
     Env,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum InternalSecretType {
     Internal,
@@ -155,11 +155,48 @@ impl SecretConfigToml {
 pub(crate) type SecretsToml = IndexMap<String, SecretConfigToml>;
 
 /// Configuration for one public environment variable.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub(crate) enum PublicEnvConfigToml {
+    // backcompat: 0.43.0-rc.6 public env entries without a type remain environment-backed.
+    Env(EnvPublicEnvConfigToml),
+    Internal(InternalPublicEnvConfigToml),
+}
+
+impl Default for PublicEnvConfigToml {
+    fn default() -> Self {
+        Self::Env(EnvPublicEnvConfigToml::default())
+    }
+}
+
+impl PublicEnvConfigToml {
+    pub(crate) fn optional(&self) -> bool {
+        matches!(self, Self::Env(config) if config.optional)
+    }
+}
+
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PublicEnvConfigToml {
+pub(crate) struct EnvPublicEnvConfigToml {
+    #[serde(default, rename = "type", skip_serializing)]
+    pub(crate) _kind: EnvSecretType,
     #[serde(default)]
     pub(crate) optional: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InternalPublicEnvConfigToml {
+    #[serde(rename = "type")]
+    pub(crate) kind: InternalSecretType,
+    pub(crate) source: InternalPublicEnvSource,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum InternalPublicEnvSource {
+    ApiUrl,
+    WebuiUrl,
 }
 
 /// Public environment variables that deployments may read.
@@ -170,13 +207,22 @@ pub(crate) type PublicEnvToml = IndexMap<String, PublicEnvConfigToml>;
 pub(crate) enum PublicEnvRef {
     // backcompat: 0.42 policy v1 keeps required entries as strings across the TOML shape change.
     Required(String),
-    Config { name: String, optional: bool },
+    Config {
+        name: String,
+        optional: bool,
+    },
+    Internal {
+        name: String,
+        #[serde(rename = "type")]
+        kind: InternalSecretType,
+        source: InternalPublicEnvSource,
+    },
 }
 
 impl PublicEnvRef {
     pub(crate) fn name(&self) -> &str {
         match self {
-            Self::Required(name) | Self::Config { name, .. } => name,
+            Self::Required(name) | Self::Config { name, .. } | Self::Internal { name, .. } => name,
         }
     }
 }
@@ -454,14 +500,20 @@ impl SecretRegistry {
 
         let public_required: HashSet<_> = public_env
             .iter()
-            .filter(|(_, config)| !config.optional)
+            .filter(|(_, config)| !config.optional())
             .map(|(name, _)| name.to_owned())
             .collect();
-        let public_allowed: HashSet<_> = public_env.into_keys().collect();
-        let public_values: HashMap<String, String> = public_allowed
+        let public_values: HashMap<String, String> = public_env
             .iter()
-            .filter_map(|name| env_vars.lookup(name).map(|value| (name.clone(), value)))
+            .filter_map(|(name, config)| {
+                let value = match config {
+                    PublicEnvConfigToml::Env(_) => env_vars.lookup(name),
+                    PublicEnvConfigToml::Internal(_) => env_vars.internal_lookup(name),
+                };
+                value.map(|value| (name.clone(), value))
+            })
             .collect();
+        let public_allowed: HashSet<_> = public_env.into_keys().collect();
         let missing_public: std::collections::BTreeSet<_> = public_required
             .iter()
             .filter(|name| !public_values.contains_key(*name))
@@ -664,7 +716,13 @@ mod tests {
         let env = StartupEnvVars::capture();
         let registry = SecretRegistry::resolve(
             SecretsToml::new(),
-            PublicEnvToml::from([(API_TOKEN.to_owned(), PublicEnvConfigToml { optional: true })]),
+            PublicEnvToml::from([(
+                API_TOKEN.to_owned(),
+                PublicEnvConfigToml::Env(EnvPublicEnvConfigToml {
+                    optional: true,
+                    ..Default::default()
+                }),
+            )]),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
             &env,
@@ -824,7 +882,13 @@ mod tests {
         let env_vars = StartupEnvVars::capture();
         let registry = SecretRegistry::resolve(
             SecretsToml::new(),
-            PublicEnvToml::from([(ALLOWED.to_string(), PublicEnvConfigToml { optional: true })]),
+            PublicEnvToml::from([(
+                ALLOWED.to_string(),
+                PublicEnvConfigToml::Env(EnvPublicEnvConfigToml {
+                    optional: true,
+                    ..Default::default()
+                }),
+            )]),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
             &env_vars,

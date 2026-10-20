@@ -297,7 +297,9 @@ fn prepare_server_startup_with_exec_policy(
     let js_runtime = parse_js_runtime_from_env(&env_vars)?;
     let activity_vm_runtime = parse_activity_vm_runtime_from_env(&env_vars)?;
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
-    let app_env_vars = env_vars.prefixed(&config.app_env_prefix);
+    let app_env_vars = env_vars
+        .prefixed(&config.app_env_prefix)
+        .with_internal_public_env(&app.public_env, &config)?;
     app.resolve_env_vars(&app_env_vars)?;
     if check_exec_policy {
         match &config.platform_exec_activities {
@@ -439,6 +441,143 @@ mod app_policy_tests {
         // Server diagnostics retain `source_path`.
         assert_eq!(Some(server), startup.config.source_path);
         assert_eq!(Some(app), startup.config.app_source_path);
+    }
+
+    #[test]
+    fn internal_public_env_resolves_before_app_policy_and_ignores_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = dir.path().join("server.toml");
+        let app = dir.path().join("app.toml");
+        std::fs::write(
+            &app,
+            r"
+app_name = 'example'
+[public_env]
+PATH = { type = 'internal', source = 'api-url' }
+UI = { type = 'internal', source = 'webui-url' }
+[[outbound_http.allowed_host]]
+pattern = '${PATH}'
+methods = ['GET']
+",
+        )
+        .unwrap();
+        for (bind, expected) in [
+            ("0.0.0.0:12345", "http://127.0.0.1:12345"),
+            ("[::]:12345", "http://[::1]:12345"),
+            ("127.0.0.2:23456", "http://127.0.0.2:23456"),
+        ] {
+            for prefix in ["", "OBELISK_APP_ENV_"] {
+                std::fs::write(&server, format!("app_env_prefix = '{prefix}'\napi.listening_addr = '{bind}'\nwebui.listening_addr = '0.0.0.0:18080'\n")).unwrap();
+                let startup = prepare_server_startup(
+                    Some(server.clone()),
+                    Some(app.clone()),
+                    EnvVarSecretsCleanup::Noop,
+                    RuntimeConfigAvailability::Strict,
+                )
+                .unwrap();
+                assert_eq!(
+                    startup
+                        .secret_registry
+                        .public_env_lookup("PATH")
+                        .unwrap()
+                        .as_deref(),
+                    Some(expected)
+                );
+                assert_eq!(
+                    startup.config.outbound_http.allowed_hosts[0].pattern,
+                    expected
+                );
+                assert!(startup.secret_registry.public_env_is_required("PATH"));
+                assert_eq!(
+                    startup
+                        .secret_registry
+                        .public_env_lookup("UI")
+                        .unwrap()
+                        .as_deref(),
+                    Some("http://127.0.0.1:18080")
+                );
+                let policy = serde_json::to_value(&startup.config.app_policy).unwrap();
+                assert_eq!(
+                    policy["public_env"][0],
+                    serde_json::json!({"name":"PATH", "type":"internal", "source":"api-url"})
+                );
+            }
+        }
+        std::fs::write(
+            &server,
+            "webui.public_url = 'https://webui--example.obelisk.works/'\n",
+        )
+        .unwrap();
+        let startup = prepare_server_startup(
+            Some(server),
+            Some(app),
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+        )
+        .unwrap();
+        assert_eq!(
+            startup
+                .secret_registry
+                .public_env_lookup("UI")
+                .unwrap()
+                .as_deref(),
+            Some("https://webui--example.obelisk.works")
+        );
+    }
+
+    #[test]
+    fn internal_public_env_rejects_unavailable_and_invalid_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = dir.path().join("server.toml");
+        let app = dir.path().join("app.toml");
+        for (source, settings, expected) in [
+            ("api-url", "api.enabled = false", "enabled API listener"),
+            (
+                "api-url",
+                "api.listening_addr = '127.0.0.1:0'",
+                "fixed listener port",
+            ),
+            (
+                "webui-url",
+                "webui.enabled = false",
+                "enabled Web UI listener",
+            ),
+            (
+                "webui-url",
+                "webui.public_url = 'file:///tmp/ui'",
+                "HTTP(S) URL",
+            ),
+        ] {
+            std::fs::write(&server, settings).unwrap();
+            std::fs::write(
+                &app,
+                format!(
+                    "app_name='example'\n[public_env]\nURL={{type='internal', source='{source}'}}\n"
+                ),
+            )
+            .unwrap();
+            let error = prepare_server_startup(
+                Some(server.clone()),
+                Some(app.clone()),
+                EnvVarSecretsCleanup::Noop,
+                RuntimeConfigAvailability::AllowUnavailable,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        for declaration in [
+            "{type='internal',source='api-url',optional=true}",
+            "{type='internal',source='api-url',optional=false}",
+            "{type='internal',source='unknown'}",
+            "{source='api-url'}",
+        ] {
+            assert!(
+                toml::from_str::<config::app::AppConfigToml>(&format!(
+                    "[public_env]\nURL={declaration}"
+                ))
+                .is_err()
+            );
+        }
     }
 }
 

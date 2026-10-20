@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(config)* App public environment entries can use `type = "internal"` with
+  `source = "api-url"` or `source = "webui-url"`. These required values ignore
+  process environment overrides and resolve from the server listeners. Set
+  `webui.public_url` for browser links behind a proxy. Cloud fill skips internal entries.
+
 ### Changed
 
 - *(auth)* API token hashes in `server.toml` are loaded at startup and require a restart
