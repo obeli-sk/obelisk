@@ -149,7 +149,7 @@ impl CloudArgs {
         let api_url = api_origin(
             current["api_url"]
                 .as_str()
-                .context("Provisioner response is missing api_url")?,
+                .context("Control plane response is missing api_url")?,
         )?;
         let startup = ClientStartup::cloud(
             api_url.as_str().trim_end_matches('/').to_owned(),

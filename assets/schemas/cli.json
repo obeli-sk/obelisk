@@ -11,7 +11,7 @@
   "subcommands": [
     {
       "name": "cloud",
-      "about": "Manage apps through an Obelisk cloud provisioner",
+      "about": "Manage apps through the Obelisk cloud control plane",
       "options": [
         {
           "name": "--json",
@@ -23,11 +23,11 @@
         },
         {
           "name": "--api-url",
-          "help": "Provisioner webhook URL"
+          "help": "Cloud control plane URL"
         },
         {
           "name": "--apps-domain",
-          "help": "Tenant app domain; used to construct endpoints without provisioner discovery"
+          "help": "Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>` and `webui--<app>.<domain>`"
         },
         {
           "name": "--api-token",
