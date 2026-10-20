@@ -109,7 +109,7 @@ pub(crate) struct ClientConnection {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Subcommand {
-    /// Manage apps through an Obelisk cloud provisioner.
+    /// Manage apps through the Obelisk cloud control plane.
     Cloud(CloudArgs),
     /// Run or verify the Obelisk server.
     #[command(subcommand)]
@@ -1607,10 +1607,10 @@ pub(crate) struct CloudArgs {
     /// Show detailed metadata and command diagnostics.
     #[arg(long, global = true)]
     pub(crate) verbose: bool,
-    /// Provisioner webhook URL.
+    /// Cloud control plane URL.
     #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", default_value = "https://cloud.obeli.sk", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
     pub(crate) api_url: Option<String>,
-    /// Tenant app domain; used to construct endpoints without provisioner discovery.
+    /// Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>` and `webui--<app>.<domain>`.
     #[arg(
         long,
         global = true,

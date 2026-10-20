@@ -231,7 +231,7 @@ the final result; `submit --follow-logs` includes log records between them.
 final result. Finite queries retain their JSON objects or arrays; execution logs
 use NDJSON with or without `--follow`.
 
-Manage apps through an Obelisk cloud provisioner using `obelisk cloud`.
+Manage apps through the Obelisk cloud control plane using `obelisk cloud`.
 
 ```sh
 export OBELISK_CLOUD_API_URL=...
@@ -249,7 +249,7 @@ obelisk cloud app component list
 share the direct API commands and output formats. They use
 `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_API_TOKEN`, with the app selected by
 `--app`, `OBELISK_APP_NAME`, or `app_name` in `./app.toml`, in that order.
-The CLI discovers the app's API URL through the provisioner, then connects directly
+The CLI derives the app's API URL from the app name and `--apps-domain`, then connects directly
 with the cloud bearer token.
 
 ### Web UI
