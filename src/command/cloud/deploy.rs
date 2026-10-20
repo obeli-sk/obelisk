@@ -29,16 +29,13 @@ impl CloudArgs {
         let save_name = app.is_none();
         let desired = desired_config(&config);
         let prepared = prepare_deployment_manifest_from_disk(&deployment).await?;
-        let step = |name: &str, command: &str, message: &str| {
-            eprintln!("→ obelisk cloud app --app {name} {command}  {message}");
+        eprintln!("Deploying {name}");
+        let step = |command: &str| {
+            eprintln!("→ obelisk cloud app {command}");
         };
         let mut current = if let Some(current) = client.lookup_app(&name).await? {
             if config_differs(&current, &desired) {
-                step(
-                    &name,
-                    &format!("stage -a {}", app_config.display()),
-                    "Staging app configuration",
-                );
+                step("stage");
                 client
                     .app(
                         &name,
@@ -55,11 +52,7 @@ impl CloudArgs {
         } else {
             let original_name = name.clone();
             let current = loop {
-                step(
-                    &name,
-                    &format!("new -a {}", app_config.display()),
-                    "Creating app",
-                );
+                step("new");
                 let mut body = desired.clone();
                 body["app_name"] = json!(name);
                 match client
@@ -96,7 +89,7 @@ impl CloudArgs {
             current
         };
         if interactive {
-            step(&name, "fill", "Resolving configuration");
+            step("fill");
         }
         let filled = fill(&client, &name, &desired["policy"], interactive).await?;
         let unset = filled["declarations"]
@@ -123,7 +116,7 @@ impl CloudArgs {
             || current["applied_revision"] == 0
             || filled["apply_required"] == true
         {
-            step(&name, "apply", "Applying staged configuration");
+            step("apply");
             current = client
                 .app(
                     &name,
@@ -139,7 +132,7 @@ impl CloudArgs {
             }
         }
         if current["status"] == "stopped" {
-            step(&name, "start", "Starting VM");
+            step("start");
             current = client
                 .app(&name, Method::POST, &["start"], None, Kind::Command(None))
                 .await?;
@@ -163,11 +156,7 @@ impl CloudArgs {
             self.api_token,
             self.verbose,
         );
-        step(
-            &name,
-            &format!("deployment apply {}", deployment.display()),
-            "Uploading and activating deployment",
-        );
+        step("deployment apply");
         let id = crate::command::deployment::apply_prepared(&startup, prepared).await
             .with_context(|| format!("Deployment did not complete; inspect `obelisk cloud app --app {name} deployment active` to see what is serving, then retry `obelisk cloud app --app {name} deploy -a {} -d {}`", app_config.display(), deployment.display()))?;
         let result = json!({"app":current,"deployment_id":id,"outcomes":outcomes});
