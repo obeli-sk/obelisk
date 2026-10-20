@@ -2,58 +2,53 @@ use axum::{Json, Router, routing::get};
 use serde_json::{Value, json};
 
 #[tokio::test]
-async fn cloud_app_commands_resolve_project_and_explicit_targets() {
-    use axum::extract::Path;
-    use std::sync::{Arc, Mutex};
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    let selected = Arc::new(Mutex::new(Vec::new()));
-    let digest = format!("sha256:{}", "a".repeat(64));
-    let components = json!([{"component_id":{"name":"demo", "component_type":"workflow", "component_digest":digest}, "files":[], "exports":[], "imports":[]}]);
-    let router = Router::new()
-        .route(
-            "/v1/apps/{name}",
-            get({
-                let selected = selected.clone();
-                let api_url = format!("{origin}/tenant");
-                move |Path(name): Path<String>| {
-                    selected.lock().unwrap().push(name);
-                    let api_url = api_url.clone();
-                    async move { Json(json!({"api_url":api_url})) }
-                }
-            }),
-        )
-        .route(
-            "/tenant/v1/components",
-            get({
-                let components = components.clone();
-                move || {
-                    let components = components.clone();
-                    async move { Json(components) }
-                }
-            }),
-        );
-    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+async fn cloud_app_endpoints_resolve_project_environment_and_explicit_targets_offline() {
     let directory = tempfile::tempdir().unwrap();
-    std::fs::write(directory.path().join("app.toml"), "app_name='from-file'\n").unwrap();
-    for (env, arguments) in [
-        (None, vec!["component", "list", "--json"]),
-        (Some("from-env"), vec!["--json", "component", "list"]),
+    let source = "# Project identity\napp_name='from-file'\n";
+    std::fs::write(directory.path().join("app.toml"), source).unwrap();
+    for (app_env, domain_env, arguments, expected_name, expected_domain) in [
+        (
+            None,
+            None,
+            vec!["endpoint", "--json"],
+            "from-file",
+            "obelisk.works",
+        ),
         (
             Some("from-env"),
-            vec!["component", "list", "--app", "explicit", "--json"],
+            Some("dev.obelisk.works"),
+            vec!["--json", "endpoint"],
+            "from-env",
+            "dev.obelisk.works",
+        ),
+        (
+            Some("from-env"),
+            Some("ignored.example"),
+            vec![
+                "endpoint",
+                "--app",
+                "explicit",
+                "--apps-domain",
+                "test.obelisk.works",
+                "--json",
+            ],
+            "explicit",
+            "test.obelisk.works",
         ),
     ] {
         let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"));
         command
-            .args(["cloud", "--api-url", &origin, "app"])
+            .args(["cloud", "--api-url", "http://127.0.0.1:1", "app"])
             .args(arguments)
             .current_dir(directory.path())
             .env_remove("OBELISK_APP_NAME")
-            .env("OBELISK_CLOUD_API_TOKEN", "test-token");
-        if let Some(env) = env {
-            command.env("OBELISK_APP_NAME", env);
+            .env_remove("OBELISK_CLOUD_APPS_DOMAIN")
+            .env_remove("OBELISK_CLOUD_API_TOKEN");
+        if let Some(app_env) = app_env {
+            command.env("OBELISK_APP_NAME", app_env);
+        }
+        if let Some(domain_env) = domain_env {
+            command.env("OBELISK_CLOUD_APPS_DOMAIN", domain_env);
         }
         let output = command.output().await.unwrap();
         assert!(
@@ -63,56 +58,24 @@ async fn cloud_app_commands_resolve_project_and_explicit_targets() {
         );
         assert_eq!(
             serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-            components
+            json!({
+                "api_url":format!("https://api--{expected_name}.{expected_domain}"),
+                "webhook_url":format!("https://{expected_name}.{expected_domain}"),
+                "webui_url":format!("https://webui--{expected_name}.{expected_domain}"),
+            })
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("app.toml")).unwrap(),
+            source
         );
     }
-    assert_eq!(
-        *selected.lock().unwrap(),
-        vec!["from-file", "from-env", "explicit"]
-    );
-    let direct = format!("{origin}/tenant");
-    for (arguments, detailed) in [
-        (
-            vec!["cloud", "--api-url", &origin, "app", "component", "list"],
-            false,
-        ),
-        (
-            vec![
-                "cloud",
-                "--api-url",
-                &origin,
-                "app",
-                "component",
-                "list",
-                "--verbose",
-            ],
-            true,
-        ),
-        (vec!["component", "--api-url", &direct, "list"], true),
-    ] {
-        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"));
-        command
-            .args(arguments)
-            .current_dir(directory.path())
-            .env_remove("OBELISK_APP_NAME");
-        let output = command.output().await.unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let text = String::from_utf8_lossy(&output.stderr);
-        assert!(text.contains("demo"), "{text}");
-        assert_eq!(text.contains(&digest), detailed, "{text}");
-    }
-    server.abort();
 }
 
 #[tokio::test]
 async fn cloud_output_and_endpoint_selection() {
     let app = json!({
         "app_name":"demo", "status":"running", "hostname":"demo.example.com",
-        "api_url":"https://demo.example.com:5005", "webui_url":"https://demo.example.com:8080"
+        "api_url":"https://api--demo.example.com", "webui_url":"https://webui--demo.example.com"
     });
     let router = Router::new()
         .route(
@@ -156,7 +119,13 @@ async fn cloud_output_and_endpoint_selection() {
     std::fs::write(directory.path().join("app.toml"), "invalid TOML [").unwrap();
     let run = async |args: &[&str]| {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"))
-            .args(["cloud", "--api-url", &origin])
+            .args([
+                "cloud",
+                "--api-url",
+                &origin,
+                "--apps-domain",
+                "example.com",
+            ])
             .args(args)
             .current_dir(directory.path())
             .env(
@@ -178,7 +147,7 @@ async fn cloud_output_and_endpoint_selection() {
         );
         String::from_utf8(output.stdout).unwrap()
     };
-    let endpoints = json!({"api_url":"https://demo.example.com:5005", "webhook_url":"https://demo.example.com", "webui_url":"https://demo.example.com:8080"});
+    let endpoints = json!({"api_url":"https://api--demo.example.com", "webhook_url":"https://demo.example.com", "webui_url":"https://webui--demo.example.com"});
     let text = run(&["app", "endpoint"]).await;
     for url in endpoints.as_object().unwrap().values() {
         assert!(text.contains(url.as_str().unwrap()), "{text}");
