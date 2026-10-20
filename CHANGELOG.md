@@ -6,18 +6,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.7](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.6...v0.43.0-rc.7)
+
+This release candidate resolves internal public environment entries from the server's own
+endpoints, derives cloud app endpoints locally, defaults the cloud API to the production
+control plane, and makes API token configuration static until restart. Cloud app names are now
+limited to 4-20 characters.
+
 ### Added
 
 - *(config)* App public environment entries can use `type = "internal"` with
   `source = "api-url"` or `source = "webui-url"`. These required values ignore
   process environment overrides and resolve from the server listeners. Set
   `webui.public_url` for browser links behind a proxy. Cloud fill skips internal entries.
+  [#1176](https://github.com/obeli-sk/obelisk/pull/1176)
+- *(cli)* `--apps-domain` (`OBELISK_CLOUD_APPS_DOMAIN`, default `obelisk.works`) sets the domain
+  shared by all Obelisk cloud apps. `cloud app endpoint` and the commands that connect directly
+  to an app derive `<app>.<domain>`, `api--<app>.<domain>` and `webui--<app>.<domain>` locally
+  instead of querying the control plane. [#1175](https://github.com/obeli-sk/obelisk/pull/1175)
 
 ### Changed
 
-- *(auth)* API token hashes in `server.toml` are loaded at startup and require a restart
-  to change. Removed live token-file reload and its loaded/changed system events.
-  OIDC signing-key refresh remains supported.
+- *(auth)* API token hashes in `server.toml` are loaded at startup and require a
+  restart to change. Removed live token-file reload and its loaded/changed system events.
+  OIDC signing-key refresh remains supported. [#1173](https://github.com/obeli-sk/obelisk/pull/1173)
+- *(cli)* Cloud app names must be 4-20 characters without double hyphens and are unique within
+  each cloud environment. When the name is taken, interactive `cloud app deploy` offers an
+  alternative and saves it to `app.toml` if the original name came from there; noninteractive
+  and JSON commands return a conflict error. [#1175](https://github.com/obeli-sk/obelisk/pull/1175)
+- *(cli)* `--api-url` (`OBELISK_CLOUD_API_URL`) defaults to `https://cloud.obeli.sk`.
+  [#1175](https://github.com/obeli-sk/obelisk/pull/1175)
+- *(cli)* `cloud app deploy` prints shorter progress lines.
+  [#1175](https://github.com/obeli-sk/obelisk/pull/1175)
+- *(cli)* `cloud app env set`, `secrets set` and `fill` accept configuration names starting
+  with `OBELISK_`. [#1170](https://github.com/obeli-sk/obelisk/pull/1170)
+- *(deps)* Wasmtime 49.0.4. [#1172](https://github.com/obeli-sk/obelisk/pull/1172)
 
 ## [0.43.0-rc.6](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.5...v0.43.0-rc.6)
 
