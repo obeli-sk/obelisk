@@ -1608,7 +1608,7 @@ pub(crate) struct CloudArgs {
     #[arg(long, global = true)]
     pub(crate) verbose: bool,
     /// Provisioner webhook URL.
-    #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
+    #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", default_value = "https://cloud.obeli.sk", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
     pub(crate) api_url: Option<String>,
     /// Tenant app domain; used to construct endpoints without provisioner discovery.
     #[arg(
