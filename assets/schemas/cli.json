@@ -26,6 +26,10 @@
           "help": "Provisioner webhook URL"
         },
         {
+          "name": "--apps-domain",
+          "help": "Tenant app domain; used to construct endpoints without provisioner discovery"
+        },
+        {
           "name": "--api-token",
           "help": "Cloud API bearer token"
         }
@@ -99,7 +103,7 @@
           "options": [
             {
               "name": "--app",
-              "help": "Selected app name; defaults to `app_name` in ./app.toml"
+              "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in ./app.toml"
             }
           ],
           "subcommands": [

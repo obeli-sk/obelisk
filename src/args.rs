@@ -1608,8 +1608,16 @@ pub(crate) struct CloudArgs {
     #[arg(long, global = true)]
     pub(crate) verbose: bool,
     /// Provisioner webhook URL.
-    #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
+    #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", default_value = "https://cloud.obeli.sk", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
     pub(crate) api_url: Option<String>,
+    /// Tenant app domain; used to construct endpoints without provisioner discovery.
+    #[arg(
+        long,
+        global = true,
+        env = "OBELISK_CLOUD_APPS_DOMAIN",
+        default_value = "obelisk.works"
+    )]
+    pub(crate) apps_domain: String,
     /// Cloud API bearer token.
     #[arg(long, global = true, env = "OBELISK_CLOUD_API_TOKEN", hide_env_values = true, value_parser = parse_secret_string)]
     pub(crate) api_token: Option<SecretString>,
@@ -1619,7 +1627,7 @@ pub(crate) struct CloudArgs {
 
 #[derive(Debug, clap::Args)]
 pub(crate) struct CloudAppTarget {
-    /// Selected app name; defaults to `app_name` in ./app.toml.
+    /// Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in ./app.toml.
     #[arg(long, global = true, env = "OBELISK_APP_NAME", value_name = "NAME")]
     pub(crate) app: Option<String>,
     #[command(subcommand)]

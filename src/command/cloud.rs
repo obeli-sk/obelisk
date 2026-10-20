@@ -110,6 +110,10 @@ fn api_origin(value: &str) -> anyhow::Result<Url> {
     );
     Ok(origin)
 }
+#[derive(Debug, thiserror::Error)]
+#[error("App name is already taken; choose another name with --app or OBELISK_APP_NAME")]
+struct AppNameTaken;
+
 impl Client {
     fn new(args: &CloudArgs) -> anyhow::Result<Self> {
         let origin = api_origin(
@@ -208,6 +212,12 @@ impl Client {
                 bail!("Cloud secret operation failed: HTTP {status}");
             }
             let body = response.text().await.unwrap_or_default();
+            if status == reqwest::StatusCode::CONFLICT
+                && serde_json::from_str::<Value>(&body)
+                    .is_ok_and(|body| body["code"] == "app_name_taken")
+            {
+                return Err(AppNameTaken.into());
+            }
             if !self.verbose {
                 let message = output::error_message(&body);
                 if let Some(id) = command_id {
@@ -243,8 +253,16 @@ async fn app_name(name: Option<&str>) -> anyhow::Result<String> {
             .app_name
             .context("Set app_name in ./app.toml, --app or OBELISK_APP_NAME")?,
     };
-    crate::config::app::validate_app_name(&name)?;
+    validate_cloud_app_name(&name)?;
     Ok(name)
+}
+fn validate_cloud_app_name(name: &str) -> anyhow::Result<()> {
+    crate::config::app::validate_app_name(name)?;
+    ensure!(
+        name.len() <= 20 && !name.contains("--"),
+        "Cloud app names must contain 4-20 lowercase letters, digits or single interior hyphens"
+    );
+    Ok(())
 }
 fn config_name(name: &str) -> anyhow::Result<()> {
     ensure!(
@@ -349,36 +367,64 @@ impl CloudArgs {
         }
     }
     async fn endpoints(&self) -> anyhow::Result<Value> {
-        let client = Client::new(self)?;
         let name = app_name(self.selected_app()).await?;
-        let app = client
-            .app(&name, Method::GET, &[], None, Kind::Read)
-            .await?;
-        let webhook = match app["webhook_url"].as_str() {
-            Some(url) => url.to_owned(),
-            None => format!(
-                "https://{}",
-                app["hostname"]
-                    .as_str()
-                    .context("Provisioner response is missing hostname")?
-            ),
-        };
+        let domain = self.apps_domain.to_ascii_lowercase();
+        ensure!(
+            domain.len() <= 253
+                && domain.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && !label.starts_with('-')
+                        && !label.ends_with('-')
+                        && label
+                            .bytes()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+                }),
+            "Invalid apps domain: expected a DNS hostname without scheme, port or path"
+        );
+        let hostname = format!("{name}.{domain}");
+        ensure!(
+            hostname.len() + "webui--".len() <= 253,
+            "App hostname exceeds the DNS length limit"
+        );
         Ok(json!({
-            "api_url": app["api_url"].as_str().context("Provisioner response is missing api_url")?,
-            "webhook_url": webhook,
-            "webui_url": app["webui_url"].as_str().context("Provisioner response is missing webui_url")?,
+            "api_url": format!("https://api--{hostname}"),
+            "webhook_url": format!("https://{hostname}"),
+            "webui_url": format!("https://webui--{hostname}"),
         }))
     }
     async fn direct_api_url(&self) -> anyhow::Result<String> {
-        let client = Client::new(self)?;
-        let name = app_name(self.selected_app()).await?;
-        let app = client
-            .app(&name, Method::GET, &[], None, Kind::Read)
-            .await?;
-        let value = app["api_url"]
+        Ok(self.endpoints().await?["api_url"]
             .as_str()
-            .context("Provisioner response is missing api_url")?;
-        Ok(api_origin(value)?.as_str().trim_end_matches('/').to_owned())
+            .unwrap()
+            .to_owned())
+    }
+    async fn run_app_api(self, api_url: String) -> anyhow::Result<()> {
+        let startup = ClientStartup::cloud(api_url.clone(), self.api_token, self.verbose);
+        let token = ClientConnection {
+            api_url,
+            api_token: None,
+        };
+        let command = match self.command {
+            Cloud::App(CloudAppTarget {
+                command: CloudApp::Deployment(command),
+                ..
+            }) => Subcommand::Deployment(DeploymentArgs { command, token }),
+            Cloud::App(CloudAppTarget {
+                command: CloudApp::Execution(command),
+                ..
+            }) => Subcommand::Execution(ExecutionArgs { command, token }),
+            Cloud::App(CloudAppTarget {
+                command: CloudApp::Component(command),
+                ..
+            }) => Subcommand::Component(ComponentArgs { command, token }),
+            Cloud::App(CloudAppTarget {
+                command: CloudApp::Admin(command),
+                ..
+            }) => Subcommand::Admin(AdminArgs { command, token }),
+            _ => unreachable!(),
+        };
+        crate::command_future(command, Some(startup))?.await
     }
     pub(crate) async fn run(mut self) -> anyhow::Result<()> {
         if matches!(
@@ -428,31 +474,7 @@ impl CloudArgs {
             })
         ) {
             let api_url = self.direct_api_url().await?;
-            let startup = ClientStartup::cloud(api_url.clone(), self.api_token, self.verbose);
-            let token = ClientConnection {
-                api_url,
-                api_token: None,
-            };
-            let command = match self.command {
-                Cloud::App(CloudAppTarget {
-                    command: CloudApp::Deployment(command),
-                    ..
-                }) => Subcommand::Deployment(DeploymentArgs { command, token }),
-                Cloud::App(CloudAppTarget {
-                    command: CloudApp::Execution(command),
-                    ..
-                }) => Subcommand::Execution(ExecutionArgs { command, token }),
-                Cloud::App(CloudAppTarget {
-                    command: CloudApp::Component(command),
-                    ..
-                }) => Subcommand::Component(ComponentArgs { command, token }),
-                Cloud::App(CloudAppTarget {
-                    command: CloudApp::Admin(command),
-                    ..
-                }) => Subcommand::Admin(AdminArgs { command, token }),
-                Cloud::Apps(_) | Cloud::App(_) | Cloud::Token(_) => unreachable!(),
-            };
-            return crate::command_future(command, Some(startup))?.await;
+            return self.run_app_api(api_url).await;
         }
         if let Cloud::App(CloudAppTarget { app, command }) = &mut self.command
             && app.is_none()
@@ -1246,12 +1268,46 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn cloud_endpoints_are_derived_without_provisioner_or_credentials() {
+        let mut args = args("http://127.0.0.1:1", &["app", "endpoint"]);
+        args.api_url = None;
+        args.api_token = None;
+        assert_eq!(
+            args.endpoints().await.unwrap(),
+            json!({
+                "api_url":"https://api--demo.obelisk.works",
+                "webhook_url":"https://demo.obelisk.works",
+                "webui_url":"https://webui--demo.obelisk.works",
+            })
+        );
+        args.apps_domain = "dev.obelisk.works".into();
+        assert_eq!(
+            args.direct_api_url().await.unwrap(),
+            "https://api--demo.dev.obelisk.works"
+        );
+        args.run().await.unwrap();
+        for domain in [
+            "",
+            "https://obelisk.works",
+            "obelisk.works/path",
+            "obelisk.works:443",
+            "*.obelisk.works",
+            "-invalid.example",
+            "bad..example",
+        ] {
+            let mut args = super::tests::args("http://127.0.0.1:1", &["app", "endpoint"]);
+            args.apps_domain = domain.to_owned();
+            assert!(args.endpoints().await.is_err(), "{domain}");
+        }
+    }
+
+    #[tokio::test]
     async fn cloud_api_commands_use_direct_api_and_cloud_token() {
         let (origin, state, task) = server().await;
         let (target, target_state, target_task) = server().await;
         let api_url = format!("{target}tenant");
-        state.lock().unwrap().api_url = Some(api_url.clone());
         let execution_id = concepts::ExecutionId::generate().to_string();
+        state.lock().unwrap().error = true;
         for command in [
             vec!["app", "deployment", "active"],
             vec!["app", "execution", "pause", &execution_id],
@@ -1259,12 +1315,12 @@ mod tests {
             vec!["app", "component", "list", "--imports"],
             vec!["app", "admin", "node-run-id"],
         ] {
-            args(&origin, &command).run().await.unwrap();
+            args(&origin, &command)
+                .run_app_api(api_url.clone())
+                .await
+                .unwrap();
         }
-        assert_eq!(
-            state.lock().unwrap().received,
-            vec![("GET /prefix/v1/apps/demo".to_owned(), Value::Null); 5]
-        );
+        assert!(state.lock().unwrap().received.is_empty());
         assert_eq!(
             target_state
                 .lock()
@@ -1282,15 +1338,6 @@ mod tests {
                 "GET /prefix/tenant/v1/info".to_owned(),
             ]
         );
-        state.lock().unwrap().error = true;
-        assert!(
-            args(&origin, &["app", "admin", "node-run-id"])
-                .run()
-                .await
-                .is_err()
-        );
-        assert_eq!(state.lock().unwrap().received.len(), 6);
-        assert_eq!(target_state.lock().unwrap().received.len(), 5);
         task.abort();
         target_task.abort();
     }
@@ -1299,27 +1346,16 @@ mod tests {
     async fn cloud_api_commands_do_not_follow_redirects() {
         let (origin, state, task) = server().await;
         state.lock().unwrap().redirect = true;
-        let error = args(&origin, &["app", "deployment", "active"])
-            .run()
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("307"));
-        assert_eq!(state.lock().unwrap().received.len(), 1);
-        let (target, target_state, target_task) = server().await;
-        state.lock().unwrap().redirect = false;
-        state.lock().unwrap().api_url = Some(format!("{target}tenant"));
-        target_state.lock().unwrap().redirect = true;
         assert!(
-            args(&origin, &["app", "deployment", "active"])
-                .run()
+            args("http://127.0.0.1:1", &["app", "deployment", "active"])
+                .run_app_api(format!("{origin}tenant"))
                 .await
                 .unwrap_err()
                 .to_string()
                 .contains("307")
         );
-        assert_eq!(target_state.lock().unwrap().received.len(), 1);
+        assert_eq!(state.lock().unwrap().received.len(), 1);
         task.abort();
-        target_task.abort();
     }
     #[tokio::test]
     async fn cloud_commands_keep_policy_staged_and_force_explicit() {

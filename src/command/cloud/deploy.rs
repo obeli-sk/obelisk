@@ -3,6 +3,14 @@ use crate::config::deployment::prepare_deployment_manifest_from_disk;
 
 impl CloudArgs {
     pub(super) async fn deploy(self) -> anyhow::Result<()> {
+        let prompt = (terminal() && !self.json).then_some(ask);
+        self.deploy_with_prompt(prompt).await
+    }
+
+    async fn deploy_with_prompt(
+        self,
+        mut prompt: Option<impl FnMut(&Question) -> anyhow::Result<String>>,
+    ) -> anyhow::Result<()> {
         let client = Client::new(&self)?;
         let Cloud::App(CloudAppTarget {
             app,
@@ -17,18 +25,17 @@ impl CloudArgs {
             unreachable!()
         };
         let config = policy(&app_config).await?;
-        let name = app_name(app.as_deref().or(config.app_name.as_deref())).await?;
+        let mut name = app_name(app.as_deref().or(config.app_name.as_deref())).await?;
+        let save_name = app.is_none();
         let desired = desired_config(&config);
         let prepared = prepare_deployment_manifest_from_disk(&deployment).await?;
-        let step = |command: &str, message: &str| {
-            eprintln!("→ obelisk cloud app --app {name} {command}  {message}");
+        eprintln!("Deploying {name}");
+        let step = |command: &str| {
+            eprintln!("→ obelisk cloud app {command}");
         };
         let mut current = if let Some(current) = client.lookup_app(&name).await? {
             if config_differs(&current, &desired) {
-                step(
-                    &format!("stage -a {}", app_config.display()),
-                    "Staging app configuration",
-                );
+                step("stage");
                 client
                     .app(
                         &name,
@@ -43,20 +50,46 @@ impl CloudArgs {
                 current
             }
         } else {
-            step(&format!("new -a {}", app_config.display()), "Creating app");
-            let mut body = desired.clone();
-            body["app_name"] = json!(name);
-            client
-                .request(
-                    Method::POST,
-                    &["v1", "apps"],
-                    Some(body),
-                    Kind::Command(None),
-                )
-                .await?
+            let original_name = name.clone();
+            let current = loop {
+                step("new");
+                let mut body = desired.clone();
+                body["app_name"] = json!(name);
+                match client
+                    .request(
+                        Method::POST,
+                        &["v1", "apps"],
+                        Some(body),
+                        Kind::Command(None),
+                    )
+                    .await
+                {
+                    Ok(app) => break app,
+                    Err(error) if error.is::<AppNameTaken>() => {
+                        let Some(prompt) = prompt.as_mut() else {
+                            return Err(error);
+                        };
+                        name = choose_app_name(&name, prompt)?;
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            if save_name && name != original_name {
+                let source = std::fs::read_to_string(&app_config)?;
+                let mut document = source.parse::<toml_edit::DocumentMut>()?;
+                document["app_name"] = toml_edit::value(&name);
+                std::fs::write(&app_config, document.to_string()).with_context(|| {
+                    format!(
+                        "App {name} was created, but {} could not be updated; use --app {name}",
+                        app_config.display()
+                    )
+                })?;
+                eprintln!("Updated app_name to {name} in {}", app_config.display());
+            }
+            current
         };
         if interactive {
-            step("fill", "Resolving configuration");
+            step("fill");
         }
         let filled = fill(&client, &name, &desired["policy"], interactive).await?;
         let unset = filled["declarations"]
@@ -83,7 +116,7 @@ impl CloudArgs {
             || current["applied_revision"] == 0
             || filled["apply_required"] == true
         {
-            step("apply", "Applying staged configuration");
+            step("apply");
             current = client
                 .app(
                     &name,
@@ -99,7 +132,7 @@ impl CloudArgs {
             }
         }
         if current["status"] == "stopped" {
-            step("start", "Starting VM");
+            step("start");
             current = client
                 .app(&name, Method::POST, &["start"], None, Kind::Command(None))
                 .await?;
@@ -123,10 +156,7 @@ impl CloudArgs {
             self.api_token,
             self.verbose,
         );
-        step(
-            &format!("deployment apply {}", deployment.display()),
-            "Uploading and activating deployment",
-        );
+        step("deployment apply");
         let id = crate::command::deployment::apply_prepared(&startup, prepared).await
             .with_context(|| format!("Deployment did not complete; inspect `obelisk cloud app --app {name} deployment active` to see what is serving, then retry `obelisk cloud app --app {name} deploy -a {} -d {}`", app_config.display(), deployment.display()))?;
         let result = json!({"app":current,"deployment_id":id,"outcomes":outcomes});
@@ -138,6 +168,34 @@ impl CloudArgs {
                 println!("{url}");
             }
             Ok(())
+        }
+    }
+}
+
+fn choose_app_name(
+    name: &str,
+    prompt: &mut impl FnMut(&Question) -> anyhow::Result<String>,
+) -> anyhow::Result<String> {
+    let suffix = ExecutionIdTopLevel::generate()
+        .to_string()
+        .to_ascii_lowercase();
+    let suggestion = format!(
+        "{}-{}",
+        name[..name.len().min(13)].trim_end_matches('-'),
+        &suffix[suffix.len() - 6..]
+    );
+    loop {
+        let answer = prompt(&Question::Line(format!(
+            "App name {name} is taken. New app name [{suggestion}]: "
+        )))?;
+        let answer = if answer.trim().is_empty() {
+            suggestion.clone()
+        } else {
+            answer.trim().to_owned()
+        };
+        match validate_cloud_app_name(&answer) {
+            Ok(()) => break Ok(answer),
+            Err(error) => eprintln!("{error}"),
         }
     }
 }
@@ -156,6 +214,7 @@ mod tests {
         calls: Vec<String>,
         api_url: String,
         reject_deployment: bool,
+        name_taken: bool,
         active: concepts::prefixed_ulid::DeploymentId,
     }
 
@@ -167,7 +226,8 @@ mod tests {
     ) -> axum::response::Response {
         let mut state = state.lock().unwrap();
         state.calls.push(format!("{method} {}", uri.path()));
-        let path = uri.path();
+        let routed_path = uri.path().replace("/v1/apps/renamed", "/v1/apps/demo");
+        let path = routed_path.as_str();
         let body: Value = if body.is_empty() {
             Value::Null
         } else {
@@ -179,6 +239,15 @@ mod tests {
                 None => return (StatusCode::NOT_FOUND, "missing").into_response(),
             },
             (Method::POST, "/v1/apps") => {
+                if state.name_taken && body["app_name"] == "demo" {
+                    return (
+                        StatusCode::CONFLICT,
+                        axum::Json(
+                            json!({"error":"App name is already taken","code":"app_name_taken"}),
+                        ),
+                    )
+                        .into_response();
+                }
                 let mut app = body;
                 app["status"] = json!("stopped");
                 app["potentially_stale"] = json!(false);
@@ -250,6 +319,9 @@ mod tests {
             "missing",
             "invalid",
             "deployment-error",
+            "name-conflict",
+            "rename",
+            "rename-override",
         ] {
             let directory = tempfile::tempdir().unwrap();
             let app_path = directory.path().join("app.toml");
@@ -284,17 +356,22 @@ mod tests {
                 app["potentially_stale"] = json!(true);
             }
             let state = Arc::new(Mutex::new(Server {
-                app: (scenario != "new").then_some(app),
+                app: (!matches!(
+                    scenario,
+                    "new" | "name-conflict" | "rename" | "rename-override"
+                ))
+                .then_some(app),
                 calls: Vec::new(),
                 api_url: format!("{origin}/tenant"),
                 reject_deployment: scenario == "deployment-error",
+                name_taken: matches!(scenario, "name-conflict" | "rename" | "rename-override"),
                 active: concepts::prefixed_ulid::DeploymentId::generate(),
             }));
             let service = Router::new()
                 .fallback(any(handle))
                 .with_state(state.clone());
             let task = tokio::spawn(async move { axum::serve(listener, service).await.unwrap() });
-            let args = super::super::tests::args(
+            let mut args = super::super::tests::args(
                 &origin,
                 &[
                     "app",
@@ -305,9 +382,44 @@ mod tests {
                     deployment_path.to_str().unwrap(),
                 ],
             );
-            let result = args.run().await;
+            if scenario == "rename" {
+                let Cloud::App(target) = &mut args.command else {
+                    unreachable!()
+                };
+                target.app = None;
+            }
+            let result = if matches!(scenario, "rename" | "rename-override") {
+                args.deploy_with_prompt(Some(|_: &Question| Ok("renamed".to_owned())))
+                    .await
+            } else {
+                args.deploy_with_prompt(None::<fn(&Question) -> anyhow::Result<String>>)
+                    .await
+            };
             let state = state.lock().unwrap();
-            if matches!(scenario, "missing" | "invalid") {
+            if scenario == "name-conflict" {
+                assert!(result.unwrap_err().is::<AppNameTaken>());
+                assert!(state.app.is_none());
+                assert_eq!(std::fs::read_to_string(&app_path).unwrap(), config);
+            } else if matches!(scenario, "rename" | "rename-override") {
+                result.unwrap();
+                assert_eq!(state.app.as_ref().unwrap()["app_name"], "renamed");
+                let saved: AppConfigToml =
+                    toml::from_str(&std::fs::read_to_string(&app_path).unwrap()).unwrap();
+                assert_eq!(
+                    saved.app_name.as_deref(),
+                    Some(if scenario == "rename" {
+                        "renamed"
+                    } else {
+                        "demo"
+                    })
+                );
+                assert!(
+                    state
+                        .calls
+                        .contains(&"POST /v1/apps/renamed/apply".to_owned())
+                );
+                assert!(state.calls.last().unwrap().ends_with("/switch"));
+            } else if matches!(scenario, "missing" | "invalid") {
                 let error = result.unwrap_err().to_string();
                 if scenario == "missing" {
                     assert!(error.contains("PATH"));
