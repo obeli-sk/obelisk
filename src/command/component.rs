@@ -627,7 +627,15 @@ fn build_component_table(
         let mut host_array = toml_edit::ArrayOfTables::new();
         for host in allowed_hosts {
             let mut host_table = Table::new();
-            host_table["pattern"] = value(&host.pattern);
+            for (key, field) in [
+                ("pattern", &host.pattern),
+                ("url_prefix", &host.url_prefix),
+                ("url_regex_suffix", &host.url_regex_suffix),
+            ] {
+                if let Some(field) = field {
+                    host_table[key] = value(field);
+                }
+            }
             if let Some(ref methods) = host.methods {
                 host_table["methods"] = serialize_methods_input(methods);
             }
@@ -799,7 +807,9 @@ mod tests {
         ComponentMetadataAnnotation::ActivityWasm {
             env_vars: vec!["API_KEY".to_string(), "BASE_URL".to_string()],
             allowed_hosts: vec![AllowedHostToml {
-                pattern: "api.example.com".to_string(),
+                pattern: Some("api.example.com".to_string()),
+                url_prefix: None,
+                url_regex_suffix: None,
                 methods: Some(MethodsInput::List(vec![
                     "GET".to_string(),
                     "POST".to_string(),
@@ -840,7 +850,10 @@ mod tests {
         assert_eq!(act.common.name.to_string(), "my_activity");
         assert_eq!(act.env_vars.len(), 2);
         assert_eq!(act.allowed_hosts.len(), 1);
-        assert_eq!(act.allowed_hosts[0].pattern, "api.example.com");
+        assert_eq!(
+            act.allowed_hosts[0].pattern.as_deref(),
+            Some("api.example.com")
+        );
         assert_eq!(act.allowed_hosts[0].secrets, vec!["API_KEY".into()]);
         // exec.lock_expiry.seconds = 5
         assert!(matches!(act.exec.lock_expiry, DurationConfig::Seconds(5)));

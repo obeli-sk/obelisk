@@ -2769,7 +2769,9 @@ impl ServerVerified {
             let target_url = format!("http://{}", config.api.listening_addr);
             let (hosts, _advisories) = resolve_allowed_hosts(
                 vec![AllowedHostToml {
-                    pattern: target_url,
+                    pattern: Some(target_url),
+                    url_prefix: None,
+                    url_regex_suffix: None,
                     methods: Some(MethodsInput::Star(MethodsInputStar::default())),
                     request_url_regex: None,
                     secrets: Vec::new(),
@@ -5217,7 +5219,9 @@ impl DeploymentVerified {
                     backtrace_persist: false,
                     logs_store_min_level: LogLevelToml::Off,
                     allowed_hosts: vec![AllowedHostToml {
-                        pattern: target_url,
+                        pattern: Some(target_url),
+                        url_prefix: None,
+                        url_regex_suffix: None,
                         methods: Some(MethodsInput::Star(MethodsInputStar::default())),
                         request_url_regex: None,
                         secrets: Vec::new(),
@@ -7382,7 +7386,9 @@ mod tests {
     #[test]
     fn strict_outbound_http_replacement_error_has_both_toml_entries() {
         let entry = AllowedHostToml {
-            pattern: "api.example.com".to_string(),
+            pattern: Some("api.example.com".to_string()),
+            url_prefix: None,
+            url_regex_suffix: None,
             methods: Some(MethodsInput::Star(MethodsInputStar::default())),
             request_url_regex: None,
             secrets: vec!["API_KEY".into()],
@@ -7425,7 +7431,9 @@ mod tests {
             SecretFindings, collect_server_allowed_host_secrets, report_missing_runtime_config,
         };
         let entry = |secret: &str| AllowedHostToml {
-            pattern: "api.example.com".to_string(),
+            pattern: Some("api.example.com".to_string()),
+            url_prefix: None,
+            url_regex_suffix: None,
             methods: Some(MethodsInput::Star(MethodsInputStar::default())),
             request_url_regex: None,
             secrets: vec![secret.into()],
@@ -7560,12 +7568,71 @@ mod tests {
         assert_eq!(std::fs::read_to_string(file.path()).unwrap(), fixed);
     }
 
+    #[tokio::test]
+    async fn fix_app_outbound_hosts_preserves_url_prefix_and_environment() {
+        let workspace = get_workspace_dir();
+        let (mut deployment, _) =
+            resolve_deployment_offline(&workspace.join("deployment-testing-js-local.toml"))
+                .await
+                .unwrap();
+        let host: AllowedHostToml = toml::from_str(
+            r#"
+            url_prefix = "${OBELISK_TEST_FIX_LLM_URL:-https://llm.example/api}"
+            methods = ["GET"]
+            url_regex_suffix = "/v1/models$"
+        "#,
+        )
+        .unwrap();
+        deployment.activities_js[1].allowed_hosts = vec![host.clone()];
+        let registry =
+            SecretRegistry::empty_with_public_env(["OBELISK_TEST_FIX_LLM_URL".to_string()]);
+        let mut required = std::collections::BTreeSet::new();
+        config_prepass::collect_deployment_required_public_env(&deployment, &mut required);
+        assert!(!required.contains("OBELISK_TEST_FIX_LLM_URL"));
+        let mut undeclared = std::collections::BTreeSet::new();
+        config_prepass::collect_deployment_unregistered_public_env(
+            &deployment,
+            &SecretRegistry::empty(),
+            &mut undeclared,
+        );
+        assert!(undeclared.contains("OBELISK_TEST_FIX_LLM_URL"));
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "app_name = 'test'\n").unwrap();
+        config_prepass::fix_app_outbound_hosts(
+            file.path(),
+            &[],
+            &deployment,
+            &registry,
+            RuntimeConfigAvailability::AllowUnavailable,
+        )
+        .await
+        .unwrap();
+        let fixed = std::fs::read_to_string(file.path()).unwrap();
+        let app: crate::config::app::AppConfigToml = toml::from_str(&fixed).unwrap();
+        let entry = &app.outbound_http.allowed_hosts[0];
+        assert_eq!(entry.url_prefix, host.url_prefix);
+        assert_eq!(entry.url_regex_suffix, host.url_regex_suffix);
+        assert!(entry.pattern.is_none());
+        config_prepass::fix_app_outbound_hosts(
+            file.path(),
+            &app.outbound_http.allowed_hosts,
+            &deployment,
+            &registry,
+            RuntimeConfigAvailability::AllowUnavailable,
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(file.path()).unwrap(), fixed);
+    }
+
     /// Missing replacements from several components are gathered into one report,
     /// so the operator can add every allowlist entry to app.toml in a single edit.
     #[test]
     fn strict_outbound_http_replacement_error_collects_all_components() {
         let entry = |secret: &str| AllowedHostToml {
-            pattern: "api.example.com".to_string(),
+            pattern: Some("api.example.com".to_string()),
+            url_prefix: None,
+            url_regex_suffix: None,
             methods: Some(MethodsInput::Star(MethodsInputStar::default())),
             request_url_regex: None,
             secrets: vec![secret.into()],
@@ -7627,7 +7694,9 @@ mod tests {
     #[test]
     fn uncovered_outbound_http_host_collected_covered_skipped() {
         let host = |pattern: &str| AllowedHostToml {
-            pattern: pattern.to_string(),
+            pattern: Some(pattern.to_string()),
+            url_prefix: None,
+            url_regex_suffix: None,
             methods: Some(MethodsInput::List(vec!["GET".to_string()])),
             request_url_regex: None,
             secrets: Vec::new(),
@@ -7658,7 +7727,7 @@ mod tests {
         );
 
         assert_eq!(uncovered.len(), 1, "only the uncovered host is collected");
-        assert_eq!(uncovered[0].entry.pattern, "example.com");
+        assert_eq!(uncovered[0].entry.pattern.as_deref(), Some("example.com"));
         assert!(
             crate::command::server::config_prepass::report_uncovered_outbound_http_hosts(
                 &uncovered,

@@ -2710,10 +2710,70 @@ pub(crate) enum ResolveAllowedHostsError {
     PublicEnvViolation(#[from] PublicEnvViolation),
     #[error("cannot parse HTTP method `{0}`")]
     InvalidMethod(String),
+    #[error("invalid allowed_host: {0}")]
+    InvalidDestination(String),
     #[error("use `methods = \"*\"` to allow all methods, not `methods = [\"*\"]`")]
     InvalidMethodStar,
     #[error("cannot parse request_url_regex `{pattern}`: {err}")]
     InvalidRequestUrlRegex { pattern: String, err: regex::Error },
+    #[error("cannot parse url_regex_suffix `{pattern}`: {err}")]
+    InvalidUrlRegexSuffix { pattern: String, err: regex::Error },
+}
+
+fn allowed_host_destination(
+    entry: &AllowedHostToml,
+) -> Result<(String, Option<Regex>), ResolveAllowedHostsError> {
+    let invalid = |message: &str| ResolveAllowedHostsError::InvalidDestination(message.to_string());
+    let (pattern, request_regex) = match (&entry.pattern, &entry.url_prefix) {
+        (Some(pattern), None) => {
+            if entry.url_regex_suffix.is_some() {
+                return Err(invalid("url_regex_suffix requires url_prefix"));
+            }
+            (pattern.clone(), entry.request_url_regex.clone())
+        }
+        (None, Some(prefix)) => {
+            if entry.request_url_regex.is_some() {
+                return Err(invalid(
+                    "url_prefix cannot be combined with request_url_regex",
+                ));
+            }
+            let url = url::Url::parse(prefix)
+                .map_err(|_| invalid("url_prefix must be an absolute HTTP(S) URL"))?;
+            if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+                return Err(invalid("url_prefix must be an absolute HTTP(S) URL"));
+            }
+            if !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || url.host_str().is_some_and(|host| host.contains('*'))
+            {
+                return Err(invalid(
+                    "url_prefix cannot contain credentials, query parameters, fragments, or wildcards",
+                ));
+            }
+            let suffix = entry.url_regex_suffix.as_deref().unwrap_or("");
+            if suffix.starts_with('^') {
+                return Err(invalid("url_regex_suffix must not start with ^"));
+            }
+            // Validate separately so the fragment cannot close the generated group.
+            Regex::new(suffix).map_err(|err| ResolveAllowedHostsError::InvalidUrlRegexSuffix {
+                pattern: suffix.to_string(),
+                err,
+            })?;
+            let prefix = url.as_str().trim_end_matches('/');
+            let request_regex = format!(r"\A[^ ]+ {}(?:{suffix})", regex::escape(prefix));
+            (url.origin().ascii_serialization(), Some(request_regex))
+        }
+        _ => return Err(invalid("specify exactly one of pattern or url_prefix")),
+    };
+    let regex = request_regex
+        .map(|pattern| {
+            Regex::new(&pattern)
+                .map_err(|err| ResolveAllowedHostsError::InvalidRequestUrlRegex { pattern, err })
+        })
+        .transpose()?;
+    Ok((pattern, regex))
 }
 
 /// An `allowed_host` entry that is valid but likely misconfigured. Carries the entry's TOML
@@ -2740,7 +2800,7 @@ pub(crate) fn resolve_allowed_hosts(
     let mut advisories = Vec::new();
     let hosts = entries
         .into_iter()
-        .filter_map(|entry| {
+        .filter_map(|mut entry| {
             let fingerprint = allowed_host_fingerprint(&entry);
             let mut advise = |message: String| {
                 advisories.push(AllowedHostAdvisory {
@@ -2748,14 +2808,31 @@ pub(crate) fn resolve_allowed_hosts(
                     message,
                 });
             };
+            for field in entry.interpolated_fields_mut() {
+                match interpolate_deployment_env_vars_plaintext(field, secret_registry) {
+                    Ok(value) => *field = value,
+                    Err(EnvVarError::Missing(var)) => {
+                        if ignore_missing_env_vars {
+                            advise(format!("allowed_host `{field}` references missing env var `{var}`, skipping"));
+                            return None;
+                        }
+                        return Some(Err(ResolveAllowedHostsError::EnvVarsMissing(EnvVarsMissing(vec![var]))));
+                    }
+                    Err(EnvVarError::PublicEnv(violation)) => return Some(Err(violation.into())),
+                }
+            }
+            let destination = entry.destination().to_string();
+            let (pattern_str, request_url_regex) = match allowed_host_destination(&entry) {
+                Ok(destination) => destination,
+                Err(error) => return Some(Err(error)),
+            };
             // Convert MethodsInput to MethodsPattern
             let methods = match entry.methods {
                 None => {
                     // Omitted methods: nothing allowed, warn and skip
                     advise(format!(
-                        "allowed_host `{}` has no `methods` field - no requests will be allowed; \
-                         use `methods = \"*\"` to allow all methods",
-                        entry.pattern
+                        "allowed_host `{destination}` has no `methods` field - no requests will be allowed; \
+                         use `methods = \"*\"` to allow all methods"
                     ));
                     return None;
                 }
@@ -2767,8 +2844,7 @@ pub(crate) fn resolve_allowed_hosts(
                     if list.is_empty() {
                         // Empty list: nothing allowed, warn and skip
                         advise(format!(
-                            "allowed_host `{}` has empty `methods = []` - no requests will be allowed",
-                            entry.pattern
+                            "allowed_host `{destination}` has empty `methods = []` - no requests will be allowed"
                         ));
                         return None;
                     }
@@ -2792,53 +2868,6 @@ pub(crate) fn resolve_allowed_hosts(
                 }
             };
 
-            let pattern_str = match interpolate_deployment_env_vars_plaintext(&entry.pattern, secret_registry) {
-                Ok(s) => s,
-                Err(EnvVarError::Missing(var)) => {
-                    if ignore_missing_env_vars {
-                        advise(format!(
-                            "allowed_host pattern `{}` references missing env var `{var}`, skipping",
-                            entry.pattern
-                        ));
-                        return None;
-                    }
-                    return Some(Err(ResolveAllowedHostsError::EnvVarsMissing(
-                        EnvVarsMissing(vec![var]),
-                    )));
-                }
-                Err(EnvVarError::PublicEnv(violation)) => return Some(Err(violation.into())),
-            };
-            let request_url_regex = match entry.request_url_regex {
-                Some(pattern) => {
-                    let pattern = match interpolate_deployment_env_vars_plaintext(&pattern, secret_registry) {
-                        Ok(s) => s,
-                        Err(EnvVarError::Missing(var)) => {
-                            if ignore_missing_env_vars {
-                                advise(format!(
-                                    "allowed_host request_url_regex `{pattern}` references missing env var `{var}`, skipping"
-                                ));
-                                return None;
-                            }
-                            return Some(Err(ResolveAllowedHostsError::EnvVarsMissing(
-                                EnvVarsMissing(vec![var]),
-                            )));
-                        }
-                        Err(EnvVarError::PublicEnv(violation)) => {
-                            return Some(Err(violation.into()));
-                        }
-                    };
-                    match Regex::new(&pattern) {
-                        Ok(regex) => Some(regex),
-                        Err(err) => {
-                            return Some(Err(ResolveAllowedHostsError::InvalidRequestUrlRegex {
-                                pattern,
-                                err,
-                            }));
-                        }
-                    }
-                }
-                None => None,
-            };
             let pattern = match HostPattern::parse_with_methods(&pattern_str, methods) {
                 Ok(p) => p,
                 Err(e) => return Some(Err(e.into())),
@@ -2847,16 +2876,14 @@ pub(crate) fn resolve_allowed_hosts(
             let (secret_names, replace_in) = if entry.secrets.is_empty() {
                 if !entry.replace_in.is_empty() {
                     advise(format!(
-                        "allowed_host `{}` has `replace_in` but no `secrets` - nothing to inject",
-                        entry.pattern
+                        "allowed_host `{destination}` has `replace_in` but no `secrets` - nothing to inject"
                     ));
                 }
                 (Vec::new(), hashbrown::HashSet::new())
             } else {
                 if entry.replace_in.is_empty() {
                     advise(format!(
-                        "allowed_host `{}` has empty `replace_in` - secrets will never be injected",
-                        entry.pattern
+                        "allowed_host `{destination}` has empty `replace_in` - secrets will never be injected"
                     ));
                 }
                 if pattern.scheme.allows_unencrypted() {

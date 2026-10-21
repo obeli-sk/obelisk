@@ -42,5 +42,20 @@
 ## Outbound HTTP needs matching app and deployment permissions. Both policies are applied;
 ## request_url_regex values need not be identical or subsets of each other.
 # [[outbound_http.allowed_host]]
-# pattern = "api.example.com"
+# pattern = "api.github.com"
 # methods = ["POST"]
+# request_url_regex = "^GET https://api\\.github\\.com/repos/"
+# secrets = ["OPENAI_API_KEY", { name = "GITHUB_TOKEN", optional = true }]
+# replace_in = ["headers"]
+
+## Alternatively, use a single base URL for the application and its HTTP permissions.
+## url_prefix replaces pattern and request_url_regex; the original form supports wildcards.
+## The prefix must be an absolute HTTP(S) URL without credentials, query, fragment, or wildcards.
+## Environment variables expand before the prefix is regex-escaped; trailing slashes are removed.
+## url_regex_suffix is a grouped regex fragment appended to the normalized literal prefix.
+## A leading ^ is forbidden; $ requires an exact endpoint. Without a suffix, any continuation matches.
+## Query parameters are excluded. App and deployment restrictions both apply at runtime.
+# [[outbound_http.allowed_host]]
+# url_prefix = "${LLM_URL:-https://openrouter.ai/api}"
+# methods = ["GET"]
+# url_regex_suffix = "/v1/models$"

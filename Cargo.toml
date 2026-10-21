@@ -20,6 +20,7 @@ executor.workspace = true
 grpc.workspace = true
 utils.workspace = true
 val-json.workspace = true
+url.workspace = true
 wasm-workers.workspace = true
 activity-vm-runner.workspace = true
 activity-vm-worker.workspace = true
@@ -118,6 +119,8 @@ console-subscriber = { workspace = true, optional = true }
 tikv-jemallocator = "0.7.0"
 
 [dev-dependencies]
+http-body-util.workspace = true
+hyper.workspace = true
 db-tests.workspace = true
 test-utils.workspace = true
 concepts = { workspace = true, features = ["test"] }

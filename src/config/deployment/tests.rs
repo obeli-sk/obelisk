@@ -421,12 +421,145 @@ mod allowed_hosts {
 
     fn allowed_host_with_regex(request_url_regex: &str) -> AllowedHostToml {
         AllowedHostToml {
-            pattern: "api.example.com".to_string(),
+            pattern: Some("api.example.com".to_string()),
+            url_prefix: None,
+            url_regex_suffix: None,
             methods: Some(MethodsInput::List(vec!["GET".to_string()])),
             request_url_regex: Some(request_url_regex.to_string()),
             secrets: Vec::new(),
             replace_in: Vec::new(),
         }
+    }
+
+    #[test]
+    fn url_prefix_resolves_escaped_prefix_and_grouped_suffix() {
+        let entry: AllowedHostToml = toml::from_str(
+            r#"
+            url_prefix = "${OBELISK_TEST_LLM_URL:-https://llm.example:8443/api/}"
+            methods = ["GET", "POST"]
+            url_regex_suffix = "/v1/models$|/v1/chat/completions$"
+        "#,
+        )
+        .unwrap();
+        let registry = SecretRegistry::empty_with_public_env(["OBELISK_TEST_LLM_URL".to_string()]);
+        let (hosts, _) = resolve_allowed_hosts(vec![entry], false, &registry).unwrap();
+        assert_eq!(
+            hosts[0].pattern.to_string(),
+            "https://llm.example:8443 [GET, POST]"
+        );
+        let regex = hosts[0].request_url_regex.as_ref().unwrap();
+        for request in [
+            "GET https://llm.example:8443/api/v1/models",
+            "POST https://llm.example:8443/api/v1/chat/completions",
+        ] {
+            assert!(regex.is_match(request), "{request}");
+        }
+        for request in [
+            "GET https://llmXexample:8443/api/v1/models",
+            "GET https://llm.example:8443/v1/models",
+            "POST https://elsewhere.example/v1/chat/completions",
+            "GET https://llm.example:8443/api/v1/models/extra",
+        ] {
+            assert!(!regex.is_match(request), "{request}");
+        }
+    }
+
+    #[test]
+    fn url_prefix_and_pattern_policies_intersect_at_runtime() {
+        use wasm_workers::http_request_policy::{AllowedHostPolicy, HttpRequestPolicy};
+        let app: AllowedHostToml = toml::from_str(
+            r#"
+            url_prefix = "https://llm.example/api"
+            methods = ["GET", "POST"]
+            url_regex_suffix = "/v1/models$"
+        "#,
+        )
+        .unwrap();
+        let deployment: AllowedHostToml = toml::from_str(
+            r#"
+            pattern = "https://*.example"
+            methods = ["GET"]
+            request_url_regex = "/api/v1/"
+        "#,
+        )
+        .unwrap();
+        let resolve = |entry| {
+            let (hosts, _) =
+                resolve_allowed_hosts(vec![entry], false, &SecretRegistry::empty()).unwrap();
+            AllowedHostPolicy {
+                pattern: hosts[0].pattern.clone(),
+                request_url_regex: hosts[0].request_url_regex.clone(),
+                secrets: vec![],
+            }
+        };
+        let app = resolve(app);
+        let deployment = resolve(deployment);
+        for (component, grant) in [(app.clone(), deployment.clone()), (deployment, app)] {
+            let policy = HttpRequestPolicy {
+                hosts: vec![component],
+                global_allowlist: Some(vec![grant]),
+                ..Default::default()
+            };
+            for (method, url, allowed) in [
+                ("GET", "https://llm.example/api/v1/models?ignored=yes", true),
+                ("POST", "https://llm.example/api/v1/models", false),
+                ("GET", "https://llm.example/api/v1/chat/completions", false),
+                ("GET", "https://other.example/api/v1/models", false),
+            ] {
+                let body = http_body_util::combinators::UnsyncBoxBody::new(
+                    http_body_util::BodyExt::map_err(
+                        http_body_util::Empty::<hyper::body::Bytes>::new(),
+                        |_| unreachable!(),
+                    ),
+                );
+                let mut request = hyper::Request::builder()
+                    .method(method)
+                    .uri(url)
+                    .body(body)
+                    .unwrap();
+                assert_eq!(
+                    policy.apply(&mut request).is_ok(),
+                    allowed,
+                    "{method} {url}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn url_prefix_rejects_invalid_variants_urls_and_suffixes() {
+        for fields in [
+            "",
+            "pattern = 'example.com'\nurl_prefix = 'https://example.com'",
+            "pattern = 'example.com'\nurl_regex_suffix = '/v1/'",
+            "url_prefix = 'https://example.com'\nrequest_url_regex = '.*'",
+            "url_prefix = 'example.com/api'",
+            "url_prefix = 'ftp://example.com/api'",
+            "url_prefix = 'https://user:password@example.com/api'",
+            "url_prefix = 'https://example.com/api?key=value'",
+            "url_prefix = 'https://example.com/api#fragment'",
+            "url_prefix = 'https://*.example.com/api'",
+            "url_prefix = 'https://example.com/api'\nurl_regex_suffix = '^/v1/'",
+            "url_prefix = 'https://example.com/api'\nurl_regex_suffix = ')|.*(?:'",
+        ] {
+            let entry = toml::from_str(&format!("methods = ['GET']\n{fields}")).unwrap();
+            assert!(
+                resolve_allowed_hosts(vec![entry], false, &SecretRegistry::empty()).is_err(),
+                "{fields}"
+            );
+        }
+    }
+
+    #[test]
+    fn url_prefix_missing_env_honors_ignore_missing() {
+        const VAR: &str = "OBELISK_TEST_MISSING_URL_PREFIX_95B2FC";
+        let entry: AllowedHostToml =
+            toml::from_str(&format!("url_prefix = '${{{VAR}}}'\nmethods = ['GET']")).unwrap();
+        let registry = SecretRegistry::empty_with_public_env([VAR.to_string()]);
+        assert!(resolve_allowed_hosts(vec![entry.clone()], false, &registry).is_err());
+        let (hosts, advisories) = resolve_allowed_hosts(vec![entry], true, &registry).unwrap();
+        assert!(hosts.is_empty());
+        assert!(advisories[0].message.contains(VAR));
     }
 
     #[test]

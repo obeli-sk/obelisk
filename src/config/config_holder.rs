@@ -313,7 +313,7 @@ mod tests {
         let [host] = app.outbound_http.allowed_hosts.as_slice() else {
             panic!("expected one outbound HTTP host");
         };
-        assert_eq!(host.pattern, "*://*:*");
+        assert_eq!(host.pattern.as_deref(), Some("*://*:*"));
         assert!(matches!(host.methods, Some(MethodsInput::Star(_))));
         assert!(host.secrets.is_empty());
         assert!(host.replace_in.is_empty());

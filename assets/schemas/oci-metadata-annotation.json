@@ -266,7 +266,24 @@
       "properties": {
         "pattern": {
           "description": "Host pattern (e.g. `\"api.example.com\"`, `\"*.example.com\"`, `\"http://localhost:8080\"`).",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url_prefix": {
+          "description": "HTTP(S) URL prefix, mutually exclusive with pattern and `request_url_regex`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url_regex_suffix": {
+          "description": "Regex fragment appended to the escaped URL prefix; leading ^ is forbidden.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "methods": {
           "description": "Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = \"*\"` or `methods = [\"*\"]` to allow all methods.\n- `methods = [\"GET\", \"POST\"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).",
@@ -304,8 +321,33 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "pattern"
+      "oneOf": [
+        {
+          "properties": {
+            "pattern": {
+              "type": "string"
+            },
+            "url_prefix": false,
+            "url_regex_suffix": false
+          },
+          "required": [
+            "pattern"
+          ]
+        },
+        {
+          "properties": {
+            "url_prefix": {
+              "type": "string"
+            },
+            "pattern": false,
+            "request_url_regex": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "url_prefix"
+          ]
+        }
       ]
     },
     "MethodsInput": {

@@ -380,9 +380,17 @@ pub(crate) fn validate_secret_optionality<'a>(
 /// An allowed outgoing HTTP host with optional method restrictions and secrets.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = allowed_host_schema)]
 pub struct AllowedHostToml {
     /// Host pattern (e.g. `"api.example.com"`, `"*.example.com"`, `"http://localhost:8080"`).
-    pub pattern: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    /// HTTP(S) URL prefix, mutually exclusive with pattern and `request_url_regex`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_prefix: Option<String>,
+    /// Regex fragment appended to the escaped URL prefix; leading ^ is forbidden.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_regex_suffix: Option<String>,
     /// Allowed HTTP methods.
     /// - Omit to allow nothing (warning emitted).
     /// - `methods = "*"` or `methods = ["*"]` to allow all methods.
@@ -409,6 +417,50 @@ pub struct AllowedHostToml {
     /// Default: empty (no replacement, deny by default).
     #[serde(default)]
     pub replace_in: Vec<ReplaceIn>,
+}
+
+fn allowed_host_schema(schema: &mut schemars::Schema) {
+    schema.insert("oneOf".to_string(), serde_json::json!([
+        {
+            "required": ["pattern"],
+            "properties": {"pattern": {"type": "string"}, "url_prefix": false, "url_regex_suffix": false}
+        },
+        {
+            "required": ["url_prefix"],
+            "properties": {"url_prefix": {"type": "string"}, "pattern": false, "request_url_regex": {"type": "null"}}
+        }
+    ]));
+}
+
+impl AllowedHostToml {
+    pub(crate) fn interpolated_fields(&self) -> impl Iterator<Item = &String> {
+        [
+            &self.pattern,
+            &self.url_prefix,
+            &self.url_regex_suffix,
+            &self.request_url_regex,
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    pub(crate) fn interpolated_fields_mut(&mut self) -> impl Iterator<Item = &mut String> {
+        [
+            &mut self.pattern,
+            &mut self.url_prefix,
+            &mut self.url_regex_suffix,
+            &mut self.request_url_regex,
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    pub(crate) fn destination(&self) -> &str {
+        self.pattern
+            .as_deref()
+            .or(self.url_prefix.as_deref())
+            .unwrap_or("<missing destination>")
+    }
 }
 
 /// A parameter declaration for a JS activity function.
