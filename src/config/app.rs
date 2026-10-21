@@ -101,9 +101,8 @@ impl AppConfigToml {
     pub(crate) fn resolve_env_vars(&mut self, env_vars: &StartupEnvVars) -> anyhow::Result<()> {
         for allowed_host in &mut self.outbound_http.allowed_hosts {
             let mut references = std::collections::BTreeSet::new();
-            collect_env_var_references(&allowed_host.pattern, &mut references);
-            if let Some(regex) = &allowed_host.request_url_regex {
-                collect_env_var_references(regex, &mut references);
+            for field in allowed_host.interpolated_fields() {
+                collect_env_var_references(field, &mut references);
             }
             for name in references {
                 ensure!(
@@ -111,9 +110,8 @@ impl AppConfigToml {
                     "app.toml outbound HTTP policy cannot interpolate registered secret `{name}`"
                 );
             }
-            allowed_host.pattern = interpolate_startup_env_vars(&allowed_host.pattern, env_vars)?;
-            if let Some(regex) = &mut allowed_host.request_url_regex {
-                *regex = interpolate_startup_env_vars(regex, env_vars)?;
+            for field in allowed_host.interpolated_fields_mut() {
+                *field = interpolate_startup_env_vars(field, env_vars)?;
             }
         }
         Ok(())

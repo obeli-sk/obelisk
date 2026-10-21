@@ -484,8 +484,10 @@ methods = ['GET']
                     Some(expected)
                 );
                 assert_eq!(
-                    startup.config.outbound_http.allowed_hosts[0].pattern,
-                    expected
+                    startup.config.outbound_http.allowed_hosts[0]
+                        .pattern
+                        .as_deref(),
+                    Some(expected)
                 );
                 assert!(startup.secret_registry.public_env_is_required("PATH"));
                 assert_eq!(

@@ -85,6 +85,21 @@
 ## - Env var values are regex syntax; use regex-escaped values when precision matters.
 ## - Omit `request_url_regex` to allow all paths accepted by host and method restrictions.
 ##
+## Simplified URL form (also supported in app.toml):
+## - Use `url_prefix` instead of `pattern` and `request_url_regex`.
+## - The prefix must be an absolute HTTP(S) URL without credentials, query, fragment, or wildcards.
+## - Environment variables are expanded before the URL prefix is regex-escaped.
+## - The URL is normalized and trailing slashes are removed before appending the suffix.
+## - Optional `url_regex_suffix` is a grouped regex fragment appended to that literal prefix.
+## - A leading `^` is forbidden; use `$` to require an exact endpoint.
+## - Omitting the suffix allows any continuation of the literal prefix.
+## - Query parameters are excluded from matching, as with request_url_regex.
+## - Host and method coverage is checked at verification; both app and component regexes apply at runtime.
+# [[activity_wasm.allowed_host]]
+# url_prefix = "${LLM_URL:-https://openrouter.ai/api}"
+# methods = ["GET"]
+# url_regex_suffix = "/v1/models$"
+##
 ## Multiple entries can match the same request; they form a union (secrets are merged).
 ## The `pattern` field supports `${VAR}` and `${VAR:-default}` env var interpolation.
 # [[activity_wasm.allowed_host]]

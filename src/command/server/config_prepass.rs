@@ -499,9 +499,8 @@ pub(super) fn collect_required_public_env_from_allowed_hosts(
 ) {
     let mut referenced = BTreeSet::new();
     for entry in entries {
-        collect_required_env_var_references(&entry.pattern, &mut referenced);
-        if let Some(regex) = &entry.request_url_regex {
-            collect_required_env_var_references(regex, &mut referenced);
+        for field in entry.interpolated_fields() {
+            collect_required_env_var_references(field, &mut referenced);
         }
     }
     required.extend(referenced);
@@ -534,9 +533,8 @@ pub(super) fn collect_unregistered_public_env_from_allowed_hosts(
 ) {
     let mut referenced = BTreeSet::new();
     for entry in entries {
-        collect_env_var_references(&entry.pattern, &mut referenced);
-        if let Some(regex) = &entry.request_url_regex {
-            collect_env_var_references(regex, &mut referenced);
+        for field in entry.interpolated_fields() {
+            collect_env_var_references(field, &mut referenced);
         }
     }
     undeclared.extend(referenced.into_iter().filter(|name| {
@@ -936,20 +934,13 @@ pub(super) struct UncoveredOutboundHost {
 
 /// Render a destination-only `[[<section>.allowed_host]]` snippet, dropping secret fields.
 pub(super) fn host_allowlist_snippet(section: &str, entry: &AllowedHostToml) -> String {
-    #[derive(serde::Serialize)]
-    struct DestinationEntry {
-        pattern: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        methods: Option<MethodsInput>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        request_url_regex: Option<String>,
-    }
-    let body = toml::to_string(&DestinationEntry {
-        pattern: entry.pattern.clone(),
-        methods: entry.methods.clone(),
-        request_url_regex: entry.request_url_regex.clone(),
-    })
-    .expect("destination allowlist entry must serialize to TOML");
+    let mut destination = entry.clone();
+    destination.secrets.clear();
+    destination.replace_in.clear();
+    let mut table = toml::Table::try_from(destination).expect("destination must serialize");
+    table.remove("secrets");
+    table.remove("replace_in");
+    let body = toml::to_string(&table).expect("destination allowlist entry must serialize to TOML");
     format!("[[{section}.allowed_host]]\n{body}")
 }
 
@@ -1012,7 +1003,7 @@ pub(super) fn report_uncovered_outbound_http_hosts(
             "  - component `{name}` (`[[{section}.allowed_host]]`) allows `{pattern}`",
             name = host.component_name,
             section = host.component_section,
-            pattern = host.entry.pattern,
+            pattern = host.entry.destination(),
         );
         let snippet = host_allowlist_snippet("outbound_http", &host.entry);
         if !snippets.contains(&snippet) {
@@ -1303,7 +1294,9 @@ mod tests {
     fn advisory_is_located_to_source_line() {
         // `methods` omitted triggers the "no methods" advisory; the entry still resolves.
         let entry = AllowedHostToml {
-            pattern: "http://localhost:5005".to_string(),
+            pattern: Some("http://localhost:5005".to_string()),
+            url_prefix: None,
+            url_regex_suffix: None,
             methods: None,
             request_url_regex: None,
             secrets: Vec::new(),

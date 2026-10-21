@@ -1669,7 +1669,7 @@ mod tests {
             .unwrap();
 
             let entry = &config.outbound_http.allowed_hosts[0];
-            assert_eq!(entry.pattern, "api.example.com");
+            assert_eq!(entry.pattern.as_deref(), Some("api.example.com"));
             assert_eq!(entry.secrets, ["API_KEY".into()]);
             assert!(matches!(
                 entry.methods,
