@@ -90,6 +90,10 @@ pub(crate) fn init(config: &ServerConfigToml) -> Result<Guard, anyhow::Error> {
     let console_layer = if config.log.console.enabled {
         let env_filter = config.log.console.common.level.0.clone();
         let writer = config.log.console.writer;
+        let ansi = match writer {
+            AppenderConsoleWriter::Stderr => std::io::stderr().is_terminal(),
+            AppenderConsoleWriter::Stdout => std::io::stdout().is_terminal(),
+        };
         // Code repetition because of https://github.com/tokio-rs/tracing/issues/575
         let console_layer = match config.log.console.style {
             LoggingStyle::Plain => tracing_subscriber::fmt::layer()
@@ -104,7 +108,7 @@ pub(crate) fn init(config: &ServerConfigToml) -> Result<Guard, anyhow::Error> {
                 .with_line_number(true)
                 .with_target(config.log.console.common.target)
                 .with_span_events(config.log.console.common.span.into())
-                .with_ansi(std::io::stdout().is_terminal())
+                .with_ansi(ansi)
                 .with_filter(env_filter)
                 .boxed(),
             LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
@@ -118,7 +122,7 @@ pub(crate) fn init(config: &ServerConfigToml) -> Result<Guard, anyhow::Error> {
                 .compact()
                 .with_target(config.log.console.common.target)
                 .with_span_events(config.log.console.common.span.into())
-                .with_ansi(std::io::stdout().is_terminal())
+                .with_ansi(ansi)
                 .with_filter(env_filter)
                 .boxed(),
             LoggingStyle::Json => tracing_subscriber::fmt::layer()

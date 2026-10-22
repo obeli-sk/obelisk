@@ -92,8 +92,7 @@ impl Summary {
                 {
                     let _ = writeln!(
                         out,
-                        "VM is {machine} although the app is {status}. Run `obelisk cloud app --app {} apply` to reconcile it.",
-                        text(&value["app"], "app_name", ""),
+                        "VM is {machine} although the app is {status}. Run `obelisk cloud app apply` to reconcile it.",
                         status = text(&value["app"], "status", "")
                     );
                 }

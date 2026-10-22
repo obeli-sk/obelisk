@@ -724,8 +724,11 @@ pub(crate) async fn run(
 /// Policy for runtime requirements that may be unavailable on the current server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeConfigAvailability {
+    /// Missing values, declarations and approvals are all errors; required for activation.
     Strict,
+    /// Tolerate missing env/secret values; declarations and approvals are still checked.
     AllowMissingValues,
+    /// Also tolerate missing declarations and approvals, deferring them to activation.
     AllowUnavailable,
 }
 impl RuntimeConfigAvailability {
