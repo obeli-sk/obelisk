@@ -298,46 +298,33 @@ async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<V
                 use std::os::unix::fs::OpenOptionsExt as _;
                 options.mode(0o600);
             }
-            let token = match options.open(token_file) {
-                Ok(mut file) => {
-                    let token = crate::api::generate_token();
-                    file.write_all(token.as_bytes())?;
-                    file.sync_all()?;
-                    token
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt as _;
-                        ensure!(
-                            std::fs::metadata(token_file)?
-                                .permissions()
-                                .mode()
-                                .trailing_zeros()
-                                >= 6,
-                            "Token file must be private (chmod 600)"
-                        );
-                    }
-                    std::fs::read_to_string(token_file)?.trim().to_owned()
-                }
-                Err(error) => return Err(error).context("Cannot persist token file"),
-            };
-            ensure!(
-                token.len() == 64 && token.bytes().all(|c| c.is_ascii_hexdigit()),
-                "Invalid token file"
-            );
+            let mut file = options
+                .open(token_file)
+                .context("Cannot create private token file; use a new path")?;
             let expires_at = expires_at
                 .map(|date| u64::try_from(date.timestamp()))
                 .transpose()
                 .context("Expiry must be after the Unix epoch")?;
-            if client.verbose {
-                eprintln!(
-                    "Token saved in {}; reuse this file and parameters to retry",
-                    token_file.display()
-                );
-            }
-            let mut value = client.request(Method::POST,&path,Some(json!({"hash":crate::api::token_hash(&token).to_string(),"name":name,"global":scope.is_empty(),"apps":scope,"expires_at":expires_at})),Kind::Read).await
-                .with_context(|| format!("Token saved in {}; reuse this file and parameters to retry", token_file.display()))?;
+            let result = client.request(Method::POST, &path, Some(json!({"name":name,"global":scope.is_empty(),"apps":scope,"expires_at":expires_at})), Kind::Read).await;
+            let mut value = match result {
+                Ok(value) => value,
+                Err(error) => {
+                    drop(file);
+                    let _ = std::fs::remove_file(token_file);
+                    return Err(error).context("Token issuance failed; if the response was lost, list tokens and revoke the inaccessible token before creating a replacement");
+                }
+            };
+            let token = value.as_object_mut().and_then(|value| value.remove("token"))
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .context("Missing issued credential; list tokens and revoke the inaccessible token before creating a replacement")?;
+            file.write_all(token.as_bytes())
+                .and_then(|()| file.sync_all())
+                .with_context(|| {
+                    format!(
+                        "Cannot save issued token {}; revoke it before creating a replacement",
+                        value["token_id"]
+                    )
+                })?;
             value["token_file"] = json!(token_file);
             Ok(value)
         }
@@ -1031,7 +1018,7 @@ mod tests {
         api_url: Option<String>,
     }
     #[tokio::test]
-    async fn cloud_token_retries_keep_private_secret_out_of_requests() {
+    async fn cloud_token_saves_server_secret_and_rejects_existing_file() {
         let (origin, state, task) = server().await;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("token");
@@ -1045,22 +1032,21 @@ mod tests {
         ];
         state.lock().unwrap().error = true;
         assert!(args(&origin, &command).execute().await.is_err());
-        let token = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(token.len(), 64);
+        assert!(!path.exists());
         state.lock().unwrap().error = false;
         args(&origin, &command).execute().await.unwrap();
+        let token = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(token, format!("obk_{}_{}", "a".repeat(32), "b".repeat(64)));
+        assert!(args(&origin, &command).execute().await.is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), token);
         let state = state.lock().unwrap();
         assert_eq!(state.received.len(), 2);
         assert_eq!(state.received[0], state.received[1]);
         assert_eq!(state.received[0].0, "POST /prefix/v1/tokens");
-        assert_eq!(state.received[0].1["global"], true);
-        assert_eq!(state.received[0].1["apps"], json!([]));
         assert_eq!(
-            state.received[0].1["hash"],
-            crate::api::token_hash(&token).to_string()
+            state.received[0].1,
+            json!({"name":"laptop","global":true,"apps":[],"expires_at":null})
         );
-        assert!(!state.received[0].1.to_string().contains(&token));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -1202,6 +1188,9 @@ mod tests {
                 app_config_digest: "digest".to_owned(),
                 started_at: chrono::Utc::now(),
             }),
+            "/prefix/v1/tokens" if method == Method::POST => {
+                json!({"token_id":"a".repeat(32),"token":format!("obk_{}_{}", "a".repeat(32), "b".repeat(64))})
+            }
             "/prefix/v1/apps/demo/policy" if method == Method::GET => {
                 json!({"public_env":["CLOUD_TEST_MISSING_REQUIRED"],"secrets":{}})
             }
