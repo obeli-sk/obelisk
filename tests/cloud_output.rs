@@ -179,9 +179,9 @@ async fn cloud_output_and_endpoint_selection() {
         "{status}"
     );
     assert!(
-        status.contains(&format!(
-            "VM is started although the app is stopped. {apply} to reconcile it."
-        )),
+        status.contains(
+            "VM is started although the app is stopped. Run `obelisk cloud app apply` to reconcile it."
+        ),
         "{status}"
     );
     for command in [
