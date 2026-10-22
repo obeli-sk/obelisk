@@ -81,7 +81,7 @@ jobs:
             crates/webhook-js-runtime \
             crates/embedded-assets/webhook-js-runtime-version.txt
 
-      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
         if: ${{ inputs.validate_nix_dev_build }}
 
       - name: Validate Nix dev build
@@ -96,7 +96,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
-      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
         if: ${{ inputs.validate_nix_dev_build }}
 
       - name: Validate cross Nix dev build
