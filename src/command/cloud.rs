@@ -453,7 +453,7 @@ impl CloudArgs {
             return if self.json {
                 print_json(&endpoints)
             } else {
-                print!("{}", human_output(&endpoints));
+                eprint!("{}", human_output(&endpoints));
                 Ok(())
             };
         }
@@ -491,7 +491,7 @@ impl CloudArgs {
         if json {
             print_json(&value)
         } else {
-            print!(
+            eprint!(
                 "{}",
                 if verbose {
                     human_output(&value)

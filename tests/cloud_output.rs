@@ -145,16 +145,19 @@ async fn cloud_output_and_endpoint_selection() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        String::from_utf8(output.stdout).unwrap()
+        (
+            String::from_utf8(output.stdout).unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
     };
     let endpoints = json!({"api_url":"https://api--demo.example.com", "webhook_url":"https://demo.example.com", "webui_url":"https://webui--demo.example.com"});
-    let text = run(&["app", "endpoint"]).await;
+    let (stdout, text) = run(&["app", "endpoint"]).await;
+    assert!(stdout.is_empty(), "{stdout}");
     for url in endpoints.as_object().unwrap().values() {
         assert!(text.contains(url.as_str().unwrap()), "{text}");
     }
-    assert!(serde_json::from_str::<Value>(&text).is_err());
     assert_eq!(
-        serde_json::from_str::<Value>(&run(&["app", "endpoint", "--json"]).await).unwrap(),
+        serde_json::from_str::<Value>(&run(&["app", "endpoint", "--json"]).await.0).unwrap(),
         endpoints
     );
     for (command, key) in [
@@ -163,16 +166,16 @@ async fn cloud_output_and_endpoint_selection() {
         ("webui", "webui_url"),
     ] {
         assert_eq!(
-            run(&["app", "endpoint", command]).await.trim(),
+            run(&["app", "endpoint", command]).await.0.trim(),
             endpoints[key].as_str().unwrap()
         );
         assert_eq!(
-            serde_json::from_str::<Value>(&run(&["app", "endpoint", command, "--json"]).await)
+            serde_json::from_str::<Value>(&run(&["app", "endpoint", command, "--json"]).await.0)
                 .unwrap(),
             endpoints[key]
         );
     }
-    let status = run(&["app", "status"]).await;
+    let status = run(&["app", "status"]).await.1;
     let apply = "Run `obelisk cloud app --app demo apply`";
     assert!(
         status.contains(&format!("Intended state: running. {apply} to reach it.")),
@@ -189,11 +192,11 @@ async fn cloud_output_and_endpoint_selection() {
         vec!["apps", "list"],
         vec!["token", "list"],
     ] {
-        let text = run(&command).await;
-        assert!(serde_json::from_str::<Value>(&text).is_err(), "{text}");
+        let (stdout, text) = run(&command).await;
+        assert!(stdout.is_empty() && !text.is_empty(), "{stdout}");
         let mut json_command = command.clone();
         json_command.push("--json");
-        let parsed: Value = serde_json::from_str(&run(&json_command).await).unwrap();
+        let parsed: Value = serde_json::from_str(&run(&json_command).await.0).unwrap();
         assert_eq!(
             parsed,
             match command[0] {
@@ -211,7 +214,8 @@ async fn cloud_output_and_endpoint_selection() {
         "--token-file",
         "account.token",
     ])
-    .await;
+    .await
+    .1;
     assert!(account.contains("scope: account-wide"), "{account}");
     let scoped = run(&[
         "token",
@@ -225,7 +229,8 @@ async fn cloud_output_and_endpoint_selection() {
         "--scope",
         "worker",
     ])
-    .await;
+    .await
+    .1;
     assert!(scoped.contains("scope: demo, worker"), "{scoped}");
     assert_eq!(
         std::fs::read_to_string(directory.path().join("ci.token")).unwrap(),
