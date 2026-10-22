@@ -148,7 +148,7 @@
                 },
                 {
                   "name": "enqueue",
-                  "about": "Submit (if a file is given) and enqueue for next server restart. Reuses matching active content and description unless a deployment ID is supplied",
+                  "about": "Submit and stage for cloud app apply, or enqueue for a standalone server restart. Reuses matching active content and description unless a deployment ID is supplied",
                   "options": [
                     {
                       "name": "--empty",
@@ -156,7 +156,7 @@
                     },
                     {
                       "name": "--allow-unavailable-runtime-config",
-                      "help": "Submit and enqueue while app or platform approval is pending. Activation on restart still checks strictly"
+                      "help": "Submit and enqueue while app or platform approval is pending. Activation still checks strictly"
                     },
                     {
                       "name": "--description",
@@ -1073,8 +1073,16 @@
             },
             {
               "name": "apply",
-              "about": "Apply staged configuration while respecting the app's intended running state",
+              "about": "Apply an explicit policy/deployment selection and run the app",
               "options": [
+                {
+                  "name": "--app-config",
+                  "short": "a",
+                  "help": "App configuration; if omitted, use the staged configuration",
+                  "accepts": {
+                    "path": true
+                  }
+                },
                 {
                   "name": "--force",
                   "help": "Reapply even with a clear stale flag, including uncertain secret changes"
@@ -1086,7 +1094,7 @@
               ]
             },
             {
-              "name": "start",
+              "name": "reactivate",
               "options": [
                 {
                   "name": "--command-id",
@@ -1095,7 +1103,7 @@
               ]
             },
             {
-              "name": "stop",
+              "name": "deactivate",
               "options": [
                 {
                   "name": "--command-id",
@@ -1269,6 +1277,10 @@
               }
             },
             {
+              "name": "--deployment-id",
+              "help": "Select an existing deployment from the database and verify it before activation"
+            },
+            {
               "name": "--empty",
               "help": "Start with an empty deployment, ignoring any Enqueued or Active deployment in the database. Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via gRPC"
             },
@@ -1287,6 +1299,19 @@
             {
               "name": "--api-token",
               "help": "API token required to access the API server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`"
+            }
+          ]
+        },
+        {
+          "name": "checkpoint",
+          "about": "Read the last successfully committed app checkpoint without starting the server",
+          "options": [
+            {
+              "name": "--server-config",
+              "short": "s",
+              "accepts": {
+                "path": true
+              }
             }
           ]
         },
@@ -1325,6 +1350,10 @@
               "accepts": {
                 "path": true
               }
+            },
+            {
+              "name": "--deployment-id",
+              "help": "Verify an existing deployment from the database without activating it"
             },
             {
               "name": "--allow-unavailable-runtime-config",
@@ -1918,7 +1947,7 @@
         },
         {
           "name": "enqueue",
-          "about": "Submit (if a file is given) and enqueue for next server restart. Reuses matching active content and description unless a deployment ID is supplied",
+          "about": "Submit and stage for cloud app apply, or enqueue for a standalone server restart. Reuses matching active content and description unless a deployment ID is supplied",
           "options": [
             {
               "name": "--empty",
@@ -1926,7 +1955,7 @@
             },
             {
               "name": "--allow-unavailable-runtime-config",
-              "help": "Submit and enqueue while app or platform approval is pending. Activation on restart still checks strictly"
+              "help": "Submit and enqueue while app or platform approval is pending. Activation still checks strictly"
             },
             {
               "name": "--description",

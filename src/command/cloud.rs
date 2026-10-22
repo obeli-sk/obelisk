@@ -83,6 +83,7 @@ enum Kind {
     /// Error bodies are redacted; staged secret edits are not provisioner commands.
     Secret,
     Command(Option<ExecutionIdTopLevel>),
+    SecretCommand(Option<ExecutionIdTopLevel>),
 }
 impl From<CloudCommandId> for Kind {
     fn from(command_id: CloudCommandId) -> Self {
@@ -158,7 +159,7 @@ impl Client {
         kind: Kind,
     ) -> anyhow::Result<Value> {
         let mut request = self.http.request(method, self.url(path)?);
-        let command_id = if let Kind::Command(id) = kind {
+        let command_id = if let Kind::Command(id) | Kind::SecretCommand(id) = kind {
             let id = id.unwrap_or_else(ExecutionIdTopLevel::generate);
             if self.verbose {
                 eprintln!("Cloud command execution ID: {id}");
@@ -217,6 +218,12 @@ impl Client {
                     .is_ok_and(|body| body["code"] == "app_name_taken")
             {
                 return Err(AppNameTaken.into());
+            }
+            if matches!(kind, Kind::SecretCommand(_)) {
+                bail!(
+                    "Cloud app creation failed: HTTP {status}. Command ID: {}",
+                    command_id.expect("Creation command ID")
+                );
             }
             if !self.verbose {
                 let message = output::error_message(&body);
@@ -527,9 +534,17 @@ impl CloudArgs {
                 if let Some(config) = config {
                     body["policy"] = serde_json::to_value(config.policy())?;
                     body["cloud"] = serde_json::to_value(config.cloud)?;
+                    let values = initial_values(&name, &body["policy"], None)?;
+                    body["env"] = values["env"].clone();
+                    body["secrets"] = values["secrets"].clone();
                 }
                 client
-                    .request(Method::POST, &["v1", "apps"], Some(body), command_id.into())
+                    .request(
+                        Method::POST,
+                        &["v1", "apps"],
+                        Some(body),
+                        Kind::SecretCommand(command_id.id),
+                    )
                     .await
             }
             Cloud::App(CloudAppTarget { app, command }) => {
@@ -572,25 +587,48 @@ impl CloudArgs {
                             )
                             .await
                     }
-                    CloudApp::Apply { force, command_id } => {
+                    CloudApp::Apply {
+                        force,
+                        app_config,
+                        command_id,
+                    } => {
+                        let current = client.app(name, Method::GET, &[], None, Kind::Read).await?;
+                        let desired = match app_config {
+                            Some(path) => desired_config(&policy(&path).await?),
+                            None => json!({"policy":current["policy"],"cloud":current["cloud"]}),
+                        };
+                        let origin =
+                            api_origin(current["api_url"].as_str().context("Missing api_url")?)?;
+                        let startup = ClientStartup::cloud(
+                            origin.as_str().trim_end_matches('/').to_owned(),
+                            self.api_token.clone(),
+                            self.verbose,
+                        );
+                        let deployment_id: concepts::prefixed_ulid::DeploymentId =
+                            crate::client::send_json(
+                                startup
+                                    .web_api_client()?
+                                    .get(format!("{}/v1/deployment-id", startup.api_url())),
+                            )
+                            .await?;
                         client
                             .app(
                                 name,
                                 Method::POST,
                                 &["apply"],
-                                Some(json!({"force":force})),
+                                Some(json!({"force":force,"config":desired,"deployment_id":deployment_id})),
                                 command_id.into(),
                             )
                             .await
                     }
-                    CloudApp::Start { command_id } => {
+                    CloudApp::Reactivate { command_id } => {
                         client
-                            .app(name, Method::POST, &["start"], None, command_id.into())
+                            .app(name, Method::POST, &["reactivate"], None, command_id.into())
                             .await
                     }
-                    CloudApp::Stop { command_id } => {
+                    CloudApp::Deactivate { command_id } => {
                         client
-                            .app(name, Method::POST, &["stop"], None, command_id.into())
+                            .app(name, Method::POST, &["deactivate"], None, command_id.into())
                             .await
                     }
                     CloudApp::Delete { command_id } => {
@@ -847,6 +885,48 @@ async fn fill_with_prompt(
     let secret_values = secrets["secrets"]
         .as_array()
         .context("Invalid cloud secrets response")?;
+    let (report, pending) = collect_values(
+        app,
+        policy,
+        env_values,
+        secret_values,
+        prompt
+            .as_mut()
+            .map(|p| p as &mut dyn FnMut(&Question) -> anyhow::Result<String>),
+    )?;
+    let mut staged = Vec::new();
+    for (kind, name, value, _) in pending {
+        client
+            .app(
+                app,
+                Method::PUT,
+                &[kind, &name],
+                Some(json!({"value":value})),
+                if kind == "secrets" {
+                    Kind::Secret
+                } else {
+                    Kind::Command(None)
+                },
+            )
+            .await
+            .with_context(|| {
+                format!("Could not stage {kind} {name}; earlier values may already be staged")
+            })?;
+        staged.push(json!({"kind":kind,"name":name}));
+    }
+    let apply_required = !staged.is_empty();
+    Ok(json!({"staged":staged,"declarations":report,"apply_required":apply_required}))
+}
+
+type PendingValue = (&'static str, String, String, &'static str);
+
+fn collect_values(
+    app: &str,
+    policy: &Value,
+    env_values: &serde_json::Map<String, Value>,
+    secret_values: &[Value],
+    mut prompt: Option<&mut dyn FnMut(&Question) -> anyhow::Result<String>>,
+) -> anyhow::Result<(Vec<Value>, Vec<PendingValue>)> {
     // (kind, name, optional, set in cloud, cloud value if readable)
     let mut declarations = Vec::new();
     for declaration in policy["public_env"]
@@ -977,28 +1057,20 @@ async fn fill_with_prompt(
             "Configuration cancelled; nothing was staged"
         );
     }
-    let mut staged = Vec::new();
+    Ok((report, pending))
+}
+
+fn initial_values(
+    app: &str,
+    policy: &Value,
+    prompt: Option<&mut dyn FnMut(&Question) -> anyhow::Result<String>>,
+) -> anyhow::Result<Value> {
+    let (_, pending) = collect_values(app, policy, &serde_json::Map::new(), &[], prompt)?;
+    let mut values = json!({"env":{},"secrets":{}});
     for (kind, name, value, _) in pending {
-        client
-            .app(
-                app,
-                Method::PUT,
-                &[kind, &name],
-                Some(json!({"value":value})),
-                if kind == "secrets" {
-                    Kind::Secret
-                } else {
-                    Kind::Command(None)
-                },
-            )
-            .await
-            .with_context(|| {
-                format!("Could not stage {kind} {name}; earlier values may already be staged")
-            })?;
-        staged.push(json!({"kind":kind,"name":name}));
+        values[kind][name] = json!(value);
     }
-    let apply_required = !staged.is_empty();
-    Ok(json!({"staged":staged,"declarations":report,"apply_required":apply_required}))
+    Ok(values)
 }
 
 #[cfg(test)]
@@ -1181,6 +1253,7 @@ mod tests {
             }
             "/prefix/tenant/v1/components" => json!([]),
             "/prefix/tenant/v1/info" => json!(rest_types::server::ServerInfoResponse {
+                app_env_prefix: String::new(),
                 app_name: "demo".to_owned(),
                 obelisk_version: "0.0.0".to_owned(),
                 deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
@@ -1355,7 +1428,7 @@ mod tests {
         let path = directory.path().join("app.toml");
         tokio::fs::write(
             &path,
-            "app_name='from-file'\n[cloud]\nmemory_mb=1024\n[public_env]\nREGION={}\n[secrets]\nKEY={optional=true}\n[[outbound_http.allowed_host]]\npattern='${REGION}'\n",
+            "app_name='from-file'\n[cloud]\nmemory_mb=1024\n[public_env]\nREGION={optional=true}\n[secrets]\nKEY={optional=true}\n[[outbound_http.allowed_host]]\npattern='${REGION}'\n",
         )
         .await
         .unwrap();
@@ -1391,10 +1464,24 @@ mod tests {
             received[1].1["policy"]["outbound_http"][0]["pattern"],
             "${REGION}"
         );
-        assert_eq!(received[2].1, json!({"force":false}));
-        assert_eq!(received[3].1, json!({"force":true}));
+        let applies: Vec<_> = received
+            .iter()
+            .filter(|(path, _)| path.ends_with("/apply"))
+            .collect();
+        assert_eq!(applies.len(), 2);
+        for (request, force) in applies.iter().zip([false, true]) {
+            assert_eq!(request.1["force"], force);
+            assert!(
+                request.1["deployment_id"]
+                    .as_str()
+                    .unwrap()
+                    .parse::<concepts::prefixed_ulid::DeploymentId>()
+                    .is_ok()
+            );
+            assert_eq!(request.1["config"], json!({"policy":null,"cloud":null}));
+        }
         assert_eq!(
-            received[4].0,
+            received.last().unwrap().0,
             "PUT /prefix/v1/apps/demo/env/OBELISK_API_URL"
         );
         task.abort();
@@ -1618,6 +1705,18 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("409"));
+        assert!(!error.to_string().contains("DO-NOT-ECHO-SECRET"));
+        let error = client
+            .request(
+                Method::POST,
+                &["v1", "apps"],
+                Some(json!({"app_name":"demo","secrets":{"KEY":"DO-NOT-ECHO-SECRET"}})),
+                Kind::SecretCommand(None),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("409"));
+        assert!(error.to_string().contains("Command ID"));
         assert!(!error.to_string().contains("DO-NOT-ECHO-SECRET"));
         state.lock().unwrap().error = false;
         state.lock().unwrap().redirect = true;

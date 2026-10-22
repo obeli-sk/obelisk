@@ -376,3 +376,7 @@ CREATE UNIQUE INDEX t_system_event_dedupe_idx
     ON t_system_event(code, deployment_id, dedupe_key)
     WHERE dedupe_key IS NOT NULL;
 CREATE INDEX t_system_event_node_run_idx ON t_system_event(node_run_id, event_id DESC);
+CREATE TABLE t_app_checkpoint (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    checkpoint TEXT NOT NULL CHECK (json_valid(checkpoint))
+);

@@ -330,7 +330,7 @@ pub(crate) enum Deployment {
         empty: bool,
         /// Store a verified deployment while app or platform approval is pending.
         /// Allows unavailable values and approvals; activation still checks strictly.
-        #[arg(long)]
+        #[arg(long, visible_alias = "ignore-missing")]
         allow_unavailable_runtime_config: bool,
         /// Optional human-readable description.
         #[arg(long)]
@@ -346,7 +346,7 @@ pub(crate) enum Deployment {
         #[arg(long)]
         json: bool,
     },
-    /// Submit (if a file is given) and enqueue for next server restart.
+    /// Submit and stage for cloud app apply, or enqueue for a standalone server restart.
     /// Reuses matching active content and description unless a deployment ID is supplied.
     Enqueue {
         /// Path to a deployment TOML file, or an existing deployment ID.
@@ -361,8 +361,8 @@ pub(crate) enum Deployment {
         #[arg(long)]
         empty: bool,
         /// Submit and enqueue while app or platform approval is pending.
-        /// Activation on restart still checks strictly.
-        #[arg(long)]
+        /// Activation still checks strictly.
+        #[arg(long, visible_alias = "ignore-missing")]
         allow_unavailable_runtime_config: bool,
         /// Optional human-readable description for a newly submitted deployment.
         #[arg(long)]
@@ -640,6 +640,9 @@ pub(crate) enum Server {
         /// overriding any existing Enqueued or Active deployment in the database.
         #[arg(short, long, conflicts_with = "empty")]
         deployment: Option<PathBuf>,
+        /// Select an existing deployment from the database and verify it before activation.
+        #[arg(long, conflicts_with_all = ["deployment", "empty", "description"])]
+        deployment_id: Option<DeploymentId>,
         /// Start with an empty deployment, ignoring any Enqueued or Active deployment in the database.
         /// Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via gRPC.
         #[arg(long)]
@@ -665,6 +668,11 @@ pub(crate) enum Server {
         )]
         api_token: Option<SecretString>,
     },
+    /// Read the last successfully committed app checkpoint without starting the server.
+    Checkpoint {
+        #[arg(short, long)]
+        server_config: Option<PathBuf>,
+    },
     /// Read the configuration, compile the components, verify their imports and exit without starting the server.
     Verify(VerifyArgs),
 }
@@ -688,6 +696,9 @@ pub(crate) struct VerifyArgs {
     /// falling back to the Active deployment. Errors if neither is found.
     #[arg(short, long)]
     pub(crate) deployment: Option<PathBuf>,
+    /// Verify an existing deployment from the database without activating it.
+    #[arg(long, conflicts_with_all = ["deployment", "skip_db"])]
+    pub(crate) deployment_id: Option<DeploymentId>,
     /// Tolerate missing environment and secret values; declarations and permissions are still checked.
     #[arg(long)]
     pub(crate) allow_unavailable_runtime_config: bool,
@@ -1731,19 +1742,22 @@ pub(crate) enum CloudApp {
         #[arg(long)]
         fill: bool,
     },
-    /// Apply staged configuration while respecting the app's intended running state.
+    /// Apply an explicit policy/deployment selection and run the app.
     Apply {
+        /// App configuration; if omitted, use the staged configuration.
+        #[arg(short = 'a', long)]
+        app_config: Option<PathBuf>,
         /// Reapply even with a clear stale flag, including uncertain secret changes.
         #[arg(long)]
         force: bool,
         #[command(flatten)]
         command_id: CloudCommandId,
     },
-    Start {
+    Reactivate {
         #[command(flatten)]
         command_id: CloudCommandId,
     },
-    Stop {
+    Deactivate {
         #[command(flatten)]
         command_id: CloudCommandId,
     },

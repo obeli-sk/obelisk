@@ -457,6 +457,7 @@ pub(crate) mod server_info {
             .expect("node run ID timestamp is generated from the current time");
         let body = ServerInfoResponse {
             app_name: state.server_verified.app_name.clone(),
+            app_env_prefix: state.server_verified.app_env_prefix.clone(),
             obelisk_version: PKG_VERSION.to_string(),
             deployment_id: state.deployment_ctx.read().await.deployment_id,
             node_run_id,

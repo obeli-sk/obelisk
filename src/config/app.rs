@@ -25,7 +25,7 @@ pub(crate) fn resolve_app_config(
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AppConfigToml {
     #[serde(default)]

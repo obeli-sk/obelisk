@@ -65,6 +65,7 @@ fn command_future(
             clean_cache,
             clean_codegen_cache,
             deployment,
+            deployment_id,
             empty: deployment_empty,
             description,
             suppress_type_checking_errors,
@@ -73,7 +74,7 @@ fn command_future(
         }) => {
             let ServerStartup {
                 config_holder,
-                config,
+                mut config,
                 secret_registry,
                 js_runtime,
                 activity_vm_runtime,
@@ -83,6 +84,7 @@ fn command_future(
                 EnvVarSecretsCleanup::Wipe,
                 RuntimeConfigAvailability::Strict,
             )?;
+            config.startup_deployment_id = deployment_id;
             let auth = if no_auth {
                 assert!(api_token.is_none(), "{API_TOKEN} conflicts with --no-auth");
                 ServerAuth::NoAuth
@@ -113,6 +115,9 @@ fn command_future(
             ))
         }
 
+        Subcommand::Server(Server::Checkpoint { server_config }) => {
+            Box::pin(crate::command::server::checkpoint(server_config))
+        }
         Subcommand::Server(Server::Verify(VerifyArgs {
             server_config,
             app_config,
@@ -120,6 +125,7 @@ fn command_future(
             clean_cache,
             clean_codegen_cache,
             deployment,
+            deployment_id,
             suppress_type_checking_errors,
             skip_db,
             fixes,
@@ -140,7 +146,7 @@ fn command_future(
             };
             let ServerStartup {
                 config_holder,
-                config,
+                mut config,
                 secret_registry,
                 js_runtime,
                 activity_vm_runtime,
@@ -155,6 +161,7 @@ fn command_future(
                 },
                 !fixes.any(),
             )?;
+            config.startup_deployment_id = deployment_id;
             Box::pin(verify(
                 config_holder,
                 config,
@@ -280,8 +287,8 @@ fn prepare_server_startup_with_exec_policy(
     check_exec_policy: bool,
 ) -> anyhow::Result<ServerStartup> {
     if env_var_cleanup == EnvVarSecretsCleanup::Wipe {
-        assert_eq!(
-            RuntimeConfigAvailability::Strict,
+        assert_ne!(
+            RuntimeConfigAvailability::AllowUnavailable,
             runtime_config_availability,
         );
     }
@@ -290,6 +297,8 @@ fn prepare_server_startup_with_exec_policy(
     let mut config = config_holder.load_config()?;
     let mut app = config_holder.load_app_config()?;
     config_holder.path_prefixes.app_name = app.effective_name()?;
+    app.app_name = Some(config_holder.path_prefixes.app_name.clone());
+    config.app_toml = toml::to_string(&app)?;
     let app_policy = app.policy();
     let app_config_digest = app_policy.digest();
     info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");

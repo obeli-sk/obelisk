@@ -33,34 +33,44 @@ impl CloudArgs {
         let step = |command: &str| {
             eprintln!("→ obelisk cloud app {command}");
         };
-        let mut current = if let Some(current) = client.lookup_app(&name).await? {
-            if config_differs(&current, &desired) {
-                step("stage");
-                client
-                    .app(
-                        &name,
-                        Method::PUT,
-                        &["config"],
-                        Some(desired.clone()),
-                        Kind::Command(None),
-                    )
-                    .await?
-            } else {
-                eprintln!("App configuration unchanged.");
-                current
-            }
+        let existing = client.lookup_app(&name).await?;
+        let is_new = existing.is_none();
+        let mut current = if existing.is_some() {
+            step("stage");
+            client
+                .app(
+                    &name,
+                    Method::PUT,
+                    &["config"],
+                    Some(desired.clone()),
+                    Kind::Command(None),
+                )
+                .await?
         } else {
+            let values = initial_values(
+                &name,
+                &desired["policy"],
+                if interactive {
+                    prompt
+                        .as_mut()
+                        .map(|p| p as &mut dyn FnMut(&Question) -> anyhow::Result<String>)
+                } else {
+                    None
+                },
+            )?;
             let original_name = name.clone();
             let current = loop {
                 step("new");
                 let mut body = desired.clone();
                 body["app_name"] = json!(name);
+                body["env"] = values["env"].clone();
+                body["secrets"] = values["secrets"].clone();
                 match client
                     .request(
                         Method::POST,
                         &["v1", "apps"],
                         Some(body),
-                        Kind::Command(None),
+                        Kind::SecretCommand(None),
                     )
                     .await
                 {
@@ -88,10 +98,27 @@ impl CloudArgs {
             }
             current
         };
+        let api_url = api_origin(
+            current["api_url"]
+                .as_str()
+                .context("Control plane response is missing api_url")?,
+        )?;
+        let startup = ClientStartup::cloud(
+            api_url.as_str().trim_end_matches('/').to_owned(),
+            self.api_token,
+            self.verbose,
+        );
+        step("deployment enqueue");
+        let id = crate::command::deployment::enqueue_prepared(&startup, prepared).await
+            .with_context(|| format!("Deployment staging failed; inspect `obelisk cloud app --app {name} status` and retry deploy"))?;
         if interactive {
             step("fill");
         }
-        let filled = fill(&client, &name, &desired["policy"], interactive).await?;
+        let filled = if is_new {
+            json!({"declarations":[]})
+        } else {
+            fill(&client, &name, &desired["policy"], interactive).await?
+        };
         let unset = filled["declarations"]
             .as_array()
             .into_iter()
@@ -112,9 +139,6 @@ impl CloudArgs {
             );
         }
         let mut outcomes = Vec::new();
-        if current["potentially_stale"] == true
-            || current["applied_revision"] == 0
-            || filled["apply_required"] == true
         {
             step("apply");
             current = client
@@ -122,19 +146,9 @@ impl CloudArgs {
                     &name,
                     Method::POST,
                     &["apply"],
-                    Some(json!({"force":false})),
+                    Some(json!({"force":false,"config":desired,"deployment_id":id})),
                     Kind::Command(None),
                 )
-                .await?;
-            eprintln!("{}", output::lifecycle_outcome(&current));
-            if let Some(outcome) = current.get("outcome") {
-                outcomes.push(outcome.clone());
-            }
-        }
-        if current["status"] == "stopped" {
-            step("start");
-            current = client
-                .app(&name, Method::POST, &["start"], None, Kind::Command(None))
                 .await?;
             eprintln!("{}", output::lifecycle_outcome(&current));
             if let Some(outcome) = current.get("outcome") {
@@ -146,19 +160,6 @@ impl CloudArgs {
             "App is {}; inspect it with `obelisk cloud app --app {name} status`",
             current["status"]
         );
-        let api_url = api_origin(
-            current["api_url"]
-                .as_str()
-                .context("Control plane response is missing api_url")?,
-        )?;
-        let startup = ClientStartup::cloud(
-            api_url.as_str().trim_end_matches('/').to_owned(),
-            self.api_token,
-            self.verbose,
-        );
-        step("deployment apply");
-        let id = crate::command::deployment::apply_prepared(&startup, prepared).await
-            .with_context(|| format!("Deployment did not complete; inspect `obelisk cloud app --app {name} deployment active` to see what is serving, then retry `obelisk cloud app --app {name} deploy -a {} -d {}`", app_config.display(), deployment.display()))?;
         let result = json!({"app":current,"deployment_id":id,"outcomes":outcomes});
         if self.json {
             print_json(&result)
@@ -216,6 +217,7 @@ mod tests {
         reject_deployment: bool,
         name_taken: bool,
         active: concepts::prefixed_ulid::DeploymentId,
+        submitted: Option<String>,
     }
 
     async fn handle(
@@ -248,10 +250,14 @@ mod tests {
                     )
                         .into_response();
                 }
+                if body["policy"]["secrets"].get("INITIAL_KEY").is_some() {
+                    assert_eq!(body["env"]["INITIAL_REGION"], "initial-value");
+                    assert_eq!(body["secrets"]["INITIAL_KEY"], "initial-value");
+                }
                 let mut app = body;
-                app["status"] = json!("stopped");
+                app["status"] = json!("running");
                 app["potentially_stale"] = json!(false);
-                app["applied_revision"] = json!(0);
+                app["applied_revision"] = json!(1);
                 app["desired_state"] = json!("running");
                 state.app = Some(app.clone());
                 app
@@ -263,9 +269,11 @@ mod tests {
                 app["potentially_stale"] = json!(true);
                 app.clone()
             }
-            (Method::POST, "/v1/apps/demo/apply" | "/v1/apps/demo/start") => {
+            (Method::POST, "/v1/apps/demo/apply") => {
+                assert_eq!(body["deployment_id"].as_str(), state.submitted.as_deref());
+                assert!(body["config"]["policy"].is_object());
                 let app = state.app.as_mut().unwrap();
-                if path.ends_with("/start") {
+                if path.ends_with("/apply") {
                     app["desired_state"] = json!("running");
                 }
                 let running = app["desired_state"] == "running";
@@ -292,11 +300,17 @@ mod tests {
                     return (StatusCode::UNPROCESSABLE_ENTITY, "invalid deployment")
                         .into_response();
                 }
+                state.submitted = Some(
+                    path.strip_prefix("/tenant/v1/deployments/")
+                        .unwrap()
+                        .to_owned(),
+                );
                 json!({"ok":true})
             }
             (Method::PUT, _) if path.ends_with("/switch") => {
-                assert_eq!(body["apply"], true);
-                json!({"ok":"switched"})
+                assert_eq!(body["apply"], false);
+                assert_eq!(body["allow_unavailable_runtime_config"], true);
+                json!({"ok":"restart_required"})
             }
             _ => panic!("unexpected request: {}", state.calls.last().unwrap()),
         };
@@ -307,10 +321,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deploy_creates_stages_and_starts_only_when_needed() {
+    async fn deploy_passes_its_uploaded_id_and_policy_to_apply() {
         test_utils::set_up();
         for scenario in [
             "new",
+            "new-values",
+            "new-missing",
             "code-only",
             "config",
             "stopped",
@@ -326,7 +342,9 @@ mod tests {
             let directory = tempfile::tempdir().unwrap();
             let app_path = directory.path().join("app.toml");
             let deployment_path = directory.path().join("deployment.toml");
-            let config = if scenario == "missing" {
+            let config = if matches!(scenario, "new-values" | "new-missing") {
+                "app_name='demo'\n[public_env]\nINITIAL_REGION={}\n[secrets]\nINITIAL_KEY={}\n"
+            } else if scenario == "missing" {
                 "app_name='demo'\n[public_env]\nPATH={}\n"
             } else {
                 "app_name='demo'\n"
@@ -358,7 +376,12 @@ mod tests {
             let state = Arc::new(Mutex::new(Server {
                 app: (!matches!(
                     scenario,
-                    "new" | "name-conflict" | "rename" | "rename-override"
+                    "new"
+                        | "new-values"
+                        | "new-missing"
+                        | "name-conflict"
+                        | "rename"
+                        | "rename-override"
                 ))
                 .then_some(app),
                 calls: Vec::new(),
@@ -366,6 +389,7 @@ mod tests {
                 reject_deployment: scenario == "deployment-error",
                 name_taken: matches!(scenario, "name-conflict" | "rename" | "rename-override"),
                 active: concepts::prefixed_ulid::DeploymentId::generate(),
+                submitted: None,
             }));
             let service = Router::new()
                 .fallback(any(handle))
@@ -388,7 +412,23 @@ mod tests {
                 };
                 target.app = None;
             }
-            let result = if matches!(scenario, "rename" | "rename-override") {
+            let result = if scenario == "new-values" {
+                let Cloud::App(target) = &mut args.command else {
+                    unreachable!()
+                };
+                let CloudApp::Deploy { fill, .. } = &mut target.command else {
+                    unreachable!()
+                };
+                *fill = true;
+                args.deploy_with_prompt(Some(|q: &Question| {
+                    Ok(match q {
+                        Question::Value { .. } => "initial-value",
+                        Question::Line(_) => "",
+                    }
+                    .to_owned())
+                }))
+                .await
+            } else if matches!(scenario, "rename" | "rename-override") {
                 args.deploy_with_prompt(Some(|_: &Question| Ok("renamed".to_owned())))
                     .await
             } else {
@@ -396,7 +436,15 @@ mod tests {
                     .await
             };
             let state = state.lock().unwrap();
-            if scenario == "name-conflict" {
+            if scenario == "new-missing" {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("Missing required configuration")
+                );
+                assert_eq!(state.calls, ["GET /v1/apps/demo"]);
+            } else if scenario == "name-conflict" {
                 assert!(result.unwrap_err().is::<AppNameTaken>());
                 assert!(state.app.is_none());
                 assert_eq!(std::fs::read_to_string(&app_path).unwrap(), config);
@@ -418,19 +466,24 @@ mod tests {
                         .calls
                         .contains(&"POST /v1/apps/renamed/apply".to_owned())
                 );
-                assert!(state.calls.last().unwrap().ends_with("/switch"));
+                assert!(state.calls.last().unwrap().ends_with("/apply"));
             } else if matches!(scenario, "missing" | "invalid") {
                 let error = result.unwrap_err().to_string();
                 if scenario == "missing" {
                     assert!(error.contains("PATH"));
                 }
-                assert!(state.calls.iter().all(|call| call.starts_with("GET")));
+                if scenario == "invalid" {
+                    assert!(state.calls.is_empty());
+                } else {
+                    assert!(state.calls.iter().any(|call| call.ends_with("/switch")));
+                    assert!(!state.calls.contains(&"POST /v1/apps/demo/apply".to_owned()));
+                }
             } else if scenario == "deployment-error" {
                 assert!(
                     result
                         .unwrap_err()
                         .to_string()
-                        .contains("deployment active")
+                        .contains("Deployment staging failed")
                 );
                 assert!(
                     state
@@ -444,20 +497,14 @@ mod tests {
                 result.unwrap();
                 assert_eq!(
                     state.calls.contains(&"POST /v1/apps".to_owned()),
-                    scenario == "new"
+                    matches!(scenario, "new" | "new-values")
                 );
                 assert_eq!(
                     state.calls.contains(&"PUT /v1/apps/demo/config".to_owned()),
-                    matches!(scenario, "config" | "stopped-config")
+                    !matches!(scenario, "new" | "new-values")
                 );
-                assert_eq!(
-                    state.calls.contains(&"POST /v1/apps/demo/apply".to_owned()),
-                    matches!(scenario, "new" | "config" | "pending" | "stopped-config")
-                );
-                assert_eq!(
-                    state.calls.contains(&"POST /v1/apps/demo/start".to_owned()),
-                    matches!(scenario, "stopped" | "stopped-config")
-                );
+                assert!(state.calls.contains(&"POST /v1/apps/demo/apply".to_owned()));
+                assert!(!state.calls.contains(&"POST /v1/apps/demo/start".to_owned()));
                 assert!(
                     state
                         .calls
@@ -465,7 +512,18 @@ mod tests {
                         .any(|call| call.starts_with("PUT /tenant/v1/deployments/")
                             && !call.ends_with("/switch"))
                 );
-                assert!(state.calls.last().unwrap().ends_with("/switch"));
+                let enqueue = state
+                    .calls
+                    .iter()
+                    .position(|call| call.ends_with("/switch"))
+                    .unwrap();
+                let apply = state
+                    .calls
+                    .iter()
+                    .position(|call| call == "POST /v1/apps/demo/apply")
+                    .unwrap();
+                assert!(enqueue < apply);
+                assert!(state.calls.last().unwrap().ends_with("/apply"));
             }
             task.abort();
         }

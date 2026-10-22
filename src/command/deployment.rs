@@ -53,7 +53,7 @@ impl args::Deployment {
                     api_url,
                     source,
                     empty,
-                    allow_unavailable_runtime_config,
+                    true,
                     description,
                     deployment_id,
                 )
@@ -304,13 +304,13 @@ async fn submit_deployment(
     .await
 }
 
-pub(super) async fn apply_prepared(
+pub(super) async fn enqueue_prepared(
     client_startup: &ClientStartup,
     prepared: PreparedDeploymentManifest,
 ) -> anyhow::Result<DeploymentId> {
     let api_url = client_startup.api_url();
-    let id = submit_prepared(client_startup, api_url, prepared, false, None, None).await?;
-    switch_deployment(client_startup, api_url, id, false, SwitchCommand::Apply).await?;
+    let id = submit_prepared(client_startup, api_url, prepared, true, None, None).await?;
+    switch_deployment(client_startup, api_url, id, true, SwitchCommand::Enqueue).await?;
     Ok(id)
 }
 
@@ -324,24 +324,26 @@ async fn submit_prepared(
 ) -> anyhow::Result<DeploymentId> {
     if deployment_id.is_none() {
         let client = client_startup.web_api_client()?;
-        let active_id: DeploymentId = send_json(
-            client
-                .get(format!("{api_url}/v1/deployment-id"))
-                .header(ACCEPT, "application/json"),
-        )
-        .await?;
-        let active: DeploymentRecordSer = send_json(
-            client
-                .get(format!("{api_url}/v1/deployments/{active_id}"))
-                .header(ACCEPT, "application/json"),
-        )
-        .await?;
-        if active.description == description
-            && toml::from_str::<toml::Value>(&active.deployment_toml)?
-                == toml::from_str::<toml::Value>(&prepared.deployment_toml)?
-        {
-            eprintln!("Deployment content unchanged; using {active_id}");
-            return Ok(active_id);
+        let response = client
+            .get(format!("{api_url}/v1/deployment-id"))
+            .header(ACCEPT, "application/json")
+            .send()
+            .await?;
+        if response.status() != http::StatusCode::NOT_FOUND {
+            let active_id: DeploymentId = response.error_for_status()?.json().await?;
+            let active: DeploymentRecordSer = send_json(
+                client
+                    .get(format!("{api_url}/v1/deployments/{active_id}"))
+                    .header(ACCEPT, "application/json"),
+            )
+            .await?;
+            if active.description == description
+                && toml::from_str::<toml::Value>(&active.deployment_toml)?
+                    == toml::from_str::<toml::Value>(&prepared.deployment_toml)?
+            {
+                eprintln!("Deployment content unchanged; using {active_id}");
+                return Ok(active_id);
+            }
         }
     }
     let id = upload_and_submit_manifest(
@@ -580,7 +582,11 @@ async fn switch_deployment(
             eprintln!("Deployment already active; it will remain active after restart.");
         }
         (SwitchCommand::Enqueue, "restart_required") => {
-            eprintln!("Deployment enqueued. Restart the server to apply.");
+            if client_startup.is_cloud() {
+                eprintln!("Deployment staged for cloud app apply.");
+            } else {
+                eprintln!("Deployment enqueued. Restart the server to apply.");
+            }
         }
         (_, outcome) => bail!("unexpected outcome from server: {outcome}"),
     }
