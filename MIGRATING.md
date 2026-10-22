@@ -1,7 +1,13 @@
 # Migrating to the next breaking release
 
-This guide describes unreleased changes after 0.42.0. gRPC and gRPC-web remain
-available, and short bearer tokens remain accepted with a warning.
+This guide describes unreleased changes after 0.42.0. Short bearer tokens remain
+accepted with a warning.
+
+## gRPC API removed
+
+The deprecated gRPC and gRPC-web API, along with `proto/obelisk.proto`, has been
+removed. Use the REST API served on the same `api.listening_addr`; the CLI
+already uses it. OTLP trace export over gRPC is unaffected.
 
 ## API token environment variable
 
@@ -42,7 +48,7 @@ missing-runtime-config responses must include `optional_public_env` and
 
 REST requests to `POST /v1/admin/system-events/retain` must include `dry_run`:
 use `true` to preview and `false` to delete. Omitted values return HTTP 422 and
-leave events unchanged. The CLI already supplies the field. gRPC is unchanged.
+leave events unchanged. The CLI already supplies the field.
 
 ## JavaScript webhook source environment variables
 

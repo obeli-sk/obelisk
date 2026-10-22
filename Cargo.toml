@@ -17,7 +17,6 @@ rest-types.workspace = true
 db-postgres.workspace = true
 db-sqlite.workspace = true
 executor.workspace = true
-grpc.workspace = true
 utils.workspace = true
 val-json.workspace = true
 url.workspace = true
@@ -59,8 +58,6 @@ jsonwebtoken.workspace = true # Enable rust_crypto features for oci-client's jso
 lzma-rs.workspace = true
 oci-client.workspace = true
 oci-wasm.workspace = true
-prost-wkt-types.workspace = true
-prost.workspace = true
 rand.workspace = true
 regex.workspace = true
 reqwest.workspace = true
@@ -84,15 +81,6 @@ tokio-stream.workspace = true
 tokio.workspace = true
 toml_edit.workspace = true
 toml.workspace = true
-tonic = { workspace = true, default-features = true, features = [
-    "zstd",
-    "gzip",
-    "tls-native-roots",
-    "tls-ring",
-] }
-tonic-prost.workspace = true
-tonic-reflection.workspace = true
-tonic-web.workspace = true
 tower-http.workspace = true
 tower.workspace = true
 tracing-appender.workspace = true
@@ -176,7 +164,6 @@ members = [
     "crates/db-sqlite",
     "crates/embedded-assets",
     "crates/executor",
-    "crates/grpc",
     "crates/js-crypto",
     "crates/rest-types",
     "crates/testing/component-builder",
@@ -244,7 +231,6 @@ deno_core = "0.412.0"
 deno_error = "=0.7.1"
 embedded-assets = { package = "obeli-sk-embedded-assets", path = "crates/embedded-assets" }
 executor = { package = "obeli-sk-executor", path = "crates/executor" }
-grpc = { package = "obeli-sk-grpc", path = "crates/grpc" }
 js-crypto = { package = "obeli-sk-js-crypto", path = "crates/js-crypto" }
 rest-types = { package = "obeli-sk-rest-types", path = "crates/rest-types" }
 obelisk-component-builder = { path = "crates/testing/component-builder", features = [
@@ -282,7 +268,7 @@ async-trait = "0.1"
 axum = { version = "0.8.9", features = ["http2", "multipart"] }
 axum-accept = "0.0.7"
 axum-extra = { version = "0.12.6", features = ["query"] }
-base64 = "0.22.1" # keep on 0.22 to match axum/tonic/hyper-util; only reqwest/oci pull 0.23
+base64 = "0.22.1" # keep on 0.22 to match axum/hyper-util; only reqwest/oci pull 0.23
 bytes = "1.12.1"
 cargo_metadata = "0.23"
 cfg-if = "1.0.5"
@@ -336,8 +322,6 @@ lzma-rs = "0.3"
 oci-client = { version = "0.17.0", default-features = false }
 oci-wasm = { version = "0.6.0", default-features = false } # Dependent on matching oci-client
 paste = "1.0"
-prost = "0.14.4"
-prost-wkt-types = "0.7"
 quote = "1"
 rand = "0.9" # postgres-protocol pulls rand 0.10; obelisk stays on 0.9 (0.10 reorganized the Rng traits)
 rcgen = "0.14"
@@ -394,11 +378,6 @@ tokio = { version = "1", features = [
 tokio-stream = "0.1.19"
 toml = { version = "1.1.8", features = ["preserve_order"] }
 toml_edit = "0.25.17"
-tonic = { version = "0.14.6", default-features = false }
-tonic-prost = "0.14.6"
-tonic-prost-build = "0.14.6"
-tonic-reflection = "0.14.6"
-tonic-web = "0.14.6"
 tower = "0.5.3"
 tower-http = { version = "0.6.11", features = ["trace", "cors"] } # keep in sync with reqwest's tower-http
 tracing = { version = "0.1", features = ["log"] }
@@ -446,7 +425,6 @@ wstd = "0.6.8"
 
 # otlp
 opentelemetry = "0.33.1"
-opentelemetry-http = "0.33.1"
 opentelemetry_sdk = { version = "0.33.1", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.33.1", default-features = false, features = [
     "tls-ring",

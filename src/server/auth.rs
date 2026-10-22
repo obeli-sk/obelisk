@@ -154,32 +154,17 @@ pub(crate) async fn auth_middleware(
                 "This server's startup token: {}",
                 auth.startup_token.expose_secret()
             );
-            deny_response(req.headers())
+            deny_response()
         }
     }
 }
 
-fn deny_response(headers: &HeaderMap) -> Response {
-    let grpc_content_type = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|content_type| content_type.to_str().ok())
-        .filter(|content_type| content_type.starts_with("application/grpc"));
-    if let Some(content_type) = grpc_content_type {
-        // Trailers-only gRPC response; 16 = UNAUTHENTICATED.
-        Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, content_type)
-            .header("grpc-status", "16")
-            .header("grpc-message", "missing or invalid API token")
-            .body(Body::empty())
-            .expect("static response must build")
-    } else {
-        Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .header(header::WWW_AUTHENTICATE, "Bearer")
-            .body(Body::from("missing or invalid API token"))
-            .expect("static response must build")
-    }
+fn deny_response() -> Response {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header(header::WWW_AUTHENTICATE, "Bearer")
+        .body(Body::from("missing or invalid API token"))
+        .expect("static response must build")
 }
 
 /// Audit-log identity of a `token_hashes` entry: the first 8 hex chars of its digest.

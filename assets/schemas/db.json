@@ -92,7 +92,7 @@
           "additionalProperties": false
         },
         {
-          "description": "Releases a lock.\n\nState transition semantics:\n- [`PendingState::Locked`] becomes [`PendingState::PendingAt`] at\n  [`Unlocked::backoff_expires_at`]. The field name is kept for persisted JSON and gRPC\n  compatibility, but it is the next pending instant for every unlock reason.\n- [`PendingState::PendingAt`], [`PendingState::BlockedByJoinSet`],\n  [`PendingState::Paused`], and [`PendingState::Finished`] reject this event.",
+          "description": "Releases a lock.\n\nState transition semantics:\n- [`PendingState::Locked`] becomes [`PendingState::PendingAt`] at\n  [`Unlocked::backoff_expires_at`]. The field name is kept for persisted JSON\n  compatibility, but it is the next pending instant for every unlock reason.\n- [`PendingState::PendingAt`], [`PendingState::BlockedByJoinSet`],\n  [`PendingState::Paused`], and [`PendingState::Finished`] reject this event.",
           "type": "object",
           "properties": {
             "unlocked": {

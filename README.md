@@ -7,7 +7,7 @@
 A [deterministic](https://obeli.sk/#faq) workflow runtime built on the WASM Component Model.
 
 > [!WARNING]
-> **Pre-release**: Expect changes in CLI, gRPC, WIT, and database schema.
+> **Pre-release**: Expect changes in CLI, REST API, WIT, and database schema.
 
 ## Obelisk in Action
 [![Watch the Demo Video](assets/images/screencast.gif)](https://obeli.sk/screencast.webm)
@@ -67,7 +67,7 @@ The deployment graph below shows the
 and webhook endpoints, persisting steps in execution log using SQLite or PostgreSQL.
 - **Control Interfaces**:
   - **CLI**: Manage executions via the `obelisk` command.
-  - **gRPC API**: Programmatic interaction.
+  - **REST API**: Programmatic interaction.
   - **Web UI**: View and submit function executions, execution logs, WIT definitions, and a time-traveling debugger showing backtraces and sources of recorded events.
 
 ## Core Principles
@@ -117,7 +117,7 @@ curl -L --tlsv1.2 -sSf https://raw.githubusercontent.com/obeli-sk/obelisk/main/d
 
 ### Docker
 ```sh
-# Use host's network. Ports 8080 (web) and 5005 (grpc) will be bound to 127.0.0.1
+# Use host's network. Ports 8080 (web) and 5005 (API) will be bound to 127.0.0.1
 mkdir config
 docker run getobelisk/obelisk generate server-config > config/server.toml
 docker run \
@@ -148,7 +148,6 @@ docker run --net=host \
 ```
 
 ### From Source
-Requires [`protoc`](https://protobuf.dev/downloads/).
 ```sh
 cargo install --locked --git https://github.com/obeli-sk/obelisk --branch latest obelisk
 ```
@@ -176,8 +175,8 @@ executions inherit it, so a configuration change applies only to new execution
 trees and cannot change replay behavior. Existing databases require no schema
 migration: executions created by older releases retain their legacy unlimited
 contract. `max_transport_message_size_bytes` (also under `[limits]`, defaulting to
-512 MiB) is a separate, larger transport safeguard bounding a single gRPC message
-or REST request body, and does not relax the persisted-value limit.
+512 MiB) is a separate, larger transport safeguard bounding a single API request
+body, and does not relax the persisted-value limit.
 
 ## Getting Started
 
@@ -295,8 +294,7 @@ under the [GNU Affero General Public License version 3](LICENSE-AGPL).
 
 The following subfolders are licensed under the MIT License:
 
-* `wit/`   – see [LICENSE-MIT](wit/LICENSE-MIT)
-* `proto/` – see [LICENSE-MIT](proto/LICENSE-MIT)
+* `wit/` – see [LICENSE-MIT](wit/LICENSE-MIT)
 
 ## Generated WIT Files
 

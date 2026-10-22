@@ -644,7 +644,7 @@ pub(crate) enum Server {
         #[arg(long, conflicts_with_all = ["deployment", "empty", "description"])]
         deployment_id: Option<DeploymentId>,
         /// Start with an empty deployment, ignoring any Enqueued or Active deployment in the database.
-        /// Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via gRPC.
+        /// Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via the API.
         #[arg(long)]
         empty: bool,
         /// Optional human-readable description for the deployment created by --deployment or --empty.

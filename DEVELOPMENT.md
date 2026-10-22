@@ -6,12 +6,11 @@
 ├── src/                    # Main binary (obelisk CLI + server)
 │   ├── command/            # CLI commands
 │   ├── config/             # Configuration handling
-│   └── server/             # gRPC and HTTP API servers
+│   └── server/             # HTTP API servers
 ├── crates/
 │   ├── concepts/           # Core types, traits, storage interfaces
 │   ├── db-sqlite/          # SQLite implementation
 │   ├── db-postgres/        # PostgreSQL implementation
-│   ├── grpc/               # gRPC codegen and mappings
 │   ├── wasm-workers/       # WASM execution runtime
 │   ├── executor/           # Work-stealing executor
 │   ├── utils/              # Shared utilities
@@ -21,8 +20,6 @@
 │       ├── db-macro/       # Test macro for multi-DB testing
 │       ├── test-utils/     # Test helpers (SimClock, etc.)
 │       └── test-programs/  # WASM test components
-├── proto/
-│   └── obelisk.proto       # gRPC API definition
 └── scripts/                # Development scripts
 ```
 
@@ -80,7 +77,7 @@ scripts/test-activity-vm-qemu-kvm.sh
 cargo test --package obeli-db-tests --test deployment_pagination
 
 # Specific test in main package
-cargo test --package obelisk grpc_server::tests
+cargo test --package obelisk web_api_server::tests
 ```
 
 ## Key Files
@@ -90,7 +87,6 @@ cargo test --package obelisk grpc_server::tests
 | TOML | `src/config/toml.rs`, `server-help.toml`, `deployment-help.toml` — update the `*-help.toml` files when changing TOML config, then run `scripts/update-schemas.sh` to regenerate TOML-facing schemas in `assets/schemas/toml/` and the canonical deployment schema in `assets/schemas/` |
 | Database schema/queries | `crates/db-sqlite/src/sqlite_dao.rs`, `crates/db-postgres/src/postgres_dao.rs`; after adding a migration, run `scripts/update-schemas.sh` to refresh the consolidated dumps in `assets/schemas/sql/` |
 | Storage traits | `crates/concepts/src/storage.rs` |
-| gRPC API | `proto/obelisk.proto`, `src/server/grpc_server.rs`,`crates/grpc/src/grpc_mapping.rs` |
 | REST API | `src/server/web_api_server.rs` |
 | Server | `src/command/server.rs`, `crates/wasm-workers/src/registry.rs` |
 | Activities | `crates/wasm-workers/src/activity/` |
@@ -101,4 +97,3 @@ cargo test --package obelisk grpc_server::tests
 ## Build System Notes
 
 - `cargo metadata --format-version 1 --no-deps | jq -r .target_directory` gets the current Cargo target directory.
-- **gRPC and REST are multiplexed on the same port** (`api.listening_addr`, default `9080`). gRPC clients connect to the same address as REST clients.

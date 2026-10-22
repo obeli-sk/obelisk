@@ -81,15 +81,6 @@ use concepts::storage::DbPool as _;
 use concepts::storage::DbPoolCloseable;
 use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
-use grpc::grpc_gen::{
-    AdvanceExecutionRequest, CancelExecutionRequest, DeploymentId as GrpcDeploymentId,
-    ExecutionId as GrpcExecutionId, GetDeploymentRequest, GetStatusRequest, ListComponentsRequest,
-    ReplayExecutionRequest, RuntimeConfigCheck, SubmitDeploymentRequest, SubmitRequest,
-    SwitchDeploymentRequest, cancel_execution_response::CancelExecutionOutcome,
-    deployment_repository_client::DeploymentRepositoryClient,
-    execution_repository_client::ExecutionRepositoryClient,
-    function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
-};
 use hmac::{Hmac, KeyInit as _, Mac};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -101,7 +92,6 @@ use std::{
 };
 use test_utils::sanitize_json;
 use tokio::{sync::watch, task::JoinHandle};
-use tokio_stream::StreamExt;
 use tracing::{debug, info, instrument};
 
 struct FollowResponse {
@@ -1073,10 +1063,6 @@ impl TestServer {
 
     // ---- helper methods ------------------------------------------------
 
-    fn api_addr(&self) -> String {
-        format!("{}:{}", self.ip, API_PORT)
-    }
-
     async fn submit_follow(&self, ffqn: &str, params: Vec<Value>) -> FollowResponse {
         let response = self
             .client
@@ -1227,28 +1213,6 @@ impl TestServer {
         serde_json::from_str(&body).expect("components parse failed")
     }
 
-    async fn grpc_list_components(
-        &self,
-        deployment_id: Option<DeploymentId>,
-    ) -> grpc::grpc_gen::ListComponentsResponse {
-        let mut fn_client =
-            FunctionRepositoryClient::connect(format!("http://{}", self.api_addr()))
-                .await
-                .unwrap();
-        fn_client
-            .list_components(ListComponentsRequest {
-                function_name: None,
-                component_digest: None,
-                extensions: false,
-                deployment_id: deployment_id.map(|deployment_id| GrpcDeploymentId {
-                    id: deployment_id.to_string(),
-                }),
-            })
-            .await
-            .unwrap()
-            .into_inner()
-    }
-
     /// Read the active deployment's verbatim manifest from the database.
     async fn active_deployment_toml(&self) -> String {
         let pool = SqlitePool::new(&self.sqlite_file, SqliteConfig::default())
@@ -1381,93 +1345,92 @@ impl TestServer {
             .expect("webapi submit deployment request failed")
     }
 
-    /// Submit a manifest over gRPC as a CAS-efficient package: preflight without
-    /// blobs, then retry attaching only the files the server reports missing.
+    /// Submit a deployment package as `multipart/form-data`. Each file is
+    /// `(field name, path, bytes)`, the field name being the claimed digest or `file`.
+    async fn webapi_submit_package(
+        &self,
+        deployment_id: DeploymentId,
+        deployment_toml: &str,
+        files: Vec<(String, String, Vec<u8>)>,
+        allow_unavailable_runtime_config: bool,
+    ) -> reqwest::Response {
+        let mut form =
+            reqwest::multipart::Form::new().text("deployment_toml", deployment_toml.to_string());
+        if allow_unavailable_runtime_config {
+            form = form.text("allow_unavailable_runtime_config", "true");
+        }
+        for (field, path, bytes) in files {
+            let part = reqwest::multipart::Part::bytes(bytes)
+                .file_name(path)
+                .mime_str("application/octet-stream")
+                .unwrap();
+            form = form.part(field, part);
+        }
+        self.client
+            .put(format!("{}/v1/deployments/{deployment_id}", self.base_url))
+            .header("Accept", "application/json")
+            .multipart(form)
+            .send()
+            .await
+            .expect("webapi submit package request failed")
+    }
+
+    async fn deployment_exists(&self, deployment_id: DeploymentId) -> bool {
+        let resp = self
+            .client
+            .get(format!("{}/v1/deployments/{deployment_id}", self.base_url))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .expect("get deployment request failed");
+        match resp.status().as_u16() {
+            200 => true,
+            404 => false,
+            other => panic!("unexpected get deployment status {other}"),
+        }
+    }
+
+    /// Submit a manifest as a CAS-efficient package: preflight without blobs,
+    /// then retry attaching only the files the server reports missing.
     /// Returns the new deployment ID.
-    async fn grpc_upload_and_submit_manifest(
+    async fn webapi_upload_and_submit_manifest(
         &self,
         deployment_toml_path: &std::path::Path,
     ) -> DeploymentId {
-        use prost::Message as _;
-
         let prepared =
             crate::config::deployment::prepare_deployment_manifest_from_disk(deployment_toml_path)
                 .await
                 .expect("cannot prepare deployment manifest");
-        let grpc_client =
-            DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
-                .await
-                .unwrap()
-                .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
-                .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
-
         let deployment_id = DeploymentId::generate();
-        let submit = async |files| {
-            grpc_client
-                .clone()
-                .submit_deployment(SubmitDeploymentRequest {
-                    deployment_toml: prepared.deployment_toml.clone(),
-                    created_by: Some("test".to_string()),
-                    runtime_config_check: RuntimeConfigCheck::Strict as i32,
-                    description: None,
-                    deployment_id: Some(deployment_id.into()),
-                    files,
+        let mut resp = self
+            .webapi_submit_package(deployment_id, &prepared.deployment_toml, Vec::new(), false)
+            .await;
+        if resp.status() == reqwest::StatusCode::CONFLICT {
+            let body: Value = resp.json().await.unwrap();
+            let missing: Vec<&str> = body["missing_files"]
+                .as_array()
+                .expect("409 must list missing_files")
+                .iter()
+                .filter_map(|issue| issue["digest"].as_str())
+                .collect();
+            let files = prepared
+                .files
+                .iter()
+                .filter(|file| missing.contains(&file.digest.to_string().as_str()))
+                .map(|file| {
+                    (
+                        file.digest.to_string(),
+                        file.path.clone(),
+                        file.bytes.clone(),
+                    )
                 })
-                .await
-        };
-
-        // Preflight: no blobs attached. Succeeds outright when every referenced
-        // digest is already in the CAS.
-        match submit(Vec::new()).await {
-            Ok(resp) => resp.into_inner(),
-            Err(status) => {
-                let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details())
-                    .expect("submit error must carry SubmitDeploymentErrorDetail");
-                let missing: Vec<String> = detail
-                    .missing_files
-                    .iter()
-                    .filter_map(|issue| issue.digest.clone())
-                    .collect();
-                // Retry with only the missing blobs.
-                let files = prepared
-                    .files
-                    .iter()
-                    .filter(|file| missing.contains(&file.digest.to_string()))
-                    .map(|file| grpc::grpc_gen::DeploymentFileContent {
-                        path: file.path.clone(),
-                        digest: Some(file.digest.to_string()),
-                        content: file.bytes.clone(),
-                    })
-                    .collect();
-                submit(files)
-                    .await
-                    .expect("resubmit with blobs failed")
-                    .into_inner()
-            }
-        };
+                .collect();
+            resp = self
+                .webapi_submit_package(deployment_id, &prepared.deployment_toml, files, false)
+                .await;
+        }
+        assert_eq!(resp.status(), reqwest::StatusCode::NO_CONTENT);
         deployment_id
-    }
-
-    /// Hot-redeploy to the given deployment over gRPC, asserting the switch succeeded.
-    async fn grpc_switch_hot_redeploy(&self, deployment_id: DeploymentId) {
-        let mut grpc_client =
-            DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
-                .await
-                .unwrap()
-                .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
-                .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
-        let resp = grpc_client
-            .switch_deployment(SwitchDeploymentRequest {
-                deployment_id: Some(GrpcDeploymentId {
-                    id: deployment_id.to_string(),
-                }),
-                runtime_config_check: RuntimeConfigCheck::Strict as i32,
-                apply: true,
-            })
-            .await
-            .expect("switch_deployment failed")
-            .into_inner();
-        assert_eq!(resp.outcome(), Outcome::SwitchOutcomeSwitched);
     }
 
     /// Hot-redeploy to the given deployment via the Web API.
@@ -1491,19 +1454,17 @@ impl TestServer {
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["ok"], "switched", "unexpected switch outcome");
     }
+
+    /// Apply `mutate` to the active deployment's manifest, submit it and hot-redeploy to it.
+    #[instrument(skip_all)]
+    async fn submit_and_hot_redeploy(&self, mutate: impl FnOnce(&mut DocumentMut)) {
+        let deployment_id = self.submit_modified_deployment(mutate).await;
+        self.webapi_switch_hot_redeploy(deployment_id).await;
+    }
 }
 
 #[tokio::test]
 async fn api_auth_should_deny_unauthenticated_requests() {
-    fn list_components_request() -> ListComponentsRequest {
-        ListComponentsRequest {
-            function_name: None,
-            component_digest: None,
-            extensions: false,
-            deployment_id: None,
-        }
-    }
-
     let hashed_token = "hashed-secret-token";
     let explicit_token = "explicit-secret-token";
     let server = TestServer::start_empty_with_auth(
@@ -1545,28 +1506,13 @@ async fn api_auth_should_deny_unauthenticated_requests() {
         .unwrap();
     assert!(resp.status().is_success(), "status: {}", resp.status());
 
-    let mut fn_client = FunctionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap();
-    let status = fn_client
-        .list_components(list_components_request())
-        .await
-        .unwrap_err();
-    assert_eq!(status.code(), tonic::Code::Unauthenticated);
-    let mut authenticated = tonic::Request::new(list_components_request());
-    authenticated.metadata_mut().insert(
-        "authorization",
-        format!("Bearer {hashed_token}").parse().unwrap(),
-    );
-    fn_client.list_components(authenticated).await.unwrap();
-
     server.shutdown().await;
 }
 
 /// Regression test for hot-deploying local WASM files to a server that starts empty.
 ///
 /// Starts with an empty deployment (no components, no CAS blobs), then runs the
-/// `deployment apply` flow over gRPC: upload every referenced WASM blob, submit the verbatim
+/// `deployment apply` flow over REST: upload every referenced WASM blob, submit the verbatim
 /// manifest, and hot-redeploy. This used to fail because the server resolved the stored
 /// manifest against a synthetic `/deployment` root and then tried to read the WASM from that
 /// non-existent path instead of materializing the uploaded blobs from the CAS.
@@ -1593,8 +1539,10 @@ routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
     )
     .await
     .unwrap();
-    let deployment_id = server.grpc_upload_and_submit_manifest(fixture.path()).await;
-    server.grpc_switch_hot_redeploy(deployment_id).await;
+    let deployment_id = server
+        .webapi_upload_and_submit_manifest(fixture.path())
+        .await;
+    server.webapi_switch_hot_redeploy(deployment_id).await;
 
     // The WASM components from the manifest are now live.
     let components = server.list_components().await;
@@ -1613,149 +1561,6 @@ routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
     server.shutdown().await;
 }
 
-/// Selects which protocol to use for submit + hot-redeploy in parametrized tests.
-#[derive(Clone, Copy, Debug)]
-enum TestDeployClient {
-    /// Submit and switch via gRPC.
-    Grpc,
-    /// Submit and switch via the Web API.
-    WebApi,
-}
-
-impl TestDeployClient {
-    /// Read the active deployment config from `SQLite`, apply `mutate` to it,
-    /// then submit the modified deployment and hot-redeploy to it using
-    /// whichever protocol this client represents.
-    #[instrument(skip_all)]
-    async fn submit_and_hot_redeploy(
-        &self,
-        server: &TestServer,
-        mutate: impl FnOnce(&mut DocumentMut),
-    ) {
-        let mut doc = server
-            .active_deployment_toml()
-            .await
-            .parse::<DocumentMut>()
-            .unwrap();
-        mutate(&mut doc);
-        let new_deployment_toml = doc.to_string();
-
-        match self {
-            TestDeployClient::Grpc => {
-                let mut grpc_client =
-                    DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-                        .await
-                        .unwrap()
-                        .max_encoding_message_size(
-                            crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES,
-                        )
-                        .max_decoding_message_size(
-                            crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES,
-                        );
-                let deployment_id = DeploymentId::generate();
-                grpc_client
-                    .submit_deployment(SubmitDeploymentRequest {
-                        deployment_toml: new_deployment_toml,
-                        created_by: Some("test".to_string()),
-                        runtime_config_check: RuntimeConfigCheck::Strict as i32,
-                        description: None,
-                        deployment_id: Some(deployment_id.into()),
-                        // The mutated active manifest references only blobs already in the CAS.
-                        files: Vec::new(),
-                    })
-                    .await
-                    .unwrap();
-
-                let switch_resp = grpc_client
-                    .switch_deployment(SwitchDeploymentRequest {
-                        deployment_id: Some(deployment_id.into()),
-                        runtime_config_check: RuntimeConfigCheck::Strict as i32,
-                        apply: true,
-                    })
-                    .await
-                    .unwrap()
-                    .into_inner();
-                assert_eq!(switch_resp.outcome(), Outcome::SwitchOutcomeSwitched);
-            }
-            TestDeployClient::WebApi => {
-                let id = server.webapi_submit_deployment(&new_deployment_toml).await;
-                server.webapi_switch_hot_redeploy(id).await;
-            }
-        }
-    }
-}
-
-/// Selects which protocol to use for execution replay in parametrized tests.
-#[derive(Debug, Clone, Copy)]
-enum TestExecutionClient {
-    /// Replay via gRPC.
-    Grpc,
-    /// Replay via the Web API.
-    WebApi,
-}
-
-fn grpc_result_to_json(value: grpc::grpc_gen::SupportedFunctionResult) -> serde_json::Value {
-    match value.value {
-        Some(grpc::grpc_gen::supported_function_result::Value::Ok(ok)) => {
-            let return_value = ok.return_value.expect("ok return_value must exist");
-            let ok = serde_json::from_slice::<serde_json::Value>(&return_value.value)
-                .expect("server must send `return_value` as a valid JSON");
-            json!({ "ok": ok })
-        }
-        Some(grpc::grpc_gen::supported_function_result::Value::Error(err)) => {
-            let return_value = err.return_value.expect("err return_value must exist");
-            let err = serde_json::from_slice::<serde_json::Value>(&return_value.value)
-                .expect("server must send `return_value` as a valid JSON");
-            json!({ "err": err })
-        }
-        Some(grpc::grpc_gen::supported_function_result::Value::ExecutionFailure(failure)) => {
-            #[derive(serde::Serialize)]
-            struct ExecutionFailure {
-                kind: String,
-                #[serde(skip_serializing_if = "Option::is_none")]
-                reason: Option<String>,
-                #[serde(skip_serializing_if = "Option::is_none")]
-                detail: Option<String>,
-            }
-            #[derive(serde::Serialize)]
-            struct ExecutionFailureWrapper {
-                execution_failure: ExecutionFailure,
-            }
-
-            let kind = grpc::grpc_gen::ExecutionFailureKind::try_from(failure.kind)
-                .expect("execution failure kind must be valid");
-            let kind = match kind {
-                grpc::grpc_gen::ExecutionFailureKind::Unspecified => {
-                    panic!("execution failure kind must not be unspecified")
-                }
-                grpc::grpc_gen::ExecutionFailureKind::TimedOut => "timed_out",
-                grpc::grpc_gen::ExecutionFailureKind::NondeterminismDetected => {
-                    "nondeterminism_detected"
-                }
-                grpc::grpc_gen::ExecutionFailureKind::OutOfFuel => "out_of_fuel",
-                grpc::grpc_gen::ExecutionFailureKind::Cancelled => "cancelled",
-                grpc::grpc_gen::ExecutionFailureKind::ValueTooLarge => "value_too_large",
-                grpc::grpc_gen::ExecutionFailureKind::Uncategorized => "uncategorized",
-            }
-            .to_string();
-            serde_json::to_value(&ExecutionFailureWrapper {
-                execution_failure: ExecutionFailure {
-                    kind,
-                    reason: failure.reason,
-                    detail: failure.detail,
-                },
-            })
-            .unwrap()
-        }
-        None => panic!("SupportedFunctionResult value must be set"),
-    }
-}
-
-#[derive(Debug)]
-struct ReplayCapturedWritesSummary {
-    captured_writes_len: usize,
-}
-
 #[derive(Debug)]
 struct AdvanceExecutionSummary {
     execution_id: String,
@@ -1763,158 +1568,7 @@ struct AdvanceExecutionSummary {
     retval: serde_json::Value,
 }
 
-impl TestExecutionClient {
-    async fn replay_captured_writes_summary(
-        self,
-        server: &TestServer,
-        execution_id: &str,
-    ) -> ReplayCapturedWritesSummary {
-        match self {
-            TestExecutionClient::WebApi => {
-                let replay_resp = server.replay(execution_id).await;
-                assert_eq!(replay_resp.status().as_u16(), 200);
-                let replay_body: Value = replay_resp.json().await.unwrap();
-                assert_eq!(
-                    0,
-                    replay_body["replayed_event_count"]
-                        .as_u64()
-                        .expect("replayed_event_count must be a number")
-                );
-                replay_body["replay_duration_ms"]
-                    .as_u64()
-                    .expect("replay_duration_ms must be a number");
-                assert_eq!(1, replay_body["replay_version"].as_u64().unwrap());
-                match replay_body["type"]
-                    .as_str()
-                    .expect("replay response type must be set")
-                {
-                    "advanceable" => ReplayCapturedWritesSummary {
-                        captured_writes_len: replay_body["captured_writes"]
-                            .as_array()
-                            .expect("captured_writes must be an array")
-                            .len(),
-                    },
-                    "finished" | "blocked" => ReplayCapturedWritesSummary {
-                        captured_writes_len: 0,
-                    },
-                    other => panic!("unexpected replay response type {other}"),
-                }
-            }
-            TestExecutionClient::Grpc => {
-                let mut grpc_client =
-                    ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-                        .await
-                        .unwrap();
-                let replay_resp = grpc_client
-                    .replay_execution(ReplayExecutionRequest {
-                        execution_id: Some(GrpcExecutionId {
-                            id: execution_id.to_string(),
-                        }),
-                    })
-                    .await
-                    .unwrap()
-                    .into_inner();
-                assert_eq!(0, replay_resp.replayed_event_count);
-                assert_eq!(1, replay_resp.replay_version);
-                let replay_duration = replay_resp
-                    .replay_duration
-                    .as_ref()
-                    .expect("replay_duration must be set");
-                assert!(replay_duration.seconds >= 0);
-                assert!(replay_duration.nanos >= 0);
-                match replay_resp.outcome.expect("replay outcome must be set") {
-                    grpc::grpc_gen::replay_execution_response::Outcome::Advanceable(
-                        advanceable,
-                    ) => ReplayCapturedWritesSummary {
-                        captured_writes_len: advanceable.captured_writes.len(),
-                    },
-                    grpc::grpc_gen::replay_execution_response::Outcome::Finished(_)
-                    | grpc::grpc_gen::replay_execution_response::Outcome::Blocked(_) => {
-                        ReplayCapturedWritesSummary {
-                            captured_writes_len: 0,
-                        }
-                    }
-                    grpc::grpc_gen::replay_execution_response::Outcome::ReplayFailed(failed) => {
-                        panic!("unexpected replay failure: {}", failed.error)
-                    }
-                }
-            }
-        }
-    }
-
-    async fn step_execution_until_finished(
-        self,
-        server: &TestServer,
-        ffqn: &str,
-        params: Vec<Value>,
-    ) -> AdvanceExecutionSummary {
-        match self {
-            TestExecutionClient::WebApi => {
-                server
-                    .step_execution_until_finished_webapi(ffqn, params)
-                    .await
-            }
-            TestExecutionClient::Grpc => {
-                server
-                    .step_execution_until_finished_grpc(ffqn, params)
-                    .await
-            }
-        }
-    }
-
-    async fn submit_paused(
-        self,
-        server: &TestServer,
-        execution_id: &str,
-        ffqn: &str,
-        params: Vec<Value>,
-    ) {
-        match self {
-            TestExecutionClient::WebApi => {
-                let submit = server
-                    .submit_paused_webapi(execution_id, ffqn, params)
-                    .await;
-                assert_eq!(submit.status().as_u16(), 201);
-            }
-            TestExecutionClient::Grpc => {
-                let submit = server.submit_paused_grpc(execution_id, ffqn, params).await;
-                assert_eq!(
-                    submit.outcome,
-                    grpc::grpc_gen::submit_response::Outcome::Created as i32
-                );
-            }
-        }
-    }
-}
-
 impl TestServer {
-    async fn submit_paused_grpc(
-        &self,
-        execution_id: &str,
-        ffqn: &str,
-        params: Vec<Value>,
-    ) -> grpc::grpc_gen::SubmitResponse {
-        let mut grpc_client =
-            ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
-                .await
-                .unwrap();
-        grpc_client
-            .submit(SubmitRequest {
-                execution_id: Some(GrpcExecutionId {
-                    id: execution_id.to_string(),
-                }),
-                function_name: Some(ffqn.parse::<FunctionFqn>().unwrap().into()),
-                params: Some(
-                    grpc::grpc_mapping::to_any(params, format!("urn:obelisk:json:params:{ffqn}"))
-                        .unwrap(),
-                ),
-                paused: true,
-            })
-            .await
-            .unwrap()
-            .into_inner()
-    }
-
     async fn submit_paused_webapi(
         &self,
         execution_id: &str,
@@ -1932,45 +1586,6 @@ impl TestServer {
             .send()
             .await
             .expect("submit paused request failed")
-    }
-
-    async fn get_status_summary_grpc(
-        &self,
-        execution_id: &str,
-    ) -> grpc::grpc_gen::ExecutionSummary {
-        let mut grpc_client =
-            ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
-                .await
-                .unwrap();
-        let mut stream = grpc_client
-            .get_status(GetStatusRequest {
-                execution_id: Some(GrpcExecutionId {
-                    id: execution_id.to_string(),
-                }),
-                follow: false,
-                send_finished_status: false,
-            })
-            .await
-            .unwrap()
-            .into_inner();
-
-        let mut summary = None;
-        while let Some(message) = stream.next().await {
-            let message = message.unwrap();
-            match message.message {
-                Some(grpc::grpc_gen::get_status_response::Message::Summary(found)) => {
-                    summary = Some(found);
-                }
-                Some(grpc::grpc_gen::get_status_response::Message::FinishedStatus(_)) => {
-                    panic!("send_finished_status=false should not emit finished_status")
-                }
-                Some(grpc::grpc_gen::get_status_response::Message::CurrentStatus(_)) => {
-                    panic!("follow=false should not emit current_status")
-                }
-                None => panic!("get_status message must be set"),
-            }
-        }
-        summary.expect("summary must be present")
     }
 
     /// Seed a cancellable parent workflow blocked on a join set holding an unfinished
@@ -2066,23 +1681,21 @@ impl TestServer {
         parent_id
     }
 
-    /// Cancel an execution out-of-band via gRPC, retrying until it exists and the
+    /// Cancel an execution out-of-band, retrying until it exists and the
     /// request is accepted (a parent submits its child lazily while running).
     async fn cancel_execution_with_retries(&self, execution_id: &str) {
-        let mut grpc_client =
-            ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
-                .await
-                .unwrap();
         loop {
-            if let Ok(resp) = grpc_client
-                .cancel_execution(CancelExecutionRequest {
-                    execution_id: Some(GrpcExecutionId {
-                        id: execution_id.to_string(),
-                    }),
-                })
+            let resp = self
+                .client
+                .put(format!(
+                    "{}/v1/executions/{execution_id}/cancel",
+                    self.base_url
+                ))
+                .header("Accept", "application/json")
+                .send()
                 .await
-                && resp.into_inner().outcome() == CancelExecutionOutcome::CancellationRequested
-            {
+                .expect("cancel execution request failed");
+            if resp.status().is_success() {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2103,115 +1716,6 @@ impl TestServer {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    }
-
-    async fn step_execution_until_finished_grpc(
-        &self,
-        ffqn: &str,
-        params: Vec<Value>,
-    ) -> AdvanceExecutionSummary {
-        let exec_id = self.generate_execution_id().await;
-        let submit = self.submit_paused_grpc(&exec_id, ffqn, params).await;
-        assert_eq!(
-            submit.outcome(),
-            grpc::grpc_gen::submit_response::Outcome::Created
-        );
-
-        let initial_summary = self.get_status_summary_grpc(&exec_id).await;
-        assert!(matches!(
-            initial_summary
-                .current_status
-                .as_ref()
-                .and_then(|status| status.status.as_ref()),
-            Some(grpc::grpc_gen::execution_status::Status::Paused(_))
-        ));
-
-        let mut grpc_client =
-            ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
-                .await
-                .unwrap();
-
-        let mut steps = 0;
-        loop {
-            let replay = grpc_client
-                .replay_execution(ReplayExecutionRequest {
-                    execution_id: Some(GrpcExecutionId {
-                        id: exec_id.clone(),
-                    }),
-                })
-                .await
-                .unwrap()
-                .into_inner();
-            if ffqn == "testing:integration/workflow-call-stub.call-stub" {
-                assert_eq!(
-                    u64::try_from(steps * 2).unwrap(),
-                    replay.replayed_event_count
-                );
-                assert_eq!(u32::try_from(steps * 2 + 1).unwrap(), replay.replay_version);
-            }
-            let captured_writes = match replay.outcome.expect("replay outcome must be set") {
-                grpc::grpc_gen::replay_execution_response::Outcome::Advanceable(advanceable) => {
-                    advanceable.captured_writes
-                }
-                grpc::grpc_gen::replay_execution_response::Outcome::Finished(finished) => {
-                    let value = finished.result.expect("finished result must be set");
-                    return AdvanceExecutionSummary {
-                        execution_id: exec_id,
-                        steps,
-                        retval: grpc_result_to_json(value),
-                    };
-                }
-                grpc::grpc_gen::replay_execution_response::Outcome::Blocked(_) => {
-                    unreachable!("blocked state is not created by any test")
-                }
-                grpc::grpc_gen::replay_execution_response::Outcome::ReplayFailed(failed) => {
-                    failed.captured_writes
-                }
-            };
-
-            steps += 1;
-            let advance = grpc_client
-                .advance_execution(AdvanceExecutionRequest {
-                    execution_id: Some(GrpcExecutionId {
-                        id: exec_id.clone(),
-                    }),
-                    captured_writes,
-                    persist_backtrace: true,
-                })
-                .await
-                .unwrap()
-                .into_inner();
-            match advance.result.expect("advance result must be set") {
-                grpc::grpc_gen::advance_execution_response::Result::Success(success) => {
-                    if let Some(value) = success.finished {
-                        return AdvanceExecutionSummary {
-                            execution_id: exec_id,
-                            steps,
-                            retval: grpc_result_to_json(value),
-                        };
-                    }
-                }
-                grpc::grpc_gen::advance_execution_response::Result::Error(error) => {
-                    match error.error.expect("advance error must be set") {
-                        grpc::grpc_gen::advance_execution_response::error::Error::VersionMismatch(_) => {
-                            panic!("advance returned version mismatch on step {steps}")
-                        }
-                        grpc::grpc_gen::advance_execution_response::error::Error::ReplayMismatch(_) => {
-                            panic!("advance returned replay mismatch on step {steps}")
-                        }
-                        grpc::grpc_gen::advance_execution_response::error::Error::TransientError(err) => {
-                            panic!("advance returned replay error on step {steps}: {}", err.message)
-                        }
-                    }
-                }
-            }
-
-            let summary = self.get_status_summary_grpc(&exec_id).await;
-            assert!(
-                !Self::is_finished(&summary),
-                "finished executions should return finished from AdvanceExecution"
-            );
         }
     }
 
@@ -2297,16 +1801,6 @@ impl TestServer {
                 }
             }
         }
-    }
-
-    fn is_finished(summary: &grpc::grpc_gen::ExecutionSummary) -> bool {
-        matches!(
-            summary
-                .current_status
-                .as_ref()
-                .and_then(|status| status.status.as_ref()),
-            Some(grpc::grpc_gen::execution_status::Status::Finished(_))
-        )
     }
 }
 
@@ -2555,108 +2049,6 @@ async fn list_functions() {
 }
 
 #[tokio::test]
-async fn list_components_grpc_by_explicit_deployment_id() {
-    let server = TestServer::start(test_addr!(999)).await;
-    const NEW_STUB_NAME: &str = "explicit_deployment_stub_grpc";
-    const NEW_STUB_FFQN: &str = "testing:integration/stubs.explicit-deployment-grpc";
-
-    let second_deployment_id = server
-        .submit_modified_deployment(|doc| {
-            append_inline_stub(doc, NEW_STUB_NAME, NEW_STUB_FFQN);
-        })
-        .await;
-
-    let current_components = server.grpc_list_components(None).await;
-    assert!(
-        !current_components.components.iter().any(|component| {
-            component.exports.iter().any(|export| {
-                export.function_name.as_ref().is_some_and(|function_name| {
-                    function_name.function_name == "explicit-deployment-grpc"
-                })
-            })
-        }),
-        "inactive deployment component must not appear without explicit deployment_id"
-    );
-
-    let explicit_components = server
-        .grpc_list_components(Some(second_deployment_id))
-        .await;
-    assert!(
-        explicit_components.components.iter().any(|component| {
-            component
-                .component_id
-                .as_ref()
-                .is_some_and(|component_id| component_id.name == NEW_STUB_NAME)
-        }),
-        "explicit deployment_id must return the submitted deployment's components"
-    );
-
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn list_components_grpc_filters_with_explicit_deployment_id() {
-    let server = TestServer::start(test_addr!(40_103)).await;
-    const NEW_STUB_NAME: &str = "explicit_deployment_stub_grpc_filters";
-    const NEW_STUB_FFQN: &str = "testing:integration/stubs.explicit-deployment-grpc-filters";
-
-    let second_deployment_id = server
-        .submit_modified_deployment(|doc| {
-            append_inline_stub(doc, NEW_STUB_NAME, NEW_STUB_FFQN);
-        })
-        .await;
-
-    let explicit_components = server
-        .grpc_list_components(Some(second_deployment_id))
-        .await;
-    let target = explicit_components
-        .components
-        .iter()
-        .find(|component| {
-            component
-                .component_id
-                .as_ref()
-                .is_some_and(|component_id| component_id.name == NEW_STUB_NAME)
-        })
-        .unwrap();
-    let digest = target
-        .component_id
-        .as_ref()
-        .unwrap()
-        .digest
-        .as_ref()
-        .unwrap()
-        .digest
-        .clone();
-
-    let mut fn_client = FunctionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap();
-    let filtered = fn_client
-        .list_components(ListComponentsRequest {
-            function_name: Some(grpc::grpc_gen::FunctionName::from(
-                &NEW_STUB_FFQN.parse::<FunctionFqn>().unwrap(),
-            )),
-            component_digest: Some(grpc::grpc_gen::ContentDigest { digest }),
-            extensions: false,
-            deployment_id: Some(GrpcDeploymentId {
-                id: second_deployment_id.to_string(),
-            }),
-        })
-        .await
-        .unwrap()
-        .into_inner();
-
-    assert_eq!(1, filtered.components.len());
-    assert_eq!(
-        NEW_STUB_NAME,
-        filtered.components[0].component_id.as_ref().unwrap().name
-    );
-
-    server.shutdown().await;
-}
-
-#[tokio::test]
 async fn app_config_webapi_reports_running_policy() {
     let server = TestServer::start(test_addr!(40_144)).await;
     let app: crate::config::app::AppConfigToml =
@@ -2851,167 +2243,13 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
     server.shutdown().await;
 }
 
-#[tokio::test]
-async fn submit_deployment_package_validates_before_persisting_grpc() {
-    use prost::Message as _;
-
-    let server = TestServer::start(test_addr!(62)).await;
-
-    let dir = tempfile::tempdir().unwrap();
-    tokio::fs::write(
-        dir.path().join("deferred.js"),
-        "export function run() { return 'ok'; }",
-    )
-    .await
-    .unwrap();
-    let deployment_toml_path = dir.path().join("deployment.toml");
-    tokio::fs::write(
-        &deployment_toml_path,
-        r#"
-[[activity_js]]
-name = "deferred"
-location = "deferred.js"
-ffqn = "testing:integration/deferred.run"
-"#,
-    )
-    .await
-    .unwrap();
-    let prepared =
-        crate::config::deployment::prepare_deployment_manifest_from_disk(&deployment_toml_path)
-            .await
-            .unwrap();
-    let expected_digest = prepared.files[0].digest.to_string();
-    let deployment_id = DeploymentId::generate();
-    let grpc_id = GrpcDeploymentId {
-        id: deployment_id.to_string(),
-    };
-
-    let mut grpc_client =
-        DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-            .await
-            .unwrap()
-            .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
-            .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
-    let submit = |files, id| {
-        let mut client = grpc_client.clone();
-        let toml = prepared.deployment_toml.clone();
-        async move {
-            client
-                .submit_deployment(SubmitDeploymentRequest {
-                    deployment_toml: toml,
-                    created_by: Some("test".to_string()),
-                    runtime_config_check: RuntimeConfigCheck::Strict as i32,
-                    description: None,
-                    deployment_id: Some(id),
-                    files,
-                })
-                .await
-        }
-    };
-
-    // Preflight with no blobs reports the missing file and stores nothing.
-    let status = submit(Vec::new(), grpc_id.clone())
-        .await
-        .expect_err("preflight must report the missing file");
-    let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details())
-        .expect("must carry SubmitDeploymentErrorDetail");
-    assert_eq!(detail.missing_files.len(), 1);
-    assert_eq!(
-        detail.missing_files[0].digest.as_deref(),
-        Some(expected_digest.as_str())
-    );
-    assert_eq!(detail.missing_files[0].section, "activity_js");
-    grpc_client
-        .clone()
-        .get_deployment(GetDeploymentRequest {
-            deployment_id: Some(grpc_id.clone()),
-            include_generated_metadata: None,
-        })
-        .await
-        .expect_err("failed preflight must not persist a deployment");
-
-    // An attached blob not referenced by the manifest is rejected as unexpected.
-    let status = submit(
-        vec![grpc::grpc_gen::DeploymentFileContent {
-            path: "deferred.js".to_string(),
-            digest: None,
-            content: b"unexpected".to_vec(),
-        }],
-        grpc_id.clone(),
-    )
-    .await
-    .expect_err("unexpected blob must be rejected");
-    let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details()).unwrap();
-    assert_eq!(detail.unexpected_files.len(), 1);
-
-    // A client-supplied digest that disagrees with the bytes is rejected.
-    let status = submit(
-        vec![grpc::grpc_gen::DeploymentFileContent {
-            path: "deferred.js".to_string(),
-            digest: Some(
-                "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-                    .to_string(),
-            ),
-            content: prepared.files[0].bytes.clone(),
-        }],
-        grpc_id.clone(),
-    )
-    .await
-    .expect_err("digest mismatch must be rejected");
-    let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details()).unwrap();
-    assert_eq!(detail.digest_mismatches.len(), 1);
-
-    // Retry with the correct blob persists the complete deployment.
-    submit(
-        vec![grpc::grpc_gen::DeploymentFileContent {
-            path: "deferred.js".to_string(),
-            digest: Some(expected_digest.clone()),
-            content: prepared.files[0].bytes.clone(),
-        }],
-        grpc_id.clone(),
-    )
-    .await
-    .expect("submit with correct blob must succeed");
-
-    // The stored deployment is complete and now exists.
-    let stored = grpc_client
-        .get_deployment(GetDeploymentRequest {
-            deployment_id: Some(grpc_id.clone()),
-            include_generated_metadata: None,
-        })
-        .await
-        .expect("stored deployment must exist")
-        .into_inner()
-        .deployment
-        .unwrap()
-        .deployment_toml
-        .unwrap();
-    assert!(stored.contains("content_digest"));
-
-    let clean = grpc_client
-        .get_deployment(GetDeploymentRequest {
-            deployment_id: Some(grpc_id),
-            include_generated_metadata: Some(false),
-        })
-        .await
-        .expect("clean deployment must be returned")
-        .into_inner()
-        .deployment
-        .unwrap()
-        .deployment_toml
-        .unwrap();
-    assert!(!clean.contains("content_digest"));
-
-    server.shutdown().await;
-}
-
 /// A deployment whose JS imports an interface that no component exports fails to
 /// compile+link on the server. This is a structural error that no runtime config can
-/// resolve, so it must be rejected regardless of `RuntimeConfigCheck` and persist
-/// nothing. The manifest is submitted verbatim over gRPC (inline content, no attached
+/// resolve, so it must be rejected regardless of `allow_unavailable_runtime_config` and persist
+/// nothing. The manifest is submitted verbatim over REST (inline content, no attached
 /// files) so verification does not lean on any client-side import checking.
 #[tokio::test]
-async fn submit_broken_js_import_fails_regardless_of_runtime_config_check_grpc() {
+async fn submit_broken_js_import_fails_regardless_of_runtime_config_check_webapi() {
     let server = TestServer::start(test_addr!(92)).await;
 
     // Inline webhook importing an interface no component exports. Inline content needs
@@ -3028,55 +2266,33 @@ export default function handle(request) {
 routes = [{ methods = ["GET"], route = "/broken-import" }]
 "#;
 
-    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap()
-        .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
-        .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
-
-    let submit = |check: RuntimeConfigCheck, id: GrpcDeploymentId| {
-        let mut client = grpc_client.clone();
-        async move {
-            client
-                .submit_deployment(SubmitDeploymentRequest {
-                    deployment_toml: deployment_toml.to_string(),
-                    created_by: Some("test".to_string()),
-                    runtime_config_check: check as i32,
-                    description: None,
-                    deployment_id: Some(id),
-                    files: Vec::new(),
-                })
-                .await
-        }
-    };
-
     // Both a strict and an allow-unavailable submit must be rejected: the missing import
     // is a link failure, not a missing env var / secret / exec allowlist entry, so no
     // runtime config tolerance can make it verify.
-    for check in [
-        RuntimeConfigCheck::Strict,
-        RuntimeConfigCheck::AllowUnavailable,
-    ] {
+    for allow_unavailable in [false, true] {
         let deployment_id = DeploymentId::generate();
-        let grpc_id = GrpcDeploymentId {
-            id: deployment_id.to_string(),
-        };
-        let status = submit(check, grpc_id.clone())
-            .await
-            .expect_err(&format!("{check:?} submit of a broken import must fail"));
+        let resp = server
+            .webapi_submit_package(
+                deployment_id,
+                deployment_toml,
+                Vec::new(),
+                allow_unavailable,
+            )
+            .await;
+        let status = resp.status();
+        let body = resp.text().await.unwrap();
         assert!(
-            status.message().contains("testing:integration/nonexistent"),
-            "{check:?} error must name the unresolved import, got: {}",
-            status.message()
+            !status.is_success(),
+            "allow_unavailable={allow_unavailable} submit of a broken import must fail"
         );
-        grpc_client
-            .clone()
-            .get_deployment(GetDeploymentRequest {
-                deployment_id: Some(grpc_id),
-                include_generated_metadata: None,
-            })
-            .await
-            .expect_err("a broken deployment must not be persisted");
+        assert!(
+            body.contains("testing:integration/nonexistent"),
+            "allow_unavailable={allow_unavailable} error must name the unresolved import, got: {body}"
+        );
+        assert!(
+            !server.deployment_exists(deployment_id).await,
+            "a broken deployment must not be persisted"
+        );
     }
 
     server.shutdown().await;
@@ -3088,9 +2304,9 @@ routes = [{ methods = ["GET"], route = "/broken-import" }]
 /// entry's `content_digest` but no `component_files`, so the server must walk the import
 /// graph from the CAS and refuse the open graph rather than persisting a webhook that
 /// only traps at request time. Like the missing-interface case, no runtime config can
-/// resolve it, so both `Strict` and `ALLOW_UNAVAILABLE` must fail and persist nothing.
+/// resolve it, so both strict and `allow_unavailable_runtime_config` submits must fail and persist nothing.
 #[tokio::test]
-async fn submit_webhook_missing_js_import_file_is_rejected_grpc() {
+async fn submit_webhook_missing_js_import_file_is_rejected_webapi() {
     let server = TestServer::start(test_addr!(93)).await;
 
     // A valid two-file graph on disk, so `prepare` computes the entry digest for us.
@@ -3146,58 +2362,34 @@ routes = [{ methods = ["GET"], route = "/" }]
         .find(|file| file.path.ends_with("ui-api.js"))
         .expect("prepared package contains the entry file");
 
-    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap()
-        .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
-        .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
-
-    let submit = |check: RuntimeConfigCheck, id: GrpcDeploymentId| {
-        let mut client = grpc_client.clone();
-        let toml = broken_toml.clone();
-        let files = vec![grpc::grpc_gen::DeploymentFileContent {
-            path: entry.path.clone(),
-            digest: Some(entry.digest.to_string()),
-            content: entry.bytes.clone(),
-        }];
-        async move {
-            client
-                .submit_deployment(SubmitDeploymentRequest {
-                    deployment_toml: toml,
-                    created_by: Some("test".to_string()),
-                    runtime_config_check: check as i32,
-                    description: None,
-                    deployment_id: Some(id),
-                    files,
-                })
-                .await
-        }
-    };
-
-    for check in [
-        RuntimeConfigCheck::Strict,
-        RuntimeConfigCheck::AllowUnavailable,
-    ] {
+    for allow_unavailable in [false, true] {
         let deployment_id = DeploymentId::generate();
-        let grpc_id = GrpcDeploymentId {
-            id: deployment_id.to_string(),
-        };
-        let status = submit(check, grpc_id.clone())
-            .await
-            .expect_err(&format!("{check:?} submit of an open JS graph must fail"));
+        let resp = server
+            .webapi_submit_package(
+                deployment_id,
+                &broken_toml,
+                vec![(
+                    entry.digest.to_string(),
+                    entry.path.clone(),
+                    entry.bytes.clone(),
+                )],
+                allow_unavailable,
+            )
+            .await;
+        let status = resp.status();
+        let body = resp.text().await.unwrap();
         assert!(
-            status.message().contains("webhook/lib/util.js"),
-            "{check:?} error must name the missing module, got: {}",
-            status.message()
+            !status.is_success(),
+            "allow_unavailable={allow_unavailable} submit of an open JS graph must fail"
         );
-        grpc_client
-            .clone()
-            .get_deployment(GetDeploymentRequest {
-                deployment_id: Some(grpc_id),
-                include_generated_metadata: None,
-            })
-            .await
-            .expect_err("a webhook with an unresolved import must not be persisted");
+        assert!(
+            body.contains("webhook/lib/util.js"),
+            "allow_unavailable={allow_unavailable} error must name the missing module, got: {body}"
+        );
+        assert!(
+            !server.deployment_exists(deployment_id).await,
+            "a webhook with an unresolved import must not be persisted"
+        );
     }
 
     server.shutdown().await;
@@ -3208,7 +2400,7 @@ routes = [{ methods = ["GET"], route = "/" }]
 /// mapping the orphan GC consults would pin a dead file forever. Built by preparing a
 /// valid graph, then hand-adding an unreferenced module + its blob (a broken client).
 #[tokio::test]
-async fn submit_rejects_stray_declared_component_file_grpc() {
+async fn submit_rejects_stray_declared_component_file_webapi() {
     let server = TestServer::start(test_addr!(94)).await;
 
     let dir = tempfile::tempdir().unwrap();
@@ -3265,55 +2457,41 @@ routes = [{ methods = ["GET"], route = "/" }]
     }
     let broken_toml = doc.to_string();
 
-    let mut files: Vec<grpc::grpc_gen::DeploymentFileContent> = prepared
+    let mut files: Vec<(String, String, Vec<u8>)> = prepared
         .files
         .iter()
-        .map(|file| grpc::grpc_gen::DeploymentFileContent {
-            path: file.path.clone(),
-            digest: Some(file.digest.to_string()),
-            content: file.bytes.clone(),
+        .map(|file| {
+            (
+                file.digest.to_string(),
+                file.path.clone(),
+                file.bytes.clone(),
+            )
         })
         .collect();
-    files.push(grpc::grpc_gen::DeploymentFileContent {
-        path: "webhook/unused.js".to_string(),
-        digest: Some(stray_digest),
-        content: stray_source.as_bytes().to_vec(),
-    });
+    files.push((
+        stray_digest,
+        "webhook/unused.js".to_string(),
+        stray_source.as_bytes().to_vec(),
+    ));
 
     let deployment_id = DeploymentId::generate();
-    let grpc_id = GrpcDeploymentId {
-        id: deployment_id.to_string(),
-    };
-    let status = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap()
-        .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
-        .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
-        .submit_deployment(SubmitDeploymentRequest {
-            deployment_toml: broken_toml,
-            created_by: Some("test".to_string()),
-            runtime_config_check: RuntimeConfigCheck::Strict as i32,
-            description: None,
-            deployment_id: Some(grpc_id.clone()),
-            files,
-        })
-        .await
-        .expect_err("a stray declared component file must be rejected");
+    let resp = server
+        .webapi_submit_package(deployment_id, &broken_toml, files, false)
+        .await;
+    let status = resp.status();
+    let body = resp.text().await.unwrap();
     assert!(
-        status.message().contains("webhook/unused.js"),
-        "error must name the stray file, got: {}",
-        status.message()
+        !status.is_success(),
+        "a stray declared component file must be rejected"
     );
-
-    DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap()
-        .get_deployment(GetDeploymentRequest {
-            deployment_id: Some(grpc_id),
-            include_generated_metadata: None,
-        })
-        .await
-        .expect_err("a deployment with a stray declared file must not be persisted");
+    assert!(
+        body.contains("webhook/unused.js"),
+        "error must name the stray file, got: {body}"
+    );
+    assert!(
+        !server.deployment_exists(deployment_id).await,
+        "a deployment with a stray declared file must not be persisted"
+    );
 
     server.shutdown().await;
 }
@@ -3323,7 +2501,7 @@ routes = [{ methods = ["GET"], route = "/" }]
 /// manual GC. Here a webhook file blob is written, then compile+link fails on a missing
 /// interface; the follow-up GC must find nothing left to delete.
 #[tokio::test]
-async fn rejected_submit_reclaims_orphan_blobs_grpc() {
+async fn rejected_submit_reclaims_orphan_blobs_webapi() {
     let server = TestServer::start(test_addr!(95)).await;
 
     // A single-file webhook (its only import is a WIT interface, so no `component_files`)
@@ -3354,35 +2532,29 @@ routes = [{ methods = ["GET"], route = "/" }]
             .await
             .unwrap();
     assert_eq!(prepared.files.len(), 1, "webhook must contribute one blob");
-    let files: Vec<grpc::grpc_gen::DeploymentFileContent> = prepared
+    let files = prepared
         .files
         .iter()
-        .map(|file| grpc::grpc_gen::DeploymentFileContent {
-            path: file.path.clone(),
-            digest: Some(file.digest.to_string()),
-            content: file.bytes.clone(),
+        .map(|file| {
+            (
+                file.digest.to_string(),
+                file.path.clone(),
+                file.bytes.clone(),
+            )
         })
         .collect();
-
-    let mut grpc_client =
-        DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-            .await
-            .unwrap()
-            .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
-            .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
-    grpc_client
-        .submit_deployment(SubmitDeploymentRequest {
-            deployment_toml: prepared.deployment_toml.clone(),
-            created_by: Some("test".to_string()),
-            runtime_config_check: RuntimeConfigCheck::Strict as i32,
-            description: None,
-            deployment_id: Some(GrpcDeploymentId {
-                id: DeploymentId::generate().to_string(),
-            }),
+    let resp = server
+        .webapi_submit_package(
+            DeploymentId::generate(),
+            &prepared.deployment_toml,
             files,
-        })
-        .await
-        .expect_err("compile+link must reject the missing interface");
+            false,
+        )
+        .await;
+    assert!(
+        !resp.status().is_success(),
+        "compile+link must reject the missing interface"
+    );
 
     let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
         .await
@@ -3402,11 +2574,11 @@ routes = [{ methods = ["GET"], route = "/" }]
     server.shutdown().await;
 }
 
-/// Phase 5: `RuntimeConfigCheck` governs whether missing env vars / secrets fail
-/// verification. Submit is strict by default and tolerant under `ALLOW_UNAVAILABLE`; a
-/// hot redeploy is always strict and rejects `ALLOW_UNAVAILABLE` outright.
+/// Phase 5: `allow_unavailable_runtime_config` governs whether missing env vars / secrets
+/// fail verification. Submit is strict by default and tolerant when it is set; a hot
+/// redeploy is always strict and rejects it outright.
 #[tokio::test]
-async fn submit_runtime_config_check_grpc() {
+async fn submit_runtime_config_check_webapi() {
     let server = TestServer::start(test_addr!(79)).await;
 
     // A JS activity referencing a bare-name env var guaranteed absent from the server
@@ -3419,78 +2591,63 @@ ffqn = "testing:integration/needs-env.run"
 env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
 "#;
 
-    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap()
-        .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
-        .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
-
     let deployment_id = DeploymentId::generate();
-
-    let submit = |check: RuntimeConfigCheck| {
-        let mut client = grpc_client.clone();
-        async move {
-            client
-                .submit_deployment(SubmitDeploymentRequest {
-                    deployment_toml: deployment_toml.to_string(),
-                    created_by: Some("test".to_string()),
-                    runtime_config_check: check as i32,
-                    description: None,
-                    deployment_id: Some(deployment_id.into()),
-                    files: Vec::new(),
-                })
-                .await
-        }
+    let switch = |allow_unavailable: bool| {
+        server
+            .client
+            .put(format!(
+                "{}/v1/deployments/{deployment_id}/switch",
+                server.base_url
+            ))
+            .header("Accept", "application/json")
+            .json(&json!({
+                "apply": true,
+                "allow_unavailable_runtime_config": allow_unavailable,
+            }))
+            .send()
     };
 
     // Strict submit fails on the missing env var and stores nothing.
-    let status = submit(RuntimeConfigCheck::Strict)
-        .await
-        .expect_err("strict submit must reject a missing env var");
+    let resp = server
+        .webapi_submit_package(deployment_id, deployment_toml, Vec::new(), false)
+        .await;
+    let status = resp.status();
+    let body = resp.text().await.unwrap();
     assert!(
-        status
-            .message()
-            .contains("OBELISK_PHASE5_DEFINITELY_MISSING_VAR"),
-        "error must name the missing env var, got: {}",
-        status.message()
+        !status.is_success(),
+        "strict submit must reject a missing env var"
+    );
+    assert!(
+        body.contains("OBELISK_PHASE5_DEFINITELY_MISSING_VAR"),
+        "error must name the missing env var, got: {body}"
     );
 
-    // ALLOW_UNAVAILABLE submit tolerates the missing env var and persists.
-    submit(RuntimeConfigCheck::AllowUnavailable)
-        .await
-        .expect("allow-missing submit must persist");
-
-    // A hot redeploy with ALLOW_UNAVAILABLE is rejected outright.
-    let status = grpc_client
-        .clone()
-        .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(deployment_id.into()),
-            runtime_config_check: RuntimeConfigCheck::AllowUnavailable as i32,
-            apply: true,
-        })
-        .await
-        .expect_err("hot redeploy must reject allow-unavailable-runtime-config");
+    // Allow-unavailable submit tolerates the missing env var and persists.
+    let resp = server
+        .webapi_submit_package(deployment_id, deployment_toml, Vec::new(), true)
+        .await;
     assert_eq!(
-        "argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE` cannot be used with `apply = true`",
-        status.message()
+        resp.status(),
+        reqwest::StatusCode::NO_CONTENT,
+        "allow-missing submit must persist"
+    );
+
+    // A hot redeploy with allow-unavailable is rejected outright.
+    let resp = switch(true).await.unwrap();
+    assert!(!resp.status().is_success());
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("`allow_unavailable_runtime_config = true` not allowed with `apply = true`"),
+        "unexpected error: {body}"
     );
 
     // A strict hot redeploy of the same deployment fails because the env var is missing.
-    let status = grpc_client
-        .clone()
-        .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(deployment_id.into()),
-            runtime_config_check: RuntimeConfigCheck::Strict as i32,
-            apply: true,
-        })
-        .await
-        .expect_err("strict hot redeploy must fail on the missing env var");
+    let resp = switch(false).await.unwrap();
+    assert!(!resp.status().is_success());
+    let body = resp.text().await.unwrap();
     assert!(
-        status
-            .message()
-            .contains("OBELISK_PHASE5_DEFINITELY_MISSING_VAR"),
-        "error must name the missing env var, got: {}",
-        status.message()
+        body.contains("OBELISK_PHASE5_DEFINITELY_MISSING_VAR"),
+        "error must name the missing env var, got: {body}"
     );
 
     server.shutdown().await;
@@ -3550,6 +2707,27 @@ ffqn = "testing:integration/pkg.run"
     assert_eq!(body["missing_files"].as_array().unwrap().len(), 1);
     assert_eq!(body["missing_files"][0]["digest"], json!(expected_digest));
     assert_eq!(body["missing_files"][0]["section"], json!("activity_js"));
+    assert!(
+        !server.deployment_exists(deployment_id).await,
+        "failed preflight must not persist a deployment"
+    );
+
+    // An attached blob not referenced by the manifest is rejected as unexpected.
+    let resp = server
+        .webapi_submit_package(
+            deployment_id,
+            &toml,
+            vec![(
+                "file".to_string(),
+                "pkg.js".to_string(),
+                b"unexpected".to_vec(),
+            )],
+            false,
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 409, "unexpected blob must be 409");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["unexpected_files"].as_array().unwrap().len(), 1);
 
     // A blob whose supplied digest disagrees with its bytes is reported as a mismatch.
     let mismatch_part = reqwest::multipart::Part::bytes(content.clone())
@@ -3637,11 +2815,8 @@ ffqn = "testing:integration/pkg.run"
 }
 
 #[tokio::test]
-async fn system_event_retention_dry_run_webapi_and_grpc() {
+async fn system_event_retention_dry_run_webapi() {
     use concepts::storage::{SystemEvent, SystemEventCode};
-    use grpc::grpc_gen::{
-        RetainSystemEventsRequest, admin_repository_client::AdminRepositoryClient,
-    };
 
     let server = TestServer::start(test_addr!(40_158)).await;
     let db_pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
@@ -3681,27 +2856,6 @@ async fn system_event_retention_dry_run_webapi_and_grpc() {
         response.json::<Value>().await.unwrap(),
         json!({"deleted": 1, "has_more": true})
     );
-    for event_id in &event_ids {
-        assert!(admin.get_system_event(*event_id).await.unwrap().is_some());
-    }
-
-    let mut client = AdminRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap();
-    let preview = client
-        .retain_system_events(RetainSystemEventsRequest {
-            max_age: Some(prost_wkt_types::Duration {
-                seconds: 86400,
-                nanos: 0,
-            }),
-            batch_size: 100,
-            dry_run: true,
-        })
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!(preview.deleted, 2);
-    assert!(!preview.has_more);
     for event_id in &event_ids {
         assert!(admin.get_system_event(*event_id).await.unwrap().is_some());
     }
@@ -3865,9 +3019,7 @@ async fn admin_cleanup_webapi() {
 }
 
 #[tokio::test]
-async fn shutdown_finishes_with_rest_grpc_and_grpc_web_follow_streams_open() {
-    use prost::Message as _;
-
+async fn shutdown_finishes_with_rest_follow_stream_open() {
     const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(10);
     let server = TestServer::start(test_addr!(129)).await;
     let execution_id = server.generate_execution_id().await;
@@ -3897,81 +3049,8 @@ async fn shutdown_finishes_with_rest_grpc_and_grpc_web_follow_streams_open() {
         .expect("REST follow request failed");
     assert_eq!(rest_follow.status(), reqwest::StatusCode::OK);
 
-    let request = GetStatusRequest {
-        execution_id: Some(GrpcExecutionId {
-            id: execution_id.clone(),
-        }),
-        follow: true,
-        send_finished_status: true,
-    };
-    let mut grpc_client =
-        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-            .await
-            .unwrap();
-    let grpc_follow = grpc_client
-        .get_status(request.clone())
-        .await
-        .expect("native gRPC follow request failed")
-        .into_inner();
-
-    let message = request.encode_to_vec();
-    let mut frame = Vec::with_capacity(message.len() + 5);
-    frame.push(0);
-    frame.extend_from_slice(
-        &u32::try_from(message.len())
-            .expect("gRPC-Web test request fits its frame length")
-            .to_be_bytes(),
-    );
-    frame.extend_from_slice(&message);
-    let grpc_web_follow = server
-        .client
-        .post(format!(
-            "{}/obelisk.ExecutionRepository/GetStatus",
-            server.base_url
-        ))
-        .header("content-type", "application/grpc-web+proto")
-        .header("x-grpc-web", "1")
-        .body(frame)
-        .send()
-        .await
-        .expect("gRPC-Web follow request failed");
-    assert_eq!(grpc_web_follow.status(), reqwest::StatusCode::OK);
-
-    // Keep every response body unconsumed to model slow clients with stream producers in flight.
-    let _open_streams = (rest_follow, grpc_follow, grpc_web_follow);
-    server.shutdown_with_timeout(SHUTDOWN_DEADLINE).await;
-}
-
-#[tokio::test]
-async fn disconnected_native_grpc_follow_does_not_delay_shutdown() {
-    const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(10);
-    let server = TestServer::start(test_addr!(130)).await;
-    let execution_id = server.generate_execution_id().await;
-    let submitted = server
-        .submit_paused_webapi(
-            &execution_id,
-            "testing:integration/workflow-add.add-workflow",
-            vec![json!(1), json!(2)],
-        )
-        .await;
-    assert_eq!(submitted.status(), reqwest::StatusCode::CREATED);
-
-    let mut grpc_client =
-        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-            .await
-            .unwrap();
-    let stream = grpc_client
-        .get_status(GetStatusRequest {
-            execution_id: Some(GrpcExecutionId { id: execution_id }),
-            follow: true,
-            send_finished_status: true,
-        })
-        .await
-        .expect("native gRPC follow request failed")
-        .into_inner();
-    drop(stream);
-    drop(grpc_client);
-
+    // Keep the response body unconsumed to model a slow client with a stream producer in flight.
+    let _open_stream = rest_follow;
     server.shutdown_with_timeout(SHUTDOWN_DEADLINE).await;
 }
 
@@ -4106,113 +3185,6 @@ async fn submit_workflow_and_replay() {
 }
 
 #[tokio::test]
-async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
-    let server = TestServer::start(test_addr!(83)).await;
-    let mut grpc_client =
-        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-            .await
-            .unwrap();
-
-    let activity_id = server.generate_execution_id().await;
-    server
-        .submit_paused_grpc(
-            &activity_id,
-            "testing:integration/activity.add",
-            vec![json!(3), json!(5)],
-        )
-        .await;
-    let resp = grpc_client
-        .cancel_execution(CancelExecutionRequest {
-            execution_id: Some(GrpcExecutionId {
-                id: activity_id.clone(),
-            }),
-        })
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!(
-        resp.outcome(),
-        CancelExecutionOutcome::CancellationRequested
-    );
-    // Cancelling a paused activity is async: the driver finalizes it to
-    // Finished(Cancelled) on a later tick, so poll rather than asserting immediately.
-    loop {
-        let summary = server.get_status_summary_grpc(&activity_id).await;
-        if matches!(
-            summary
-                .current_status
-                .as_ref()
-                .and_then(|status| status.status.as_ref()),
-            Some(grpc::grpc_gen::execution_status::Status::Finished(_))
-        ) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    let cancellable_workflow_id = server
-        .seed_cancellable_parent_blocked_on_uncancellable_child()
-        .await
-        .to_string();
-    let resp = grpc_client
-        .cancel_execution(CancelExecutionRequest {
-            execution_id: Some(GrpcExecutionId {
-                id: cancellable_workflow_id.clone(),
-            }),
-        })
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!(
-        resp.outcome(),
-        CancelExecutionOutcome::CancellationRequested
-    );
-    let summary = server
-        .get_status_summary_grpc(&cancellable_workflow_id)
-        .await;
-    assert!(matches!(
-        summary
-            .current_status
-            .as_ref()
-            .and_then(|status| status.status.as_ref()),
-        Some(grpc::grpc_gen::execution_status::Status::Cancelling(_))
-    ));
-    let resp = grpc_client
-        .cancel_execution(CancelExecutionRequest {
-            execution_id: Some(GrpcExecutionId {
-                id: cancellable_workflow_id.clone(),
-            }),
-        })
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!(resp.outcome(), CancelExecutionOutcome::AlreadyCancelling);
-
-    let workflow_id = server.generate_execution_id().await;
-    server
-        .submit_paused_grpc(
-            &workflow_id,
-            "testing:integration/workflow-add.add-workflow",
-            vec![json!(1), json!(2)],
-        )
-        .await;
-    let status = grpc_client
-        .cancel_execution(CancelExecutionRequest {
-            execution_id: Some(GrpcExecutionId { id: workflow_id }),
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(status.code(), tonic::Code::InvalidArgument);
-    assert!(
-        status
-            .message()
-            .contains("cannot cancel, execution is not a cancellable workflow")
-    );
-
-    server.shutdown().await;
-}
-
-#[tokio::test]
 async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
     let server = TestServer::start(test_addr!(84)).await;
 
@@ -4241,17 +3213,7 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
     );
     // Cancelling a paused activity is async: the driver finalizes it to
     // Finished(Cancelled) on a later tick, so poll rather than asserting immediately.
-    loop {
-        let summary = server.get_status_summary_grpc(&activity_id).await;
-        if matches!(
-            summary
-                .current_status
-                .as_ref()
-                .and_then(|status| status.status.as_ref()),
-            Some(grpc::grpc_gen::execution_status::Status::Finished(_))
-        ) {
-            break;
-        }
+    while server.get_status(&activity_id).await["pending_state"]["status"] != "finished" {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
@@ -4274,16 +3236,10 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
         resp.json::<Value>().await.unwrap(),
         json!({ "ok": "cancellation requested" })
     );
-    let summary = server
-        .get_status_summary_grpc(&cancellable_workflow_id)
-        .await;
-    assert!(matches!(
-        summary
-            .current_status
-            .as_ref()
-            .and_then(|status| status.status.as_ref()),
-        Some(grpc::grpc_gen::execution_status::Status::Cancelling(_))
-    ));
+    assert_eq!(
+        server.get_status(&cancellable_workflow_id).await["pending_state"]["status"],
+        "cancelling"
+    );
     let resp = server
         .client
         .put(format!(
@@ -4332,86 +3288,56 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
 /// delay and finishes the workflow as Cancelled.
 #[tokio::test]
 async fn cancellation_driver_finishes_running_cancellable_workflow_as_cancelled() {
-    use grpc::grpc_gen::execution_status::Status;
     const FFQN: &str = "testing:integration/workflow-sleep.sleep-cancellable";
     let server = TestServer::start(test_addr!(85)).await;
-    let mut grpc_client =
-        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-            .await
-            .unwrap();
 
     // Submit running (not paused); the workflow blocks on a 100s durable sleep.
     let exec_id = server.generate_execution_id().await;
-    grpc_client
-        .submit(SubmitRequest {
-            execution_id: Some(GrpcExecutionId {
-                id: exec_id.clone(),
-            }),
-            function_name: Some(FFQN.parse::<FunctionFqn>().unwrap().into()),
-            params: Some(
-                grpc::grpc_mapping::to_any(
-                    Vec::<Value>::new(),
-                    format!("urn:obelisk:json:params:{FFQN}"),
-                )
-                .unwrap(),
-            ),
-            paused: false,
-        })
+    let resp = server
+        .client
+        .put(format!("{}/v1/executions/{exec_id}", server.base_url))
+        .header("Accept", "application/json")
+        .json(&json!({ "ffqn": FFQN, "params": [] }))
+        .send()
         .await
-        .unwrap();
+        .expect("submit request failed");
+    assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
 
     // Wait until it has run and created the delay (blocked, or kept warm-locked).
-    loop {
-        let status = server.get_status_summary_grpc(&exec_id).await;
-        if matches!(
-            status
-                .current_status
-                .as_ref()
-                .and_then(|status| status.status.as_ref()),
-            Some(Status::BlockedByJoinSet(_) | Status::Locked(_))
-        ) {
-            break;
-        }
+    while !matches!(
+        server.get_status(&exec_id).await["pending_state"]["status"].as_str(),
+        Some("blocked_by_join_set" | "locked")
+    ) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    let resp = grpc_client
-        .cancel_execution(CancelExecutionRequest {
-            execution_id: Some(GrpcExecutionId {
-                id: exec_id.clone(),
-            }),
-        })
+    let resp = server
+        .client
+        .put(format!(
+            "{}/v1/executions/{exec_id}/cancel",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .send()
         .await
-        .unwrap()
-        .into_inner();
+        .expect("cancel request failed");
+    assert_eq!(resp.status().as_u16(), 200);
     assert_eq!(
-        resp.outcome(),
-        CancelExecutionOutcome::CancellationRequested
+        resp.json::<Value>().await.unwrap(),
+        json!({ "ok": "cancellation requested" })
     );
 
     // The driver drives it to Finished(Cancelled) without the 100s sleep ever expiring.
-    let finished_kind = loop {
-        let status = server.get_status_summary_grpc(&exec_id).await;
-        if let Some(Status::Finished(finished)) = status
-            .current_status
-            .as_ref()
-            .and_then(|status| status.status.as_ref())
-        {
-            break Some(
-                finished
-                    .result_kind
-                    .as_ref()
-                    .and_then(|rk| rk.value)
-                    .expect("finished must carry a result kind"),
-            );
+    let pending_state = loop {
+        let status = server.get_status(&exec_id).await;
+        if status["pending_state"]["status"] == "finished" {
+            break status["pending_state"].clone();
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
     assert_eq!(
-        finished_kind,
-        Some(grpc::grpc_gen::result_kind::Value::ExecutionFailureKind(
-            grpc::grpc_gen::ExecutionFailureKind::Cancelled as i32
-        )),
+        pending_state["result_kind"],
+        json!({ "err": { "execution_failure": "cancelled" } }),
         "workflow must finish as Cancelled"
     );
 
@@ -4421,46 +3347,39 @@ async fn cancellation_driver_finishes_running_cancellable_workflow_as_cancelled(
 // ---- Workflow: replaying a paused workflow should return preview events ----
 
 #[tokio::test]
-async fn replaying_paused_workflow_should_return_preview_events_grpc() {
-    replaying_paused_workflow_should_return_preview_events(
-        TestExecutionClient::Grpc,
-        test_addr!(63),
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn replaying_paused_workflow_should_return_preview_events_webapi() {
-    replaying_paused_workflow_should_return_preview_events(
-        TestExecutionClient::WebApi,
-        test_addr!(66),
-    )
-    .await;
-}
-
-async fn replaying_paused_workflow_should_return_preview_events(
-    client: TestExecutionClient,
-    addr: String,
-) {
-    let server = TestServer::start(addr).await;
+    let server = TestServer::start(test_addr!(66)).await;
 
     let exec_id = server.generate_execution_id().await;
-
-    client
-        .submit_paused(
-            &server,
+    let submit = server
+        .submit_paused_webapi(
             &exec_id,
             "testing:integration/workflow-add-via-activity.add-via-activity",
             vec![json!(3), json!(4)],
         )
         .await;
+    assert_eq!(submit.status().as_u16(), 201);
 
-    let replay = client
-        .replay_captured_writes_summary(&server, &exec_id)
-        .await;
+    let replay_resp = server.replay(&exec_id).await;
+    assert_eq!(replay_resp.status().as_u16(), 200);
+    let replay_body: Value = replay_resp.json().await.unwrap();
+    assert_eq!(
+        0,
+        replay_body["replayed_event_count"]
+            .as_u64()
+            .expect("replayed_event_count must be a number")
+    );
+    replay_body["replay_duration_ms"]
+        .as_u64()
+        .expect("replay_duration_ms must be a number");
+    assert_eq!(1, replay_body["replay_version"].as_u64().unwrap());
+    assert_eq!(replay_body["type"], "advanceable");
     assert!(
-        replay.captured_writes_len > 0,
-        "captured_writes must not be empty for a paused workflow: {client:?}"
+        !replay_body["captured_writes"]
+            .as_array()
+            .expect("captured_writes must be an array")
+            .is_empty(),
+        "captured_writes must not be empty for a paused workflow"
     );
     assert_eq!(
         server.persist_backtraces(&exec_id).await,
@@ -4471,150 +3390,63 @@ async fn replaying_paused_workflow_should_return_preview_events(
 
     server.shutdown().await;
 }
-
 #[tokio::test]
 async fn replay_nondeterminism_reason_survives_webapi() {
-    Box::pin(replay_nondeterminism_reason_survives(
-        TestExecutionClient::WebApi,
-        test_addr!(131),
-    ))
-    .await;
-}
-
-#[tokio::test]
-async fn replay_nondeterminism_reason_survives_grpc() {
-    Box::pin(replay_nondeterminism_reason_survives(
-        TestExecutionClient::Grpc,
-        test_addr!(132),
-    ))
-    .await;
-}
-
-async fn replay_nondeterminism_reason_survives(client: TestExecutionClient, addr: String) {
-    let server = TestServer::start(addr).await;
+    let server = TestServer::start(test_addr!(131)).await;
     let execution_id = server.generate_execution_id().await;
-    client
-        .submit_paused(
-            &server,
+    let submit = server
+        .submit_paused_webapi(
             &execution_id,
             "testing:integration/workflow-add-via-activity.add-via-activity",
             vec![json!(3), json!(4)],
         )
         .await;
+    assert_eq!(submit.status().as_u16(), 201);
 
-    match client {
-        TestExecutionClient::WebApi => {
-            let replay = server.replay(&execution_id).await;
-            assert_eq!(replay.status().as_u16(), 200);
-            let mut replay: Value = replay.json().await.unwrap();
-            let captured_writes = replay["captured_writes"]
-                .as_array_mut()
-                .expect("captured_writes must be an array");
-            let advance = server
-                .client
-                .put(format!(
-                    "{}/v1/executions/{execution_id}/advance",
-                    server.base_url
-                ))
-                .header("Accept", "application/json")
-                .json(&json!({
-                    "captured_writes": captured_writes,
-                    "persist_backtrace": false,
-                }))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(advance.status().as_u16(), 200);
-            server.corrupt_child_request_params_hash(&execution_id);
+    let replay = server.replay(&execution_id).await;
+    assert_eq!(replay.status().as_u16(), 200);
+    let mut replay: Value = replay.json().await.unwrap();
+    let captured_writes = replay["captured_writes"]
+        .as_array_mut()
+        .expect("captured_writes must be an array");
+    let advance = server
+        .client
+        .put(format!(
+            "{}/v1/executions/{execution_id}/advance",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .json(&json!({
+            "captured_writes": captured_writes,
+            "persist_backtrace": false,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(advance.status().as_u16(), 200);
+    server.corrupt_child_request_params_hash(&execution_id);
 
-            let failed = server.replay(&execution_id).await;
-            assert_eq!(failed.status().as_u16(), 409);
-            let failed: Value = failed.json().await.unwrap();
-            assert_eq!(failed["type"], "replay_failed");
-            assert_eq!(failed["failure"]["kind"], "nondeterminism_detected");
-            let detail = failed["failure"]["detail"]
-                .as_str()
-                .expect("nondeterminism detail must be set");
-            assert!(
-                detail.contains("found unprocessed request stored at version 3")
-                    && detail.contains("testing:integration/activity.add"),
-                "unexpected nondeterminism detail: {detail}"
-            );
-        }
-        TestExecutionClient::Grpc => {
-            let mut grpc_client =
-                ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-                    .await
-                    .unwrap();
-            let replay = grpc_client
-                .replay_execution(ReplayExecutionRequest {
-                    execution_id: Some(GrpcExecutionId {
-                        id: execution_id.clone(),
-                    }),
-                })
-                .await
-                .unwrap()
-                .into_inner();
-            let captured_writes = match replay.outcome.unwrap() {
-                grpc::grpc_gen::replay_execution_response::Outcome::Advanceable(advanceable) => {
-                    advanceable.captured_writes
-                }
-                outcome => panic!("unexpected replay outcome: {outcome:?}"),
-            };
-            let advance = grpc_client
-                .advance_execution(AdvanceExecutionRequest {
-                    execution_id: Some(GrpcExecutionId {
-                        id: execution_id.clone(),
-                    }),
-                    captured_writes,
-                    persist_backtrace: false,
-                })
-                .await
-                .unwrap()
-                .into_inner();
-            assert!(matches!(
-                advance.result,
-                Some(grpc::grpc_gen::advance_execution_response::Result::Success(
-                    _
-                ))
-            ));
-            server.corrupt_child_request_params_hash(&execution_id);
-
-            let failed = grpc_client
-                .replay_execution(ReplayExecutionRequest {
-                    execution_id: Some(GrpcExecutionId { id: execution_id }),
-                })
-                .await
-                .unwrap()
-                .into_inner();
-            let failed = match failed.outcome.unwrap() {
-                grpc::grpc_gen::replay_execution_response::Outcome::ReplayFailed(failed) => failed,
-                outcome => panic!("unexpected replay outcome: {outcome:?}"),
-            };
-            let failure = failed.failure.expect("structured failure must be set");
-            assert_eq!(
-                failure.kind,
-                grpc::grpc_gen::ExecutionFailureKind::NondeterminismDetected as i32
-            );
-            let detail = failure.detail.expect("nondeterminism detail must be set");
-            assert!(
-                detail.contains("found unprocessed request stored at version 3")
-                    && detail.contains("testing:integration/activity.add"),
-                "unexpected nondeterminism detail: {detail}"
-            );
-        }
-    }
+    let failed = server.replay(&execution_id).await;
+    assert_eq!(failed.status().as_u16(), 409);
+    let failed: Value = failed.json().await.unwrap();
+    assert_eq!(failed["type"], "replay_failed");
+    assert_eq!(failed["failure"]["kind"], "nondeterminism_detected");
+    let detail = failed["failure"]["detail"]
+        .as_str()
+        .expect("nondeterminism detail must be set");
+    assert!(
+        detail.contains("found unprocessed request stored at version 3")
+            && detail.contains("testing:integration/activity.add"),
+        "unexpected nondeterminism detail: {detail}"
+    );
     server.shutdown().await;
 }
 
-async fn replay_and_advance_paused_js_workflow_until_finished(
-    client: TestExecutionClient,
-    addr: String,
-) {
-    let server = TestServer::start(addr).await;
-    let stepped = client
-        .step_execution_until_finished(
-            &server,
+#[tokio::test]
+async fn replay_and_advance_paused_js_workflow_until_finished_webapi() {
+    let server = TestServer::start(test_addr!(65)).await;
+    let stepped = server
+        .step_execution_until_finished_webapi(
             "testing:integration/workflow-call-stub.call-stub",
             vec![json!(123_u64)],
         )
@@ -4628,120 +3460,51 @@ async fn replay_and_advance_paused_js_workflow_until_finished(
 }
 
 #[tokio::test]
-async fn replay_and_advance_paused_js_workflow_until_finished_grpc() {
-    replay_and_advance_paused_js_workflow_until_finished(TestExecutionClient::Grpc, test_addr!(64))
-        .await;
-}
-
-#[tokio::test]
-async fn replay_and_advance_paused_js_workflow_until_finished_webapi() {
-    replay_and_advance_paused_js_workflow_until_finished(
-        TestExecutionClient::WebApi,
-        test_addr!(65),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn replay_finished_execution_reports_final_version_grpc() {
-    replay_finished_execution_reports_final_version(TestExecutionClient::Grpc, test_addr!(133))
-        .await;
-}
-
-#[tokio::test]
 async fn replay_finished_execution_reports_final_version_webapi() {
-    replay_finished_execution_reports_final_version(TestExecutionClient::WebApi, test_addr!(134))
-        .await;
-}
-
-async fn replay_finished_execution_reports_final_version(
-    client: TestExecutionClient,
-    addr: String,
-) {
-    let server = TestServer::start(addr).await;
-    let stepped = client
-        .step_execution_until_finished(
-            &server,
+    let server = TestServer::start(test_addr!(134)).await;
+    let stepped = server
+        .step_execution_until_finished_webapi(
             "testing:integration/workflow-math-random.math-random",
             vec![],
         )
         .await;
     assert_eq!(1, stepped.steps);
 
-    match client {
-        TestExecutionClient::WebApi => {
-            let replay = server.replay(&stepped.execution_id).await;
-            assert_eq!(replay.status().as_u16(), 200);
-            let replay: ReplayResponseSer = replay.json().await.unwrap();
-            assert_eq!(5, replay.replay_version);
-            assert!(matches!(replay.outcome, ReplayOutcomeSer::Finished { .. }));
-        }
-        TestExecutionClient::Grpc => {
-            let mut grpc_client =
-                ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-                    .await
-                    .unwrap();
-            let replay = grpc_client
-                .replay_execution(ReplayExecutionRequest {
-                    execution_id: Some(GrpcExecutionId {
-                        id: stepped.execution_id,
-                    }),
-                })
-                .await
-                .unwrap()
-                .into_inner();
-            assert_eq!(5, replay.replay_version);
-            assert!(matches!(
-                replay.outcome,
-                Some(grpc::grpc_gen::replay_execution_response::Outcome::Finished(_))
-            ));
-        }
-    }
+    let replay = server.replay(&stepped.execution_id).await;
+    assert_eq!(replay.status().as_u16(), 200);
+    let replay: ReplayResponseSer = replay.json().await.unwrap();
+    assert_eq!(5, replay.replay_version);
+    assert!(matches!(replay.outcome, ReplayOutcomeSer::Finished { .. }));
     server.shutdown().await;
 }
 
-async fn replay_and_advance_oversized_result(client: TestExecutionClient, addr: String) {
+#[tokio::test]
+async fn replay_and_advance_oversized_result_webapi() {
     let server = TestServer::start_with_server_lines_and_component(
-        addr,
+        test_addr!(127),
         "limits.max_persisted_value_size_bytes = 256",
         "workflow_js",
         "test_make_record_workflow",
     )
     .await;
-    let stepped = client
-        .step_execution_until_finished(
-            &server,
+    let stepped = server
+        .step_execution_until_finished_webapi(
             "testing:integration/workflow-make-record.make-record",
             vec![json!("x".repeat(240))],
         )
         .await;
     assert_eq!(stepped.steps, 1);
-    let failure_key = match client {
-        TestExecutionClient::Grpc => "execution_failure",
-        TestExecutionClient::WebApi => "execution_failed",
-    };
     assert_eq!(
         stepped.retval,
-        serde_json::Value::Object(serde_json::Map::from_iter([(
-            failure_key.to_string(),
-            json!({
+        json!({
+            "execution_failed": {
                 "kind": "value_too_large",
                 "reason": "function result exceeds the persisted value limit",
                 "detail": "limit: 256 bytes"
-            }),
-        )]))
+            }
+        })
     );
     server.shutdown().await;
-}
-
-#[tokio::test]
-async fn replay_and_advance_oversized_result_grpc() {
-    replay_and_advance_oversized_result(TestExecutionClient::Grpc, test_addr!(126)).await;
-}
-
-#[tokio::test]
-async fn replay_and_advance_oversized_result_webapi() {
-    replay_and_advance_oversized_result(TestExecutionClient::WebApi, test_addr!(127)).await;
 }
 
 #[tokio::test]
@@ -4807,37 +3570,23 @@ async fn replay_after_restart_uses_original_persisted_value_limit() {
 
 const REPLAY_FAILED_FFQN: &str = "testing:integration/workflow-return-wrong-type.return-wrong-type";
 
-async fn replay_failed_js_workflow_then_advance(client: TestExecutionClient, addr: String) {
-    let server = TestServer::start(addr).await;
-    let stepped = client
-        .step_execution_until_finished(&server, REPLAY_FAILED_FFQN, vec![])
+#[tokio::test]
+async fn replay_failed_js_workflow_then_advance_webapi() {
+    let server = TestServer::start(test_addr!(67)).await;
+    let stepped = server
+        .step_execution_until_finished_webapi(REPLAY_FAILED_FFQN, vec![])
         .await;
     assert_eq!(stepped.steps, 1);
-    let failure_key = match client {
-        TestExecutionClient::Grpc => "execution_failure",
-        TestExecutionClient::WebApi => "execution_failed",
-    };
     assert_eq!(
-        serde_json::Value::Object(serde_json::Map::from_iter([(
-            failure_key.to_string(),
-            json!({
+        json!({
+            "execution_failed": {
                 "kind":"uncategorized",
                 "reason":"value does not type check - failed to type check the ok variant value `\"not-a-number\"` as type u32 - invalid type: string \"not-a-number\", expected value matching \"u32\" at line 1 column 14"
-            }),
-        )])),
+            }
+        }),
         stepped.retval
     );
     server.shutdown().await;
-}
-
-#[tokio::test]
-async fn replay_failed_js_workflow_then_advance_webapi() {
-    replay_failed_js_workflow_then_advance(TestExecutionClient::WebApi, test_addr!(67)).await;
-}
-
-#[tokio::test]
-async fn replay_failed_js_workflow_then_advance_grpc() {
-    replay_failed_js_workflow_then_advance(TestExecutionClient::Grpc, test_addr!(68)).await;
 }
 
 // ---- Workflow: submit activity via join set + getResult ----
@@ -5016,70 +3765,6 @@ async fn submit_nonexistent_function_returns_404() {
 }
 
 #[tokio::test]
-async fn grpc_submit_enforces_exact_persisted_value_boundary() {
-    let server = TestServer::start_with_server_lines_and_component(
-        test_addr!(124),
-        "limits.max_persisted_value_size_bytes = 16",
-        "activity_exec",
-        "testing:integration/exec-greet.greet-inline",
-    )
-    .await;
-    let mut grpc_client =
-        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
-            .await
-            .unwrap();
-    let ffqn = "testing:integration/exec-greet.greet-inline";
-
-    let accepted_id = server.generate_execution_id().await;
-    let accepted = grpc_client
-        .submit(SubmitRequest {
-            execution_id: Some(GrpcExecutionId { id: accepted_id }),
-            function_name: Some(ffqn.parse::<FunctionFqn>().unwrap().into()),
-            params: Some(
-                grpc::grpc_mapping::to_any(
-                    vec![json!("secretmarker")],
-                    format!("urn:obelisk:json:params:{ffqn}"),
-                )
-                .unwrap(),
-            ),
-            paused: true,
-        })
-        .await
-        .expect("a 16-byte compact JSON parameter array must be accepted")
-        .into_inner();
-    assert_eq!(
-        accepted.outcome(),
-        grpc::grpc_gen::submit_response::Outcome::Created
-    );
-
-    let rejected_id = server.generate_execution_id().await;
-    let error = grpc_client
-        .submit(SubmitRequest {
-            execution_id: Some(GrpcExecutionId { id: rejected_id }),
-            function_name: Some(ffqn.parse::<FunctionFqn>().unwrap().into()),
-            params: Some(
-                grpc::grpc_mapping::to_any(
-                    vec![json!("secretmarkerx")],
-                    format!("urn:obelisk:json:params:{ffqn}"),
-                )
-                .unwrap(),
-            ),
-            paused: true,
-        })
-        .await
-        .expect_err("a 17-byte compact JSON parameter array must be rejected");
-    assert_eq!(error.code(), tonic::Code::ResourceExhausted);
-    assert_eq!(
-        error.message(),
-        "execution parameters exceed the 16-byte persisted value limit"
-    );
-    assert!(!error.message().contains("secretmarkerx"));
-    assert_eq!(server.list_executions().await.as_array().unwrap().len(), 1);
-
-    server.shutdown().await;
-}
-
-#[tokio::test]
 async fn rest_submit_enforces_exact_persisted_value_boundary() {
     let server = TestServer::start_with_server_lines_and_component(
         test_addr!(125),
@@ -5173,7 +3858,7 @@ async fn inline_stub_self_stubbing() {
 /// its value.  The initial deployment sets `TEST_ENV_VAR=hello_from_env`.  A
 /// second deployment changes that value to `updated_value`.  After a hot redeploy
 /// the activity must return the new value without a server restart.
-async fn hot_redeploy_activity_impl(server: &TestServer, deploy_client: &TestDeployClient) {
+async fn hot_redeploy_activity_impl(server: &TestServer) {
     // 1. Run the activity with the initial deployment — must return the configured value.
     let resp = server
         .submit_follow(
@@ -5186,8 +3871,8 @@ async fn hot_redeploy_activity_impl(server: &TestServer, deploy_client: &TestDep
     assert_eq!(body, json!({"ok": "hello_from_env"}));
 
     // 2. Build a second deployment with the env var changed to "updated_value".
-    deploy_client
-        .submit_and_hot_redeploy(server, |doc| {
+    server
+        .submit_and_hot_redeploy(|doc| {
             set_component_env_var(
                 doc,
                 "activity_js",
@@ -5211,39 +3896,27 @@ async fn hot_redeploy_activity_impl(server: &TestServer, deploy_client: &TestDep
 }
 
 #[rstest::rstest]
-#[case::boa_wasm_grpc(JsRuntime::BoaWasm, TestDeployClient::Grpc)]
-#[case::v8_grpc(JsRuntime::V8, TestDeployClient::Grpc)]
-#[case::boa_wasm_webapi(JsRuntime::BoaWasm, TestDeployClient::WebApi)]
-#[case::v8_webapi(JsRuntime::V8, TestDeployClient::WebApi)]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn hot_redeploy_activity(
-    #[case] runtime: JsRuntime,
-    #[case] deploy_client: TestDeployClient,
-) {
-    let ip = match (runtime, deploy_client) {
-        (JsRuntime::BoaWasm, TestDeployClient::Grpc) => test_addr!(30),
-        (JsRuntime::V8, TestDeployClient::Grpc) => test_addr!(167),
-        (JsRuntime::BoaWasm, TestDeployClient::WebApi) => test_addr!(39),
-        (JsRuntime::V8, TestDeployClient::WebApi) => test_addr!(168),
+async fn hot_redeploy_activity(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(39),
+        JsRuntime::V8 => test_addr!(168),
     };
     let server = TestServer::start_with_js_runtime(ip, runtime.mode()).await;
-    hot_redeploy_activity_impl(&server, &deploy_client).await;
+    hot_redeploy_activity_impl(&server).await;
     server.shutdown().await;
 }
 
-/// After a hot redeploy, both the gRPC server and the web API server must expose
-/// the updated component registry.
+/// After a hot redeploy, the web API server must expose the updated component registry.
 ///
 /// A new inline stub `testing:integration/stubs.new-hot-stub` is added only in
-/// the second deployment.  The test asserts that before the hot redeploy the stub
-/// is absent from both REST `/v1/functions` and gRPC `ListComponents`, and present
-/// in both after it.
-async fn hot_redeploy_registry_impl(server: &TestServer, deploy_client: &TestDeployClient) {
+/// the second deployment. The test asserts that the stub is absent from REST
+/// `/v1/functions` before the hot redeploy and present after it.
+async fn hot_redeploy_registry_impl(server: &TestServer) {
     const NEW_STUB_FFQN: &str = "testing:integration/stubs.new-hot-stub";
 
-    let grpc_endpoint = format!("http://{}", server.api_addr());
-
-    // Helper: check whether the new stub ffqn appears in REST /v1/functions.
     let rest_has_new_stub = || async {
         let functions = server
             .client
@@ -5262,67 +3935,25 @@ async fn hot_redeploy_registry_impl(server: &TestServer, deploy_client: &TestDep
             .any(|f| f["ffqn"] == NEW_STUB_FFQN)
     };
 
-    // Helper: check whether the new stub appears in gRPC ListComponents exports.
-    let grpc_has_new_stub = |endpoint: String| async move {
-        let mut fn_client = FunctionRepositoryClient::connect(endpoint).await.unwrap();
-        let resp = fn_client
-            .list_components(ListComponentsRequest {
-                function_name: None,
-                component_digest: None,
-                extensions: false,
-                deployment_id: None,
-            })
-            .await
-            .unwrap()
-            .into_inner();
-        resp.components.iter().any(|c| {
-            c.exports.iter().any(|f| {
-                f.function_name
-                    .as_ref()
-                    .is_some_and(|n| n.function_name == "new-hot-stub")
-            })
-        })
-    };
-
-    // Confirm the new stub is absent before the hot redeploy.
     assert!(
         !rest_has_new_stub().await,
-        "stub must be absent before hot redeploy (REST)"
+        "stub must be absent before hot redeploy"
     );
-    assert!(
-        !grpc_has_new_stub(grpc_endpoint.clone()).await,
-        "stub must be absent before hot redeploy (gRPC)"
-    );
-
-    // Build a second deployment that adds the new inline stub and hot-redeploy.
-    deploy_client
-        .submit_and_hot_redeploy(server, |doc| {
+    server
+        .submit_and_hot_redeploy(|doc| {
             append_inline_stub(doc, "new_hot_stub", NEW_STUB_FFQN);
         })
         .await;
-
-    // Both servers must now expose the updated registry.
     assert!(
         rest_has_new_stub().await,
-        "stub must be present after hot redeploy (REST)"
+        "stub must be present after hot redeploy"
     );
-    assert!(
-        grpc_has_new_stub(grpc_endpoint).await,
-        "stub must be present after hot redeploy (gRPC)"
-    );
-}
-
-#[tokio::test]
-async fn hot_redeploy_registry_grpc() {
-    let server = TestServer::start(test_addr!(31)).await;
-    hot_redeploy_registry_impl(&server, &TestDeployClient::Grpc).await;
-    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn hot_redeploy_registry_webapi() {
     let server = TestServer::start(test_addr!(40)).await;
-    hot_redeploy_registry_impl(&server, &TestDeployClient::WebApi).await;
+    hot_redeploy_registry_impl(&server).await;
     server.shutdown().await;
 }
 
@@ -5330,10 +3961,7 @@ async fn hot_redeploy_registry_webapi() {
 /// env-var value from the updated deployment — proving that `WebhookServerState`
 /// (including `fn_registry`, `deployment_id`, and the rebuilt router) is pushed
 /// through the `WebhookRegistry` watch channel.
-async fn hot_redeploy_webhook_js_env_var_impl(
-    server: &TestServer,
-    deploy_client: &TestDeployClient,
-) {
+async fn hot_redeploy_webhook_js_env_var_impl(server: &TestServer) {
     // 1. Verify the initial env var value is served.
     let resp = server
         .client
@@ -5345,8 +3973,8 @@ async fn hot_redeploy_webhook_js_env_var_impl(
     assert_eq!(resp.text().await.unwrap(), "hello_from_webhook_env");
 
     // 2. Build a second deployment with the env var changed and hot-redeploy.
-    deploy_client
-        .submit_and_hot_redeploy(server, |doc| {
+    server
+        .submit_and_hot_redeploy(|doc| {
             set_component_env_var(
                 doc,
                 "webhook_endpoint_js",
@@ -5368,33 +3996,23 @@ async fn hot_redeploy_webhook_js_env_var_impl(
 }
 
 #[rstest::rstest]
-#[case::boa_wasm_grpc(JsRuntime::BoaWasm, TestDeployClient::Grpc)]
-#[case::v8_grpc(JsRuntime::V8, TestDeployClient::Grpc)]
-#[case::boa_wasm_webapi(JsRuntime::BoaWasm, TestDeployClient::WebApi)]
-#[case::v8_webapi(JsRuntime::V8, TestDeployClient::WebApi)]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn hot_redeploy_webhook_js_env_var(
-    #[case] runtime: JsRuntime,
-    #[case] deploy_client: TestDeployClient,
-) {
-    let ip = match (runtime, deploy_client) {
-        (JsRuntime::BoaWasm, TestDeployClient::Grpc) => test_addr!(32),
-        (JsRuntime::V8, TestDeployClient::Grpc) => test_addr!(169),
-        (JsRuntime::BoaWasm, TestDeployClient::WebApi) => test_addr!(41),
-        (JsRuntime::V8, TestDeployClient::WebApi) => test_addr!(170),
+async fn hot_redeploy_webhook_js_env_var(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(41),
+        JsRuntime::V8 => test_addr!(170),
     };
     let server = TestServer::start_with_js_runtime(ip, runtime.mode()).await;
-    hot_redeploy_webhook_js_env_var_impl(&server, &deploy_client).await;
+    hot_redeploy_webhook_js_env_var_impl(&server).await;
     server.shutdown().await;
 }
 
 /// After a hot redeploy that removes a JS webhook endpoint, the route must
 /// return 404 — proving that the router inside the running HTTP server is
 /// replaced, not just the env vars.
-async fn hot_redeploy_webhook_js_remove_endpoint_impl(
-    server: &TestServer,
-    deploy_client: &TestDeployClient,
-) {
+async fn hot_redeploy_webhook_js_remove_endpoint_impl(server: &TestServer) {
     // 1. Verify /hello is served by the initial deployment.
     let resp = server
         .client
@@ -5406,8 +4024,8 @@ async fn hot_redeploy_webhook_js_remove_endpoint_impl(
     assert_eq!(resp.text().await.unwrap(), "Hello from JS webhook!");
 
     // 2. Build a second deployment that removes test_hello_webhook and hot-redeploy.
-    deploy_client
-        .submit_and_hot_redeploy(server, |doc| {
+    server
+        .submit_and_hot_redeploy(|doc| {
             remove_component(doc, "webhook_endpoint_js", "test_hello_webhook");
         })
         .await;
@@ -5429,23 +4047,16 @@ async fn hot_redeploy_webhook_js_remove_endpoint_impl(
 }
 
 #[rstest::rstest]
-#[case::boa_wasm_grpc(JsRuntime::BoaWasm, TestDeployClient::Grpc)]
-#[case::v8_grpc(JsRuntime::V8, TestDeployClient::Grpc)]
-#[case::boa_wasm_webapi(JsRuntime::BoaWasm, TestDeployClient::WebApi)]
-#[case::v8_webapi(JsRuntime::V8, TestDeployClient::WebApi)]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn hot_redeploy_webhook_js_remove_endpoint(
-    #[case] runtime: JsRuntime,
-    #[case] deploy_client: TestDeployClient,
-) {
-    let ip = match (runtime, deploy_client) {
-        (JsRuntime::BoaWasm, TestDeployClient::Grpc) => test_addr!(33),
-        (JsRuntime::V8, TestDeployClient::Grpc) => test_addr!(171),
-        (JsRuntime::BoaWasm, TestDeployClient::WebApi) => test_addr!(42),
-        (JsRuntime::V8, TestDeployClient::WebApi) => test_addr!(172),
+async fn hot_redeploy_webhook_js_remove_endpoint(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(42),
+        JsRuntime::V8 => test_addr!(172),
     };
     let server = TestServer::start_with_js_runtime(ip, runtime.mode()).await;
-    hot_redeploy_webhook_js_remove_endpoint_impl(&server, &deploy_client).await;
+    hot_redeploy_webhook_js_remove_endpoint_impl(&server).await;
     server.shutdown().await;
 }
 

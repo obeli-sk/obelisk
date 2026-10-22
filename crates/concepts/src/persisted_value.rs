@@ -33,7 +33,6 @@ impl PersistedValueClass {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PersistedValueOrigin {
-    Grpc,
     Rest,
     Webhook,
     Workflow,
@@ -44,7 +43,6 @@ pub enum PersistedValueOrigin {
 impl PersistedValueOrigin {
     const fn as_str(self) -> &'static str {
         match self {
-            Self::Grpc => "grpc",
             Self::Rest => "rest",
             Self::Webhook => "webhook",
             Self::Workflow => "workflow",

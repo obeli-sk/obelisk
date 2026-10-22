@@ -53,11 +53,9 @@ skip = [
     { name = "fixedbitset", version = "0.4" },
     # hashbrown 0.14.5 used by boa_engine
     { name = "hashbrown", version = "0.14" },
-    # hashbrown 0.15 is used by prost-build, regalloc2 (wasmtime), wasmparser 0.244
-    { name = "hashbrown", version = "0.15" },
     { name = "hashbrown", version = "0.16.1" },
     { name = "foldhash", version = "0.1" },
-    # deno_core uses itertools 0.13; prost-build and wasmtime use 0.14; workspace and Boa use 0.15
+    # deno_core uses itertools 0.13; wasmtime uses 0.14; workspace and Boa use 0.15
     { name = "itertools", version = "0.13" },
     { name = "itertools", version = "0.14" },
     # boa_interner requires phf 0.14 while tokio-postgres uses 0.13

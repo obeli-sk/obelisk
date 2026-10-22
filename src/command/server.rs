@@ -78,7 +78,6 @@ use crate::config::wasm_cache_metadata_dir;
 use crate::init;
 use crate::init::Guard;
 use crate::prepare_server_startup;
-use crate::server::grpc_server::GrpcServer;
 use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
 use anyhow::Context;
@@ -132,8 +131,6 @@ use executor::expired_timers_watcher;
 use executor::expired_timers_watcher::TimersWatcherConfig;
 use executor::worker::Worker;
 use futures_util::future::OptionFuture;
-use grpc::extractor::accept_trace;
-use grpc::grpc_gen;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -159,11 +156,6 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
 use toml_edit::{DocumentMut, Item, Table, value};
-use tonic::codec::CompressionEncoding;
-use tonic::service::RoutesBuilder;
-use tonic_web::GrpcWebLayer;
-use tower::ServiceBuilder;
-use tower_http::trace::TraceLayer;
 use tracing::Instrument;
 use tracing::Span;
 use tracing::info_span;
@@ -2411,84 +2403,6 @@ pub(crate) async fn run_internal(
     )
     .await?;
     let deployment_switch_manager = server_init.deployment_switch_manager.clone();
-    let grpc_server = Arc::new(GrpcServer::new(
-        server_init.server_verified.clone(),
-        server_init.db_pool.clone(),
-        termination_watcher.clone(),
-        cancel_registry.clone(),
-        prepared_dirs.clone(),
-        server_init.deployment_ctx.clone(),
-        deployment_switch_manager.clone(),
-    ));
-
-    let max_transport_message_size_bytes = server_init
-        .server_verified
-        .max_transport_message_size_bytes();
-
-    let mut grpc = RoutesBuilder::default();
-
-    grpc.add_service(
-        grpc_gen::function_repository_server::FunctionRepositoryServer::from_arc(
-            grpc_server.clone(),
-        )
-        .send_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Zstd)
-        .send_compressed(CompressionEncoding::Gzip)
-        .accept_compressed(CompressionEncoding::Gzip)
-        .max_decoding_message_size(max_transport_message_size_bytes)
-        .max_encoding_message_size(max_transport_message_size_bytes),
-    )
-    .add_service(
-        grpc_gen::admin_repository_server::AdminRepositoryServer::from_arc(grpc_server.clone())
-            .send_compressed(CompressionEncoding::Zstd)
-            .accept_compressed(CompressionEncoding::Zstd)
-            .send_compressed(CompressionEncoding::Gzip)
-            .accept_compressed(CompressionEncoding::Gzip)
-            .max_decoding_message_size(max_transport_message_size_bytes)
-            .max_encoding_message_size(max_transport_message_size_bytes),
-    )
-    .add_service(
-        grpc_gen::execution_repository_server::ExecutionRepositoryServer::from_arc(
-            grpc_server.clone(),
-        )
-        .send_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Zstd)
-        .send_compressed(CompressionEncoding::Gzip)
-        .accept_compressed(CompressionEncoding::Gzip)
-        .max_decoding_message_size(max_transport_message_size_bytes)
-        .max_encoding_message_size(max_transport_message_size_bytes),
-    )
-    .add_service(
-        grpc_gen::deployment_repository_server::DeploymentRepositoryServer::from_arc(
-            grpc_server.clone(),
-        )
-        .send_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Zstd)
-        .send_compressed(CompressionEncoding::Gzip)
-        .accept_compressed(CompressionEncoding::Gzip)
-        // Submit requests inline deployment-owned blobs; raise the decode limit
-        // well above tonic's 4 MiB default. `GetFile` responses are likewise large.
-        .max_decoding_message_size(max_transport_message_size_bytes)
-        .max_encoding_message_size(max_transport_message_size_bytes),
-    )
-    .add_service(
-        tonic_reflection::server::Builder::configure()
-            .register_encoded_file_descriptor_set(grpc_gen::FILE_DESCRIPTOR_SET)
-            .build_v1()?
-            .max_decoding_message_size(max_transport_message_size_bytes)
-            .max_encoding_message_size(max_transport_message_size_bytes),
-    );
-
-    let trace_layer = TraceLayer::new_for_grpc()
-        .make_span_with(make_span)
-        .on_failure(tower_http::trace::DefaultOnFailure::new().level(tracing::Level::DEBUG));
-
-    let grpc_service = ServiceBuilder::new()
-        .layer(GrpcWebLayer::new())
-        .layer(trace_layer)
-        .map_request(accept_trace)
-        .service(grpc.routes());
-
     let app_router = app_router(WebApiState {
         server_verified: server_init.server_verified.clone(),
         deployment_ctx: server_init.deployment_ctx.clone(),
@@ -2500,7 +2414,7 @@ pub(crate) async fn run_internal(
         deployment_switch_manager: deployment_switch_manager.clone(),
     });
     if let Some(api_listening_addr) = api_listening_addr {
-        let app = app_router.fallback_service(grpc_service);
+        let app = app_router;
         let app_svc = match api_auth {
             None => {
                 warn!("API authentication is disabled by --no-auth: accepting all API requests");
@@ -2564,7 +2478,7 @@ pub(crate) async fn run_internal(
                 .await
         });
         let _http_server_abort = AbortOnDropHandle::new(http_server.abort_handle());
-        info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
+        info!("Serving API requests at {api_listening_addr}");
         obelisk_is_ready();
 
         let server_result = tokio::select! {
@@ -2630,18 +2544,6 @@ pub(crate) async fn run_internal(
 
 fn obelisk_is_ready() {
     info!("Obelisk {} is ready", shadow::PKG_VERSION);
-}
-
-fn make_span<B>(request: &axum::http::Request<B>) -> Span {
-    let mut headers = request.headers().clone();
-    if let Some(authorization) = headers.get_mut(axum::http::header::AUTHORIZATION) {
-        authorization.set_sensitive(true);
-    }
-    info_span!(
-        "gRPC request",
-        "otel.name" = format!("gRPC request {}", request.uri().path()),
-        ?headers
-    )
 }
 
 #[derive(Clone)]
@@ -3182,8 +3084,7 @@ pub(crate) struct SuppliedFile {
     pub(crate) content: Vec<u8>,
 }
 
-/// A single file-set problem found while validating a submit package. Mirrors the
-/// proto `FileIssue` but keeps the command layer free of grpc types.
+/// A single file-set problem found while validating a submit package.
 #[derive(Debug, Clone)]
 pub(crate) struct SubmitFileIssue {
     pub(crate) section: String,
@@ -3361,7 +3262,7 @@ fn validate_submit_package(
     }
 }
 
-/// Shared logic for submitting a deployment (used by both gRPC and web API).
+/// Shared logic for submitting a deployment via the web API.
 /// Validates the manifest and its file set as a package; persists only a complete
 /// deployment. Compile/link verification still happens when the deployment is activated.
 #[instrument(skip_all, fields(%deployment_id))]
