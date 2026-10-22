@@ -108,9 +108,9 @@ async fn cloud_output_and_endpoint_selection() {
             }),
         )
         .route("/v1/tokens", get(|| async { Json(json!({"tokens":[]})) }).post(|Json(body): Json<Value>| async move {
-            assert!(body["hash"].as_str().unwrap().starts_with("sha256:"));
+            assert!(body.get("hash").is_none());
             assert!(body["global"] == true || !body["apps"].as_array().unwrap().is_empty());
-            Json(json!({"token_id":"T_ID", "name":body["name"], "creation":body, "revoked":false, "expires_at":null}))
+            Json(json!({"token_id":"T_ID", "token":"obk_secret", "name":body["name"], "creation":body, "revoked":false, "expires_at":null}))
         }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -227,5 +227,9 @@ async fn cloud_output_and_endpoint_selection() {
     ])
     .await;
     assert!(scoped.contains("scope: demo, worker"), "{scoped}");
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("ci.token")).unwrap(),
+        "obk_secret"
+    );
     server.abort();
 }
