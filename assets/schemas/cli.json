@@ -1008,6 +1008,14 @@
                   }
                 },
                 {
+                  "name": "--fill",
+                  "help": "Prompt for initial env vars and secrets; requires a terminal"
+                },
+                {
+                  "name": "--fill-non-interactive",
+                  "help": "Read initial env vars and secrets from same-named environment variables"
+                },
+                {
                   "name": "--command-id",
                   "help": "Reuse this root execution ID when retrying the command"
                 }
@@ -1068,20 +1076,36 @@
                 {
                   "name": "--fill",
                   "help": "Run `fill` first; otherwise missing required env vars and secrets are an error"
+                },
+                {
+                  "name": "--fill-non-interactive",
+                  "help": "Run `fill --non-interactive` first"
                 }
               ]
             },
             {
               "name": "apply",
-              "about": "Apply an explicit policy/deployment selection and run the app",
+              "about": "Apply the staged configuration and the enqueued (or active) deployment",
               "options": [
                 {
                   "name": "--app-config",
                   "short": "a",
-                  "help": "App configuration; if omitted, use the staged configuration",
+                  "help": "App policy path compared with the staged configuration; defaults to ./app.toml if present",
                   "accepts": {
                     "path": true
                   }
+                },
+                {
+                  "name": "--staged",
+                  "help": "Use the staged configuration even when the local app config differs"
+                },
+                {
+                  "name": "--fill",
+                  "help": "Run `fill` first; otherwise missing required env vars and secrets are an error"
+                },
+                {
+                  "name": "--fill-non-interactive",
+                  "help": "Run `fill --non-interactive` first"
                 },
                 {
                   "name": "--force",
@@ -1127,10 +1151,18 @@
                 {
                   "name": "--app-config",
                   "short": "a",
-                  "help": "App policy path; defaults to ./app.toml if present, otherwise the staged policy is used",
+                  "help": "App policy path compared with the staged configuration; defaults to ./app.toml if present",
                   "accepts": {
                     "path": true
                   }
+                },
+                {
+                  "name": "--staged",
+                  "help": "Use the staged configuration even when the local app config differs"
+                },
+                {
+                  "name": "--non-interactive",
+                  "help": "Stage values of same-named environment variables without prompting"
                 }
               ]
             },

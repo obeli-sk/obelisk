@@ -1162,8 +1162,8 @@ pub(crate) async fn checkpoint(server_config: Option<PathBuf>) -> anyhow::Result
         &config.database,
         &holder.path_prefixes,
         &SecretRegistry::resolve(
-            Default::default(),
-            Default::default(),
+            IndexMap::default(),
+            IndexMap::default(),
             crate::config::secret_registry::EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
             &crate::config::env_var::StartupEnvVars::capture(),
@@ -2115,8 +2115,7 @@ async fn persist_startup_deployment(
     component_registry_ro: &ComponentConfigRegistryRO,
 ) -> Result<(), anyhow::Error> {
     match persist {
-        DeploymentPersist::AlreadyActive => {}
-        DeploymentPersist::ActivateEnqueued => {}
+        DeploymentPersist::AlreadyActive | DeploymentPersist::ActivateEnqueued => {}
         DeploymentPersist::Insert {
             record,
             component_files,

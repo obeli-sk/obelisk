@@ -19,6 +19,7 @@ impl CloudArgs {
                     app_config,
                     deployment,
                     fill: interactive,
+                    fill_non_interactive,
                 },
         }) = self.command
         else {
@@ -47,16 +48,16 @@ impl CloudArgs {
                 )
                 .await?
         } else {
+            if interactive || fill_non_interactive {
+                step("fill");
+            }
             let values = initial_values(
-                &name,
                 &desired["policy"],
-                if interactive {
-                    prompt
-                        .as_mut()
-                        .map(|p| p as &mut dyn FnMut(&Question) -> anyhow::Result<String>)
-                } else {
-                    None
-                },
+                Values::new(
+                    interactive,
+                    fill_non_interactive,
+                    prompt.as_mut().map(|p| p as Prompt),
+                )?,
             )?;
             let original_name = name.clone();
             let current = loop {
@@ -111,13 +112,23 @@ impl CloudArgs {
         step("deployment enqueue");
         let id = crate::command::deployment::enqueue_prepared(&startup, prepared).await
             .with_context(|| format!("Deployment staging failed; inspect `obelisk cloud app --app {name} status` and retry deploy"))?;
-        if interactive {
-            step("fill");
-        }
         let filled = if is_new {
             json!({"declarations":[]})
         } else {
-            fill(&client, &name, &desired["policy"], interactive).await?
+            if interactive || fill_non_interactive {
+                step("fill");
+            }
+            fill_values(
+                &client,
+                &name,
+                &desired["policy"],
+                Values::new(
+                    interactive,
+                    fill_non_interactive,
+                    prompt.as_mut().map(|p| p as Prompt),
+                )?,
+            )
+            .await?
         };
         let unset = filled["declarations"]
             .as_array()
@@ -437,12 +448,9 @@ mod tests {
             };
             let state = state.lock().unwrap();
             if scenario == "new-missing" {
-                assert!(
-                    result
-                        .unwrap_err()
-                        .to_string()
-                        .contains("Missing required configuration")
-                );
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains("Missing required configuration"));
+                assert!(error.contains("Retry with `--fill`"));
                 assert_eq!(state.calls, ["GET /v1/apps/demo"]);
             } else if scenario == "name-conflict" {
                 assert!(result.unwrap_err().is::<AppNameTaken>());

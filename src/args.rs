@@ -1715,6 +1715,12 @@ pub(crate) enum CloudApp {
         /// App policy path; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
+        /// Prompt for initial env vars and secrets; requires a terminal.
+        #[arg(long)]
+        fill: bool,
+        /// Read initial env vars and secrets from same-named environment variables.
+        #[arg(long, conflicts_with = "fill")]
+        fill_non_interactive: bool,
         #[command(flatten)]
         command_id: CloudCommandId,
     },
@@ -1741,12 +1747,24 @@ pub(crate) enum CloudApp {
         /// Run `fill` first; otherwise missing required env vars and secrets are an error.
         #[arg(long)]
         fill: bool,
+        /// Run `fill --non-interactive` first.
+        #[arg(long, conflicts_with = "fill")]
+        fill_non_interactive: bool,
     },
-    /// Apply an explicit policy/deployment selection and run the app.
+    /// Apply the staged configuration and the enqueued (or active) deployment.
     Apply {
-        /// App configuration; if omitted, use the staged configuration.
+        /// App policy path compared with the staged configuration; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
+        /// Use the staged configuration even when the local app config differs.
+        #[arg(long, conflicts_with = "app_config")]
+        staged: bool,
+        /// Run `fill` first; otherwise missing required env vars and secrets are an error.
+        #[arg(long)]
+        fill: bool,
+        /// Run `fill --non-interactive` first.
+        #[arg(long, conflicts_with = "fill")]
+        fill_non_interactive: bool,
         /// Reapply even with a clear stale flag, including uncertain secret changes.
         #[arg(long)]
         force: bool,
@@ -1767,9 +1785,15 @@ pub(crate) enum CloudApp {
     },
     /// Interactively stage declared env vars and secrets, offering process environment values.
     Fill {
-        /// App policy path; defaults to ./app.toml if present, otherwise the staged policy is used.
+        /// App policy path compared with the staged configuration; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
+        /// Use the staged configuration even when the local app config differs.
+        #[arg(long, conflicts_with = "app_config")]
+        staged: bool,
+        /// Stage values of same-named environment variables without prompting.
+        #[arg(long)]
+        non_interactive: bool,
     },
     #[command(subcommand)]
     Env(CloudEnv),

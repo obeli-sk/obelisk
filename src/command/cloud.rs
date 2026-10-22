@@ -475,7 +475,7 @@ impl CloudArgs {
         {
             let path = match command {
                 CloudApp::Stage { app_config, .. } => Some(app_config.clone()),
-                CloudApp::Fill { app_config } => {
+                CloudApp::Fill { app_config, .. } | CloudApp::Apply { app_config, .. } => {
                     crate::config::app::resolve_app_config(app_config.clone())?
                 }
                 _ => None,
@@ -517,6 +517,8 @@ impl CloudArgs {
                     CloudApp::New {
                         name,
                         app_config,
+                        fill,
+                        fill_non_interactive,
                         command_id,
                     },
             }) => {
@@ -524,6 +526,10 @@ impl CloudArgs {
                     Some(path) => Some(policy(&path).await?),
                     None => None,
                 };
+                ensure!(
+                    !(fill || fill_non_interactive) || config.is_some(),
+                    "`--fill` requires an app config"
+                );
                 let name = app_name(
                     name.as_deref()
                         .or(app.as_deref())
@@ -534,7 +540,11 @@ impl CloudArgs {
                 if let Some(config) = config {
                     body["policy"] = serde_json::to_value(config.policy())?;
                     body["cloud"] = serde_json::to_value(config.cloud)?;
-                    let values = initial_values(&name, &body["policy"], None)?;
+                    let mut ask = ask;
+                    let values = initial_values(
+                        &body["policy"],
+                        Values::new(fill, fill_non_interactive, terminal().then_some(&mut ask))?,
+                    )?;
                     body["env"] = values["env"].clone();
                     body["secrets"] = values["secrets"].clone();
                 }
@@ -548,12 +558,13 @@ impl CloudArgs {
                     .await
             }
             Cloud::App(CloudAppTarget { app, command }) => {
-                let config_path = match &command {
-                    CloudApp::Stage { app_config, .. } => Some(app_config.clone()),
-                    CloudApp::Fill { app_config } => {
-                        crate::config::app::resolve_app_config(app_config.clone())?
-                    }
-                    _ => None,
+                let (config_path, explicit) = match &command {
+                    CloudApp::Stage { app_config, .. } => (Some(app_config.clone()), true),
+                    CloudApp::Fill { app_config, .. } | CloudApp::Apply { app_config, .. } => (
+                        crate::config::app::resolve_app_config(app_config.clone())?,
+                        app_config.is_some(),
+                    ),
+                    _ => (None, false),
                 };
                 let config = match &config_path {
                     Some(path) => Some(policy(path).await?),
@@ -564,6 +575,10 @@ impl CloudArgs {
                         .or_else(|| config.as_ref().and_then(|c| c.app_name.as_deref())),
                 )
                 .await?;
+                // A discovered ./app.toml naming another app is not this app's configuration.
+                let local = config.zip(config_path).filter(|(config, _)| {
+                    explicit || config.app_name.as_deref().is_none_or(|n| n == name)
+                });
                 match command {
                     CloudApp::Deployment(_)
                     | CloudApp::Execution(_)
@@ -576,7 +591,7 @@ impl CloudArgs {
                             .await
                     }
                     CloudApp::Stage { command_id, .. } => {
-                        let config = config.unwrap();
+                        let (config, _) = local.unwrap();
                         client
                             .app(
                                 name,
@@ -589,14 +604,34 @@ impl CloudArgs {
                     }
                     CloudApp::Apply {
                         force,
-                        app_config,
+                        staged,
+                        fill,
+                        fill_non_interactive,
                         command_id,
+                        ..
                     } => {
                         let current = client.app(name, Method::GET, &[], None, Kind::Read).await?;
-                        let desired = match app_config {
-                            Some(path) => desired_config(&policy(&path).await?),
-                            None => json!({"policy":current["policy"],"cloud":current["cloud"]}),
-                        };
+                        let mut ask = ask;
+                        let interactive = terminal() && !self.json && !fill_non_interactive;
+                        let desired = staged_or_local(
+                            &client,
+                            name,
+                            &current,
+                            local.filter(|_| !staged),
+                            interactive.then_some(&mut ask),
+                        )
+                        .await?;
+                        fill_values(
+                            &client,
+                            name,
+                            &desired["policy"],
+                            Values::new(
+                                fill,
+                                fill_non_interactive,
+                                interactive.then_some(&mut ask),
+                            )?,
+                        )
+                        .await?;
                         let origin =
                             api_origin(current["api_url"].as_str().context("Missing api_url")?)?;
                         let startup = ClientStartup::cloud(
@@ -636,38 +671,31 @@ impl CloudArgs {
                             .app(name, Method::DELETE, &[], None, command_id.into())
                             .await
                     }
-                    CloudApp::Fill { .. } => {
+                    CloudApp::Fill {
+                        non_interactive,
+                        staged,
+                        ..
+                    } => {
                         let current = client.app(name, Method::GET, &[], None, Kind::Read).await?;
-                        let declarations = if let Some((config, path)) = config.zip(config_path) {
-                            let desired = desired_config(&config);
-                            if config_differs(&current, &desired) {
-                                let path = path.display();
-                                ensure!(
-                                    terminal()
-                                        && confirm(
-                                            &mut ask,
-                                            &format!(
-                                                "{path} differs from the staged configuration. Stage it now "
-                                            ),
-                                            true,
-                                        )?,
-                                    "{path} differs from the staged configuration; run `obelisk cloud app --app {name} stage -a {path}` first"
-                                );
-                                client
-                                    .app(
-                                        name,
-                                        Method::PUT,
-                                        &["config"],
-                                        Some(desired.clone()),
-                                        Kind::Command(None),
-                                    )
-                                    .await?;
-                            }
-                            desired["policy"].clone()
+                        let mut ask = ask;
+                        let desired = staged_or_local(
+                            &client,
+                            name,
+                            &current,
+                            local.filter(|_| !staged),
+                            (!non_interactive && terminal()).then_some(&mut ask),
+                        )
+                        .await?;
+                        let values = if non_interactive {
+                            Values::Env
                         } else {
-                            current["policy"].clone()
+                            ensure!(
+                                terminal(),
+                                "`fill` requires a terminal; use `fill --non-interactive` to read same-named environment variables"
+                            );
+                            Values::Prompt(&mut ask)
                         };
-                        fill(&client, name, &declarations, true).await
+                        fill_values(&client, name, &desired["policy"], values).await
                     }
                     CloudApp::Env(CloudEnv::List) => {
                         client
@@ -770,22 +798,69 @@ fn config_differs(current: &Value, desired: &Value) -> bool {
     current["policy"] != desired["policy"] || current["cloud"] != desired["cloud"]
 }
 
+/// Returns the staged configuration, unless `local` differs and the user chooses to stage it.
+async fn staged_or_local(
+    client: &Client,
+    name: &str,
+    current: &Value,
+    local: Option<(AppConfigToml, std::path::PathBuf)>,
+    prompt: Option<Prompt<'_>>,
+) -> anyhow::Result<Value> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Use {
+        Local,
+        Staged,
+        Cancel,
+    }
+    let staged = json!({"policy":current["policy"],"cloud":current["cloud"]});
+    let Some((config, path)) = local else {
+        return Ok(staged);
+    };
+    let desired = desired_config(&config);
+    if !config_differs(current, &desired) {
+        return Ok(staged);
+    }
+    let path = path.display();
+    let differs = match (
+        current["policy"] != desired["policy"],
+        current["cloud"] != desired["cloud"],
+    ) {
+        (true, true) => "policy and cloud settings",
+        (true, false) => "policy",
+        _ => "cloud settings",
+    };
+    let text = format!("{path} differs from the staged configuration ({differs}).\n");
+    let Some(prompt) = prompt else {
+        bail!(
+            "{text}Run `obelisk cloud app --app {name} stage -a {path}`, or pass `--staged` to use the staged configuration"
+        );
+    };
+    let choices = [
+        ("stage", Use::Local),
+        ("use staged", Use::Staged),
+        ("cancel", Use::Cancel),
+    ];
+    match choose(prompt, &text, &choices, Use::Local)? {
+        Use::Local => {
+            client
+                .app(
+                    name,
+                    Method::PUT,
+                    &["config"],
+                    Some(desired.clone()),
+                    Kind::Command(None),
+                )
+                .await?;
+            Ok(desired)
+        }
+        Use::Staged => Ok(staged),
+        Use::Cancel => bail!("Cancelled; nothing was staged"),
+    }
+}
+
 fn terminal() -> bool {
     use std::io::IsTerminal as _;
     std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
-}
-
-async fn fill(
-    client: &Client,
-    app: &str,
-    policy: &Value,
-    interactive: bool,
-) -> anyhow::Result<Value> {
-    ensure!(
-        !interactive || terminal(),
-        "`fill` requires a terminal; set values with `obelisk cloud app env set` and `obelisk cloud app secrets set`"
-    );
-    fill_with_prompt(client, app, policy, interactive.then_some(ask)).await
 }
 
 fn kind_label(kind: &str) -> &'static str {
@@ -866,12 +941,11 @@ fn shown(value: &str) -> String {
     }
 }
 
-/// Without `prompt`, only checks that required values are set.
-async fn fill_with_prompt(
+async fn fill_values(
     client: &Client,
     app: &str,
     policy: &Value,
-    mut prompt: Option<impl FnMut(&Question) -> anyhow::Result<String>>,
+    values: Values<'_>,
 ) -> anyhow::Result<Value> {
     let env = client
         .app(app, Method::GET, &["env"], None, Kind::Read)
@@ -886,13 +960,13 @@ async fn fill_with_prompt(
         .as_array()
         .context("Invalid cloud secrets response")?;
     let (report, pending) = collect_values(
-        app,
+        &format!(
+            "Run `obelisk cloud app --app {app} fill`, or retry with `--fill` or `--fill-non-interactive`"
+        ),
         policy,
         env_values,
         secret_values,
-        prompt
-            .as_mut()
-            .map(|p| p as &mut dyn FnMut(&Question) -> anyhow::Result<String>),
+        values,
     )?;
     let mut staged = Vec::new();
     for (kind, name, value, _) in pending {
@@ -919,13 +993,35 @@ async fn fill_with_prompt(
 }
 
 type PendingValue = (&'static str, String, String, &'static str);
+type Prompt<'a> = &'a mut dyn FnMut(&Question) -> anyhow::Result<String>;
+
+/// Where `fill` takes values from; `Check` only verifies that required values are set.
+enum Values<'a> {
+    Check,
+    Env,
+    Prompt(Prompt<'a>),
+}
+impl<'a> Values<'a> {
+    /// Maps `--fill` and `--fill-non-interactive`; `prompt` is `None` without a terminal.
+    fn new(fill: bool, non_interactive: bool, prompt: Option<Prompt<'a>>) -> anyhow::Result<Self> {
+        Ok(if non_interactive {
+            Values::Env
+        } else if fill {
+            Values::Prompt(prompt.context(
+                "`--fill` requires a terminal; use `--fill-non-interactive` to read same-named environment variables",
+            )?)
+        } else {
+            Values::Check
+        })
+    }
+}
 
 fn collect_values(
-    app: &str,
+    fill_hint: &str,
     policy: &Value,
     env_values: &serde_json::Map<String, Value>,
     secret_values: &[Value],
-    mut prompt: Option<&mut dyn FnMut(&Question) -> anyhow::Result<String>>,
+    mut values: Values,
 ) -> anyhow::Result<(Vec<Value>, Vec<PendingValue>)> {
     // (kind, name, optional, set in cloud, cloud value if readable)
     let mut declarations = Vec::new();
@@ -978,7 +1074,7 @@ fn collect_values(
         let secret = kind == "secrets";
         let action = if exists && current.is_some() && current == source.as_deref() {
             "unchanged"
-        } else if let Some(prompt) = prompt.as_mut() {
+        } else if let Values::Prompt(prompt) = &mut values {
             let describe = |value: Option<&str>, present: &str| match value {
                 None => "not set".to_owned(),
                 Some(_) if secret => present.to_owned(),
@@ -1029,6 +1125,11 @@ fn collect_values(
             } else {
                 "unset"
             }
+        } else if let Values::Env = values
+            && let Some(value) = source
+        {
+            pending.push((kind, name.to_owned(), value, "from environment"));
+            "staged"
         } else if exists {
             "kept"
         } else if optional {
@@ -1041,10 +1142,15 @@ fn collect_values(
     }
     ensure!(
         missing.is_empty(),
-        "Missing required configuration: {}. Run `obelisk cloud app --app {app} fill`, or retry `deploy` with `--fill`",
-        missing.join(", ")
+        "Missing required configuration: {}. {}",
+        missing.join(", "),
+        if let Values::Env = values {
+            "Set them as environment variables of the same name"
+        } else {
+            fill_hint
+        }
     );
-    if let Some(prompt) = prompt.as_mut()
+    if let Values::Prompt(prompt) = &mut values
         && !pending.is_empty()
     {
         let mut plan = "Will stage:\n".to_owned();
@@ -1060,12 +1166,14 @@ fn collect_values(
     Ok((report, pending))
 }
 
-fn initial_values(
-    app: &str,
-    policy: &Value,
-    prompt: Option<&mut dyn FnMut(&Question) -> anyhow::Result<String>>,
-) -> anyhow::Result<Value> {
-    let (_, pending) = collect_values(app, policy, &serde_json::Map::new(), &[], prompt)?;
+fn initial_values(policy: &Value, values: Values) -> anyhow::Result<Value> {
+    let (_, pending) = collect_values(
+        "Retry with `--fill`, or `--fill-non-interactive` to read same-named environment variables",
+        policy,
+        &serde_json::Map::new(),
+        &[],
+        values,
+    )?;
     let mut values = json!({"env":{},"secrets":{}});
     for (kind, name, value, _) in pending {
         values[kind][name] = json!(value);
@@ -1088,6 +1196,7 @@ mod tests {
         redirect: bool,
         existing_config: bool,
         api_url: Option<String>,
+        staged: Value,
     }
     #[tokio::test]
     async fn cloud_token_saves_server_secret_and_rejects_existing_file() {
@@ -1216,7 +1325,9 @@ mod tests {
             serde_json::from_slice(&body).unwrap()
         };
         let mut state = state.lock().unwrap();
-        state.received.push((format!("{method} {uri}"), body));
+        state
+            .received
+            .push((format!("{method} {uri}"), body.clone()));
         if method != Method::GET
             && uri.path().starts_with("/prefix/v1/apps")
             && !uri.path().contains("/secrets/")
@@ -1240,8 +1351,16 @@ mod tests {
             return (axum::http::StatusCode::CONFLICT, "DO-NOT-ECHO-SECRET").into_response();
         }
         let result = match uri.path() {
+            "/prefix/v1/apps/demo/config" if method == Method::PUT => {
+                state.staged = body;
+                json!({"ok":true})
+            }
             "/prefix/v1/apps/demo" => {
-                json!({"api_url":state.api_url.clone().unwrap_or_else(||format!("http://{}/prefix/tenant",headers["host"].to_str().unwrap()))})
+                json!({
+                    "api_url":state.api_url.clone().unwrap_or_else(||format!("http://{}/prefix/tenant",headers["host"].to_str().unwrap())),
+                    "policy":state.staged["policy"],
+                    "cloud":state.staged["cloud"],
+                })
             }
             path if path.starts_with("/prefix/tenant/v1/executions/")
                 && path.ends_with("/cancel") =>
@@ -1422,6 +1541,54 @@ mod tests {
         task.abort();
     }
     #[tokio::test]
+    async fn local_config_differing_from_staged_needs_a_choice() {
+        let (origin, state, task) = server().await;
+        let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
+        let config: AppConfigToml =
+            toml::from_str("[public_env]\nREGION={optional=true}\n").unwrap();
+        let staged = json!({"policy":{"public_env":[]},"cloud":{"memory_mb":512}});
+        let local = || Some((config.clone(), std::path::PathBuf::from("app.toml")));
+        let pick = async |answer: &str| {
+            let mut prompt = |_: &Question| Ok(answer.to_owned());
+            staged_or_local(&client, "demo", &staged, local(), Some(&mut prompt)).await
+        };
+        let error = staged_or_local(&client, "demo", &staged, local(), None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("(policy and cloud settings)"), "{error}");
+        assert!(
+            error.contains("stage -a app.toml`, or pass `--staged`"),
+            "{error}"
+        );
+        assert_eq!(pick("u").await.unwrap(), staged);
+        assert!(
+            pick("c")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Cancelled")
+        );
+        assert!(state.lock().unwrap().received.is_empty());
+        let desired = desired_config(&config);
+        assert_eq!(pick("").await.unwrap(), desired);
+        assert_eq!(
+            state.lock().unwrap().received,
+            [(
+                "PUT /prefix/v1/apps/demo/config".to_owned(),
+                desired.clone()
+            )]
+        );
+        let mut unexpected = |_: &Question| -> anyhow::Result<String> { unreachable!() };
+        assert_eq!(
+            staged_or_local(&client, "demo", &desired, local(), Some(&mut unexpected))
+                .await
+                .unwrap(),
+            desired
+        );
+        task.abort();
+    }
+    #[tokio::test]
     async fn cloud_commands_keep_policy_staged_and_force_explicit() {
         let (origin, state, task) = server().await;
         let directory = tempfile::tempdir().unwrap();
@@ -1478,7 +1645,7 @@ mod tests {
                     .parse::<concepts::prefixed_ulid::DeploymentId>()
                     .is_ok()
             );
-            assert_eq!(request.1["config"], json!({"policy":null,"cloud":null}));
+            assert_eq!(request.1["config"], received[1].1);
         }
         assert_eq!(
             received.last().unwrap().0,
@@ -1577,11 +1744,11 @@ mod tests {
             ),
         ];
         let mut answers = script.iter();
-        let result = fill_with_prompt(
+        let result = fill_values(
             &client,
             "demo",
             &policy,
-            Some(|question: &Question| {
+            Values::Prompt(&mut |question: &Question| {
                 let (expected, secret, answer) = answers.next().expect("unexpected question");
                 match question {
                     Question::Line(text) => assert_eq!((text, None), (expected, *secret)),
@@ -1628,11 +1795,11 @@ mod tests {
             .map(|(route, value)| (route.to_owned(), value.to_owned()))
         );
         state.lock().unwrap().received.clear();
-        let error = fill_with_prompt(
+        let error = fill_values(
             &client,
             "demo",
             &policy,
-            Some(|question: &Question| {
+            Values::Prompt(&mut |question: &Question| {
                 Ok(match question {
                     Question::Value { .. } => "value".to_owned(),
                     Question::Line(text) if text.starts_with("Will stage:") => "n".to_owned(),
@@ -1661,14 +1828,9 @@ mod tests {
             .app("demo", Method::GET, &["policy"], None, Kind::Read)
             .await
             .unwrap();
-        let error = fill_with_prompt(
-            &client,
-            "demo",
-            &policy,
-            None::<fn(&Question) -> anyhow::Result<String>>,
-        )
-        .await
-        .unwrap_err();
+        let error = fill_values(&client, "demo", &policy, Values::Check)
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("CLOUD_TEST_MISSING_REQUIRED"));
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("app.toml");
@@ -1680,9 +1842,9 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            error.to_string().contains(
-                "differs from the staged configuration; run `obelisk cloud app --app demo stage -a"
-            ),
+            error
+                .to_string()
+                .contains("Run `obelisk cloud app --app demo stage -a"),
             "{error}"
         );
         assert!(
