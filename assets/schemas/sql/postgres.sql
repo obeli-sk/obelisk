@@ -34,6 +34,17 @@ CREATE TABLE public.refinery_schema_history (
 
 
 --
+-- Name: t_app_checkpoint; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.t_app_checkpoint (
+    singleton integer NOT NULL,
+    checkpoint jsonb NOT NULL,
+    CONSTRAINT t_app_checkpoint_singleton_check CHECK ((singleton = 1))
+);
+
+
+--
 -- Name: t_component_metadata; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -306,6 +317,14 @@ CREATE TABLE public.t_wasm_backtrace (
 
 ALTER TABLE ONLY public.refinery_schema_history
     ADD CONSTRAINT refinery_schema_history_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: t_app_checkpoint t_app_checkpoint_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.t_app_checkpoint
+    ADD CONSTRAINT t_app_checkpoint_pkey PRIMARY KEY (singleton);
 
 
 --

@@ -4085,6 +4085,7 @@
         "type": "object",
         "required": [
           "app_name",
+          "app_env_prefix",
           "obelisk_version",
           "deployment_id",
           "node_run_id",
@@ -4093,6 +4094,9 @@
         ],
         "properties": {
           "app_config_digest": {
+            "type": "string"
+          },
+          "app_env_prefix": {
             "type": "string"
           },
           "app_name": {

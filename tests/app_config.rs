@@ -142,20 +142,37 @@ async fn cloud_new_and_stage_load_local_policy() {
     )
     .unwrap();
     tokio::task::spawn_blocking(move || {
-        for command in ["new", "stage"] {
-            assert_success(&cli(
-                dir.path(),
-                &[
-                    "cloud",
-                    "--api-url",
-                    &origin,
-                    "--api-token",
-                    "test-token",
-                    "app",
-                    command,
-                ],
-            ));
+        let run = |args: &[&str], region: Option<&str>| {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_obelisk"));
+            command
+                .args(["cloud", "--api-url", &origin, "--api-token", "test-token"])
+                .args(args)
+                .current_dir(dir.path())
+                .env_remove("OBELISK_APP_NAME")
+                .env_remove("REGION");
+            if let Some(region) = region {
+                command.env("REGION", region);
+            }
+            command.output().unwrap()
+        };
+        for (args, error) in [
+            (
+                &["app", "new"][..],
+                "env REGION. Retry with `--fill`, or `--fill-non-interactive`",
+            ),
+            (&["app", "new", "--fill"], "`--fill` requires a terminal"),
+            (
+                &["app", "new", "--fill-non-interactive"],
+                "env REGION. Set them as environment variables",
+            ),
+        ] {
+            let output = run(args, None);
+            assert!(!output.status.success());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains(error), "{stderr}");
         }
+        assert_success(&run(&["app", "new", "--fill-non-interactive"], Some("eu")));
+        assert_success(&run(&["app", "stage"], None));
     })
     .await
     .unwrap();
@@ -165,6 +182,7 @@ async fn cloud_new_and_stage_load_local_policy() {
     assert_eq!(requests[0].1, "/v1/apps");
     assert_eq!(requests[0].2["app_name"], "local-app");
     assert_eq!(requests[0].2["policy"]["public_env"], json!(["REGION"]));
+    assert_eq!(requests[0].2["env"], json!({"REGION":"eu"}));
     assert_eq!(requests[0].2["cloud"], json!({"memory_mb":512}));
     assert_eq!(requests[1].0, "PUT");
     assert_eq!(requests[1].1, "/v1/apps/local-app/config");

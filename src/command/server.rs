@@ -358,7 +358,8 @@ impl DeploymentSwitchManagerHandle {
 
     async fn spawn_critical_hot_switch(
         &self,
-        prepared: PreparedDeploymentSwitch,
+        prepared: Option<PreparedDeploymentSwitch>,
+        deployment_id: DeploymentId,
         switch_permit: SwitchPermit,
     ) -> Result<SwitchOutcome, SwitchError> {
         let (tx, rx) = oneshot::channel();
@@ -368,53 +369,51 @@ impl DeploymentSwitchManagerHandle {
         let cancel_registry = self.inner.cancel_registry.clone();
         let log_forwarder_sender = self.inner.log_forwarder_sender.clone();
         let app_config_digest = self.inner.server_verified.app_config_digest.to_string();
+        let checkpoint = concepts::storage::AppCheckpoint {
+            deployment_id,
+            app_toml: self.inner.server_verified.app_toml.clone(),
+            app_env_prefix: self.inner.server_verified.app_env_prefix.clone(),
+        };
         let server_configuration_event_id = self
             .inner
             .server_verified
             .server_configuration_event_id
             .expect("server configuration event must be recorded before switching deployments");
-        // Own the whole commit in a detached task: a dropped caller only stops observing the
-        // result via `rx`, it cannot abort the switch. This covers the durable pre-critical
-        // commits (cron seeds + activate) as well as the non-cancel-safe critical swap, so a
-        // cancellation can never leave the DB activated while the old workers keep running.
-        // The permit is held until the task finishes, which is what `close()` drains on.
+        // Keep the checkpoint commit and worker swap alive if the request is cancelled.
         utils::spawn::spawn_named("deployment_switch", async move {
             let _switch_permit = switch_permit;
-            let deployment_id = prepared.deployment_id;
             let result = async {
-                // Pre-critical, fallible commit work, before the critical swap so the section
-                // after `exec_task_handles` is taken cannot fail and strand the context.
-                // `activate_deployment` is the durable source of truth for which deployment is
-                // active, so commit it first: startup reconciles cron seeds (and workers) from
-                // the active deployment, so a crash after activate self-heals on restart, while
-                // a crash before it leaves no orphan seeds.
                 let db_conn = db_pool
                     .external_api_conn()
                     .await
                     .map_err(|e| SwitchError::Other(e.into()))?;
-                db_conn
-                    .activate_deployment(
+                if let Some(prepared) = prepared {
+                    prepared
+                        .compiled_linked
+                        .create_missing_cron_seeds(&db_pool, deployment_id)
+                        .await?;
+                    db_conn
+                        .commit_app_checkpoint(checkpoint, chrono::Utc::now(), app_config_digest)
+                        .await
+                        .map_err(|err| SwitchError::Other(err.into()))?;
+                    switch_hot_redeploy(
+                        prepared.compiled_linked,
                         deployment_id,
-                        chrono::Utc::now(),
-                        Some(app_config_digest.as_str()),
+                        db_pool,
+                        deployment_ctx,
+                        webhook_registry,
+                        cancel_registry,
+                        log_forwarder_sender,
+                        server_configuration_event_id,
                     )
                     .await
-                    .map_err(|e| SwitchError::Other(e.into()))?;
-                prepared
-                    .compiled_linked
-                    .create_missing_cron_seeds(&db_pool, deployment_id)
-                    .await?;
-                switch_hot_redeploy(
-                    prepared.compiled_linked,
-                    deployment_id,
-                    db_pool,
-                    deployment_ctx,
-                    webhook_registry,
-                    cancel_registry,
-                    log_forwarder_sender,
-                    server_configuration_event_id,
-                )
-                .await
+                } else {
+                    db_conn
+                        .commit_app_checkpoint(checkpoint, chrono::Utc::now(), app_config_digest)
+                        .await
+                        .map_err(|err| SwitchError::Other(err.into()))?;
+                    Ok(SwitchOutcome::Switched)
+                }
             }
             .await;
             let _ = tx.send(result);
@@ -1061,7 +1060,20 @@ pub(crate) async fn verify(
         let (pool, _) = db_pool
             .as_ref()
             .expect("db pool is set when no deployment TOML is provided");
-        get_deployment_resolved_from_db(pool.as_ref()).await?
+        if let Some(id) = config.startup_deployment_id {
+            let record = pool
+                .external_api_conn()
+                .await?
+                .get_deployment(id)
+                .await?
+                .with_context(|| format!("deployment {id} not found"))?;
+            (
+                deployment_resolved_from_manifest(pool.as_ref(), &record.deployment_toml).await?,
+                id,
+            )
+        } else {
+            get_deployment_resolved_from_db(pool.as_ref()).await?
+        }
     };
     config_prepass::preflight_runtime_config(
         &config.outbound_http.allowed_hosts,
@@ -1134,6 +1146,35 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
 }
 
 type VerifiedDbPool = (Arc<dyn DbPool>, Pin<Box<dyn Future<Output = ()> + Send>>);
+
+pub(crate) async fn checkpoint(server_config: Option<PathBuf>) -> anyhow::Result<()> {
+    let holder = ConfigHolder::new(
+        crate::project_dirs(),
+        directories::BaseDirs::new(),
+        server_config,
+    )?;
+    let mut config = holder.load_config()?;
+    config.resolve_env_vars(
+        &holder.path_prefixes,
+        &crate::config::env_var::StartupEnvVars::capture(),
+    )?;
+    let (pool, close) = verify_db_schema(
+        &config.database,
+        &holder.path_prefixes,
+        &SecretRegistry::resolve(
+            IndexMap::default(),
+            IndexMap::default(),
+            crate::config::secret_registry::EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+            &crate::config::env_var::StartupEnvVars::capture(),
+        )?,
+    )
+    .await?;
+    let result = pool.external_api_conn().await?.get_app_checkpoint().await?;
+    println!("{}", serde_json::to_string(&result)?);
+    close.await;
+    Ok(())
+}
 
 async fn verify_db_schema(
     db_config_toml: &DatabaseConfigToml,
@@ -1984,6 +2025,7 @@ async fn resolve_startup_deployment(
     db_pool: &dyn DbPool,
     deployment: Option<LocalDeployment>,
     description: Option<String>,
+    selected: Option<DeploymentId>,
     span: &Span,
 ) -> Result<(DeploymentId, DeploymentResolved, DeploymentPersist), anyhow::Error> {
     if let Some(deployment) = deployment {
@@ -2015,18 +2057,25 @@ async fn resolve_startup_deployment(
             .external_api_conn()
             .await
             .context("cannot get db connection for deployment lookup")?;
-        if let Some(record) = conn
-            .get_current_deployment()
-            .await
-            .context("cannot query current deployment")?
-        {
+        let record = if let Some(id) = selected {
+            Some(
+                conn.get_deployment(id)
+                    .await?
+                    .with_context(|| format!("deployment {id} not found"))?,
+            )
+        } else {
+            conn.get_current_deployment()
+                .await
+                .context("cannot query current deployment")?
+        };
+        if let Some(record) = record {
             let resolved =
                 deployment_resolved_from_manifest(db_pool, &record.deployment_toml).await?;
             span.record(
                 "deployment_id",
                 tracing::field::display(&record.deployment_id),
             );
-            let persist = if record.status == DeploymentStatus::Enqueued {
+            let persist = if record.status != DeploymentStatus::Active {
                 info!("Verifying enqueued deployment before activation");
                 DeploymentPersist::ActivateEnqueued
             } else {
@@ -2064,22 +2113,9 @@ async fn persist_startup_deployment(
     deployment_id: DeploymentId,
     persist: DeploymentPersist,
     component_registry_ro: &ComponentConfigRegistryRO,
-    app_config_digest: &AppConfigDigest,
 ) -> Result<(), anyhow::Error> {
-    let app_config_digest = app_config_digest.to_string();
     match persist {
-        DeploymentPersist::AlreadyActive => {}
-        DeploymentPersist::ActivateEnqueued => {
-            let api_conn = db_pool
-                .external_api_conn()
-                .await
-                .context("cannot get db connection for deployment activation")?;
-            api_conn
-                .activate_deployment(deployment_id, chrono::Utc::now(), Some(&app_config_digest))
-                .await
-                .context("cannot activate enqueued deployment")?;
-            info!("Activated enqueued deployment");
-        }
+        DeploymentPersist::AlreadyActive | DeploymentPersist::ActivateEnqueued => {}
         DeploymentPersist::Insert {
             record,
             component_files,
@@ -2099,11 +2135,6 @@ async fn persist_startup_deployment(
                 )
                 .await
                 .context("cannot insert deployment")?;
-            api_conn
-                .activate_deployment(deployment_id, chrono::Utc::now(), Some(&app_config_digest))
-                .await
-                .context("cannot activate deployment")?;
-            info!("Activated new deployment");
         }
     }
     Ok(())
@@ -2149,6 +2180,7 @@ pub(crate) async fn run_internal(
     secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
+    let selected_deployment = config.startup_deployment_id;
     let api_auth = match &params.auth {
         ServerAuth::Auth { api_token } if api_listening_addr.is_some() => Some(Arc::new(
             crate::server::auth::ApiAuth::new(&config.api, api_token.clone())?,
@@ -2215,12 +2247,20 @@ pub(crate) async fn run_internal(
             (db_pool, db_close)
         }
     };
+    let runtime_config_availability = RuntimeConfigAvailability::Strict;
     let span = Span::current();
     let (active_deployment_id, deployment_resolved, persist) = record_startup_failed(
         db_pool.as_ref(),
         "deployment_resolve",
         None,
-        resolve_startup_deployment(db_pool.as_ref(), deployment, description, &span).await,
+        resolve_startup_deployment(
+            db_pool.as_ref(),
+            deployment,
+            description,
+            selected_deployment,
+            &span,
+        )
+        .await,
     )
     .await?;
     let engines = record_startup_failed(
@@ -2234,7 +2274,7 @@ pub(crate) async fn run_internal(
         &config.outbound_http.allowed_hosts,
         Some(&deployment_resolved),
         &secret_registry,
-        RuntimeConfigAvailability::Strict,
+        runtime_config_availability,
     ) {
         let (error, error_truncated) = bounded_system_event_text(&err.to_string());
         let missing_public_env_count = err.public_env.len();
@@ -2274,7 +2314,7 @@ pub(crate) async fn run_internal(
     if let Err(err) = config_prepass::preflight(
         &server_verified,
         Some(&deployment_resolved),
-        RuntimeConfigAvailability::Strict,
+        runtime_config_availability,
     ) {
         let (error, error_truncated) = bounded_system_event_text(&err.to_string());
         crate::server::system_event_writer::record(
@@ -2336,7 +2376,6 @@ pub(crate) async fn run_internal(
             active_deployment_id,
             persist,
             &compiled_and_linked.component_registry_ro,
-            &server_verified.app_config_digest,
         )
         .await,
     )
@@ -2372,27 +2411,6 @@ pub(crate) async fn run_internal(
     )
     .await?;
     let deployment_switch_manager = server_init.deployment_switch_manager.clone();
-    record_startup_failed(
-        db_pool.as_ref(),
-        "deployment_switch",
-        Some(active_deployment_id),
-        switch_deployment_inner(
-            deployment_switch_manager.clone(),
-            active_deployment_id,
-            SwitchDeploymentAction::Activate,
-        )
-        .instrument(info_span!("startup deployment manager no-op", %active_deployment_id))
-        .await
-        .map_err(|err| match err {
-            SwitchError::Busy => anyhow::anyhow!("deployment switch manager busy during startup"),
-            SwitchError::NotFound => {
-                anyhow::anyhow!("active deployment {active_deployment_id} not found during startup")
-            }
-            SwitchError::MissingRuntimeConfig(err) => err.into(),
-            SwitchError::Other(err) => err,
-        }),
-    )
-    .await?;
     let grpc_server = Arc::new(GrpcServer::new(
         server_init.server_verified.clone(),
         server_init.db_pool.clone(),
@@ -2479,7 +2497,7 @@ pub(crate) async fn run_internal(
         termination_watcher: termination_watcher.clone(),
         subscription_interruption,
         prepared_dirs: server_init.prepared_dirs.clone(),
-        deployment_switch_manager,
+        deployment_switch_manager: deployment_switch_manager.clone(),
     });
     if let Some(api_listening_addr) = api_listening_addr {
         let app = app_router.fallback_service(grpc_service);
@@ -2519,6 +2537,15 @@ pub(crate) async fn run_internal(
                 return Err(source).with_context(|| format!("cannot bind to {api_listening_addr}"));
             }
         };
+        {
+            let permit = deployment_switch_manager
+                .try_acquire_switch_permit()
+                .map_err(|err| anyhow::anyhow!("checkpoint commit unavailable: {err:?}"))?;
+            deployment_switch_manager
+                .spawn_critical_hot_switch(None, active_deployment_id, permit)
+                .await
+                .map_err(|err| anyhow::anyhow!("checkpoint commit failed: {err:?}"))?;
+        }
         crate::server::system_event_writer::record(
             server_init.db_pool.as_ref(),
             concepts::storage::SystemEventCode::ServerStartupCompleted,
@@ -2577,6 +2604,15 @@ pub(crate) async fn run_internal(
         }
         debug!("Server {api_listening_addr} has been closed");
     } else {
+        {
+            let permit = deployment_switch_manager
+                .try_acquire_switch_permit()
+                .map_err(|err| anyhow::anyhow!("checkpoint commit unavailable: {err:?}"))?;
+            deployment_switch_manager
+                .spawn_critical_hot_switch(None, active_deployment_id, permit)
+                .await
+                .map_err(|err| anyhow::anyhow!("checkpoint commit failed: {err:?}"))?;
+        }
         crate::server::system_event_writer::record(
             server_init.db_pool.as_ref(),
             concepts::storage::SystemEventCode::ServerStartupCompleted,
@@ -2610,6 +2646,8 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 
 #[derive(Clone)]
 pub(crate) struct ServerVerified {
+    pub(crate) app_toml: String,
+    pub(crate) app_env_prefix: String,
     pub(crate) app_name: String,
     js_runtime: JsRuntimeMode,
     activity_vm_runtime: ActivityVmRuntimeMode,
@@ -2798,6 +2836,8 @@ impl ServerVerified {
             app_name: config.app_name.clone(),
             js_runtime,
             activity_vm_runtime,
+            app_toml: config.app_toml.clone(),
+            app_env_prefix: config.app_env_prefix.clone(),
             app_config_digest: config.app_policy.digest(),
             app_policy: config.app_policy.clone(),
             platform_exec_activities: config.platform_exec_activities.clone(),
@@ -3662,6 +3702,7 @@ pub(crate) enum SwitchOutcome {
 }
 
 /// Error returned by [`switch_deployment`].
+#[derive(Debug)]
 pub(crate) enum SwitchError {
     /// Another deployment submit/switch operation is queued or running.
     Busy,
@@ -3856,7 +3897,7 @@ async fn switch_deployment_inner(
             )
             .await?;
             deployment_switch_manager
-                .spawn_critical_hot_switch(prepared, switch_permit)
+                .spawn_critical_hot_switch(Some(prepared), deployment_id, switch_permit)
                 .await
         }
     }

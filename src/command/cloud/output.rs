@@ -33,9 +33,9 @@ impl From<&Cloud> for Summary {
                     CloudApp::Get => Self::App(None),
                     CloudApp::Status => Self::Status,
                     CloudApp::New { .. } => Self::App(Some("App created.")),
-                    CloudApp::Apply { .. } | CloudApp::Start { .. } | CloudApp::Stop { .. } => {
-                        Self::Lifecycle
-                    }
+                    CloudApp::Apply { .. }
+                    | CloudApp::Reactivate { .. }
+                    | CloudApp::Deactivate { .. } => Self::Lifecycle,
                     CloudApp::Delete { .. } => Self::Message("App deleted."),
                     CloudApp::Stage { .. } => Self::Staged("Configuration staged.", apply),
                     CloudApp::Env(CloudEnv::List) => Self::Env,
