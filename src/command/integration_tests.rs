@@ -2049,56 +2049,47 @@ async fn list_functions() {
 }
 
 #[tokio::test]
-async fn app_config_webapi_reports_running_policy() {
+async fn app_policy_webapi_reports_running_policy() {
     let server = TestServer::start(test_addr!(40_144)).await;
     let app: crate::config::app::AppConfigToml =
         toml::from_str(&std::fs::read_to_string(server.tmp_dir.path().join("app.toml")).unwrap())
             .unwrap();
     let expected_digest = app.policy().digest().to_string();
-    let digest = server
+    let info: Value = server
         .client
-        .get(format!("{}/v1/app-config-digest", server.base_url))
+        .get(format!("{}/v1/info", server.base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(info["app_config_digest"], expected_digest);
+
+    let policy = server
+        .client
+        .get(format!("{}/v1/app-policy", server.base_url))
         .send()
         .await
         .unwrap();
-    assert_eq!(digest.status(), reqwest::StatusCode::OK);
-    assert_eq!(digest.text().await.unwrap(), expected_digest);
+    assert_eq!(policy.status(), reqwest::StatusCode::OK);
+    let policy: Value = policy.json().await.unwrap();
+    assert_eq!(policy, serde_json::to_value(app.policy()).unwrap());
 
-    let config = server
+    let policy = server
         .client
-        .get(format!("{}/v1/app-config", server.base_url))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(config.status(), reqwest::StatusCode::OK);
-    let config: Value = config.json().await.unwrap();
-    assert_eq!(config["app_config_digest"], expected_digest);
-    assert_eq!(
-        config["policy"],
-        serde_json::to_value(app.policy()).unwrap()
-    );
-
-    let config = server
-        .client
-        .get(format!("{}/v1/app-config", server.base_url))
+        .get(format!("{}/v1/app-policy", server.base_url))
         .header("Accept", "application/toml")
         .send()
         .await
         .unwrap();
-    assert_eq!(config.status(), reqwest::StatusCode::OK);
+    assert_eq!(policy.status(), reqwest::StatusCode::OK);
     assert_eq!(
-        config.headers()[reqwest::header::CONTENT_TYPE],
+        policy.headers()[reqwest::header::CONTENT_TYPE],
         "application/toml"
     );
-    let config: toml::Table = toml::from_str(&config.text().await.unwrap()).unwrap();
-    assert_eq!(
-        config["app_config_digest"].as_str(),
-        Some(expected_digest.as_str())
-    );
-    assert_eq!(
-        config["policy"],
-        toml::Value::try_from(app.policy()).unwrap()
-    );
+    let policy: toml::Value = toml::from_str(&policy.text().await.unwrap()).unwrap();
+    assert_eq!(policy, toml::Value::try_from(app.policy()).unwrap());
 
     let deployments: Value = server
         .client

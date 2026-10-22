@@ -108,7 +108,7 @@ async fn until_terminated<T>(
         (name = "functions", description = "Function management"),
         (name = "deployments", description = "Deployment management"),
         (name = "server", description = "Running server identity"),
-        (name = "app config", description = "Running app policy"),
+        (name = "app policy", description = "Running app policy"),
         (name = "admin", description = "Operator-only destructive maintenance"),
         (name = "delays", description = "Delay management")
     ),
@@ -149,6 +149,7 @@ async fn until_terminated<T>(
         deployment::submit_put,
         deployment::switch,
         deployment::get_file,
+        app_config::policy,
         app_config::get,
         app_config::digest,
         server_info::get,
@@ -243,6 +244,7 @@ pub(crate) fn app_router(state: WebApiState) -> Router {
         .with_state(Arc::new(state))
 }
 
+#[expect(deprecated)]
 fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>> {
     Router::new()
         .route("/components", routing::get(components_list))
@@ -336,6 +338,7 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
             routing::put(deployment::switch),
         )
         .route("/deployment-id", routing::get(deployment::current))
+        .route("/app-policy", routing::get(app_config::policy))
         .route("/app-config", routing::get(app_config::get))
         .route("/app-config-digest", routing::get(app_config::digest))
         .route("/info", routing::get(server_info::get))
@@ -402,18 +405,10 @@ pub(crate) mod app_config {
         Toml,
     }
 
-    #[utoipa::path(get, path = "/v1/app-config", tag = "app config", responses((status = 200, content((AppConfigResponse = "application/json"), (String = "application/toml")))))]
-    pub(crate) async fn get(
-        State(state): State<Arc<WebApiState>>,
-        accept: AppConfigAcceptHeader,
-    ) -> Response {
-        let body = AppConfigResponse {
-            app_config_digest: &state.server_verified.app_config_digest,
-            policy: &state.server_verified.app_policy,
-        };
+    fn json_or_toml(accept: AppConfigAcceptHeader, body: &impl Serialize) -> Response {
         match accept {
             AppConfigAcceptHeader::Json => (StatusCode::OK, Json(body)).into_response(),
-            AppConfigAcceptHeader::Toml => match toml::to_string_pretty(&body) {
+            AppConfigAcceptHeader::Toml => match toml::to_string_pretty(body) {
                 Ok(toml) => (
                     StatusCode::OK,
                     [(header::CONTENT_TYPE, "application/toml")],
@@ -422,7 +417,7 @@ pub(crate) mod app_config {
                     .into_response(),
                 Err(err) => HttpResponse {
                     status: StatusCode::INTERNAL_SERVER_ERROR,
-                    message: format!("cannot serialize app config as TOML: {err}"),
+                    message: format!("cannot serialize app policy as TOML: {err}"),
                     accept: AcceptHeader::Json,
                 }
                 .into_response(),
@@ -430,7 +425,31 @@ pub(crate) mod app_config {
         }
     }
 
-    #[utoipa::path(get, path = "/v1/app-config-digest", tag = "app config", responses((status = 200, content((String = "text/plain"), (String = "application/json")))))]
+    #[utoipa::path(get, path = "/v1/app-policy", tag = "app policy", responses((status = 200, content((Object = "application/json"), (String = "application/toml")))))]
+    pub(crate) async fn policy(
+        State(state): State<Arc<WebApiState>>,
+        accept: AppConfigAcceptHeader,
+    ) -> Response {
+        json_or_toml(accept, &state.server_verified.app_policy)
+    }
+
+    #[utoipa::path(get, path = "/v1/app-config", tag = "app policy", responses((status = 200, content((AppConfigResponse = "application/json"), (String = "application/toml")))))]
+    // backcompat: 0.43, delete this endpoint after 0.43 in favor of `GET /v1/app-policy`.
+    #[deprecated(note = "use `GET /v1/app-policy` and `app_config_digest` from `GET /v1/info`")]
+    pub(crate) async fn get(
+        State(state): State<Arc<WebApiState>>,
+        accept: AppConfigAcceptHeader,
+    ) -> Response {
+        let body = AppConfigResponse {
+            app_config_digest: &state.server_verified.app_config_digest,
+            policy: &state.server_verified.app_policy,
+        };
+        json_or_toml(accept, &body)
+    }
+
+    #[utoipa::path(get, path = "/v1/app-config-digest", tag = "app policy", responses((status = 200, content((String = "text/plain"), (String = "application/json")))))]
+    // backcompat: 0.43, delete this endpoint after 0.43 in favor of `GET /v1/info`.
+    #[deprecated(note = "use `app_config_digest` from `GET /v1/info`")]
     pub(crate) async fn digest(
         State(state): State<Arc<WebApiState>>,
         accept: TextDefaultAcceptHeader,

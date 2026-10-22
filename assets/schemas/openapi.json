@@ -324,7 +324,7 @@
     "/v1/app-config": {
       "get": {
         "tags": [
-          "app config"
+          "app policy"
         ],
         "operationId": "get",
         "responses": {
@@ -342,13 +342,14 @@
               }
             }
           }
-        }
+        },
+        "deprecated": true
       }
     },
     "/v1/app-config-digest": {
       "get": {
         "tags": [
-          "app config"
+          "app policy"
         ],
         "operationId": "digest",
         "responses": {
@@ -360,6 +361,31 @@
                 }
               },
               "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/v1/app-policy": {
+      "get": {
+        "tags": [
+          "app policy"
+        ],
+        "operationId": "policy",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "application/toml": {
                 "schema": {
                   "type": "string"
                 }
@@ -4324,7 +4350,7 @@
       "description": "Running server identity"
     },
     {
-      "name": "app config",
+      "name": "app policy",
       "description": "Running app policy"
     },
     {
