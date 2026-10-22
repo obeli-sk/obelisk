@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(cli)* `cloud token new` saves a server-issued credential to a new private
+  `--token-file`. Token names are unique per account until revoked; a lost creation
+  response requires revoking the inaccessible token before creating a replacement.
+
 ## [0.43.0-rc.7](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.6...v0.43.0-rc.7)
 
 This release candidate resolves internal public environment entries from the server's own

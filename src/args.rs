@@ -1675,7 +1675,7 @@ pub(crate) enum CloudToken {
     New {
         #[arg(long)]
         name: String,
-        /// Persist the generated token here before registration; reuse the file to retry.
+        /// Save the server-issued token in a new private file. Lost responses require revocation and replacement.
         #[arg(long)]
         token_file: PathBuf,
         /// Restrict access to this app slug; repeat for multiple apps.
