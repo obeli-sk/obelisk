@@ -3,7 +3,7 @@
 # Upcoming goals
 
 ## Activities
-* External activity executor gRPC API
+* External activity executor API
 
 ## Security
 * Dynamic secrets loaded from Vault, missing dynamic secrets should be a warning

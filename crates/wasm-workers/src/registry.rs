@@ -26,7 +26,7 @@ use tracing::{debug, error};
 
 pub use concepts::storage::WitOrigin;
 
-/// Holds information about components, used for gRPC services like `ListComponents`
+/// Holds information about components, used for API endpoints like listing components
 #[derive(Debug, Clone)]
 pub struct ComponentConfig {
     pub component_id: ComponentId,
@@ -37,7 +37,7 @@ pub struct ComponentConfig {
     pub wit_origin: WitOrigin,
 }
 
-/// A replay-purposed worker held by the server so gRPC and REST handlers can replay/advance
+/// A replay-purposed worker held by the server so REST handlers can replay/advance
 /// executions without re-compiling the WASM component on every request.
 #[derive(Clone)]
 pub enum ReplayWorker {

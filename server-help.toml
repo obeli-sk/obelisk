@@ -197,8 +197,7 @@ max_persisted_value_size_bytes = 1048576
 # Per-file size limit (in bytes) for deployment-owned blobs attached to a submit
 # request. Defaults to 20 MiB.
 # max_deployment_file_bytes = 20971520
-# Maximum size of a single API transport message: the gRPC encoded message size and
-# the equivalent REST request body limit. Must be positive. Defaults to 512 MiB.
+# Maximum size of a single API request body. Must be positive. Defaults to 512 MiB.
 # max_transport_message_size_bytes = 536870912
 
 # Every execution slot in the process is charged to exactly one (workload, runtime) cell below.

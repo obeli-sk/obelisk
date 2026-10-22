@@ -121,7 +121,7 @@
           "$ref": "#/$defs/MaxDeploymentFileBytes"
         },
         "max_transport_message_size_bytes": {
-          "description": "Maximum size of a single API transport message: the gRPC encoded message\nsize and the equivalent REST request body limit. Must be positive; the\ndefault is 512 MiB. This is a transport bound and is distinct from\n`max_persisted_value_size_bytes`.",
+          "description": "Maximum size of a single API request body. Must be positive; the\ndefault is 512 MiB. This is a transport bound and is distinct from\n`max_persisted_value_size_bytes`.",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,

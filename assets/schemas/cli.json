@@ -1314,7 +1314,7 @@
             },
             {
               "name": "--empty",
-              "help": "Start with an empty deployment, ignoring any Enqueued or Active deployment in the database. Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via gRPC"
+              "help": "Start with an empty deployment, ignoring any Enqueued or Active deployment in the database. Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via the API"
             },
             {
               "name": "--description",

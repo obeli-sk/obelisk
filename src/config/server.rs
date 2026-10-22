@@ -220,8 +220,7 @@ pub(crate) struct LimitsToml {
     /// Per-file size limit for deployment-owned blobs attached to a submit request.
     #[serde(default)]
     pub(crate) max_deployment_file_bytes: MaxDeploymentFileBytes,
-    /// Maximum size of a single API transport message: the gRPC encoded message
-    /// size and the equivalent REST request body limit. Must be positive; the
+    /// Maximum size of a single API request body. Must be positive; the
     /// default is 512 MiB. This is a transport bound and is distinct from
     /// `max_persisted_value_size_bytes`.
     #[serde(default = "default_max_transport_message_size_bytes")]

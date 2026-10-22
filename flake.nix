@@ -211,7 +211,6 @@
                 nativeBuildInputs = with pkgs; [
                   rustToolchain
                   pkg-config
-                  protobuf
                   findutils # for installPhase
                 ]
                 # Add Zig when cross compiling
@@ -307,7 +306,6 @@
                 oras # scripts/push-wasm-oci.sh
                 pkg-config
                 postgresql
-                protobuf
                 qemu # native activity VM runtime
                 sqlite
                 wasm-tools
@@ -325,7 +323,6 @@
                 jq
                 oras
                 pkg-config
-                protobuf
                 wasm-tools
               ];
           };

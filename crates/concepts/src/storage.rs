@@ -434,7 +434,7 @@ pub enum ExecutionRequest {
     ///
     /// State transition semantics:
     /// - [`PendingState::Locked`] becomes [`PendingState::PendingAt`] at
-    ///   [`Unlocked::backoff_expires_at`]. The field name is kept for persisted JSON and gRPC
+    ///   [`Unlocked::backoff_expires_at`]. The field name is kept for persisted JSON
     ///   compatibility, but it is the next pending instant for every unlock reason.
     /// - [`PendingState::PendingAt`], [`PendingState::BlockedByJoinSet`],
     ///   [`PendingState::Paused`], and [`PendingState::Finished`] reject this event.
