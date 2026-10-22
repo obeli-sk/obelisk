@@ -79,7 +79,7 @@
             };
           embeddedWebui = fetchOciAssets {
             pname = "obelisk-embedded-webui";
-            outputHash = "sha256-gSgqC3yYNyBkuxZ9EdgS1H5dQU/dMDB8oBo2y0L6+ng=";
+            outputHash = "sha256-L/XVb69wTxoUF+5g8dyg1Qxtgw813LzZqXsO4Kzi5tI=";
             assets = [
               { name = "webui"; versionFile = "webui-version.txt"; }
             ];
