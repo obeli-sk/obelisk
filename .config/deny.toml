@@ -43,18 +43,14 @@ skip = [
     { name = "getrandom", version = "0.2" },
     # rand 0.9 uses getrandom 0.3; we directly depend on getrandom 0.4
     { name = "getrandom", version = "0.3" },
-    # cap-std 4 uses io-lifetimes 3 directly while fs-set-times uses io-lifetimes 2
-    { name = "io-lifetimes", version = "2" },
     # obelisk uses rand 0.9; postgres-protocol requires rand 0.10
     { name = "rand", version = "0.9" },
     { name = "rand_core", version = "0.9" },
-    # wasmtime uses wasm-compose which requires petgraph 0.6
-    { name = "petgraph", version = "0.6" },
+    # wasm-compose (via petgraph 0.6) requires fixedbitset 0.4
     { name = "fixedbitset", version = "0.4" },
     # hashbrown 0.14.5 used by boa_engine
     { name = "hashbrown", version = "0.14" },
     { name = "hashbrown", version = "0.16.1" },
-    { name = "foldhash", version = "0.1" },
     # deno_core uses itertools 0.13; wasmtime uses 0.14; workspace and Boa use 0.15
     { name = "itertools", version = "0.13" },
     { name = "itertools", version = "0.14" },
@@ -92,7 +88,6 @@ skip = [
     { name = "fastrand", version = "1" },
     { name = "futures-lite", version = "1" },
     { name = "linux-raw-sys", version = "0.4" },
-    { name = "miniz_oxide", version = "0.8" },
     { name = "num-bigint", version = "0.4" },
     { name = "rustix", version = "0.38" },
     { name = "shlex", version = "1" },
