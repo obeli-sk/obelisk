@@ -391,18 +391,18 @@ utoipa-axum = "0.3.0"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "49.0.4", features = ["memory-protection-keys"] }
-wasmtime-wasi = { version = "49.0.4", features = ["p3"] }
-wasmtime-wasi-io = "49.0.4"
-wasmtime-wasi-http = { version = "49.0.4", features = ["p3", "component-model-async"] }
-wasmtime-environ = "49.0.4"
+wasmtime = { version = "50.0.0", features = ["memory-protection-keys"] }
+wasmtime-wasi = { version = "50.0.0", features = ["p3"] }
+wasmtime-wasi-io = "50.0.0"
+wasmtime-wasi-http = { version = "50.0.0", features = ["p3", "component-model-async"] }
+wasmtime-environ = "50.0.0"
 wasip3 = "0.9.0"
 # wasm-tools (keep in sync with wasmtime's pinned wasm-tools suite)
-wast = "258.0.3"
-wat = "~1.258.3"
-wit-parser = "0.258.3"
-wasmparser = "0.258.3"
-wit-component = "0.258.3"
+wast = "261.0.0"
+wat = "~1.261.0"
+wit-parser = "0.261.0"
+wasmparser = "0.261.0"
+wit-component = "0.261.0"
 
 # boa
 boa_engine = { package="obeli-sk-boa-engine", version="1.0.0-obeli-sk.14", default-features = false }
