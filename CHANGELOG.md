@@ -6,22 +6,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.8](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.7...v0.43.0-rc.8)
+
+This release candidate removes the deprecated gRPC API, adds URL prefix rules for outbound HTTP,
+persists atomic app checkpoints, makes cloud app apply and fill explicit, and adds
+`/v1/app-policy`.
+
 ### Added
 
+- *(config)* Outbound HTTP rules in `app.toml` and deployments accept `url_prefix` with an optional
+  `url_regex_suffix` instead of `pattern` and `request_url_regex`. Environment variables expand
+  before the prefix is regex-escaped. [#1178](https://github.com/obeli-sk/obelisk/pull/1178)
 - *(api)* `GET /v1/app-policy` returns the running app policy as JSON, or as TOML with
-  `Accept: application/toml`.
+  `Accept: application/toml`. [#1187](https://github.com/obeli-sk/obelisk/pull/1187)
+- *(server)* The server persists the last successfully activated app config and deployment as one
+  checkpoint. `server checkpoint` prints it without starting the server. `server run` and
+  `server verify` accept `--deployment-id` to select an existing deployment.
+  `GET /v1/info` includes `app_env_prefix`. [#1182](https://github.com/obeli-sk/obelisk/pull/1182)
 
 ### Changed
 
+- **Breaking:** *(api)* The deprecated gRPC and gRPC-web API and `proto/obelisk.proto` are removed.
+  Use the REST API on the same `api.listening_addr`. OTLP trace export over gRPC is unaffected.
+  [#1184](https://github.com/obeli-sk/obelisk/pull/1184)
+- **Breaking:** *(cli)* `cloud app start` and `cloud app stop` are renamed to `cloud app reactivate`
+  and `cloud app deactivate`. `cloud app apply` sends the app config and the enqueued (or active)
+  deployment explicitly. [#1182](https://github.com/obeli-sk/obelisk/pull/1182)
+- **Breaking:** *(cli)* Missing required env vars and secrets fail in the client. `cloud app new`,
+  `deploy` and `apply` take `--fill` or `--fill-non-interactive`; `cloud app fill` takes
+  `--non-interactive`. `fill` and `apply` prompt or fail when `./app.toml` differs from the staged
+  config unless `--staged` is passed. [#1182](https://github.com/obeli-sk/obelisk/pull/1182)
 - *(cli)* `cloud token new` saves a server-issued credential to a new private
   `--token-file`. Token names are unique per account until revoked; a lost creation
   response requires revoking the inaccessible token before creating a replacement.
+  [#1181](https://github.com/obeli-sk/obelisk/pull/1181)
+- *(webui)* Embedded Web UI updated to 2026-10-22. [#1183](https://github.com/obeli-sk/obelisk/pull/1183)
 
 ### Deprecated
 
 - *(api)* `GET /v1/app-config` and `GET /v1/app-config-digest` are deprecated and will be removed
   after 0.43. Use `GET /v1/app-policy` for the policy and read `app_config_digest` from
-  `GET /v1/info`.
+  `GET /v1/info`. [#1187](https://github.com/obeli-sk/obelisk/pull/1187)
 
 ## [0.43.0-rc.7](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.6...v0.43.0-rc.7)
 
