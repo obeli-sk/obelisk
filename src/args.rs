@@ -330,7 +330,7 @@ pub(crate) enum Deployment {
         empty: bool,
         /// Store a verified deployment while app or platform approval is pending.
         /// Allows unavailable values and approvals; activation still checks strictly.
-        #[arg(long, visible_alias = "ignore-missing")]
+        #[arg(long)]
         allow_unavailable_runtime_config: bool,
         /// Optional human-readable description.
         #[arg(long)]
@@ -362,7 +362,7 @@ pub(crate) enum Deployment {
         empty: bool,
         /// Submit and enqueue while app or platform approval is pending.
         /// Activation still checks strictly.
-        #[arg(long, visible_alias = "ignore-missing")]
+        #[arg(long)]
         allow_unavailable_runtime_config: bool,
         /// Optional human-readable description for a newly submitted deployment.
         #[arg(long)]
