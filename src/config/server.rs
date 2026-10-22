@@ -30,6 +30,12 @@ use std::time::Duration;
 #[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ServerConfigToml {
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) startup_deployment_id: Option<concepts::prefixed_ulid::DeploymentId>,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) app_toml: String,
     /// Prefix for app-owned environment sources; server environment stays unprefixed.
     #[serde(default)]
     pub(crate) app_env_prefix: String,

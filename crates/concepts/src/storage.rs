@@ -2438,6 +2438,15 @@ pub trait DbExternalApi: DbConnection {
         app_config_digest: Option<&str>,
     ) -> Result<(), DbErrorWrite>;
 
+    async fn commit_app_checkpoint(
+        &self,
+        checkpoint: AppCheckpoint,
+        now: DateTime<Utc>,
+        app_config_digest: String,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn get_app_checkpoint(&self) -> Result<Option<AppCheckpoint>, DbErrorRead>;
+
     /// Mark a deployment as Enqueued (pending next server restart).
     /// Any previously Enqueued deployment is demoted to Inactive. If the target deployment is
     /// currently Active, it remains Active and any previously Enqueued deployment is cleared.
@@ -2577,6 +2586,13 @@ impl std::str::FromStr for DeploymentStatus {
             _ => Err(StrVariant::from(format!("unknown deployment status: {s}"))),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppCheckpoint {
+    pub deployment_id: DeploymentId,
+    pub app_toml: String,
+    pub app_env_prefix: String,
 }
 
 #[derive(Debug, Clone)]
