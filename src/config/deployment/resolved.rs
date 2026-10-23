@@ -2761,7 +2761,11 @@ fn allowed_host_destination(
                 pattern: suffix.to_string(),
                 err,
             })?;
-            let prefix = url.as_str().trim_end_matches('/');
+            // The prefix is literal, except for the `/` that `Url` adds to a bare origin.
+            let prefix = match url.as_str().strip_suffix('/') {
+                Some(origin) if url.path() == "/" && !prefix.ends_with('/') => origin,
+                _ => url.as_str(),
+            };
             let request_regex = format!(r"\A[^ ]+ {}(?:{suffix})", regex::escape(prefix));
             (url.origin().ascii_serialization(), Some(request_regex))
         }
