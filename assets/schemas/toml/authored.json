@@ -1527,6 +1527,11 @@
           "description": "Cron expression or `@once`, `@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`.",
           "type": "string"
         },
+        "overlap": {
+          "description": "What to do on a tick while the previously scheduled execution is not finished.",
+          "$ref": "#/$defs/CronOverlapToml",
+          "default": "skip"
+        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml",
           "default": {
@@ -1546,6 +1551,20 @@
         "name",
         "ffqn",
         "schedule"
+      ]
+    },
+    "CronOverlapToml": {
+      "oneOf": [
+        {
+          "description": "Skip the tick, wait for the next one.",
+          "type": "string",
+          "const": "skip"
+        },
+        {
+          "description": "Schedule a new execution regardless.",
+          "type": "string",
+          "const": "allow"
+        }
       ]
     }
   }

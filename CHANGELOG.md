@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(cron)* `overlap` setting on `[[cron]]`: `skip` (default) skips a tick while the previously
+  scheduled execution is not finished, `allow` keeps the previous behavior.
+
+### Changed
+
+- *(cron)* Crons no longer start a new execution while the previous one is unfinished. Set
+  `overlap = "allow"` to restore overlapping runs.
+
 ## [0.43.0-rc.8](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.7...v0.43.0-rc.8)
 
 This release candidate removes the deprecated gRPC API, adds URL prefix rules for outbound HTTP,
