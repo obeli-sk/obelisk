@@ -643,7 +643,8 @@ impl CloudArgs {
                             crate::client::send_json(
                                 startup
                                     .web_api_client()?
-                                    .get(format!("{}/v1/deployment-id", startup.api_url())),
+                                    .get(format!("{}/v1/deployment-id", startup.api_url()))
+                                    .header(header::ACCEPT, "application/json"),
                             )
                             .await?;
                         client
@@ -1368,7 +1369,11 @@ mod tests {
                 json!({"ok":"cancelled"})
             }
             "/prefix/tenant/v1/deployment-id" => {
-                json!(concepts::prefixed_ulid::DeploymentId::generate())
+                let id = concepts::prefixed_ulid::DeploymentId::generate();
+                if headers.get("accept").and_then(|v| v.to_str().ok()) != Some("application/json") {
+                    return id.to_string().into_response();
+                }
+                json!(id)
             }
             "/prefix/tenant/v1/components" => json!([]),
             "/prefix/tenant/v1/info" => json!(rest_types::server::ServerInfoResponse {
