@@ -84,7 +84,7 @@ CONTEXTS_JSON="$(echo "$REQUIRED_CHECKS" | jq -R . | jq -s .)"
 
 PAYLOAD="$(jq -n --argjson contexts "$CONTEXTS_JSON" '{
     required_status_checks: {
-        strict: true,
+        strict: false,
         contexts: $contexts
     },
     enforce_admins: false,
