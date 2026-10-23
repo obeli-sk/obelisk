@@ -89,7 +89,7 @@
 ## - Use `url_prefix` instead of `pattern` and `request_url_regex`.
 ## - The prefix must be an absolute HTTP(S) URL without credentials, query, fragment, or wildcards.
 ## - Environment variables are expanded before the URL prefix is regex-escaped.
-## - The URL is normalized and trailing slashes are removed before appending the suffix.
+## - The prefix is matched literally, including any trailing slash; a bare origin matches any path.
 ## - Optional `url_regex_suffix` is a grouped regex fragment appended to that literal prefix.
 ## - A leading `^` is forbidden; use `$` to require an exact endpoint.
 ## - Omitting the suffix allows any continuation of the literal prefix.

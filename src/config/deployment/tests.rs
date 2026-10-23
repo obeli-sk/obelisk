@@ -435,7 +435,7 @@ mod allowed_hosts {
     fn url_prefix_resolves_escaped_prefix_and_grouped_suffix() {
         let entry: AllowedHostToml = toml::from_str(
             r#"
-            url_prefix = "${OBELISK_TEST_LLM_URL:-https://llm.example:8443/api/}"
+            url_prefix = "${OBELISK_TEST_LLM_URL:-https://llm.example:8443/api}"
             methods = ["GET", "POST"]
             url_regex_suffix = "/v1/models$|/v1/chat/completions$"
         "#,
@@ -462,6 +462,37 @@ mod allowed_hosts {
         ] {
             assert!(!regex.is_match(request), "{request}");
         }
+    }
+
+    #[test]
+    fn url_prefix_keeps_trailing_slash_and_bare_origin_matches_any_path() {
+        let regex_of = |fields: &str| {
+            let entry = toml::from_str(&format!("methods = ['GET']\n{fields}")).unwrap();
+            let (hosts, _) =
+                resolve_allowed_hosts(vec![entry], false, &SecretRegistry::empty()).unwrap();
+            hosts[0].request_url_regex.clone().unwrap()
+        };
+        let slash = regex_of("url_prefix = 'https://api.example/repos/'");
+        assert!(slash.is_match("GET https://api.example/repos/o/r"));
+        assert!(!slash.is_match("GET https://api.example/repos-evil/o/r"));
+        let slash_suffix = regex_of(
+            "url_prefix = 'https://api.example/repos/'\nurl_regex_suffix = '[^/]+/[^/]+$'",
+        );
+        assert!(slash_suffix.is_match("GET https://api.example/repos/o/r"));
+        let no_slash_suffix = regex_of(
+            "url_prefix = 'https://api.example/repos/'\nurl_regex_suffix = '/[^/]+/[^/]+$'",
+        );
+        assert!(!no_slash_suffix.is_match("GET https://api.example/repos/o/r"));
+
+        let origin =
+            regex_of("url_prefix = 'https://api.example'\nurl_regex_suffix = '/v1/models$'");
+        assert!(origin.is_match("GET https://api.example/v1/models"));
+        let origin_slash =
+            regex_of("url_prefix = 'https://api.example/'\nurl_regex_suffix = 'v1/models$'");
+        assert!(origin_slash.is_match("GET https://api.example/v1/models"));
+        assert!(
+            regex_of("url_prefix = 'https://api.example'").is_match("GET https://api.example/x")
+        );
     }
 
     #[test]
