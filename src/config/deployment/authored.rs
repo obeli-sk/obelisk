@@ -1065,8 +1065,21 @@ pub struct CronComponentConfigToml {
     pub params: String,
     /// Cron expression or `@once`, `@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`.
     pub schedule: String,
+    /// What to do on a tick while the previously scheduled execution is not finished.
+    #[serde(default)]
+    pub overlap: CronOverlapToml,
     #[serde(default)]
     pub exec: ExecConfigToml,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CronOverlapToml {
+    /// Skip the tick, wait for the next one.
+    #[default]
+    Skip,
+    /// Schedule a new execution regardless.
+    Allow,
 }
 
 #[must_use]

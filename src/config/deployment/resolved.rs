@@ -8,10 +8,10 @@ use super::{
     ActivityStubComponentConfigToml, ActivityStubFileConfigToml, ActivityWasmComponentConfigToml,
     AllowedHostToml, AuthoredFunctionInterfaceToml, BlockingStrategyConfigToml,
     ComponentBacktraceConfig, ComponentCommon, ComponentLocationToml, ComponentStdOutputToml,
-    ConfigName, CronComponentConfigToml, DeploymentTomlValidated, DurationConfig, ExecConfigToml,
-    FunctionInterfaceToml, InlineFunctionInterfaceToml, JsParamToml, LockingStrategy, LogLevelToml,
-    MethodsInput, NixCacheToml, ReplaceIn, ScriptLocationPathOrOci, SecretRef, WebhookRoute,
-    WebhookRouteDetail, sanitize_deployment_relative_path, secret_names,
+    ConfigName, CronComponentConfigToml, CronOverlapToml, DeploymentTomlValidated, DurationConfig,
+    ExecConfigToml, FunctionInterfaceToml, InlineFunctionInterfaceToml, JsParamToml,
+    LockingStrategy, LogLevelToml, MethodsInput, NixCacheToml, ReplaceIn, ScriptLocationPathOrOci,
+    SecretRef, WebhookRoute, WebhookRouteDetail, sanitize_deployment_relative_path, secret_names,
 };
 use crate::command::server::{FrameFilesToSource, FrameSource};
 use crate::config::env_var::{
@@ -43,7 +43,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, instrument, warn};
 use utils::wasm_tools::WasmComponent;
-use wasm_workers::cron::cron_worker::CronOrOnce;
+use wasm_workers::cron::cron_worker::{CronOrOnce, CronOverlap};
 use wasm_workers::http_hooks::ConfigSectionHint;
 use wasm_workers::http_request_policy::HostPatternError;
 use wasm_workers::{
@@ -2457,6 +2457,7 @@ pub(crate) struct CronConfigVerified {
     pub(crate) target_ffqn: FunctionFqn,
     pub(crate) params_json: Vec<serde_json::Value>,
     pub(crate) cron_schedule: CronOrOnce,
+    pub(crate) overlap: CronOverlap,
     pub(crate) exec_config: executor::executor::ExecConfig,
 }
 
@@ -2517,6 +2518,10 @@ impl CronComponentConfigTomlExt for CronComponentConfigToml {
             target_ffqn: self.ffqn,
             params_json,
             cron_schedule,
+            overlap: match self.overlap {
+                CronOverlapToml::Skip => CronOverlap::Skip,
+                CronOverlapToml::Allow => CronOverlap::Allow,
+            },
             exec_config,
         })
     }

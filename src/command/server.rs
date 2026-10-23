@@ -172,6 +172,7 @@ use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::component_logger::LogStrageConfig;
 use wasm_workers::cron::cron_worker;
 use wasm_workers::cron::cron_worker::CronOrOnce;
+use wasm_workers::cron::cron_worker::CronOverlap;
 use wasm_workers::cron::cron_worker::CronWorker;
 use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
@@ -6086,6 +6087,7 @@ async fn compile_and_link(
                 target_component_id: target_component_id.clone(),
                 params,
                 cron_schedule: cron.cron_schedule,
+                overlap: cron.overlap,
             })),
             exec_config: cron.exec_config,
             logs_store_min_level: None,
@@ -7123,6 +7125,7 @@ struct ScheduleWorkerConfig {
     target_component_id: ComponentId,
     params: Params,
     cron_schedule: CronOrOnce,
+    overlap: CronOverlap,
 }
 
 pub(crate) struct WorkerLinked {
@@ -7237,6 +7240,7 @@ impl WorkerLinked {
                     config.target_component_id,
                     config.params,
                     config.cron_schedule,
+                    config.overlap,
                     deployment_id,
                     db_pool.clone(),
                     Now.clone_box(),
