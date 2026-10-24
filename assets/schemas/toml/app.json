@@ -58,9 +58,31 @@
           ],
           "format": "uint32",
           "minimum": 1
+        },
+        "integrations": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CloudIntegrationToml"
+          }
         }
       },
       "additionalProperties": false
+    },
+    "CloudIntegrationToml": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "env": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "env"
+      ]
     },
     "SecretConfigToml": {
       "description": "Source and exposure authorization for a secret in the `[secrets]` table.",

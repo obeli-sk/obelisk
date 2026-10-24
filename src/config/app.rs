@@ -52,6 +52,16 @@ pub(crate) struct CloudConfigToml {
     /// VM memory in MB; omission uses the cloud default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) memory_mb: Option<std::num::NonZeroU32>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(crate) integrations: std::collections::BTreeMap<String, CloudIntegrationToml>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CloudIntegrationToml {
+    #[serde(rename = "type")]
+    pub(crate) kind: String,
+    pub(crate) env: String,
 }
 
 #[derive(Debug, Default, Clone, JsonSchema, Serialize)]
@@ -98,7 +108,54 @@ enum AppPolicySecretV1 {
 }
 
 impl AppConfigToml {
+    pub(crate) fn validate_cloud_integrations(&self) -> anyhow::Result<()> {
+        let mut supplied = std::collections::BTreeSet::new();
+        for (name, integration) in &self.cloud.integrations {
+            ensure!(
+                !name.is_empty() && !integration.kind.is_empty(),
+                "Cloud integration name and type must not be empty"
+            );
+            ensure!(
+                matches!(
+                    self.public_env.get(&integration.env),
+                    Some(PublicEnvConfigToml::Env(_))
+                ),
+                "Cloud integration `{name}` env `{}` must reference an environment-backed [public_env] declaration",
+                integration.env
+            );
+            ensure!(
+                !self.secrets.contains_key(&integration.env),
+                "Cloud integration `{name}` env must not reference a secret"
+            );
+            ensure!(
+                supplied.insert(&integration.env),
+                "Multiple cloud integrations supply `{}`",
+                integration.env
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_local_integrations(
+        &self,
+        env_vars: &StartupEnvVars,
+    ) -> anyhow::Result<()> {
+        for (name, integration) in &self.cloud.integrations {
+            if matches!(self.public_env.get(&integration.env), Some(PublicEnvConfigToml::Env(config)) if !config.optional)
+            {
+                ensure!(
+                    env_vars.lookup(&integration.env).is_some(),
+                    "{} is required. Cloud integration `{name}` supplies it during cloud deployment; for local execution, set {} explicitly",
+                    integration.env,
+                    integration.env
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn resolve_env_vars(&mut self, env_vars: &StartupEnvVars) -> anyhow::Result<()> {
+        self.validate_cloud_integrations()?;
         for allowed_host in &mut self.outbound_http.allowed_hosts {
             let mut references = std::collections::BTreeSet::new();
             for field in allowed_host.interpolated_fields() {
@@ -209,6 +266,29 @@ pub(crate) struct AppConfigDigest(Digest);
 #[cfg(test)]
 mod tests {
     use super::AppConfigToml;
+
+    #[test]
+    fn cloud_integrations_are_open_typed_bindings_with_local_required_values() {
+        let app: AppConfigToml = toml::from_str("[cloud.integrations]\nlimited={type='future-llm',env='OBELISK_TEST_INTEGRATION_URL_UNSET'}\n[public_env]\nOBELISK_TEST_INTEGRATION_URL_UNSET={}\n").unwrap();
+        app.validate_cloud_integrations().unwrap();
+        let error = app
+            .validate_local_integrations(&super::StartupEnvVars::capture())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("limited")
+                && error.contains("set OBELISK_TEST_INTEGRATION_URL_UNSET explicitly"),
+            "{error}"
+        );
+        for text in [
+            "[cloud.integrations]\nllm={type='llm',env='MISSING'}",
+            "[cloud.integrations]\nllm={type='llm',env='URL'}\n[public_env]\nURL={type='internal',source='api-url'}",
+            "[cloud.integrations]\nllm={type='llm',env='URL'}\nother={type='llm',env='URL'}\n[public_env]\nURL={}",
+        ] {
+            let app: AppConfigToml = toml::from_str(text).unwrap();
+            assert!(app.validate_cloud_integrations().is_err(), "{text}");
+        }
+    }
 
     #[test]
     fn secret_types_default_to_env_and_internal_rejects_optional() {

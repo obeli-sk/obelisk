@@ -309,6 +309,9 @@ fn prepare_server_startup_with_exec_policy(
     let app_env_vars = env_vars
         .prefixed(&config.app_env_prefix)
         .with_internal_public_env(&app.public_env, &config)?;
+    if runtime_config_availability == RuntimeConfigAvailability::Strict {
+        app.validate_local_integrations(&app_env_vars)?;
+    }
     app.resolve_env_vars(&app_env_vars)?;
     if check_exec_policy {
         match &config.platform_exec_activities {
