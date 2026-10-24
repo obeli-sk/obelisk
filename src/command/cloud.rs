@@ -564,9 +564,12 @@ impl CloudArgs {
                         crate::config::app::resolve_app_config(app_config.clone())?,
                         app_config.is_some(),
                     ),
+                    CloudApp::Status => (crate::config::app::resolve_app_config(None)?, false),
                     _ => (None, false),
                 };
                 let config = match &config_path {
+                    // Status only reports a readable ./app.toml.
+                    Some(path) if matches!(command, CloudApp::Status) => policy(path).await.ok(),
                     Some(path) => Some(policy(path).await?),
                     None => None,
                 };
@@ -586,9 +589,19 @@ impl CloudArgs {
                     | CloudApp::Admin(_) => unreachable!("API commands are dispatched in run"),
                     CloudApp::Get => client.app(name, Method::GET, &[], None, Kind::Read).await,
                     CloudApp::Status => {
-                        client
+                        let mut value = client
                             .app(name, Method::GET, &["status"], None, Kind::Read)
-                            .await
+                            .await?;
+                        if let Some((config, path)) = local {
+                            let comparison =
+                                compare_config(&client, name, &desired_config(&config)).await;
+                            value["local_config"] = json!({
+                                "path": path.display().to_string(),
+                                "comparison": comparison.as_ref().ok(),
+                                "error": comparison.err().map(|error| format!("{error:#}")),
+                            });
+                        }
+                        Ok(value)
                     }
                     CloudApp::Stage { command_id, .. } => {
                         let (config, _) = local.unwrap();
@@ -613,7 +626,7 @@ impl CloudArgs {
                         let current = client.app(name, Method::GET, &[], None, Kind::Read).await?;
                         let mut ask = ask;
                         let interactive = terminal() && !self.json && !fill_non_interactive;
-                        let desired = staged_or_local(
+                        let (desired, revision) = staged_or_local(
                             &client,
                             name,
                             &current,
@@ -652,7 +665,7 @@ impl CloudArgs {
                                 name,
                                 Method::POST,
                                 &["apply"],
-                                Some(json!({"force":force,"config":desired,"deployment_id":deployment_id})),
+                                Some(json!({"force":force,"revision":revision,"deployment_id":deployment_id})),
                                 command_id.into(),
                             )
                             .await
@@ -679,7 +692,7 @@ impl CloudArgs {
                     } => {
                         let current = client.app(name, Method::GET, &[], None, Kind::Read).await?;
                         let mut ask = ask;
-                        let desired = staged_or_local(
+                        let (desired, _) = staged_or_local(
                             &client,
                             name,
                             &current,
@@ -795,18 +808,33 @@ fn desired_config(config: &AppConfigToml) -> Value {
     json!({"policy":config.policy(), "cloud":config.cloud})
 }
 
-fn config_differs(current: &Value, desired: &Value) -> bool {
-    current["policy"] != desired["policy"] || current["cloud"] != desired["cloud"]
+/// Asks the provisioner how `desired` differs from the staged configuration.
+async fn compare_config(client: &Client, name: &str, desired: &Value) -> anyhow::Result<Value> {
+    client
+        .app(
+            name,
+            Method::POST,
+            &["config", "compare"],
+            Some(desired.clone()),
+            Kind::Read,
+        )
+        .await
 }
 
-/// Returns the staged configuration, unless `local` differs and the user chooses to stage it.
+fn staged_revision(value: &Value) -> anyhow::Result<u64> {
+    value["revision"]
+        .as_u64()
+        .context("Cloud response is missing the staged configuration revision")
+}
+
+/// Returns the staged configuration and its revision, unless `local` differs and the user chooses to stage it.
 async fn staged_or_local(
     client: &Client,
     name: &str,
     current: &Value,
     local: Option<(AppConfigToml, std::path::PathBuf)>,
     prompt: Option<Prompt<'_>>,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<(Value, u64)> {
     #[derive(Clone, Copy, PartialEq)]
     enum Use {
         Local,
@@ -815,22 +843,25 @@ async fn staged_or_local(
     }
     let staged = json!({"policy":current["policy"],"cloud":current["cloud"]});
     let Some((config, path)) = local else {
-        return Ok(staged);
+        return Ok((staged, staged_revision(current)?));
     };
     let desired = desired_config(&config);
-    if !config_differs(current, &desired) {
-        return Ok(staged);
+    let comparison = compare_config(client, name, &desired).await?;
+    let revision = staged_revision(&comparison)?;
+    let changes = comparison["changes"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if changes.is_empty() {
+        return Ok((staged, revision));
     }
     let path = path.display();
-    let differs = match (
-        current["policy"] != desired["policy"],
-        current["cloud"] != desired["cloud"],
-    ) {
-        (true, true) => "policy and cloud settings",
-        (true, false) => "policy",
-        _ => "cloud settings",
-    };
-    let text = format!("{path} differs from the staged configuration ({differs}).\n");
+    let changes = changes
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let text = format!("{path} differs from staged configuration revision {revision}: {changes}\n");
     let Some(prompt) = prompt else {
         bail!(
             "{text}Run `obelisk cloud app --app {name} stage -a {path}`, or pass `--staged` to use the staged configuration"
@@ -843,7 +874,7 @@ async fn staged_or_local(
     ];
     match choose(prompt, &text, &choices, Use::Local)? {
         Use::Local => {
-            client
+            let staged = client
                 .app(
                     name,
                     Method::PUT,
@@ -852,9 +883,9 @@ async fn staged_or_local(
                     Kind::Command(None),
                 )
                 .await?;
-            Ok(desired)
+            Ok((desired, staged_revision(&staged)?))
         }
-        Use::Staged => Ok(staged),
+        Use::Staged => Ok((staged, revision)),
         Use::Cancel => bail!("Cancelled; nothing was staged"),
     }
 }
@@ -1198,6 +1229,7 @@ mod tests {
         existing_config: bool,
         api_url: Option<String>,
         staged: Value,
+        revision: u64,
     }
     #[tokio::test]
     async fn cloud_token_saves_server_secret_and_rejects_existing_file() {
@@ -1332,6 +1364,7 @@ mod tests {
         if method != Method::GET
             && uri.path().starts_with("/prefix/v1/apps")
             && !uri.path().contains("/secrets/")
+            && !uri.path().ends_with("/config/compare")
         {
             let id = headers["idempotency-key"].to_str().unwrap();
             assert!(
@@ -1353,14 +1386,27 @@ mod tests {
         }
         let result = match uri.path() {
             "/prefix/v1/apps/demo/config" if method == Method::PUT => {
-                state.staged = body;
-                json!({"ok":true})
+                let changed = state.staged != body;
+                if changed {
+                    state.staged = body;
+                    state.revision += 1;
+                }
+                json!({"revision":state.revision,"changed":changed})
+            }
+            "/prefix/v1/apps/demo/config/compare" => {
+                let changes: Vec<_> = ["policy", "cloud"]
+                    .into_iter()
+                    .filter(|key| state.staged[key] != body[key])
+                    .map(|key| format!("/{key}"))
+                    .collect();
+                json!({"changes":changes,"revision":state.revision})
             }
             "/prefix/v1/apps/demo" => {
                 json!({
                     "api_url":state.api_url.clone().unwrap_or_else(||format!("http://{}/prefix/tenant",headers["host"].to_str().unwrap())),
                     "policy":state.staged["policy"],
                     "cloud":state.staged["cloud"],
+                    "revision":state.revision,
                 })
             }
             path if path.starts_with("/prefix/tenant/v1/executions/")
@@ -1552,21 +1598,27 @@ mod tests {
         let config: AppConfigToml =
             toml::from_str("[public_env]\nREGION={optional=true}\n").unwrap();
         let staged = json!({"policy":{"public_env":[]},"cloud":{"memory_mb":512}});
+        state.lock().unwrap().staged = staged.clone();
+        state.lock().unwrap().revision = 4;
+        let current = json!({"policy":staged["policy"],"cloud":staged["cloud"],"revision":4});
         let local = || Some((config.clone(), std::path::PathBuf::from("app.toml")));
         let pick = async |answer: &str| {
             let mut prompt = |_: &Question| Ok(answer.to_owned());
-            staged_or_local(&client, "demo", &staged, local(), Some(&mut prompt)).await
+            staged_or_local(&client, "demo", &current, local(), Some(&mut prompt)).await
         };
-        let error = staged_or_local(&client, "demo", &staged, local(), None)
+        let error = staged_or_local(&client, "demo", &current, local(), None)
             .await
             .unwrap_err()
             .to_string();
-        assert!(error.contains("(policy and cloud settings)"), "{error}");
+        assert!(
+            error.contains("differs from staged configuration revision 4: /policy, /cloud"),
+            "{error}"
+        );
         assert!(
             error.contains("stage -a app.toml`, or pass `--staged`"),
             "{error}"
         );
-        assert_eq!(pick("u").await.unwrap(), staged);
+        assert_eq!(pick("u").await.unwrap(), (staged, 4));
         assert!(
             pick("c")
                 .await
@@ -1574,22 +1626,34 @@ mod tests {
                 .to_string()
                 .contains("Cancelled")
         );
-        assert!(state.lock().unwrap().received.is_empty());
+        let puts = || {
+            state
+                .lock()
+                .unwrap()
+                .received
+                .iter()
+                .filter(|(route, _)| route.starts_with("PUT "))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        assert!(puts().is_empty());
         let desired = desired_config(&config);
-        assert_eq!(pick("").await.unwrap(), desired);
+        assert_eq!(pick("").await.unwrap(), (desired.clone(), 5));
         assert_eq!(
-            state.lock().unwrap().received,
+            puts(),
             [(
                 "PUT /prefix/v1/apps/demo/config".to_owned(),
                 desired.clone()
             )]
         );
         let mut unexpected = |_: &Question| -> anyhow::Result<String> { unreachable!() };
+        let current = json!({"policy":desired["policy"],"cloud":desired["cloud"],"revision":5});
         assert_eq!(
-            staged_or_local(&client, "demo", &desired, local(), Some(&mut unexpected))
+            staged_or_local(&client, "demo", &current, local(), Some(&mut unexpected))
                 .await
-                .unwrap(),
-            desired
+                .unwrap()
+                .1,
+            5
         );
         task.abort();
     }
@@ -1650,7 +1714,8 @@ mod tests {
                     .parse::<concepts::prefixed_ulid::DeploymentId>()
                     .is_ok()
             );
-            assert_eq!(request.1["config"], received[1].1);
+            assert_eq!(request.1["revision"], 1);
+            assert!(request.1.get("config").is_none());
         }
         assert_eq!(
             received.last().unwrap().0,
@@ -1858,7 +1923,7 @@ mod tests {
                 .unwrap()
                 .received
                 .iter()
-                .all(|(method, _)| method.starts_with("GET"))
+                .all(|(route, _)| route.starts_with("GET") || route.ends_with("/config/compare"))
         );
         state.lock().unwrap().error = true;
         let error = client

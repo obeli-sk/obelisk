@@ -99,6 +99,7 @@ impl CloudArgs {
             }
             current
         };
+        let revision = staged_revision(&current)?;
         let api_url = api_origin(
             current["api_url"]
                 .as_str()
@@ -157,7 +158,7 @@ impl CloudArgs {
                     &name,
                     Method::POST,
                     &["apply"],
-                    Some(json!({"force":false,"config":desired,"deployment_id":id})),
+                    Some(json!({"force":false,"revision":revision,"deployment_id":id})),
                     Kind::Command(None),
                 )
                 .await?;
@@ -268,6 +269,7 @@ mod tests {
                 let mut app = body;
                 app["status"] = json!("running");
                 app["potentially_stale"] = json!(false);
+                app["revision"] = json!(1);
                 app["applied_revision"] = json!(1);
                 app["desired_state"] = json!("running");
                 state.app = Some(app.clone());
@@ -275,15 +277,22 @@ mod tests {
             }
             (Method::PUT, "/v1/apps/demo/config") => {
                 let app = state.app.as_mut().unwrap();
-                app["policy"] = body["policy"].clone();
-                app["cloud"] = body["cloud"].clone();
-                app["potentially_stale"] = json!(true);
-                app.clone()
+                let changed = app["policy"] != body["policy"] || app["cloud"] != body["cloud"];
+                if changed {
+                    app["policy"] = body["policy"].clone();
+                    app["cloud"] = body["cloud"].clone();
+                    app["revision"] = json!(app["revision"].as_u64().unwrap() + 1);
+                    app["potentially_stale"] = json!(true);
+                }
+                let mut value = app.clone();
+                value["changed"] = json!(changed);
+                value
             }
             (Method::POST, "/v1/apps/demo/apply") => {
                 assert_eq!(body["deployment_id"].as_str(), state.submitted.as_deref());
-                assert!(body["config"]["policy"].is_object());
+                assert!(body.get("config").is_none());
                 let app = state.app.as_mut().unwrap();
+                assert_eq!(body["revision"], app["revision"]);
                 if path.ends_with("/apply") {
                     app["desired_state"] = json!("running");
                 }
@@ -294,7 +303,7 @@ mod tests {
                     app["outcome"]["configuration"] = json!("applied");
                 }
                 app["potentially_stale"] = json!(false);
-                app["applied_revision"] = json!(1);
+                app["applied_revision"] = app["revision"].clone();
                 app.clone()
             }
             (Method::GET, "/v1/apps/demo/env") => json!({"env":{}}),
@@ -373,7 +382,7 @@ mod tests {
             let desired = policy(&app_path).await.unwrap();
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", listener.local_addr().unwrap());
-            let mut app = json!({"policy":desired.policy(),"cloud":{},"status":"running","desired_state":"running","potentially_stale":false,"applied_revision":1,"api_url":format!("{origin}/tenant")});
+            let mut app = json!({"policy":desired.policy(),"cloud":{},"status":"running","desired_state":"running","potentially_stale":false,"revision":1,"applied_revision":1,"api_url":format!("{origin}/tenant")});
             if matches!(scenario, "config" | "stopped-config") {
                 app["cloud"] = json!({"memory_mb":512});
             }
