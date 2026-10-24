@@ -629,7 +629,9 @@ impl EventHistory {
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
     ) -> Result<(), DbErrorWrite> {
-        if self.deadline_tracker.close_to_expired() && self.lock_extension > Duration::ZERO {
+        if self.lock_extension > Duration::ZERO
+            && self.deadline_tracker.close_to_expired(self.lock_extension)
+        {
             self.extend_lock(event_call_cursor, db_connection).await?;
         }
         Ok(())
@@ -4197,10 +4199,7 @@ mod tests {
             execution_id.clone(),
             sim_clock.now(),
             Duration::from_secs(1),
-            Arc::new(DeadlineTrackerFactory::new(
-                Duration::from_millis(100),
-                sim_clock.clone_box(),
-            )),
+            Arc::new(DeadlineTrackerFactory::new(sim_clock.clone_box())),
             JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching: 0,
                 subscription_interruption: None,

@@ -4,8 +4,8 @@ use super::{
     AllowedHostToml, BlockingStrategyConfigToml, ByteSizeConfig, ComponentCommon,
     ComponentLocationToml, ComponentStdOutputToml, ConfigName, DeploymentResolved, DurationConfig,
     ExecConfigToml, JsParamToml, LogLevelToml, OCI_SCHEMA_PREFIX, SecretRef, WebhookRoute,
-    default_external_server_name, default_lock_extension, default_lock_extension_leeway,
-    default_max_output_bytes, default_max_retries, default_retry_exp_backoff, resolve_local_refs,
+    default_external_server_name, default_lock_extension, default_max_output_bytes,
+    default_max_retries, default_retry_exp_backoff, resolve_local_refs,
     sanitize_deployment_relative_path, validate_secret_optionality,
 };
 use crate::args::TomlComponentType;
@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::path::Path;
 use std::str::FromStr;
-use tracing::info;
+use tracing::{info, warn};
 
 pub(crate) async fn load_deployment_validated(
     deployment_toml: &Path,
@@ -189,6 +189,23 @@ impl DeploymentToml {
         let activities_stub = Self::resolve_stub_names(self.activities_stub);
         let activities_external = Self::resolve_external_names(self.activities_external);
         let workflows_js = Self::resolve_names(self.workflows_js);
+        for (name, leeway) in self
+            .workflows_wasm
+            .iter()
+            .map(|w| (&w.common.name, &w.lock_extension_leeway))
+            .chain(
+                workflows_js
+                    .iter()
+                    .map(|(w, name)| (name, &w.lock_extension_leeway)),
+            )
+        {
+            if let Some(leeway) = leeway {
+                warn!(
+                    "Workflow `{name}`: ignoring `lock_extension_leeway` ({leeway:?}), the lock is \
+                    extended once half of `exec.lock_expiry` has elapsed; remove the setting"
+                );
+            }
+        }
 
         // Add components with optional names (now resolved)
 
@@ -844,11 +861,13 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     pub(crate) retry_exp_backoff: DurationConfig,
     #[serde(default)]
     pub(crate) blocking_strategy: BlockingStrategyConfigToml,
+    /// Extends the lock by `exec.lock_expiry` once half of it has elapsed, checked on each workflow call.
     #[serde(default = "default_lock_extension")]
     pub(crate) lock_extension: bool,
-    /// Starts extending the lock shortly before it expires, at `expires_at` minus this leeway.
-    #[serde(default = "default_lock_extension_leeway")]
-    pub(crate) lock_extension_leeway: DurationConfig,
+    // backcompat: 0.42 manifests serialized the removed leeway, accepted and ignored.
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub(crate) lock_extension_leeway: Option<DurationConfig>,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
 }
@@ -876,11 +895,13 @@ pub(crate) struct WorkflowWasmComponentConfigToml {
     pub(crate) backtrace: ComponentBacktraceConfig,
     #[serde(default)]
     pub(crate) stub_wasi: bool,
+    /// Extends the lock by `exec.lock_expiry` once half of it has elapsed, checked on each workflow call.
     #[serde(default = "default_lock_extension")]
     pub(crate) lock_extension: bool,
-    /// Starts extending the lock shortly before it expires, at `expires_at` minus this leeway.
-    #[serde(default = "default_lock_extension_leeway")]
-    pub(crate) lock_extension_leeway: DurationConfig,
+    // backcompat: 0.42 manifests serialized the removed leeway, accepted and ignored.
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub(crate) lock_extension_leeway: Option<DurationConfig>,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
 }

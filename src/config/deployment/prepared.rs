@@ -87,6 +87,14 @@ pub(crate) async fn prepare_deployment_manifest(
     // Validate through the typed config before collecting files so malformed component
     // entries fail with the same errors as today's resolution path.
     parse_manifest(deployment_toml, deployment_dir)?;
+    // backcompat: 0.42 drop the ignored `lock_extension_leeway`, already warned about above.
+    for section in ["workflow_wasm", "workflow_js"] {
+        if let Some(tables) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) {
+            for table in tables.iter_mut() {
+                table.remove("lock_extension_leeway");
+            }
+        }
+    }
 
     let mut files = Vec::new();
     collect_wasm_refs(&mut doc, "activity_wasm", deployment_dir, &mut files).await?;
@@ -1267,6 +1275,27 @@ mod tests {
         resolve_manifest(&prepared.deployment_toml, &cas)
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn prepare_drops_lock_extension_leeway() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("w.js"), "export default function w() {}")
+            .await
+            .unwrap();
+        let manifest = r#"
+[[workflow_js]]
+name = "w"
+location = "w.js"
+ffqn = "ns:pkg/ifc.fn"
+lock_extension_leeway.seconds = 15
+"#;
+
+        let prepared = prepare_deployment_manifest(manifest, dir.path())
+            .await
+            .unwrap();
+
+        assert!(!prepared.deployment_toml.contains("lock_extension_leeway"));
     }
 
     #[tokio::test]

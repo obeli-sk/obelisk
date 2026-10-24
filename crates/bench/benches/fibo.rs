@@ -215,10 +215,7 @@ mod bench {
             .into_worker(
                 DEPLOYMENT_ID_DUMMY,
                 db_pool.clone(),
-                Arc::new(DeadlineTrackerFactory::new(
-                    Duration::ZERO,
-                    clock_fn.clone_box(),
-                )),
+                Arc::new(DeadlineTrackerFactory::new(clock_fn.clone_box())),
                 cancel_registry,
                 None, // logs_storage_config
             ),

@@ -899,7 +899,7 @@ mod tests {
             .unwrap();
 
         let (guard, db_pool, db_close) = db_tests::Database::Sqlite.set_up().await;
-        let deadline_factory = Arc::new(DeadlineTrackerFactory::new(Duration::ZERO, clock_fn));
+        let deadline_factory = Arc::new(DeadlineTrackerFactory::new(clock_fn));
 
         (
             Arc::new(linked.into_worker(
@@ -1210,6 +1210,7 @@ mod tests {
     // ==================== Workflow function tests ====================
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
+    const LOCK_EXPIRY: Duration = Duration::from_secs(3);
 
     fn version_obelisk_test_imports(source: &str) -> String {
         let source = source
@@ -1242,7 +1243,7 @@ mod tests {
             workflow_engine,
             DEPLOYMENT_ID_DUMMY,
             JoinNextBlockingStrategy::Interrupt,
-            Arc::new(DeadlineTrackerFactory::new(Duration::ZERO, clock_fn)),
+            Arc::new(DeadlineTrackerFactory::new(clock_fn)),
         )
     }
 
@@ -1346,7 +1347,7 @@ mod tests {
             fuel: None,
             mode: WorkflowConfigMode::Real {
                 join_next_blocking_strategy,
-                lock_extension: None,
+                lock_extension: Some(LOCK_EXPIRY),
                 max_events_per_run,
                 response_refresh_interval,
             },
@@ -1424,7 +1425,7 @@ mod tests {
     ) -> ExecTaskAndClose {
         let exec_config = ExecConfig {
             batch_size: 1,
-            lock_expiry: Duration::from_secs(3),
+            lock_expiry: LOCK_EXPIRY,
             tick_sleep: TICK_SLEEP,
             component_id: worker.inner.config.component_id.clone(),
             task_limiter_cell: None,
@@ -1443,7 +1444,7 @@ mod tests {
     ) -> ExecTask {
         let exec_config = ExecConfig {
             batch_size: 1,
-            lock_expiry: Duration::from_secs(3),
+            lock_expiry: LOCK_EXPIRY,
             tick_sleep: TICK_SLEEP,
             component_id: worker.inner.config.component_id.clone(),
             task_limiter_cell: None,
@@ -2025,10 +2026,9 @@ mod tests {
             // `Await` needs the SimClock deadline tracker for determinism; `Interrupt` never calls `track`.
             let deadline_factory: Arc<DeadlineTrackerFactory> = match join_next_blocking_strategy {
                 JoinNextBlockingStrategy::Await { .. } => deadline_tracker_factory_test(&sim_clock),
-                JoinNextBlockingStrategy::Interrupt => Arc::new(DeadlineTrackerFactory::new(
-                    Duration::ZERO,
-                    sim_clock.clone_box(),
-                )),
+                JoinNextBlockingStrategy::Interrupt => {
+                    Arc::new(DeadlineTrackerFactory::new(sim_clock.clone_box()))
+                }
             };
 
             let workflow_engine =
@@ -2885,10 +2885,7 @@ mod tests {
                 workflow_engine.clone(),
                 DEPLOYMENT_ID_DUMMY,
                 JoinNextBlockingStrategy::Interrupt,
-                Arc::new(DeadlineTrackerFactory::new(
-                    Duration::ZERO,
-                    sim_clock.clone_box(),
-                )),
+                Arc::new(DeadlineTrackerFactory::new(sim_clock.clone_box())),
                 &params,
                 return_type.clone(),
                 usize::MAX,
@@ -2923,7 +2920,7 @@ mod tests {
 
         let exec_config = ExecConfig {
             batch_size: 1,
-            lock_expiry: Duration::from_secs(3),
+            lock_expiry: LOCK_EXPIRY,
             tick_sleep: TICK_SLEEP,
             component_id: producer_component_id,
             task_limiter_cell: None,
@@ -3079,10 +3076,7 @@ mod tests {
                 workflow_engine.clone(),
                 DEPLOYMENT_ID_DUMMY,
                 JoinNextBlockingStrategy::Interrupt,
-                Arc::new(DeadlineTrackerFactory::new(
-                    Duration::ZERO,
-                    sim_clock.clone_box(),
-                )),
+                Arc::new(DeadlineTrackerFactory::new(sim_clock.clone_box())),
                 &params,
                 return_type.clone(),
                 usize::MAX,
@@ -3117,7 +3111,7 @@ mod tests {
 
         let exec_config = ExecConfig {
             batch_size: 1,
-            lock_expiry: Duration::from_secs(3),
+            lock_expiry: LOCK_EXPIRY,
             tick_sleep: TICK_SLEEP,
             component_id: producer_component_id,
             task_limiter_cell: None,
@@ -4606,6 +4600,51 @@ mod tests {
         db_close.close().await;
     }
 
+    /// Rapid calls and a replayed blocking call must not extend a lock that is still more than half valid.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_lock_extension_not_repeated(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_lock_extension(params) {
+            for (let i = 0; i < 20; i++) { obelisk.createJoinSet(); }
+            obelisk.sleep({ milliseconds: 100 });
+            for (let i = 0; i < 20; i++) { obelisk.createJoinSet(); }
+            return '{}';
+        }";
+
+        let harness = JsWorkflowTestHarness::with_no_activities(
+            db_pool.clone(),
+            js_source,
+            "test-lock-extension",
+        )
+        .await;
+        harness.tick().await; // yields at sleep
+        harness.advance_time(Duration::from_millis(100)).await;
+        harness.tick().await; // replays the first run including the blocking sleep, then finishes
+        assert_eq!(json!({}), harness.get_result_json().await);
+
+        let log = harness
+            .db_connection
+            .get(&harness.execution_id)
+            .await
+            .unwrap();
+        let locked_count = log
+            .events
+            .iter()
+            .filter(|event| matches!(event.event, ExecutionRequest::Locked(_)))
+            .count();
+        assert_eq!(
+            2, locked_count,
+            "only the executor should lock, once per run"
+        );
+        drop(harness);
+        db_close.close().await;
+    }
+
     /// Test: `obelisk.sleep` accepts a JS `Date` as an absolute wake-up time
     /// (symmetric with the `Date` it returns). `new Date(142)` is 142ms since epoch,
     /// so with the clock at 42ms the sleep must resolve at the absolute 142ms.
@@ -4968,10 +5007,7 @@ mod tests {
                 workflow_engine.clone(),
                 original_deployment_id,
                 JoinNextBlockingStrategy::Interrupt,
-                Arc::new(DeadlineTrackerFactory::new(
-                    Duration::ZERO,
-                    sim_clock.clone_box(),
-                )),
+                Arc::new(DeadlineTrackerFactory::new(sim_clock.clone_box())),
             );
         let (upgrade_worker, upgrade_component_id, _upgrade_runnable) =
             compile_js_workflow_worker_with_deployment_id_and_signature(
@@ -4984,10 +5020,7 @@ mod tests {
                 workflow_engine,
                 upgrade_deployment_id,
                 JoinNextBlockingStrategy::Interrupt,
-                Arc::new(DeadlineTrackerFactory::new(
-                    Duration::ZERO,
-                    sim_clock.clone_box(),
-                )),
+                Arc::new(DeadlineTrackerFactory::new(sim_clock.clone_box())),
                 &[
                     single_list_of_strings_params().into_iter().next().unwrap(),
                     ParameterType {
@@ -7016,10 +7049,7 @@ function inner() {
                 non_blocking_event_batching: 0,
                 subscription_interruption: None,
             },
-            Arc::new(DeadlineTrackerFactory::new(
-                Duration::ZERO,
-                clock_fn.clone_box(),
-            )),
+            Arc::new(DeadlineTrackerFactory::new(clock_fn.clone_box())),
             &single_list_of_strings_params(),
             default_return_type(),
             usize::MAX, // max_events_per_run
@@ -7197,10 +7227,7 @@ function inner() {
         .into_worker(
             DEPLOYMENT_ID_DUMMY,
             db_pool.clone(),
-            Arc::new(DeadlineTrackerFactory::new(
-                Duration::ZERO,
-                clock_fn.clone_box(),
-            )),
+            Arc::new(DeadlineTrackerFactory::new(clock_fn.clone_box())),
             CancelRegistry::new(),
             None,
         );

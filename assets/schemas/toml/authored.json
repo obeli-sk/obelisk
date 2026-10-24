@@ -1171,15 +1171,9 @@
           "default": false
         },
         "lock_extension": {
+          "description": "Extends the lock by `exec.lock_expiry` once half of it has elapsed, checked on each workflow call.",
           "type": "boolean",
           "default": true
-        },
-        "lock_extension_leeway": {
-          "description": "Starts extending the lock shortly before it expires, at `expires_at` minus this leeway.",
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "seconds": 15
-          }
         },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml",
@@ -1294,15 +1288,9 @@
           "default": "await"
         },
         "lock_extension": {
+          "description": "Extends the lock by `exec.lock_expiry` once half of it has elapsed, checked on each workflow call.",
           "type": "boolean",
           "default": true
-        },
-        "lock_extension_leeway": {
-          "description": "Starts extending the lock shortly before it expires, at `expires_at` minus this leeway.",
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "seconds": 15
-          }
         },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml",

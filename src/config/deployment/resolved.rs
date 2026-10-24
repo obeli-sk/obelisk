@@ -1155,7 +1155,6 @@ pub(crate) struct WorkflowJsConfigVerified {
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
-    pub(crate) lock_extension_leeway: Duration,
 }
 
 impl WorkflowJsConfigVerified {
@@ -1287,7 +1286,6 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) frame_files_to_sources: FrameFilesToSource,
     pub(crate) logs_store_min_level: Option<LogLevel>,
-    pub(crate) lock_extension_leeway: Duration,
 }
 
 impl WorkflowConfigVerified {
@@ -1498,7 +1496,6 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
             )?,
             frame_files_to_sources,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
-            lock_extension_leeway: self.lock_extension_leeway.into(),
         })
     }
 }
@@ -1598,7 +1595,6 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
                 retry_config,
             )?,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
-            lock_extension_leeway: self.lock_extension_leeway.into(),
         })
     }
 }
@@ -1652,7 +1648,6 @@ pub(crate) async fn resolve_local_refs(
             backtrace: resolve_backtrace(&w.backtrace, &w.component_files)?,
             stub_wasi: w.stub_wasi,
             lock_extension: w.lock_extension,
-            lock_extension_leeway: w.lock_extension_leeway,
             logs_store_min_level: w.logs_store_min_level,
         });
     }
@@ -1681,7 +1676,6 @@ pub(crate) async fn resolve_local_refs(
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
             lock_extension: w.lock_extension,
-            lock_extension_leeway: w.lock_extension_leeway,
             logs_store_min_level: w.logs_store_min_level,
         });
     }
@@ -3156,7 +3150,6 @@ pub struct WorkflowWasmComponentConfigResolved {
     pub backtrace: ComponentBacktraceConfigResolved,
     pub stub_wasi: bool,
     pub lock_extension: bool,
-    pub lock_extension_leeway: DurationConfig,
     pub logs_store_min_level: LogLevelToml,
 }
 
@@ -3173,7 +3166,6 @@ pub struct WorkflowJsComponentConfigResolved {
     pub blocking_strategy: BlockingStrategyConfigToml,
     pub logs_store_min_level: LogLevelToml,
     pub lock_extension: bool,
-    pub lock_extension_leeway: DurationConfig,
 }
 
 /// Resolved form of `WebhookWasmComponentConfigToml`.
