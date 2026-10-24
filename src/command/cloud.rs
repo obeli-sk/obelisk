@@ -266,8 +266,11 @@ async fn app_name(name: Option<&str>) -> anyhow::Result<String> {
 fn validate_cloud_app_name(name: &str) -> anyhow::Result<()> {
     crate::config::app::validate_app_name(name)?;
     ensure!(
-        name.len() <= 20 && !name.contains("--"),
-        "Cloud app names must contain 4-20 lowercase letters, digits or single interior hyphens"
+        name.len() <= 20
+            && !name.contains("--")
+            && !name.starts_with("system-")
+            && !name.starts_with("integrations-"),
+        "Cloud app names must contain 4-20 lowercase letters, digits or single interior hyphens; system- and integrations- are reserved"
     );
     Ok(())
 }
@@ -285,7 +288,10 @@ async fn policy(path: &Path) -> anyhow::Result<AppConfigToml> {
     let text = tokio::fs::read_to_string(path)
         .await
         .with_context(|| format!("Cannot read policy {}", path.display()))?;
-    toml::from_str(&text).with_context(|| format!("Invalid app policy {}", path.display()))
+    let config: AppConfigToml =
+        toml::from_str(&text).with_context(|| format!("Invalid app policy {}", path.display()))?;
+    config.validate_cloud_integrations()?;
+    Ok(config)
 }
 async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<Value> {
     let mut path = vec!["v1", "tokens"];
@@ -542,7 +548,7 @@ impl CloudArgs {
                     body["cloud"] = serde_json::to_value(config.cloud)?;
                     let mut ask = ask;
                     let values = initial_values(
-                        &body["policy"],
+                        &user_supplied_policy(&body),
                         Values::new(fill, fill_non_interactive, terminal().then_some(&mut ask))?,
                     )?;
                     body["env"] = values["env"].clone();
@@ -637,7 +643,7 @@ impl CloudArgs {
                         fill_values(
                             &client,
                             name,
-                            &desired["policy"],
+                            &user_supplied_policy(&desired),
                             Values::new(
                                 fill,
                                 fill_non_interactive,
@@ -709,7 +715,7 @@ impl CloudArgs {
                             );
                             Values::Prompt(&mut ask)
                         };
-                        fill_values(&client, name, &desired["policy"], values).await
+                        fill_values(&client, name, &user_supplied_policy(&desired), values).await
                     }
                     CloudApp::Env(CloudEnv::List) => {
                         client
@@ -973,6 +979,23 @@ fn shown(value: &str) -> String {
     }
 }
 
+fn user_supplied_policy(config: &Value) -> Value {
+    let mut policy = config["policy"].clone();
+    if let Some(declarations) = policy["public_env"].as_array_mut() {
+        declarations.retain(|declaration| {
+            let name = declaration
+                .as_str()
+                .or_else(|| declaration["name"].as_str());
+            !config["cloud"]["integrations"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .any(|(_, integration)| integration["env"].as_str() == name)
+        });
+    }
+    policy
+}
+
 async fn fill_values(
     client: &Client,
     app: &str,
@@ -1216,6 +1239,18 @@ fn initial_values(policy: &Value, values: Values) -> anyhow::Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloud_integration_values_are_never_collected_from_local_environment() {
+        let config = json!({"policy":{"public_env":["PATH","OTHER_REQUIRED"],"secrets":{}},"cloud":{"integrations":{"llm":{"type":"llm","env":"PATH"}}}});
+        let policy = user_supplied_policy(&config);
+        let existing = serde_json::from_value(json!({"OTHER_REQUIRED":"value"})).unwrap();
+        let (_, pending) = collect_values("", &policy, &existing, &[], Values::Env).unwrap();
+        assert!(pending.is_empty());
+        assert_eq!(policy["public_env"], json!(["OTHER_REQUIRED"]));
+        assert!(validate_cloud_app_name("integrations-llm").is_err());
+        assert!(validate_cloud_app_name("system-example").is_err());
+    }
     use crate::args::{Args, Subcommand};
     use axum::{Router, body::Bytes, extract::State, http::HeaderMap, routing::any};
     use clap::Parser as _;

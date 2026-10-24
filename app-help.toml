@@ -10,6 +10,11 @@
 # [cloud]
 # memory_mb = 512
 
+## Cloud bindings supply public environment values, overriding uploaded or local values.
+## Binding names and types are validated by the target cloud; local runs must set required envs.
+# [cloud.integrations]
+# llm = { type = "llm", env = "LLM_BASE_URL" }
+
 ## Registered secrets default to type = "env", reading app environment at startup.
 ## server.toml app_env_prefix is prepended to environment source names.
 ## They are removed from the process environment before workers start.
@@ -27,6 +32,7 @@
 ## Optional entries may be absent, but a deployment must use an optional reference or fallback.
 # [public_env]
 # REGION = {}
+# LLM_BASE_URL = {}
 # TRACE_ID = { optional = true }
 ## Internal entries ignore process environment values and require an available source.
 ## API URLs use the listener address, replacing wildcard binds with loopback.

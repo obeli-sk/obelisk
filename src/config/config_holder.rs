@@ -195,8 +195,10 @@ impl ConfigHolder {
             Some(path) => {
                 let contents = std::fs::read_to_string(path)
                     .with_context(|| format!("cannot read app config {path:?}"))?;
-                toml::from_str(&contents)
-                    .with_context(|| format!("cannot parse app config {path:?}"))
+                let app: AppConfigToml = toml::from_str(&contents)
+                    .with_context(|| format!("cannot parse app config {path:?}"))?;
+                app.validate_cloud_integrations()?;
+                Ok(app)
             }
             None => Ok(AppConfigToml::default()),
         }
