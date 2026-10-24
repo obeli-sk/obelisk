@@ -30,15 +30,14 @@ use concepts::{
 use concepts::{JoinSetId, SupportedFunctionReturnValue};
 use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::Bytes;
-use hyper::server::conn::http1;
 use hyper::{Method, StatusCode, Uri};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto;
 use log_activities::obelisk::log::log::Host;
 use route_recognizer::{Match, Router};
 use secrecy::ExposeSecret as _;
 use std::future::Future;
 use std::ops::Deref;
-use std::pin::Pin;
 use std::str::FromStr;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
@@ -661,7 +660,8 @@ pub async fn server(
                 async move {
                     let (connection_drop_sender, connection_drop_watcher) = watch::channel(());
                     let deployment_id = state.deployment_id;
-                    let mut conn = http1::Builder::new()
+                    let builder = auto::Builder::new(TokioExecutor::new());
+                    let conn = builder
                         .serve_connection(
                             stream,
                             hyper::service::service_fn({
@@ -687,7 +687,7 @@ pub async fn server(
                                 }.instrument(info_span!(parent: &connection_span, "request", %deployment_id))
                             })
                         );
-                    let mut conn = Pin::new(&mut conn);
+                    let mut conn = std::pin::pin!(conn);
                     let res = loop {
                         select! {
                             result = conn.as_mut() => {
@@ -2933,7 +2933,6 @@ pub(crate) mod tests {
             db_close: DbPoolCloseableWrapper,
             #[expect(dead_code)]
             server_termination_sender: watch::Sender<()>,
-            #[expect(dead_code)]
             wh_server_state_sender: watch::Sender<Arc<WebhookServerState>>,
         }
 
@@ -3098,6 +3097,127 @@ pub(crate) mod tests {
                 "fiboa(1, 0) = hardcoded: 1",
                 SetUpFiboWebhook::fibo_fetch(&server_addr, 1, 0, 200).await
             );
+        }
+
+        #[tokio::test]
+        async fn webhook_http2_requests_and_deployment_switch() {
+            use http_body_util::{BodyExt as _, Full};
+            use hyper::{Request, StatusCode, Version, body::Bytes};
+            use hyper_util::rt::{TokioExecutor, TokioIo};
+
+            test_utils::set_up();
+            let harness = SetUpFiboWebhook::new(Database::Sqlite, LockingStrategy::ByFfqns).await;
+            let request = || {
+                Request::get(format!("http://{}/fibo/1/0", harness.server_addr))
+                    .version(Version::HTTP_2)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap()
+            };
+            let stream = tokio::net::TcpStream::connect(harness.server_addr)
+                .await
+                .unwrap();
+            let (mut sender, connection) =
+                hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                    .await
+                    .unwrap();
+            let connection_task = tokio::spawn(connection);
+            let mut second_sender = sender.clone();
+            let (first, second) = tokio::join!(
+                sender.send_request(request()),
+                second_sender.send_request(request()),
+            );
+            for response in [first, second] {
+                let response = response.unwrap();
+                assert_eq!(response.version(), Version::HTTP_2);
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(
+                    response.into_body().collect().await.unwrap().to_bytes(),
+                    "fiboa(1, 0) = hardcoded: 1"
+                );
+            }
+
+            let pending = sender.send_request(
+                Request::get(format!("http://{}/fibo/2/1", harness.server_addr))
+                    .version(Version::HTTP_2)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            );
+            let now = harness.sim_clock.now();
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if !harness
+                        .workflow_exec
+                        .tick_test_await(now, RunId::generate())
+                        .await
+                        .is_empty()
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            let previous = harness.wh_server_state_sender.borrow().clone();
+            harness
+                .wh_server_state_sender
+                .send_replace(Arc::new(WebhookServerState {
+                    deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
+                    router: Arc::new(MethodAwareRouter::default()),
+                    fn_registry: previous.fn_registry.clone(),
+                    max_persisted_value_size_bytes: previous.max_persisted_value_size_bytes,
+                    request_timeout: previous.request_timeout,
+                }));
+            assert_eq!(
+                harness
+                    .activity_exec
+                    .tick_test_await(now, RunId::generate())
+                    .await
+                    .len(),
+                1
+            );
+            assert_eq!(
+                harness
+                    .workflow_exec
+                    .tick_test_await(now, RunId::generate())
+                    .await
+                    .len(),
+                1
+            );
+            let response = pending.await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.into_body().collect().await.unwrap().to_bytes(),
+                "fiboa(2, 1) = direct call: 1"
+            );
+            tokio::time::timeout(Duration::from_secs(10), connection_task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert!(sender.ready().await.is_err());
+
+            let stream = tokio::net::TcpStream::connect(harness.server_addr)
+                .await
+                .unwrap();
+            let (mut sender, connection) =
+                hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                    .await
+                    .unwrap();
+            let connection_task = tokio::spawn(connection);
+            let response = sender.send_request(request()).await.unwrap();
+            assert_eq!(response.version(), Version::HTTP_2);
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_eq!(
+                response.into_body().collect().await.unwrap().to_bytes(),
+                "Route not found"
+            );
+            assert_eq!(
+                SetUpFiboWebhook::fibo_fetch(&harness.server_addr.to_string(), 1, 0, 404).await,
+                "Route not found"
+            );
+            connection_task.abort();
+            harness.close().await;
         }
 
         #[expand_enum_database]
