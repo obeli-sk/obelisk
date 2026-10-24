@@ -6,15 +6,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.9](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.8...v0.43.0-rc.9)
+
+This release candidate skips overlapping cron executions by default, accepts HTTP/2 on webhook
+listeners, adds cloud integration bindings and staged configuration revisions, and fixes workflow
+lock extension with short lock expiries.
+
 ### Added
 
 - *(cron)* `overlap` setting on `[[cron]]`: `skip` (default) skips a tick while the previously
   scheduled execution is not finished, `allow` keeps the previous behavior.
+  [#1191](https://github.com/obeli-sk/obelisk/pull/1191)
+- *(webhook)* Webhook listeners accept HTTP/2 alongside HTTP/1.1.
+  [#1197](https://github.com/obeli-sk/obelisk/pull/1197)
+- *(config)* `[cloud.integrations]` binds cloud-provided values to environment-backed
+  `[public_env]` declarations. Cloud fill skips these values; required values must be set
+  explicitly for local runs. [#1198](https://github.com/obeli-sk/obelisk/pull/1198)
+- *(cli)* `cloud app status` shows staged and applied configuration revisions and compares
+  a readable local `app.toml` with the staged configuration through the provisioner.
+  [#1196](https://github.com/obeli-sk/obelisk/pull/1196)
 
 ### Changed
 
-- *(cron)* Crons no longer start a new execution while the previous one is unfinished. Set
-  `overlap = "allow"` to restore overlapping runs.
+- **Breaking:** *(cron)* Crons no longer start a new execution while the previous one is
+  unfinished. Set `overlap = "allow"` to restore overlapping runs.
+  [#1191](https://github.com/obeli-sk/obelisk/pull/1191)
+- *(cli)* Cloud configuration comparisons use the provisioner, and `cloud app apply` and
+  `deploy` apply a staged configuration revision instead of sending the configuration inline.
+  [#1196](https://github.com/obeli-sk/obelisk/pull/1196)
+- *(cli)* Cloud app names starting with `system-` or `integrations-` are reserved.
+  [#1198](https://github.com/obeli-sk/obelisk/pull/1198)
+- *(config)* Outbound HTTP `url_prefix` preserves trailing slashes when matching. A bare
+  origin still matches any path. [#1189](https://github.com/obeli-sk/obelisk/pull/1189)
+
+### Fixed
+
+- *(workflow)* Automatic lock extension runs after half of `exec.lock_expiry` has elapsed,
+  preventing repeated lock events with short expiries and during replay. The old
+  `lock_extension_leeway` setting is accepted with a warning and ignored.
+  [#1194](https://github.com/obeli-sk/obelisk/pull/1194)
+- *(cli)* `cloud app apply` requests the deployment ID as JSON from the app API.
+  [#1190](https://github.com/obeli-sk/obelisk/pull/1190)
 
 ## [0.43.0-rc.8](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.7...v0.43.0-rc.8)
 
