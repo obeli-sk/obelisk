@@ -768,13 +768,14 @@ pub(crate) struct VerifyParams {
 }
 
 pub(crate) async fn verify_deployment(path: PathBuf, params: VerifyParams) -> anyhow::Result<()> {
-    let (deployment, cas) = resolve_deployment_offline(&path).await?;
     let mut config_holder = ConfigHolder::new(crate::project_dirs(), BaseDirs::new(), None)?;
     config_holder.path_prefixes.app_name = "deployment-verify".to_string();
     let mut config = ServerConfigToml::default();
     config.webui.enabled = false;
     config.api.enabled = false;
     config.external.enabled = false;
+    let _guard = init::init(&config)?;
+    let (deployment, cas) = resolve_deployment_offline(&path).await?;
     let names: BTreeSet<_> = deployment
         .webhooks_wasm
         .iter()
@@ -793,7 +794,6 @@ pub(crate) async fn verify_deployment(path: PathBuf, params: VerifyParams) -> an
             listening_addr: "127.0.0.1:0".parse().unwrap(),
         })
         .collect();
-    let _guard = init::init(&config)?;
     let registry = Arc::new(SecretRegistry::resolve(
         crate::config::secret_registry::SecretsToml::default(),
         crate::config::secret_registry::PublicEnvToml::default(),
@@ -5795,11 +5795,9 @@ async fn compile_and_link(
                 let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "workflow_compile", component_id = %workflow.component_id());
                 span.in_scope(|| {
-                    let lock_extension_leeway = workflow.lock_extension_leeway;
                     prespawn_workflow_wasm(
                         workflow,
                         &engines,
-                        lock_extension_leeway,
                         workflows_max_replay_captured_writes,
                     )
                     .map(|(worker, component_config, frame_files)| {
@@ -5821,12 +5819,10 @@ async fn compile_and_link(
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "workflow_js_compile", component_id = %workflow_js.component_id());
                 span.in_scope(|| {
-                    let lock_extension_leeway = workflow_js.lock_extension_leeway;
                     prespawn_workflow_js(
                         workflow_js,
                         &engines,
                         workflow_js_runnable,
-                        lock_extension_leeway,
                         workflows_max_replay_captured_writes,
                         workflow_js_runtime,
                         v8_executor,
@@ -6676,7 +6672,6 @@ async fn default_webui_location(
 fn prespawn_workflow_wasm(
     workflow: WorkflowConfigVerified,
     engines: &Engines,
-    workflows_lock_extension_leeway: Duration,
     max_replay_captured_writes: usize,
 ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = workflow.component_id().clone();
@@ -6693,7 +6688,6 @@ fn prespawn_workflow_wasm(
         engine,
         workflow,
         wit,
-        workflows_lock_extension_leeway,
         max_replay_captured_writes,
     )
     .with_context(|| format!("cannot compile {component_id}"))
@@ -6708,7 +6702,6 @@ fn prespawn_workflow_js(
     workflow_js: WorkflowJsConfigVerified,
     engines: &Engines,
     runnable_component: Option<RunnableComponent>,
-    workflows_lock_extension_leeway: Duration,
     max_replay_captured_writes: usize,
     workflow_js_runtime: WorkflowJsRuntime,
     v8_executor: V8Executor,
@@ -6786,7 +6779,6 @@ fn prespawn_workflow_js(
         replay_compiled,
         workflow_js.exec_config,
         workflow_js.logs_store_min_level,
-        workflows_lock_extension_leeway,
         wit,
         workflow_js.js_files,
         wit_origin,
@@ -6815,7 +6807,6 @@ fn replay_workflow_config(
 
 struct WorkflowWorkerCompiledWithConfig {
     worker: WorkflowWorkerCompiled,
-    workflows_lock_extension_leeway: Duration,
     /// Replay-purposed compiled worker (Interrupt strategy and stubbed WASI).
     /// Linked alongside the production worker; spawned into a long-lived [`ReplayWorker`].
     replay_compiled: WorkflowWorkerCompiled,
@@ -6823,7 +6814,6 @@ struct WorkflowWorkerCompiledWithConfig {
 
 struct WorkflowJsWorkerCompiledWithConfig {
     worker: WorkflowJsWorkerCompiled,
-    workflows_lock_extension_leeway: Duration,
     replay_compiled: WorkflowJsWorkerCompiled,
     runtime: WorkflowJsRuntime,
     v8_executor: V8Executor,
@@ -6959,7 +6949,6 @@ impl WorkerCompiled {
         engine: Arc<Engine>,
         workflow: WorkflowConfigVerified,
         wit: String,
-        workflows_lock_extension_leeway: Duration,
         max_replay_captured_writes: usize,
     ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), utils::wasm_tools::DecodeError>
     {
@@ -6990,7 +6979,6 @@ impl WorkerCompiled {
                 worker: CompiledWorkerKind::WorkflowWasm(Box::new(
                     WorkflowWorkerCompiledWithConfig {
                         worker,
-                        workflows_lock_extension_leeway,
                         replay_compiled,
                     },
                 )),
@@ -7008,7 +6996,6 @@ impl WorkerCompiled {
         replay_compiled: WorkflowJsWorkerCompiled,
         exec_config: ExecConfig,
         logs_store_min_level: Option<LogLevel>,
-        workflows_lock_extension_leeway: Duration,
         wit: String,
         js_files: std::collections::BTreeMap<String, String>,
         wit_origin: WitOrigin,
@@ -7031,7 +7018,6 @@ impl WorkerCompiled {
                 worker: CompiledWorkerKind::WorkflowJs(Box::new(
                     WorkflowJsWorkerCompiledWithConfig {
                         worker,
-                        workflows_lock_extension_leeway,
                         replay_compiled,
                         runtime,
                         v8_executor,
@@ -7064,8 +7050,6 @@ impl WorkerCompiled {
                 CompiledWorkerKind::WorkflowWasm(workflow_compiled) => {
                     LinkedWorkerKind::WorkflowWasm(Box::new(WorkflowWorkerLinkedWithConfig {
                         worker: workflow_compiled.worker.link(fn_registry.clone())?,
-                        workflows_lock_extension_leeway: workflow_compiled
-                            .workflows_lock_extension_leeway,
                         replay_linked: workflow_compiled
                             .replay_compiled
                             .link(fn_registry.clone())?,
@@ -7082,8 +7066,6 @@ impl WorkerCompiled {
                         worker: workflow_js_compiled
                             .worker
                             .link_with_runtime_and_pool(fn_registry.clone(), runtime.clone())?,
-                        workflows_lock_extension_leeway: workflow_js_compiled
-                            .workflows_lock_extension_leeway,
                         replay_linked: workflow_js_compiled
                             .replay_compiled
                             .link_with_runtime_and_pool(fn_registry.clone(), runtime)?,
@@ -7098,13 +7080,11 @@ impl WorkerCompiled {
 
 struct WorkflowWorkerLinkedWithConfig {
     worker: WorkflowWorkerLinked,
-    workflows_lock_extension_leeway: Duration,
     replay_linked: WorkflowWorkerLinked,
 }
 
 struct WorkflowJsWorkerLinkedWithConfig {
     worker: WorkflowJsWorkerLinked,
-    workflows_lock_extension_leeway: Duration,
     replay_linked: WorkflowJsWorkerLinked,
 }
 
@@ -7185,10 +7165,7 @@ impl WorkerLinked {
                 ))
             }
             LinkedWorkerKind::WorkflowWasm(workflow_linked) => {
-                let factory = DeadlineTrackerFactory::new(
-                    workflow_linked.workflows_lock_extension_leeway,
-                    Now.clone_box(),
-                );
+                let factory = DeadlineTrackerFactory::new(Now.clone_box());
                 let replay_worker = Arc::new(workflow_linked.replay_linked.into_worker(
                     deployment_id,
                     db_pool.clone(),
@@ -7209,10 +7186,7 @@ impl WorkerLinked {
                 ))
             }
             LinkedWorkerKind::WorkflowJs(workflow_js_linked) => {
-                let factory = DeadlineTrackerFactory::new(
-                    workflow_js_linked.workflows_lock_extension_leeway,
-                    Now.clone_box(),
-                );
+                let factory = DeadlineTrackerFactory::new(Now.clone_box());
                 let replay_worker = Arc::new(workflow_js_linked.replay_linked.into_worker(
                     deployment_id,
                     db_pool.clone(),

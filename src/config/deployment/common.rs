@@ -576,11 +576,6 @@ pub const fn default_lock_extension() -> bool {
 }
 
 #[must_use]
-pub const fn default_lock_extension_leeway() -> DurationConfig {
-    DurationConfig::Seconds(15)
-}
-
-#[must_use]
 pub const fn default_max_output_bytes() -> u64 {
     4096
 }

@@ -3808,7 +3808,7 @@ pub(crate) mod tests {
                 join_next_blocking_strategy,
                 tracing::info_span!("workflow-test"),
                 BacktraceCapture::Disabled,
-                DeadlineTrackerFactory::new(Duration::ZERO, self.clock_fn.clone_box())
+                DeadlineTrackerFactory::new(self.clock_fn.clone_box())
                     .create(
                         ctx.locked_event.lock_expires_at,
                         tokio::sync::watch::channel(false).1,

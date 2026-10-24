@@ -2147,7 +2147,7 @@ pub(crate) mod tests {
                         fuel: None,
                         mode: WorkflowConfigMode::Real {
                             join_next_blocking_strategy,
-                            lock_extension: None,
+                            lock_extension: Some(LOCK_EXPIRY_WORKFLOW),
                             max_events_per_run: usize::MAX,
                             response_refresh_interval: usize::MAX,
                         },
@@ -2161,7 +2161,7 @@ pub(crate) mod tests {
                 .into_worker(
                     DEPLOYMENT_ID_DUMMY,
                     db_pool,
-                    Arc::new(DeadlineTrackerFactory::new(Duration::ZERO, clock_fn)),
+                    Arc::new(DeadlineTrackerFactory::new(clock_fn)),
                     cancel_registry,
                     None, // logs_storage_config
                 ),
@@ -2416,6 +2416,107 @@ pub(crate) mod tests {
         let fibo = assert_matches!(res,
             WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 } => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
+    }
+
+    /// Replaying many blocking calls must not extend a lock that is still more than half valid.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn lock_extension_not_repeated_on_blocking_call_replay(db: Database) {
+        const INPUT_ITERATIONS: u32 = 5;
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = db.set_up().await;
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
+                .await,
+        ]);
+        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+            CancelRegistry::new(),
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+        let (activity_exec, _activity_close_tx) = new_activity_fibo(
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            TokioSleep,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: FIBOA_WORKFLOW_FFQN,
+                params: Params::from_json_values_test(vec![
+                    json!(FIBO_10_INPUT),
+                    json!(INPUT_ITERATIONS),
+                ]),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: workflow_exec.config.component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
+            })
+            .await
+            .unwrap();
+
+        // Each run replays all previous blocking calls before submitting the next one.
+        for _ in 0..INPUT_ITERATIONS {
+            assert_eq!(
+                1,
+                workflow_exec
+                    .tick_test_await(sim_clock.now(), RunId::generate())
+                    .await
+                    .len()
+            );
+            assert_eq!(
+                1,
+                activity_exec
+                    .tick_test_await(sim_clock.now(), RunId::generate())
+                    .await
+                    .len()
+            );
+        }
+        workflow_exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        let res = db_connection
+            .get_finished_result(&execution_id)
+            .await
+            .unwrap();
+        assert_matches!(
+            res,
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+                value: WastVal::U64(FIBO_10_OUTPUT),
+                ..
+            }))
+        );
+
+        let log = db_connection.get(&execution_id).await.unwrap();
+        let locked_count = log
+            .events
+            .iter()
+            .filter(|event| matches!(event.event, ExecutionRequest::Locked(_)))
+            .count();
+        assert_eq!(
+            usize::try_from(INPUT_ITERATIONS).unwrap() + 1,
+            locked_count,
+            "only the executor should lock, once per run"
+        );
+        drop(db_connection);
+        db_close.close().await;
     }
 
     /// Test for `submit_json` and `get_result_json` workflow functions.

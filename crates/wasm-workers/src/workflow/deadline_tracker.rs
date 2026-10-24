@@ -61,10 +61,11 @@ impl DeadlineTracker {
         }
     }
 
+    /// True once half of `lock_duration` remains until the lock expires.
     #[must_use]
-    pub fn close_to_expired(&self) -> bool {
+    pub fn close_to_expired(&self, lock_duration: Duration) -> bool {
         match self {
-            Self::ClockFn(tracker) => tracker.close_to_expired(),
+            Self::ClockFn(tracker) => tracker.close_to_expired(lock_duration),
             Self::Replay => false,
         }
     }
@@ -85,17 +86,14 @@ impl DeadlineTracker {
 }
 
 pub enum DeadlineTrackerFactory {
-    ClockFn {
-        leeway: Duration,
-        clock_fn: Box<dyn ClockFn>,
-    },
+    ClockFn { clock_fn: Box<dyn ClockFn> },
     Replay,
 }
 
 impl DeadlineTrackerFactory {
     #[must_use]
-    pub fn new(leeway: Duration, clock_fn: Box<dyn ClockFn>) -> Self {
-        Self::ClockFn { leeway, clock_fn }
+    pub fn new(clock_fn: Box<dyn ClockFn>) -> Self {
+        Self::ClockFn { clock_fn }
     }
 
     #[must_use]
@@ -114,7 +112,7 @@ impl DeadlineTrackerFactory {
         execution_interrupt_watcher: watch::Receiver<bool>,
         local_interrupt_watcher: watch::Receiver<bool>,
     ) -> Result<DeadlineTracker, LockAlreadyExpired> {
-        let Self::ClockFn { leeway, clock_fn } = self else {
+        let Self::ClockFn { clock_fn } = self else {
             return Ok(DeadlineTracker::Replay);
         };
         let started_at = clock_fn.now();
@@ -123,9 +121,7 @@ impl DeadlineTrackerFactory {
         }
         Ok(DeadlineTracker::ClockFn(DeadlineTrackerClockFn {
             lock_expires_at,
-            close_to_expired: lock_expires_at - *leeway,
             clock_fn: clock_fn.clone_box(),
-            leeway: *leeway,
             execution_interrupt_watcher,
             local_interrupt_watcher,
         }))
@@ -148,9 +144,7 @@ pub enum EpochCallbackError {
 
 pub struct DeadlineTrackerClockFn {
     pub(crate) lock_expires_at: DateTime<Utc>, // updated on every extension
-    pub(crate) close_to_expired: DateTime<Utc>, // lock_expires_at - leeway, updated on every extension
     pub(crate) clock_fn: Box<dyn ClockFn>,
-    pub(crate) leeway: Duration, // for close_to_expired
     execution_interrupt_watcher: watch::Receiver<bool>,
     local_interrupt_watcher: watch::Receiver<bool>,
 }
@@ -223,15 +217,14 @@ impl DeadlineTrackerClockFn {
     fn extend_by(&mut self, lock_extension: Duration) -> ExtendBy {
         let now = self.clock_fn.now();
         self.lock_expires_at = now + lock_extension;
-        self.close_to_expired = self.lock_expires_at - self.leeway;
         ExtendBy {
             lock_expires_at: self.lock_expires_at,
             now,
         }
     }
 
-    fn close_to_expired(&self) -> bool {
-        self.close_to_expired <= self.clock_fn.now()
+    fn close_to_expired(&self, lock_duration: Duration) -> bool {
+        self.lock_expires_at - lock_duration / 2 <= self.clock_fn.now()
     }
 
     fn epoch_callback_check(&self) -> Result<(), EpochCallbackError> {
@@ -253,7 +246,7 @@ pub struct ExtendBy {
 impl Clone for DeadlineTrackerFactory {
     fn clone(&self) -> Self {
         match self {
-            Self::ClockFn { leeway, clock_fn } => Self::new(*leeway, clock_fn.clone_box()),
+            Self::ClockFn { clock_fn } => Self::new(clock_fn.clone_box()),
             Self::Replay => Self::Replay,
         }
     }
@@ -264,8 +257,32 @@ impl Clone for DeadlineTrackerFactory {
 pub fn deadline_tracker_factory_test(
     sim_clock: &test_utils::sim_clock::SimClock,
 ) -> std::sync::Arc<DeadlineTrackerFactory> {
-    std::sync::Arc::new(DeadlineTrackerFactory::new(
-        Duration::ZERO,
-        sim_clock.clone_box(),
-    ))
+    std::sync::Arc::new(DeadlineTrackerFactory::new(sim_clock.clone_box()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_utils::sim_clock::SimClock;
+
+    #[test]
+    fn short_lock_renews_after_half_elapsed() {
+        const LOCK: Duration = Duration::from_secs(2);
+        let sim_clock = SimClock::epoch();
+        let mut tracker = DeadlineTrackerFactory::new(sim_clock.clone_box())
+            .create(
+                sim_clock.now() + LOCK,
+                watch::channel(false).1,
+                watch::channel(false).1,
+            )
+            .unwrap();
+        for _ in 0..3 {
+            sim_clock.move_time_forward(Duration::from_millis(999));
+            assert!(!tracker.close_to_expired(LOCK));
+            sim_clock.move_time_forward(Duration::from_millis(1));
+            assert!(tracker.close_to_expired(LOCK));
+            let extend_by = tracker.extend_by(LOCK);
+            assert_eq!(sim_clock.now() + LOCK, extend_by.lock_expires_at);
+        }
+    }
 }
