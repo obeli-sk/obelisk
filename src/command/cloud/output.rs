@@ -96,6 +96,7 @@ impl Summary {
                         status = text(&value["app"], "status", "")
                     );
                 }
+                config_revisions(&mut out, value);
                 if let Some(memory) = value["memory_mb"].as_u64() {
                     let _ = writeln!(out, "Memory: {memory} MB");
                 }
@@ -165,7 +166,22 @@ impl Summary {
                 let _ = writeln!(out, "{message}");
             }
             Self::Staged(message, apply) => {
-                let _ = writeln!(out, "{message} Run `{apply}` to apply changes.");
+                if value["changed"] == false {
+                    let _ = writeln!(
+                        out,
+                        "Configuration unchanged at staged revision {}.",
+                        value["revision"]
+                    );
+                } else if let Some(revision) = value["revision"].as_u64()
+                    && value.get("changed").is_some()
+                {
+                    let _ = writeln!(
+                        out,
+                        "Configuration staged as revision {revision}. Run `{apply}` to apply changes."
+                    );
+                } else {
+                    let _ = writeln!(out, "{message} Run `{apply}` to apply changes.");
+                }
             }
             Self::Fill(apply) => {
                 for declaration in value["declarations"].as_array().into_iter().flatten() {
@@ -249,6 +265,42 @@ fn app(out: &mut String, value: &Value) {
     }
 }
 
+fn config_revisions(out: &mut String, value: &Value) {
+    let app = &value["app"];
+    if let Some(revision) = app["revision"].as_u64() {
+        let applied = app["applied_revision"].as_u64();
+        let _ = writeln!(
+            out,
+            "Configuration: staged revision {revision}, {}",
+            match applied {
+                Some(applied) if applied == revision => format!("applied revision {applied}"),
+                Some(applied) => format!("applied revision {applied} (apply pending)"),
+                None => "not applied yet".to_owned(),
+            }
+        );
+    }
+    let local = &value["local_config"];
+    let path = text(local, "path", "app.toml");
+    if let Some(error) = local["error"].as_str() {
+        let _ = writeln!(out, "{path}: cannot compare ({error})");
+    } else if let Some(changes) = local["comparison"]["changes"].as_array() {
+        if changes.is_empty() {
+            let _ = writeln!(out, "{path}: matches the staged configuration");
+        } else {
+            let changes = changes
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(
+                out,
+                "{path}: differs from the staged configuration: {changes}. Run `obelisk cloud app --app {} stage` to stage it.",
+                text(app, "app_name", "")
+            );
+        }
+    }
+}
+
 fn token(out: &mut String, value: &Value) {
     let scope = &value["creation"];
     let scope = if scope["global"] == true {
@@ -311,5 +363,67 @@ pub(super) fn error_message(body: &str) -> String {
         message
     } else {
         "Cloud request failed".to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn status_shows_revisions_and_local_differences() {
+        let status = |applied: Value, local: Value| {
+            Summary::Status.render(&json!({
+                "app":{"app_name":"demo","status":"running","revision":3,"applied_revision":applied},
+                "local_config":local,
+            }))
+        };
+        let out = status(
+            json!(2),
+            json!({"path":"app.toml","comparison":{"changes":["/cloud/memory_mb"]}}),
+        );
+        assert!(
+            out.contains("staged revision 3, applied revision 2 (apply pending)"),
+            "{out}"
+        );
+        assert!(
+            out.contains("app.toml: differs from the staged configuration: /cloud/memory_mb"),
+            "{out}"
+        );
+        let out = status(
+            json!(3),
+            json!({"path":"app.toml","comparison":{"changes":[]}}),
+        );
+        assert!(
+            out.contains("staged revision 3, applied revision 3\n"),
+            "{out}"
+        );
+        assert!(
+            out.contains("app.toml: matches the staged configuration"),
+            "{out}"
+        );
+        let out = status(Value::Null, Value::Null);
+        assert!(out.contains("not applied yet"), "{out}");
+        assert!(!out.contains("app.toml"), "{out}");
+    }
+
+    #[test]
+    fn stage_reports_unchanged_revision() {
+        let staged = Summary::Staged("Configuration staged.", "apply".into());
+        assert_eq!(
+            staged.render(&json!({"revision":4,"changed":false})),
+            "Configuration unchanged at staged revision 4.\n"
+        );
+        assert!(
+            staged
+                .render(&json!({"revision":5,"changed":true}))
+                .starts_with("Configuration staged as revision 5.")
+        );
+        assert!(
+            staged
+                .render(&json!({}))
+                .starts_with("Configuration staged.")
+        );
     }
 }
