@@ -1004,6 +1004,8 @@ pub(crate) mod admin {
         (status = 200, description = "Generated execution ID", body = String)
     )
 )]
+// backcompat: 0.43, delete this endpoint after 0.43 in favor of local ID generation.
+#[deprecated(note = "generate execution IDs locally, e.g. `obelisk generate execution-id`")]
 async fn execution_id_generate(
     _: State<Arc<WebApiState>>,
     accept: TextDefaultAcceptHeader,
@@ -3474,6 +3476,8 @@ pub(crate) mod deployment {
             content((String = "text/plain"), (String = "application/json"))
         ))
     )]
+    // backcompat: 0.43, delete this endpoint after 0.43 in favor of `GET /v1/info`.
+    #[deprecated(note = "use `deployment_id` from `GET /v1/info`")]
     pub(crate) async fn current(
         state: State<Arc<WebApiState>>,
         accept: TextDefaultAcceptHeader,

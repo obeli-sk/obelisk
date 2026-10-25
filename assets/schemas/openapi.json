@@ -694,7 +694,8 @@
               }
             }
           }
-        }
+        },
+        "deprecated": true
       }
     },
     "/v1/deployments": {
@@ -1007,7 +1008,8 @@
               }
             }
           }
-        }
+        },
+        "deprecated": true
       }
     },
     "/v1/executions": {

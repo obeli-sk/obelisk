@@ -2066,6 +2066,26 @@ async fn app_policy_webapi_reports_running_policy() {
         .unwrap();
     assert_eq!(info["app_config_digest"], expected_digest);
 
+    for endpoint in ["deployment-id", "execution-id"] {
+        let response = server
+            .client
+            .get(format!("{}/v1/{endpoint}", server.base_url))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/plain; charset=utf-8"
+        );
+        let id = response.text().await.unwrap();
+        if endpoint == "deployment-id" {
+            assert_eq!(info["deployment_id"], id);
+        } else {
+            id.parse::<concepts::ExecutionId>().unwrap();
+        }
+    }
+
     let policy = server
         .client
         .get(format!("{}/v1/app-policy", server.base_url))
