@@ -60,6 +60,7 @@ fn main() -> Result<()> {
         }
     }
     let mut settings = typify::TypeSpaceSettings::default();
+    settings.with_derive("PartialEq".into());
     settings.with_map_type("::std::collections::BTreeMap");
     let mut types = typify::TypeSpace::new(&settings);
     types.add_ref_types(definitions)?;

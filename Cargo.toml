@@ -167,6 +167,7 @@ members = [
     "crates/executor",
     "crates/js-crypto",
     "crates/rest-types",
+    "crates/api-types",
     "crates/testing/component-builder",
     "crates/testing/db-macro",
     "crates/testing/db-tests",

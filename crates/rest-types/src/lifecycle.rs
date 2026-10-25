@@ -1,11 +1,6 @@
 //! Wire types generated from the authoritative lifecycle `OpenAPI` contract.
 
-#[allow(clippy::all, clippy::pedantic)]
-mod generated {
-    include!("lifecycle_generated.rs");
-}
-
-pub use generated::*;
+pub use api_types::*;
 
 pub const OPENAPI: &str = include_str!("../../../assets/openapi/lifecycle.json");
 
@@ -14,7 +9,9 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
     serde_json::from_str(OPENAPI).expect("valid lifecycle OpenAPI contract")
 }
 
-impl utoipa::PartialSchema for AppPolicyV1 {
+pub struct AppPolicySchema;
+
+impl utoipa::PartialSchema for AppPolicySchema {
     fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
         openapi()
             .components
@@ -25,4 +22,8 @@ impl utoipa::PartialSchema for AppPolicyV1 {
     }
 }
 
-impl utoipa::ToSchema for AppPolicyV1 {}
+impl utoipa::ToSchema for AppPolicySchema {
+    fn name() -> std::borrow::Cow<'static, str> {
+        "AppPolicyV1".into()
+    }
+}

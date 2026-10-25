@@ -8,3 +8,5 @@ obelisk.log
 /.claude/
 /meta
 result
+
+node_modules/

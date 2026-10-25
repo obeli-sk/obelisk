@@ -403,7 +403,7 @@ pub(crate) mod app_config {
     pub(crate) struct AppConfigResponse<'a> {
         #[schema(value_type = String)]
         pub(crate) app_config_digest: &'a crate::config::app::AppConfigDigest,
-        #[schema(value_type = rest_types::lifecycle::AppPolicyV1)]
+        #[schema(value_type = rest_types::lifecycle::AppPolicySchema)]
         pub(crate) policy: &'a crate::config::app::AppPolicyV1,
     }
 

@@ -33,6 +33,9 @@ jobs:
       - name: Check generated API types
         run: nix develop --command scripts/update-api-types.sh --check
 
+      - name: Check JavaScript API decoders
+        run: nix develop --command node --test tools/obelisk-api-codegen-js/client.test.mjs
+
       - name: Run `update-schemas.sh`
         run: |
           nix develop --command scripts/update-schemas.sh

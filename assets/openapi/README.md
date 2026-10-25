@@ -16,7 +16,7 @@ scripts/test.sh -p obelisk --run-ignored only -E 'test(update_openapi_schema)'
 
 The locked generator in `tools/obelisk-api-codegen` uses Typify to follow the
 selected operations' component references. Generated Rust is checked in under
-`crates/rest-types/src/lifecycle_generated.rs`; ordinary builds do not run the
+`crates/api-types/src/generated.rs`; ordinary builds do not run the
 generator. CI checks regeneration. Generated maps use `BTreeMap` for stable
 serialization.
 
@@ -37,3 +37,25 @@ to false when omitted and reject null, preserving the existing handler behavior.
 The contract describes the existing 400/503 switch errors instead of the former
 incorrect 409 annotation. Switch rejects text-only Accept headers with 406;
 policy accepts JSON or TOML. Middleware errors remain outside this initial slice.
+
+## Client distribution
+
+`crates/api-types` is a standalone, transport-independent Rust package used by
+rest-types and client apps. `clients/javascript` contains bundled ES modules,
+TypeScript declarations and schema-derived runtime decoders. JavaScript validates
+formats and preserves responses without coercion, default insertion or stripping
+unknown fields. Both packages come from the same lifecycle contract.
+
+Generation uses locked Rust and npm workspaces. `scripts/update-api-types.sh`
+regenerates both packages; `--check` compares temporary output to committed files.
+Run `node --test tools/obelisk-api-codegen-js/client.test.mjs` for decoder tests.
+
+Apps vendor their language's package in `vendor/obelisk-api`, the lifecycle
+contract in `assets/schemas/obelisk-openapi.json`, and its upstream revision in
+`assets/schemas/obelisk-openapi.rev`. `obelisk-api.language` selects the package.
+Copy `scripts/import-api-client.sh` to the app's `scripts/update-obelisk-api.sh`.
+The importer fetches the immutable revision or accepts a matching clean local
+checkout as its argument. `--check` verifies package, contract and importer against
+that revision. Ordinary app builds use the checked-in artifacts and need neither
+network access nor code generation. The API contract pin is independent of the
+app's Obelisk runtime pin.

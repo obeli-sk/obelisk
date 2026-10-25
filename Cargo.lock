@@ -3981,6 +3981,7 @@ dependencies = [
  "itertools 0.15.0",
  "obeli-sk-concepts",
  "obeli-sk-val-json",
+ "obelisk-api-types",
  "serde",
  "serde_json",
  "utoipa",
@@ -4306,6 +4307,15 @@ dependencies = [
  "tracing",
  "wasmtime",
  "wat",
+]
+
+[[package]]
+name = "obelisk-api-types"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
