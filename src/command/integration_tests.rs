@@ -1446,13 +1446,19 @@ impl TestServer {
             .send()
             .await
             .expect("webapi switch deployment request failed");
-        assert!(
-            resp.status().is_success(),
-            "webapi switch deployment failed: {}",
-            resp.status()
+        let body = lifecycle_response(
+            resp,
+            "/v1/deployments/{deployment_id}/switch",
+            "put",
+            reqwest::StatusCode::OK,
+        )
+        .await;
+        let body: rest_types::lifecycle::DeploymentSwitchResponse =
+            serde_json::from_value(body).unwrap();
+        assert_eq!(
+            body.ok,
+            rest_types::lifecycle::DeploymentSwitchOutcome::Switched
         );
-        let body: Value = resp.json().await.unwrap();
-        assert_eq!(body["ok"], "switched", "unexpected switch outcome");
     }
 
     /// Apply `mutate` to the active deployment's manifest, submit it and hot-redeploy to it.
@@ -1542,6 +1548,24 @@ routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
     let deployment_id = server
         .webapi_upload_and_submit_manifest(fixture.path())
         .await;
+    let response = server
+        .client
+        .put(format!(
+            "{}/v1/deployments/{deployment_id}/switch",
+            server.base_url
+        ))
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    let body = lifecycle_response(
+        response,
+        "/v1/deployments/{deployment_id}/switch",
+        "put",
+        reqwest::StatusCode::OK,
+    )
+    .await;
+    assert_eq!(body["ok"], "restart_required");
     server.webapi_switch_hot_redeploy(deployment_id).await;
 
     // The WASM components from the manifest are now live.
@@ -1559,6 +1583,45 @@ routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
     }
 
     server.shutdown().await;
+}
+
+async fn lifecycle_response(
+    response: reqwest::Response,
+    path: &str,
+    method: &str,
+    status: reqwest::StatusCode,
+) -> Value {
+    assert_eq!(response.status(), status);
+    let media_type = response.headers()[reqwest::header::CONTENT_TYPE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let contract: Value = serde_json::from_str(rest_types::lifecycle::OPENAPI).unwrap();
+    let mut schema = contract["paths"][path][method]["responses"][status.as_str()]["content"]
+        [&media_type]["schema"]
+        .clone();
+    assert!(
+        schema.is_object(),
+        "undocumented response: {method} {path} {status} {media_type}"
+    );
+    schema["components"] = contract["components"].clone();
+    let body = response.text().await.unwrap();
+    let body = if media_type == "application/json" {
+        serde_json::from_str(&body).unwrap()
+    } else {
+        Value::String(body)
+    };
+    jsonschema::options()
+        .with_draft(jsonschema::Draft::Draft202012)
+        .should_validate_formats(true)
+        .build(&schema)
+        .unwrap()
+        .validate(&body)
+        .unwrap();
+    body
 }
 
 #[derive(Debug)]
@@ -2055,15 +2118,15 @@ async fn app_policy_webapi_reports_running_policy() {
         toml::from_str(&std::fs::read_to_string(server.tmp_dir.path().join("app.toml")).unwrap())
             .unwrap();
     let expected_digest = app.policy().digest().to_string();
-    let info: Value = server
+    let response = server
         .client
         .get(format!("{}/v1/info", server.base_url))
         .send()
         .await
-        .unwrap()
-        .json()
-        .await
         .unwrap();
+    let info = lifecycle_response(response, "/v1/info", "get", reqwest::StatusCode::OK).await;
+    let _: rest_types::lifecycle::ServerInfoResponse =
+        serde_json::from_value(info.clone()).unwrap();
     assert_eq!(info["app_config_digest"], expected_digest);
 
     for endpoint in ["deployment-id", "execution-id"] {
@@ -2092,8 +2155,8 @@ async fn app_policy_webapi_reports_running_policy() {
         .send()
         .await
         .unwrap();
-    assert_eq!(policy.status(), reqwest::StatusCode::OK);
-    let policy: Value = policy.json().await.unwrap();
+    let policy = lifecycle_response(policy, "/v1/app-policy", "get", reqwest::StatusCode::OK).await;
+    let _: rest_types::lifecycle::AppPolicyV1 = serde_json::from_value(policy.clone()).unwrap();
     assert_eq!(policy, serde_json::to_value(app.policy()).unwrap());
 
     let policy = server
@@ -2108,8 +2171,121 @@ async fn app_policy_webapi_reports_running_policy() {
         policy.headers()[reqwest::header::CONTENT_TYPE],
         "application/toml"
     );
-    let policy: toml::Value = toml::from_str(&policy.text().await.unwrap()).unwrap();
+    let policy = lifecycle_response(policy, "/v1/app-policy", "get", reqwest::StatusCode::OK).await;
+    let policy: toml::Value = toml::from_str(policy.as_str().unwrap()).unwrap();
     assert_eq!(policy, toml::Value::try_from(app.policy()).unwrap());
+
+    let switch_path = "/v1/deployments/{deployment_id}/switch";
+    let switch_url = format!(
+        "{}/v1/deployments/{}/switch",
+        server.base_url,
+        info["deployment_id"].as_str().unwrap()
+    );
+    for payload in [json!({"apply": null}), json!({"apply": "true"})] {
+        let response = server
+            .client
+            .put(&switch_url)
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        lifecycle_response(
+            response,
+            switch_path,
+            "put",
+            reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+    let response = server
+        .client
+        .put(&switch_url)
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    lifecycle_response(
+        response,
+        switch_path,
+        "put",
+        reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+    )
+    .await;
+    for accept in ["application/json", "*/*"] {
+        let response = server
+            .client
+            .put(&switch_url)
+            .header("Accept", accept)
+            .json(&json!({"apply": true, "allow_unavailable_runtime_config": true}))
+            .send()
+            .await
+            .unwrap();
+        lifecycle_response(
+            response,
+            switch_path,
+            "put",
+            reqwest::StatusCode::BAD_REQUEST,
+        )
+        .await;
+        let response = server
+            .client
+            .put(format!(
+                "{}/v1/deployments/{}/switch",
+                server.base_url,
+                DeploymentId::generate()
+            ))
+            .header("Accept", accept)
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap();
+        lifecycle_response(response, switch_path, "put", reqwest::StatusCode::NOT_FOUND).await;
+    }
+    let response = server
+        .client
+        .put(&switch_url)
+        .header("Accept", "text/plain")
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    lifecycle_response(
+        response,
+        switch_path,
+        "put",
+        reqwest::StatusCode::NOT_ACCEPTABLE,
+    )
+    .await;
+    let response = server
+        .client
+        .get(format!("{}/v1/app-policy", server.base_url))
+        .header("Accept", "text/plain")
+        .send()
+        .await
+        .unwrap();
+    lifecycle_response(
+        response,
+        "/v1/app-policy",
+        "get",
+        reqwest::StatusCode::NOT_ACCEPTABLE,
+    )
+    .await;
+    let published: Value = server
+        .client
+        .get(format!("{}/openapi.json", server.base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let contract: Value = serde_json::from_str(rest_types::lifecycle::OPENAPI).unwrap();
+    for (path, definition) in contract["paths"].as_object().unwrap() {
+        assert_eq!(&published["paths"][path], definition);
+    }
+    for (name, schema) in contract["components"]["schemas"].as_object().unwrap() {
+        assert_eq!(&published["components"]["schemas"][name], schema);
+    }
 
     let deployments: Value = server
         .client

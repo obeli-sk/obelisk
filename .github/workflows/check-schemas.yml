@@ -30,6 +30,9 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
+      - name: Check generated API types
+        run: nix develop --command scripts/update-api-types.sh --check
+
       - name: Run `update-schemas.sh`
         run: |
           nix develop --command scripts/update-schemas.sh

@@ -92,6 +92,11 @@ cargo test --package obelisk web_api_server::tests
 | Activities | `crates/wasm-workers/src/activity/` |
 | Workflows | `crates/wasm-workers/src/workflow/` |
 | Webhooks | `crates/wasm-workers/src/webhook/` |
+
+Server info, app policy and deployment switch use authoritative OpenAPI definitions
+in [`assets/openapi/lifecycle.json`](assets/openapi/lifecycle.json). Edit that
+contract before regenerating their Rust wire types. See
+[`assets/openapi/README.md`](assets/openapi/README.md) for generation and checks.
 | Test utilities | `crates/testing/test-utils/src/` |
 
 ## Build System Notes

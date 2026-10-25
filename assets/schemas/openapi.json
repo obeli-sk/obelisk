@@ -379,6 +379,7 @@
         "operationId": "policy",
         "responses": {
           "200": {
+            "description": "Running app policy",
             "content": {
               "application/json": {
                 "schema": {
@@ -386,6 +387,16 @@
                 }
               },
               "application/toml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Accept must allow application/json or application/toml",
+            "content": {
+              "text/plain": {
                 "schema": {
                   "type": "string"
                 }
@@ -981,11 +992,94 @@
               }
             }
           },
-          "404": {
-            "description": "Deployment not found"
+          "400": {
+            "description": "Validation or switch failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "err"
+                  ],
+                  "properties": {
+                    "err": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
-          "409": {
-            "description": "Validation or switch failed"
+          "404": {
+            "description": "Deployment not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "err"
+                  ],
+                  "properties": {
+                    "err": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Accept must allow application/json",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Request content type must be application/json",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request JSON does not match the switch payload",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Another deployment operation is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "err"
+                  ],
+                  "properties": {
+                    "err": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -2276,6 +2370,7 @@
         "operationId": "get",
         "responses": {
           "200": {
+            "description": "Running server information",
             "content": {
               "application/json": {
                 "schema": {
@@ -2446,6 +2541,12 @@
             "items": {
               "type": "object",
               "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.",
+              "required": [
+                "methods",
+                "request_url_regex",
+                "secrets",
+                "replace_in"
+              ],
               "properties": {
                 "methods": {
                   "anyOf": [
@@ -3498,11 +3599,13 @@
         "properties": {
           "allow_unavailable_runtime_config": {
             "type": "boolean",
-            "description": "Enqueue while app or platform approval is pending. Activation on restart\nchecks strictly; rejected when applying without restart."
+            "description": "Enqueue while app or platform approval is pending. Activation on restart\nchecks strictly; rejected when applying without restart.",
+            "default": false
           },
           "apply": {
             "type": "boolean",
-            "description": "Apply deployment without restart"
+            "description": "Apply deployment without restart",
+            "default": false
           }
         }
       },
