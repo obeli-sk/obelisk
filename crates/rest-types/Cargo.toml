@@ -11,6 +11,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+api-types = { package = "obelisk-api-types", path = "../api-types" }
 # Not inherited: the workspace dependency enables the runtime feature.
 concepts = { package = "obeli-sk-concepts", path = "../concepts", default-features = false }
 val-json.workspace = true

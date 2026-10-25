@@ -303,6 +303,7 @@
                 litecli
                 nixd
                 nixpkgs-fmt
+                nodejs # API client generation
                 oras # scripts/push-wasm-oci.sh
                 pkg-config
                 postgresql
