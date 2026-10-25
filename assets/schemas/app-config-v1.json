@@ -261,7 +261,10 @@
       ]
     },
     "MethodsInputStar": {
-      "type": "null"
+      "type": "string",
+      "enum": [
+        "*"
+      ]
     },
     "SecretRef": {
       "description": "A reference to a secret registered in app.toml `[secrets]`.\nEither `\"NAME\"` (required) or `{ name = \"NAME\", optional = true }`.",

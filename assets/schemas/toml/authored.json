@@ -497,7 +497,10 @@
       ]
     },
     "MethodsInputStar": {
-      "type": "null"
+      "type": "string",
+      "enum": [
+        "*"
+      ]
     },
     "ReplaceIn": {
       "description": "Where in the outgoing request placeholders are replaced.",
