@@ -52,7 +52,7 @@ impl CloudArgs {
                 step("fill");
             }
             let values = initial_values(
-                &desired["policy"],
+                &user_supplied_policy(&desired),
                 Values::new(
                     interactive,
                     fill_non_interactive,
@@ -122,7 +122,7 @@ impl CloudArgs {
             fill_values(
                 &client,
                 &name,
-                &desired["policy"],
+                &user_supplied_policy(&desired),
                 Values::new(
                     interactive,
                     fill_non_interactive,
@@ -347,6 +347,8 @@ mod tests {
             "new",
             "new-values",
             "new-missing",
+            "new-integration",
+            "integration",
             "code-only",
             "config",
             "stopped",
@@ -366,6 +368,8 @@ mod tests {
                 "app_name='demo'\n[public_env]\nINITIAL_REGION={}\n[secrets]\nINITIAL_KEY={}\n"
             } else if scenario == "missing" {
                 "app_name='demo'\n[public_env]\nPATH={}\n"
+            } else if matches!(scenario, "new-integration" | "integration") {
+                "app_name='demo'\n[cloud.integrations]\nllm={type='llm',env='PATH'}\n[public_env]\nPATH={}\n"
             } else {
                 "app_name='demo'\n"
             };
@@ -399,6 +403,7 @@ mod tests {
                     "new"
                         | "new-values"
                         | "new-missing"
+                        | "new-integration"
                         | "name-conflict"
                         | "rename"
                         | "rename-override"
@@ -514,12 +519,15 @@ mod tests {
                 result.unwrap();
                 assert_eq!(
                     state.calls.contains(&"POST /v1/apps".to_owned()),
-                    matches!(scenario, "new" | "new-values")
+                    matches!(scenario, "new" | "new-values" | "new-integration")
                 );
                 assert_eq!(
                     state.calls.contains(&"PUT /v1/apps/demo/config".to_owned()),
-                    !matches!(scenario, "new" | "new-values")
+                    !matches!(scenario, "new" | "new-values" | "new-integration")
                 );
+                if scenario == "new-integration" {
+                    assert_eq!(state.app.as_ref().unwrap()["env"], json!({}));
+                }
                 assert!(state.calls.contains(&"POST /v1/apps/demo/apply".to_owned()));
                 assert!(!state.calls.contains(&"POST /v1/apps/demo/start".to_owned()));
                 assert!(
