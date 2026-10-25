@@ -402,7 +402,7 @@ pub(crate) async fn stub(
 struct AlreadyPrintedError;
 
 async fn fetch_execution_status_json(
-    client: &reqwest::Client,
+    client: &crate::client::HttpClient,
     api_url: &str,
     execution_id: &ExecutionId,
 ) -> anyhow::Result<ExecutionWithStateSer> {
@@ -422,7 +422,7 @@ fn execution_status_is_finished(status: &ExecutionWithStateSer) -> bool {
 }
 
 async fn fetch_execution_result_json(
-    client: &reqwest::Client,
+    client: &crate::client::HttpClient,
     api_url: &str,
     execution_id: &ExecutionId,
     follow: bool,
@@ -1169,7 +1169,10 @@ impl LogsOpts {
         })
     }
 
-    fn apply_to_request(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    fn apply_to_request(
+        &self,
+        mut req: crate::client::RequestBuilder,
+    ) -> crate::client::RequestBuilder {
         let show_logs = !self.levels.is_empty();
         req = req.query(&[("show_logs", if show_logs { "true" } else { "false" })]);
         if show_logs {
@@ -1247,7 +1250,7 @@ fn print_log_items(
 }
 
 async fn fetch_logs(
-    client: &reqwest::Client,
+    client: &crate::client::HttpClient,
     logs_url: &str,
     opts: &LogsOpts,
     cursor: Option<&str>,

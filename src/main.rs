@@ -211,13 +211,17 @@ fn command_future(
             ))
         }
 
-        Subcommand::Deployment(DeploymentArgs { command, token }) => Box::pin(command.run(
-            client_override.unwrap_or_else(|| ClientStartup::new(token.api_url, token.api_token)),
-        )),
+        Subcommand::Deployment(DeploymentArgs { command, token }) => {
+            Box::pin(command.run(client_override.unwrap_or_else(|| {
+                ClientStartup::new(token.api_url, token.api_token, token.verbose)
+            })))
+        }
 
-        Subcommand::Admin(AdminArgs { command, token }) => Box::pin(command.run(
-            client_override.unwrap_or_else(|| ClientStartup::new(token.api_url, token.api_token)),
-        )),
+        Subcommand::Admin(AdminArgs { command, token }) => {
+            Box::pin(command.run(client_override.unwrap_or_else(|| {
+                ClientStartup::new(token.api_url, token.api_token, token.verbose)
+            })))
+        }
 
         Subcommand::Generate(generate) => {
             let env_vars = StartupEnvVars::capture();
@@ -232,8 +236,9 @@ fn command_future(
         }
 
         Subcommand::Component(ComponentArgs { command, token }) => {
-            let client_startup = client_override
-                .unwrap_or_else(|| ClientStartup::new(token.api_url, token.api_token));
+            let client_startup = client_override.unwrap_or_else(|| {
+                ClientStartup::new(token.api_url, token.api_token, token.verbose)
+            });
             let env_vars = StartupEnvVars::capture();
             let secret_registry = Arc::new(SecretRegistry::resolve(
                 SecretsToml::new(),
@@ -245,9 +250,11 @@ fn command_future(
             Box::pin(command.run(client_startup, secret_registry))
         }
 
-        Subcommand::Execution(ExecutionArgs { command, token }) => Box::pin(command.run(
-            client_override.unwrap_or_else(|| ClientStartup::new(token.api_url, token.api_token)),
-        )),
+        Subcommand::Execution(ExecutionArgs { command, token }) => {
+            Box::pin(command.run(client_override.unwrap_or_else(|| {
+                ClientStartup::new(token.api_url, token.api_token, token.verbose)
+            })))
+        }
     };
 
     Ok(future)

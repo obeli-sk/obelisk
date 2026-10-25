@@ -19,7 +19,7 @@
         },
         {
           "name": "--verbose",
-          "help": "Show detailed metadata and command diagnostics"
+          "help": "Show detailed metadata, HTTP requests, and response statuses on stderr"
         },
         {
           "name": "--api-url",
@@ -1432,6 +1432,10 @@
       "about": "Submit, inspect, stub, cancel, pause, replay, persist backtraces, or upgrade executions",
       "options": [
         {
+          "name": "--verbose",
+          "help": "Show HTTP requests and response statuses on stderr"
+        },
+        {
           "name": "--api-url",
           "short": "a",
           "help": "Address of the Obelisk server"
@@ -1837,6 +1841,10 @@
       "about": "Inspect components or add/push them to an OCI registry",
       "options": [
         {
+          "name": "--verbose",
+          "help": "Show HTTP requests and response statuses on stderr"
+        },
+        {
           "name": "--api-url",
           "short": "a",
           "help": "Address of the Obelisk server"
@@ -1931,6 +1939,10 @@
       "name": "deployment",
       "about": "Manage deployments",
       "options": [
+        {
+          "name": "--verbose",
+          "help": "Show HTTP requests and response statuses on stderr"
+        },
         {
           "name": "--api-url",
           "short": "a",
@@ -2144,6 +2156,10 @@
       "name": "admin",
       "about": "Perform operator-only destructive maintenance",
       "options": [
+        {
+          "name": "--verbose",
+          "help": "Show HTTP requests and response statuses on stderr"
+        },
         {
           "name": "--api-url",
           "short": "a",

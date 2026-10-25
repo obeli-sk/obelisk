@@ -92,7 +92,7 @@ impl From<CloudCommandId> for Kind {
 }
 
 struct Client {
-    http: reqwest::Client,
+    http: crate::client::HttpClient,
     origin: Url,
     verbose: bool,
 }
@@ -133,12 +133,15 @@ impl Client {
             headers.insert(header::AUTHORIZATION, value);
         }
         Ok(Self {
-            http: reqwest::Client::builder()
-                .user_agent(crate::client::USER_AGENT)
-                .default_headers(headers)
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(360))
-                .build()?,
+            http: crate::client::HttpClient::new(
+                reqwest::Client::builder()
+                    .user_agent(crate::client::USER_AGENT)
+                    .default_headers(headers)
+                    .redirect(reqwest::redirect::Policy::none())
+                    .timeout(Duration::from_secs(360))
+                    .build()?,
+                args.verbose,
+            ),
             origin,
             verbose: args.verbose,
         })
@@ -404,6 +407,7 @@ impl CloudArgs {
         let token = ClientConnection {
             api_url,
             api_token: None,
+            verbose: self.verbose,
         };
         let command = match self.command {
             Cloud::App(CloudAppTarget {
