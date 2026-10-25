@@ -422,7 +422,7 @@ enum SubmitAttempt {
 
 /// One submit request. A conflict carrying only `missing_files` becomes `Missing`.
 async fn submit_attempt(
-    client: &reqwest::Client,
+    client: &crate::client::HttpClient,
     api_url: &str,
     prepared: &PreparedDeploymentManifest,
     allow_unavailable_runtime_config: bool,
@@ -539,7 +539,7 @@ fn format_submit_detail(detail: &SubmitPackageErrorBody) -> String {
 
 /// Fetch a deployment file blob from the server's content-addressed store.
 async fn fetch_file(
-    client: &reqwest::Client,
+    client: &crate::client::HttpClient,
     api_url: &str,
     digest: &str,
 ) -> anyhow::Result<bytes::Bytes> {

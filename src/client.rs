@@ -14,7 +14,7 @@ pub(crate) struct ClientStartup {
 }
 
 pub(crate) async fn send_json<T: DeserializeOwned>(
-    request: reqwest::RequestBuilder,
+    request: RequestBuilder,
 ) -> Result<T, anyhow::Error> {
     let response = request.send().await?;
     let status = response.status();
@@ -25,7 +25,7 @@ pub(crate) async fn send_json<T: DeserializeOwned>(
     Ok(response.json().await?)
 }
 
-pub(crate) async fn send_empty(request: reqwest::RequestBuilder) -> Result<(), anyhow::Error> {
+pub(crate) async fn send_empty(request: RequestBuilder) -> Result<(), anyhow::Error> {
     let response = request.send().await?;
     let status = response.status();
     if !status.is_success() {
@@ -35,9 +35,7 @@ pub(crate) async fn send_empty(request: reqwest::RequestBuilder) -> Result<(), a
     Ok(())
 }
 
-pub(crate) async fn send_bytes(
-    request: reqwest::RequestBuilder,
-) -> Result<bytes::Bytes, anyhow::Error> {
+pub(crate) async fn send_bytes(request: RequestBuilder) -> Result<bytes::Bytes, anyhow::Error> {
     let response = request.send().await?;
     let status = response.status();
     if !status.is_success() {
@@ -48,14 +46,14 @@ pub(crate) async fn send_bytes(
 }
 
 impl ClientStartup {
-    pub(crate) fn new(api_url: String, flag: Option<SecretString>) -> Self {
+    pub(crate) fn new(api_url: String, flag: Option<SecretString>, verbose: bool) -> Self {
         let api_token = flag.filter(|token| !token.expose_secret().is_empty());
 
         Self {
             api_token,
             api_url,
             cloud: false,
-            verbose: false,
+            verbose,
         }
     }
 
@@ -81,8 +79,11 @@ impl ClientStartup {
     }
 
     /// HTTP client for web-API calls, presenting the API token as a default header.
-    pub(crate) fn web_api_client(&self) -> Result<reqwest::Client, anyhow::Error> {
-        Ok(self.web_api_client_builder()?.build()?)
+    pub(crate) fn web_api_client(&self) -> Result<HttpClient, anyhow::Error> {
+        Ok(HttpClient::new(
+            self.web_api_client_builder()?.build()?,
+            self.verbose,
+        ))
     }
 
     pub(crate) fn web_api_client_builder(&self) -> Result<reqwest::ClientBuilder, anyhow::Error> {
@@ -104,5 +105,171 @@ impl ClientStartup {
         } else {
             builder
         })
+    }
+}
+
+pub(crate) struct HttpClient {
+    inner: reqwest::Client,
+    verbose: bool,
+}
+
+impl HttpClient {
+    pub(crate) fn new(inner: reqwest::Client, verbose: bool) -> Self {
+        Self { inner, verbose }
+    }
+
+    pub(crate) fn request(
+        &self,
+        method: reqwest::Method,
+        url: impl reqwest::IntoUrl,
+    ) -> RequestBuilder {
+        RequestBuilder {
+            inner: self.inner.request(method, url),
+            verbose: self.verbose,
+        }
+    }
+
+    pub(crate) fn get(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.request(reqwest::Method::GET, url)
+    }
+
+    pub(crate) fn post(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.request(reqwest::Method::POST, url)
+    }
+
+    pub(crate) fn put(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.request(reqwest::Method::PUT, url)
+    }
+
+    pub(crate) fn delete(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.request(reqwest::Method::DELETE, url)
+    }
+}
+
+pub(crate) struct RequestBuilder {
+    inner: reqwest::RequestBuilder,
+    verbose: bool,
+}
+
+impl RequestBuilder {
+    pub(crate) fn header<K, V>(self, key: K, value: V) -> Self
+    where
+        reqwest::header::HeaderName: TryFrom<K>,
+        <reqwest::header::HeaderName as TryFrom<K>>::Error: Into<http::Error>,
+        reqwest::header::HeaderValue: TryFrom<V>,
+        <reqwest::header::HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+    {
+        Self {
+            inner: self.inner.header(key, value),
+            ..self
+        }
+    }
+
+    pub(crate) fn json<T: serde::Serialize + ?Sized>(self, body: &T) -> Self {
+        Self {
+            inner: self.inner.json(body),
+            ..self
+        }
+    }
+
+    pub(crate) fn query<T: serde::Serialize + ?Sized>(self, query: &T) -> Self {
+        Self {
+            inner: self.inner.query(query),
+            ..self
+        }
+    }
+
+    pub(crate) fn multipart(self, form: reqwest::multipart::Form) -> Self {
+        Self {
+            inner: self.inner.multipart(form),
+            ..self
+        }
+    }
+
+    pub(crate) async fn send(self) -> Result<reqwest::Response, reqwest::Error> {
+        let (client, request) = self.inner.build_split();
+        let request = request?;
+        if self.verbose {
+            eprintln!("> {} {}", request.method(), diagnostic_url(request.url()));
+        }
+        let response = client.execute(request).await;
+        let response = if self.verbose {
+            response.map_err(reqwest::Error::without_url)
+        } else {
+            response
+        };
+        if self.verbose {
+            match &response {
+                Ok(response) => eprintln!("< {}", response.status()),
+                Err(err) => eprintln!("< Request failed: {err}"),
+            }
+        }
+        response
+    }
+}
+
+fn diagnostic_url(url: &reqwest::Url) -> reqwest::Url {
+    let mut url = url.clone();
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_fragment(None);
+    if url.query().is_some() {
+        let pairs: Vec<_> = url
+            .query_pairs()
+            .map(|(key, value)| {
+                let name = key.to_ascii_lowercase();
+                let sensitive = [
+                    "token",
+                    "secret",
+                    "password",
+                    "credential",
+                    "signature",
+                    "key",
+                    "auth",
+                ]
+                .iter()
+                .any(|part| name.contains(part));
+                (
+                    key.into_owned(),
+                    if sensitive {
+                        "[REDACTED]".to_owned()
+                    } else {
+                        value.into_owned()
+                    },
+                )
+            })
+            .collect();
+        url.query_pairs_mut().clear().extend_pairs(pairs);
+    }
+    url
+}
+
+#[cfg(test)]
+mod tests {
+    use super::diagnostic_url;
+
+    #[test]
+    fn diagnostic_url_redacts_credentials_and_preserves_request_parameters() {
+        let original = reqwest::Url::parse(
+            "https://user:password@example.com/prefix/v1/executions?follow=true&api%5Ftoken=first&api_token=second&X-Amz-Signature=signed&password=hidden&cursor=a%2Bb#secret",
+        ).unwrap();
+        let redacted = diagnostic_url(&original);
+        assert_eq!(redacted.username(), "");
+        assert_eq!(redacted.password(), None);
+        assert_eq!(redacted.fragment(), None);
+        assert_eq!(redacted.path(), "/prefix/v1/executions");
+        assert_eq!(
+            redacted.query_pairs().collect::<Vec<_>>(),
+            vec![
+                ("follow".into(), "true".into()),
+                ("api_token".into(), "[REDACTED]".into()),
+                ("api_token".into(), "[REDACTED]".into()),
+                ("X-Amz-Signature".into(), "[REDACTED]".into()),
+                ("password".into(), "[REDACTED]".into()),
+                ("cursor".into(), "a+b".into()),
+            ]
+        );
+        assert_eq!(original.username(), "user");
+        assert_eq!(original.query_pairs().nth(1).unwrap().1, "first");
     }
 }

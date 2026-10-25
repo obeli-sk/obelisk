@@ -85,6 +85,9 @@ pub(crate) struct Args {
 /// Connection options shared by direct API commands.
 #[derive(Debug, clap::Args)]
 pub(crate) struct ClientConnection {
+    /// Show HTTP requests and response statuses on stderr.
+    #[arg(long, global = true)]
+    pub(crate) verbose: bool,
     /// Address of the Obelisk server.
     #[arg(
         short,
@@ -1615,7 +1618,7 @@ pub(crate) struct CloudArgs {
     /// Print machine-readable JSON instead of human-readable output.
     #[arg(long, global = true)]
     pub(crate) json: bool,
-    /// Show detailed metadata and command diagnostics.
+    /// Show detailed metadata, HTTP requests, and response statuses on stderr.
     #[arg(long, global = true)]
     pub(crate) verbose: bool,
     /// Cloud control plane URL.
