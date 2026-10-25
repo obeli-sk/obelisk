@@ -6,6 +6,7 @@ pub mod components;
 pub mod deployment;
 pub mod executions;
 pub mod functions;
+pub mod lifecycle;
 pub mod logs;
 pub mod replay;
 pub mod server;

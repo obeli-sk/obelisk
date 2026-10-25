@@ -223,26 +223,6 @@ pub enum DeploymentSubmitErrorBody {
     MissingRuntimeConfig(MissingRuntimeConfigErrorBody),
 }
 
-/// Request payload for switching deployment
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-pub struct DeploymentSwitchPayload {
-    /// Enqueue while app or platform approval is pending. Activation on restart
-    /// checks strictly; rejected when applying without restart.
-    #[serde(default)]
-    pub allow_unavailable_runtime_config: bool,
-    /// Apply deployment without restart
-    #[serde(default)]
-    pub apply: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-pub struct DeploymentSwitchResponse {
-    pub ok: DeploymentSwitchOutcome,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DeploymentSwitchOutcome {
-    Switched,
-    RestartRequired,
-}
+pub use crate::lifecycle::{
+    DeploymentSwitchOutcome, DeploymentSwitchPayload, DeploymentSwitchResponse,
+};

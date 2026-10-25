@@ -249,6 +249,13 @@ impl AppConfigToml {
     }
 }
 
+impl From<&AppPolicyV1> for rest_types::lifecycle::AppPolicyV1 {
+    fn from(policy: &AppPolicyV1) -> Self {
+        serde_json::from_value(serde_json::to_value(policy).expect("serialize app policy"))
+            .expect("internal app policy must satisfy the OpenAPI contract")
+    }
+}
+
 impl AppPolicyV1 {
     pub(crate) fn digest(&self) -> AppConfigDigest {
         let bytes = serde_json::to_vec(self).expect("app policy must serialize");
@@ -358,6 +365,39 @@ mod tests {
         assert_eq!(
             policy["public_env"],
             serde_json::json!(["A", "B", { "name": "TRACE_ID", "optional": true }])
+        );
+    }
+
+    #[test]
+    fn generated_policy_preserves_wire_shape() {
+        let app: AppConfigToml = toml::from_str(
+            r#"
+            [public_env]
+            REGION = {}
+            TRACE_ID = { optional = true }
+            API_URL = { type = "internal", source = "api-url" }
+            [secrets]
+            TOKEN = {}
+            OPTIONAL_TOKEN = { optional = true }
+            KEY = { type = "internal" }
+            [[outbound_http.allowed_host]]
+            pattern = "api.example.com"
+            methods = "*"
+            [[outbound_http.allowed_host]]
+            url_prefix = "https://example.com/api/"
+            methods = ["GET"]
+            secrets = ["TOKEN", { name = "OPTIONAL_TOKEN", optional = true }]
+            replace_in = ["headers", "body"]
+            [[outbound_http.allowed_host]]
+            pattern = "unused.example.com"
+        "#,
+        )
+        .unwrap();
+        let policy = app.policy();
+        let wire = rest_types::lifecycle::AppPolicyV1::from(&policy);
+        assert_eq!(
+            serde_json::to_value(wire).unwrap(),
+            serde_json::to_value(policy).unwrap()
         );
     }
 

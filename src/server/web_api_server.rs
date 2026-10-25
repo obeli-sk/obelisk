@@ -97,6 +97,7 @@ async fn until_terminated<T>(
 /// `OpenAPI` documentation for the Obelisk REST API
 #[derive(OpenApi)]
 #[openapi(
+    modifiers(&LifecycleContract),
     info(
         title = "Obelisk REST API",
         description = "REST API for the Obelisk deterministic workflow engine. Structured resources and actions use JSON. Text remains available for WIT documents, source files, IDs, and app-config digests. Execution logs include raw stdout/stderr payloads in JSON.",
@@ -147,12 +148,9 @@ async fn until_terminated<T>(
         deployment::get,
         deployment::submit_post,
         deployment::submit_put,
-        deployment::switch,
         deployment::get_file,
-        app_config::policy,
         app_config::get,
         app_config::digest,
-        server_info::get,
         admin::delete_execution_tree,
         admin::retain_executions,
         admin::delete_deployment,
@@ -199,11 +197,9 @@ async fn until_terminated<T>(
         rest_types::admin::CleanupResponse,
         rest_types::admin::SystemEventsResponse,
         rest_types::admin::StorageStatusResponse,
-        rest_types::server::ServerInfoResponse,
         rest_types::admin::RetainSystemEventsRequest,
         rest_types::admin::RetainSystemEventsResponse,
         rest_types::deployment::DeploymentSubmitErrorBody,
-        crate::config::app::AppPolicyV1,
         app_config::AppConfigResponse,
         rest_types::deployment::GenericErrorBody,
         rest_types::deployment::SubmitPackageErrorBody,
@@ -214,6 +210,21 @@ async fn until_terminated<T>(
     ))
 )]
 pub(crate) struct ApiDoc;
+
+struct LifecycleContract;
+
+impl utoipa::Modify for LifecycleContract {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let contract = rest_types::lifecycle::openapi();
+        for path in contract.paths.paths.keys() {
+            assert!(
+                !openapi.paths.paths.contains_key(path),
+                "lifecycle paths must come from OpenAPI"
+            );
+        }
+        openapi.merge(contract);
+    }
+}
 
 /// Return the `OpenAPI` JSON schema
 #[utoipa::path(
@@ -388,29 +399,11 @@ fn admin_router() -> Router<Arc<WebApiState>> {
 
 pub(crate) mod app_config {
     use super::*;
-    use crate::config::app::AppPolicyV1;
-
-    impl utoipa::PartialSchema for AppPolicyV1 {
-        fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-            let mut settings = schemars::generate::SchemaSettings::draft2020_12();
-            settings.inline_subschemas = true;
-            settings
-                .transforms
-                .push(Box::new(schemars::transform::ReplaceConstValue::default()));
-            let schema = settings.into_generator().into_root_schema_for::<Self>();
-            serde_json::from_value(
-                serde_json::to_value(schema).expect("serialize app policy schema"),
-            )
-            .expect("app policy JSON Schema is compatible with OpenAPI")
-        }
-    }
-
-    impl utoipa::ToSchema for AppPolicyV1 {}
-
     #[derive(Serialize, ToSchema)]
     pub(crate) struct AppConfigResponse<'a> {
         #[schema(value_type = String)]
         pub(crate) app_config_digest: &'a crate::config::app::AppConfigDigest,
+        #[schema(value_type = rest_types::lifecycle::AppPolicyV1)]
         pub(crate) policy: &'a crate::config::app::AppPolicyV1,
     }
 
@@ -443,12 +436,18 @@ pub(crate) mod app_config {
         }
     }
 
-    #[utoipa::path(get, path = "/v1/app-policy", tag = "app policy", responses((status = 200, content((AppPolicyV1 = "application/json"), (String = "application/toml")))))]
     pub(crate) async fn policy(
         State(state): State<Arc<WebApiState>>,
         accept: AppConfigAcceptHeader,
     ) -> Response {
-        json_or_toml(accept, &state.server_verified.app_policy)
+        match accept {
+            AppConfigAcceptHeader::Json => {
+                let policy =
+                    rest_types::lifecycle::AppPolicyV1::from(&state.server_verified.app_policy);
+                json_or_toml(accept, &policy)
+            }
+            AppConfigAcceptHeader::Toml => json_or_toml(accept, &state.server_verified.app_policy),
+        }
     }
 
     #[utoipa::path(get, path = "/v1/app-config", tag = "app policy", responses((status = 200, content((AppConfigResponse = "application/json"), (String = "application/toml")))))]
@@ -481,11 +480,10 @@ pub(crate) mod app_config {
 }
 
 pub(crate) mod server_info {
-    use super::*;
+    use super::{Arc, DateTime, Response, State, StatusCode, WebApiState, pretty_json_response};
     use crate::args::shadow::PKG_VERSION;
     use rest_types::server::ServerInfoResponse;
 
-    #[utoipa::path(get, path = "/v1/info", tag = "server", responses((status = 200, body = ServerInfoResponse)))]
     pub(crate) async fn get(State(state): State<Arc<WebApiState>>) -> Response {
         let node_run_id = concepts::storage::initialize_node_run_id();
         let started_at = i64::try_from(node_run_id.timestamp_part())
@@ -496,8 +494,8 @@ pub(crate) mod server_info {
             app_name: state.server_verified.app_name.clone(),
             app_env_prefix: state.server_verified.app_env_prefix.clone(),
             obelisk_version: PKG_VERSION.to_string(),
-            deployment_id: state.deployment_ctx.read().await.deployment_id,
-            node_run_id,
+            deployment_id: state.deployment_ctx.read().await.deployment_id.to_string(),
+            node_run_id: node_run_id.to_string(),
             app_config_digest: state.server_verified.app_config_digest.to_string(),
             started_at,
         };
@@ -3881,21 +3879,6 @@ pub(crate) mod deployment {
         Ok(content.into_response())
     }
 
-    /// Switch the active deployment
-    #[utoipa::path(
-        put,
-        path = "/v1/deployments/{deployment_id}/switch",
-        tag = "deployments",
-        params(
-            ("deployment_id" = String, Path, description = "Deployment ID to switch to")
-        ),
-        request_body = DeploymentSwitchPayload,
-        responses(
-            (status = 200, description = "Deployment switched or enqueued", body = DeploymentSwitchResponse),
-            (status = 404, description = "Deployment not found"),
-            (status = 409, description = "Validation or switch failed")
-        )
-    )]
     #[instrument(skip_all, fields(deployment_id))]
     pub(crate) async fn switch(
         Path(deployment_id): Path<DeploymentId>,

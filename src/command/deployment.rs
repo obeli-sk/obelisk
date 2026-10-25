@@ -332,7 +332,7 @@ async fn submit_prepared(
             .await?;
         if response.status() != http::StatusCode::NOT_FOUND {
             let info: ServerInfoResponse = response.error_for_status()?.json().await?;
-            let active_id = info.deployment_id;
+            let active_id: DeploymentId = info.deployment_id.parse()?;
             let active: DeploymentRecordSer = send_json(
                 client
                     .get(format!("{api_url}/v1/deployments/{active_id}"))

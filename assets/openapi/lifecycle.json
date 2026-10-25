@@ -1,0 +1,519 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Obelisk lifecycle API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/v1/info": {
+      "get": {
+        "tags": [
+          "server"
+        ],
+        "operationId": "get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerInfoResponse"
+                }
+              }
+            },
+            "description": "Running server information"
+          }
+        }
+      }
+    },
+    "/v1/app-policy": {
+      "get": {
+        "tags": [
+          "app policy"
+        ],
+        "operationId": "policy",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppPolicyV1"
+                }
+              },
+              "application/toml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Running app policy"
+          },
+          "406": {
+            "description": "Accept must allow application/json or application/toml",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/deployments/{deployment_id}/switch": {
+      "put": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Switch the active deployment",
+        "operationId": "switch",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "description": "Deployment ID to switch to",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeploymentSwitchPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Deployment switched or enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentSwitchResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Deployment not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "err"
+                  ],
+                  "properties": {
+                    "err": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation or switch failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "err"
+                  ],
+                  "properties": {
+                    "err": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Another deployment operation is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "err"
+                  ],
+                  "properties": {
+                    "err": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Request content type must be application/json",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Request JSON does not match the switch payload",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Accept must allow application/json",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ServerInfoResponse": {
+        "type": "object",
+        "required": [
+          "app_name",
+          "app_env_prefix",
+          "obelisk_version",
+          "deployment_id",
+          "node_run_id",
+          "app_config_digest",
+          "started_at"
+        ],
+        "properties": {
+          "app_config_digest": {
+            "type": "string"
+          },
+          "app_env_prefix": {
+            "type": "string"
+          },
+          "app_name": {
+            "type": "string"
+          },
+          "deployment_id": {
+            "type": "string"
+          },
+          "node_run_id": {
+            "type": "string"
+          },
+          "obelisk_version": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AppPolicyV1": {
+        "type": "object",
+        "title": "AppPolicyV1",
+        "required": [
+          "format",
+          "secrets",
+          "public_env",
+          "allowed_exec_activities",
+          "outbound_http"
+        ],
+        "properties": {
+          "allowed_exec_activities": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "obelisk-app-config-v1"
+            ]
+          },
+          "outbound_http": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.",
+              "properties": {
+                "methods": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "All methods allowed (from `methods = \"*\"`).",
+                          "enum": [
+                            "*"
+                          ]
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Specific methods list (from `methods = [\"GET\", \"POST\"]`)."
+                        }
+                      ],
+                      "description": "Input for method restrictions in TOML configuration.\nSupports both `methods = \"*\"` and `methods = [\"GET\", \"POST\"]` syntax."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = \"*\"` or `methods = [\"*\"]` to allow all methods.\n- `methods = [\"GET\", \"POST\"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted)."
+                },
+                "pattern": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Host pattern (e.g. `\"api.example.com\"`, `\"*.example.com\"`, `\"http://localhost:8080\"`)."
+                },
+                "replace_in": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "Where in the outgoing request placeholders are replaced.",
+                    "enum": [
+                      "headers",
+                      "body",
+                      "params"
+                    ]
+                  },
+                  "description": "Where in the request to perform placeholder replacement:\n- `headers` searches textual header values, including placeholders within larger values.\n- `params` searches URL query parameter values.\n- `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.\n\nDefault: empty (no replacement, deny by default).",
+                  "default": []
+                },
+                "request_url_regex": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Optional regex restriction checked against `METHOD URL` with query params removed.\nFor example, `GET https://api.example.com/v1/items`.\nSupports `${VAR}` and `${VAR:-default}` env var interpolation.\nEnv var values are interpreted as regex syntax; use regex-escaped values when precision matters.\nOmit to allow all paths accepted by the host and method restrictions."
+                },
+                "secrets": {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "name"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "optional": {
+                            "type": "boolean",
+                            "default": false
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ],
+                    "description": "A reference to a secret registered in app.toml `[secrets]`.\nEither `\"NAME\"` (required) or `{ name = \"NAME\", optional = true }`."
+                  },
+                  "description": "Registered secret names (from the app-owned `app.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.",
+                  "default": []
+                },
+                "url_prefix": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "HTTP(S) URL prefix, mutually exclusive with pattern and `request_url_regex`."
+                },
+                "url_regex_suffix": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Regex fragment appended to the escaped URL prefix; leading ^ is forbidden."
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "methods",
+                "request_url_regex",
+                "secrets",
+                "replace_in"
+              ]
+            }
+          },
+          "public_env": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "optional"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "optional": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "type",
+                    "source"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "api-url",
+                        "webui-url"
+                      ]
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "secrets": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "exposed_to"
+                  ],
+                  "properties": {
+                    "exposed_to": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "optional",
+                    "exposed_to"
+                  ],
+                  "properties": {
+                    "exposed_to": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "optional": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeploymentSwitchPayload": {
+        "type": "object",
+        "description": "Request payload for switching deployment",
+        "properties": {
+          "allow_unavailable_runtime_config": {
+            "type": "boolean",
+            "description": "Enqueue while app or platform approval is pending. Activation on restart\nchecks strictly; rejected when applying without restart.",
+            "default": false
+          },
+          "apply": {
+            "type": "boolean",
+            "description": "Apply deployment without restart",
+            "default": false
+          }
+        }
+      },
+      "DeploymentSwitchResponse": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "$ref": "#/components/schemas/DeploymentSwitchOutcome"
+          }
+        }
+      },
+      "DeploymentSwitchOutcome": {
+        "type": "string",
+        "enum": [
+          "switched",
+          "restart_required"
+        ]
+      }
+    }
+  }
+}
