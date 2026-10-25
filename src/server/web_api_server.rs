@@ -203,6 +203,7 @@ async fn until_terminated<T>(
         rest_types::admin::RetainSystemEventsRequest,
         rest_types::admin::RetainSystemEventsResponse,
         rest_types::deployment::DeploymentSubmitErrorBody,
+        crate::config::app::AppPolicyV1,
         app_config::AppConfigResponse,
         rest_types::deployment::GenericErrorBody,
         rest_types::deployment::SubmitPackageErrorBody,
@@ -387,12 +388,29 @@ fn admin_router() -> Router<Arc<WebApiState>> {
 
 pub(crate) mod app_config {
     use super::*;
+    use crate::config::app::AppPolicyV1;
+
+    impl utoipa::PartialSchema for AppPolicyV1 {
+        fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+            let mut settings = schemars::generate::SchemaSettings::draft2020_12();
+            settings.inline_subschemas = true;
+            settings
+                .transforms
+                .push(Box::new(schemars::transform::ReplaceConstValue::default()));
+            let schema = settings.into_generator().into_root_schema_for::<Self>();
+            serde_json::from_value(
+                serde_json::to_value(schema).expect("serialize app policy schema"),
+            )
+            .expect("app policy JSON Schema is compatible with OpenAPI")
+        }
+    }
+
+    impl utoipa::ToSchema for AppPolicyV1 {}
 
     #[derive(Serialize, ToSchema)]
     pub(crate) struct AppConfigResponse<'a> {
         #[schema(value_type = String)]
         pub(crate) app_config_digest: &'a crate::config::app::AppConfigDigest,
-        #[schema(value_type = Object)]
         pub(crate) policy: &'a crate::config::app::AppPolicyV1,
     }
 
@@ -425,7 +443,7 @@ pub(crate) mod app_config {
         }
     }
 
-    #[utoipa::path(get, path = "/v1/app-policy", tag = "app policy", responses((status = 200, content((Object = "application/json"), (String = "application/toml")))))]
+    #[utoipa::path(get, path = "/v1/app-policy", tag = "app policy", responses((status = 200, content((AppPolicyV1 = "application/json"), (String = "application/toml")))))]
     pub(crate) async fn policy(
         State(state): State<Arc<WebApiState>>,
         accept: AppConfigAcceptHeader,
@@ -3298,8 +3316,9 @@ pub(crate) mod deployment {
     use http::header;
     use rest_types::deployment::{
         DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitErrorBody,
-        DeploymentSubmitPayload, DeploymentSubmitResponse, DeploymentSwitchPayload, DigestMismatch,
-        FileIssue, MissingRuntimeConfigErrorBody, SubmitPackageErrorBody,
+        DeploymentSubmitPayload, DeploymentSubmitResponse, DeploymentSwitchOutcome,
+        DeploymentSwitchPayload, DeploymentSwitchResponse, DigestMismatch, FileIssue,
+        MissingRuntimeConfigErrorBody, SubmitPackageErrorBody,
     };
 
     /// Map the REST `allow_unavailable_runtime_config` flag to the runtime config policy.
@@ -3872,7 +3891,7 @@ pub(crate) mod deployment {
         ),
         request_body = DeploymentSwitchPayload,
         responses(
-            (status = 200, description = "Deployment switched or enqueued", body = String),
+            (status = 200, description = "Deployment switched or enqueued", body = DeploymentSwitchResponse),
             (status = 404, description = "Deployment not found"),
             (status = 409, description = "Validation or switch failed")
         )
@@ -3926,16 +3945,16 @@ pub(crate) mod deployment {
             },
         })?;
         info!(%deployment_id, "Deployment switch outcome: {outcome}");
-        let message = match outcome {
-            crate::command::server::SwitchOutcome::Switched => "switched",
-            crate::command::server::SwitchOutcome::RestartRequired => "restart_required",
+        let ok = match outcome {
+            crate::command::server::SwitchOutcome::Switched => DeploymentSwitchOutcome::Switched,
+            crate::command::server::SwitchOutcome::RestartRequired => {
+                DeploymentSwitchOutcome::RestartRequired
+            }
         };
-        Ok(HttpResponse {
-            status: StatusCode::OK,
-            message: message.to_string(),
-            accept,
-        }
-        .into_response())
+        Ok(pretty_json_response(
+            StatusCode::OK,
+            &DeploymentSwitchResponse { ok },
+        ))
     }
 }
 

@@ -266,6 +266,7 @@ pub enum MethodsInput {
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
+#[schemars(transform = methods_input_star_schema)]
 pub struct MethodsInputStar(
     #[serde(
         deserialize_with = "deserialize_star",
@@ -273,6 +274,10 @@ pub struct MethodsInputStar(
     )]
     (),
 );
+
+fn methods_input_star_schema(schema: &mut schemars::Schema) {
+    *schema = schemars::json_schema!({"type": "string", "enum": ["*"]});
+}
 
 fn deserialize_star<'de, D>(deserializer: D) -> Result<(), D::Error>
 where

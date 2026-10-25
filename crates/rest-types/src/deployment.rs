@@ -234,3 +234,15 @@ pub struct DeploymentSwitchPayload {
     #[serde(default)]
     pub apply: bool,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DeploymentSwitchResponse {
+    pub ok: DeploymentSwitchOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentSwitchOutcome {
+    Switched,
+    RestartRequired,
+}
