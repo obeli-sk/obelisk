@@ -210,7 +210,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.43.0-rc.8"
+version = "0.43.0-rc.9"
 description = "Deterministic workflow runtime"
 license = "AGPL-3.0-only"
 repository = "https://github.com/obeli-sk/obelisk"
