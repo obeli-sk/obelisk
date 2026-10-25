@@ -12,6 +12,7 @@ use rest_types::deployment::{
     DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitPayload,
     DeploymentSwitchPayload, MissingRuntimeConfigErrorBody, SubmitPackageErrorBody,
 };
+use rest_types::server::ServerInfoResponse;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -141,13 +142,13 @@ impl args::Deployment {
 
             args::Deployment::Active { json } => {
                 let client = client_startup.web_api_client()?;
-                let id: DeploymentId = send_json(
+                let info: ServerInfoResponse = send_json(
                     client
-                        .get(format!("{api_url}/v1/deployment-id"))
+                        .get(format!("{api_url}/v1/info"))
                         .header(ACCEPT, "application/json"),
                 )
                 .await?;
-                print_value(&id, json)
+                print_value(&info.deployment_id, json)
             }
 
             args::Deployment::Show { id, file, json } => {
@@ -325,12 +326,13 @@ async fn submit_prepared(
     if deployment_id.is_none() {
         let client = client_startup.web_api_client()?;
         let response = client
-            .get(format!("{api_url}/v1/deployment-id"))
+            .get(format!("{api_url}/v1/info"))
             .header(ACCEPT, "application/json")
             .send()
             .await?;
         if response.status() != http::StatusCode::NOT_FOUND {
-            let active_id: DeploymentId = response.error_for_status()?.json().await?;
+            let info: ServerInfoResponse = response.error_for_status()?.json().await?;
+            let active_id = info.deployment_id;
             let active: DeploymentRecordSer = send_json(
                 client
                     .get(format!("{api_url}/v1/deployments/{active_id}"))

@@ -662,14 +662,15 @@ impl CloudArgs {
                             self.api_token.clone(),
                             self.verbose,
                         );
-                        let deployment_id: concepts::prefixed_ulid::DeploymentId =
+                        let info: rest_types::server::ServerInfoResponse =
                             crate::client::send_json(
                                 startup
                                     .web_api_client()?
-                                    .get(format!("{}/v1/deployment-id", startup.api_url()))
+                                    .get(format!("{}/v1/info", startup.api_url()))
                                     .header(header::ACCEPT, "application/json"),
                             )
                             .await?;
+                        let deployment_id = info.deployment_id;
                         client
                             .app(
                                 name,
@@ -1453,13 +1454,6 @@ mod tests {
             {
                 json!({"ok":"cancelled"})
             }
-            "/prefix/tenant/v1/deployment-id" => {
-                let id = concepts::prefixed_ulid::DeploymentId::generate();
-                if headers.get("accept").and_then(|v| v.to_str().ok()) != Some("application/json") {
-                    return id.to_string().into_response();
-                }
-                json!(id)
-            }
             "/prefix/tenant/v1/components" => json!([]),
             "/prefix/tenant/v1/info" => json!(rest_types::server::ServerInfoResponse {
                 app_env_prefix: String::new(),
@@ -1603,7 +1597,7 @@ mod tests {
                 .map(|(route, _)| route.clone())
                 .collect::<Vec<_>>(),
             vec![
-                "GET /prefix/tenant/v1/deployment-id".to_owned(),
+                "GET /prefix/tenant/v1/info".to_owned(),
                 format!("PUT /prefix/tenant/v1/executions/{execution_id}/pause"),
                 format!("PUT /prefix/tenant/v1/executions/{execution_id}/cancel"),
                 "GET /prefix/tenant/v1/components?exports=true&imports=true&extensions=false"

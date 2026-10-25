@@ -308,7 +308,15 @@ mod tests {
             }
             (Method::GET, "/v1/apps/demo/env") => json!({"env":{}}),
             (Method::GET, "/v1/apps/demo/secrets") => json!({"secrets":[]}),
-            (Method::GET, "/tenant/v1/deployment-id") => json!(state.active),
+            (Method::GET, "/tenant/v1/info") => json!(rest_types::server::ServerInfoResponse {
+                app_name: "demo".to_owned(),
+                app_env_prefix: String::new(),
+                obelisk_version: "0.0.0".to_owned(),
+                deployment_id: state.active,
+                node_run_id: concepts::prefixed_ulid::NodeRunId::generate(),
+                app_config_digest: "digest".to_owned(),
+                started_at: chrono::Utc::now(),
+            }),
             (Method::GET, _) if path.starts_with("/tenant/v1/deployments/") => json!({
                 "deployment_id":state.active,"digest":"sha256:old","status":"active",
                 "created_at":chrono::Utc::now(),"deployment_toml":"[defaults]", "files":[]
