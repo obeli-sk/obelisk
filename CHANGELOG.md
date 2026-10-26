@@ -6,10 +6,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.10](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.9...v0.43.0-rc.10)
+
+This release candidate streams webhook response bodies from WASIp3 and JS webhooks, pools
+outbound HTTP connections, adds follow streams to the execution responses, logs and events
+endpoints, and fixes record parameters of JS activities and workflows.
+
+### Added
+
+- *(webhook)* WASIp3 webhooks send the response as soon as the guest produces headers and
+  stream the body, so SSE and other incremental responses arrive as they are written.
+  [#1209](https://github.com/obeli-sk/obelisk/pull/1209)
+- *(js)* JS webhooks (Boa and V8) can return a `Response` over a `ReadableStream`, forward a
+  `fetch` response body, or return a `fetch` response directly; chunks are sent as they are
+  enqueued. `fetch` resolves on headers and exposes `Response.body` as a stream. V8 responses
+  gain `bytes()` and `arrayBuffer()`, and `TextDecoder` supports `{ stream: true }`.
+  [#1210](https://github.com/obeli-sk/obelisk/pull/1210)
+- *(http)* Outbound HTTP connections of activities and webhooks are pooled per scheme, host
+  and port. Configure with `[outbound_http_pool]` in `server.toml`: `max_idle_per_host`
+  (default `16`, `0` disables pooling) and `idle_timeout` (default 90 seconds).
+  [#1212](https://github.com/obeli-sk/obelisk/pull/1212)
+- *(api)* `GET /v1/executions/{id}/responses`, `/logs` and `/events-and-responses` accept
+  `follow=true` with `Accept: text/event-stream`, streaming pages until the execution finishes.
+  Reconnects resume through `Last-Event-ID`.
+  [#1214](https://github.com/obeli-sk/obelisk/pull/1214)
+- *(api)* `POST /v1/executions/status/batch` returns the status and `max_version` of up to 200
+  executions. With `follow=true` it streams changed statuses until every execution finished.
+  [#1214](https://github.com/obeli-sk/obelisk/pull/1214)
+- *(cli)* `--verbose` reports HTTP requests and response statuses; `obelisk cloud --verbose`
+  also prefixes requests and deploy steps with the time since the previous step.
+  [#1202](https://github.com/obeli-sk/obelisk/pull/1202),
+  [#1215](https://github.com/obeli-sk/obelisk/pull/1215)
+- *(api)* The lifecycle API (server info, app policy, deployment switch) is described by an
+  authoritative OpenAPI document, with generated Rust and JavaScript clients.
+  [#1204](https://github.com/obeli-sk/obelisk/pull/1204),
+  [#1205](https://github.com/obeli-sk/obelisk/pull/1205),
+  [#1206](https://github.com/obeli-sk/obelisk/pull/1206)
+
 ### Changed
 
 - **Breaking:** *(cli)* `cloud app reactivate` and `cloud app deactivate` are renamed to
   `cloud app enable` and `cloud app disable`.
+  [#1213](https://github.com/obeli-sk/obelisk/pull/1213)
+- *(js)* V8 `fetch` responses report the canonical `statusText` for the status code, matching
+  Boa and WASM components. [#1211](https://github.com/obeli-sk/obelisk/pull/1211)
+- *(webhook)* `[webhooks] request_timeout` limits only the time until the response headers are
+  returned, for WASIp3 and V8 JS webhooks too (WASIp2 and Boa JS webhooks already worked this
+  way). A streaming body is not limited; a client disconnect ends a V8 stream and finishes the
+  execution successfully. [#1209](https://github.com/obeli-sk/obelisk/pull/1209),
+  [#1210](https://github.com/obeli-sk/obelisk/pull/1210)
+- *(cli)* `cloud app deploy` no longer prompts for public environment variables bound to
+  `[cloud.integrations]`, matching `new`, `fill` and `apply`.
+  [#1201](https://github.com/obeli-sk/obelisk/pull/1201)
+
+### Deprecated
+
+- *(api)* `GET /v1/execution-id` (generate IDs locally, e.g. `obelisk generate execution-id`)
+  and `GET /v1/deployment-id` (use `deployment_id` from `GET /v1/info`).
+  [#1203](https://github.com/obeli-sk/obelisk/pull/1203)
+
+### Fixed
+
+- *(js)* Record parameters of Boa JS activities and workflows are parsed as JSON instead of
+  being evaluated as JS source. [#1207](https://github.com/obeli-sk/obelisk/pull/1207),
+  [#1208](https://github.com/obeli-sk/obelisk/pull/1208)
+- *(js)* Non-ASCII HTTP header bytes are preserved in JS `fetch` responses.
+  [#1207](https://github.com/obeli-sk/obelisk/pull/1207)
+- *(js)* V8 JS activities and webhooks finish once the function or handler settles instead of
+  waiting for orphaned timers and abandoned fetches.
+  [#1210](https://github.com/obeli-sk/obelisk/pull/1210)
+- *(js)* Boa JS activities and webhooks run async jobs queued by microtasks without waiting for
+  the next timer, so `Promise.race` timeouts around `fetch` fire.
+  [#1210](https://github.com/obeli-sk/obelisk/pull/1210)
 
 ## [0.43.0-rc.9](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.8...v0.43.0-rc.9)
 
