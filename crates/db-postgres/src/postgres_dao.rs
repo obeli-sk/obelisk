@@ -5314,6 +5314,26 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip(self))]
+    async fn get_pending_state_batch(
+        &self,
+        execution_ids: &[ExecutionId],
+    ) -> Result<Vec<concepts::storage::ExecutionStateWithVersion>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let mut states = Vec::with_capacity(execution_ids.len());
+        for execution_id in execution_ids {
+            states.push(concepts::storage::ExecutionStateWithVersion {
+                execution_with_state: get_combined_state(&tx, execution_id)
+                    .await?
+                    .execution_with_state,
+                max_version: get_max_version(&tx, execution_id).await?,
+            });
+        }
+        tx.commit().await?;
+        Ok(states)
+    }
+
+    #[instrument(skip(self))]
     async fn list_responses_filtered(
         &self,
         execution_id: &ExecutionId,

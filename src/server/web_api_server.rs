@@ -27,11 +27,11 @@ use concepts::{
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, NodeRunId, SystemEventId},
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
-        DbExternalApi,
-        DbErrorWrite, DbErrorWriteNonRetriable, DbPool, DelayCancelOutcome, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionStateFilter, FunctionNameFilter,
-        ListExecutionsFilter, Pagination, PendingState, PendingStateFinishedError,
-        PendingStateFinishedResultKind, TimeoutOutcome, Version, VersionType,
+        DbErrorWrite, DbErrorWriteNonRetriable, DbExternalApi, DbPool, DelayCancelOutcome,
+        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionStateFilter,
+        FunctionNameFilter, ListExecutionsFilter, Pagination, PendingState,
+        PendingStateFinishedError, PendingStateFinishedResultKind, TimeoutOutcome, Version,
+        VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -125,6 +125,7 @@ async fn until_terminated<T>(
         execution_unpause,
         execution_events,
         execution_event_bounds_batch,
+        execution_status_batch,
         execution_events_and_responses,
         logs::execution_logs,
         execution_responses,
@@ -169,6 +170,8 @@ async fn until_terminated<T>(
         ExecutionEventsResponse,
         ExecutionEventBoundsBatchRequest,
         ExecutionEventBoundsBatchItem,
+        ExecutionStatusBatchRequest,
+        ExecutionStatusBatchItem,
         ExecutionEventsAndResponsesResponse,
         ExecutionResponsesResponse,
         ExecutionStubPayload,
@@ -293,6 +296,10 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
         .route(
             "/executions/events/batch",
             routing::post(execution_event_bounds_batch),
+        )
+        .route(
+            "/executions/status/batch",
+            routing::post(execution_status_batch),
         )
         .route(
             "/executions/{execution-id}/events-and-responses",
@@ -1585,6 +1592,133 @@ async fn execution_event_bounds_batch(
     Ok(pretty_json_response(StatusCode::OK, &response))
 }
 
+/// Most executions one status batch may list.
+const STATUS_BATCH_MAX_IDS: usize = 200;
+
+#[derive(Deserialize, ToSchema)]
+struct ExecutionStatusBatchRequest {
+    /// At most 200 executions, duplicates are ignored.
+    #[schema(value_type = Vec<String>)]
+    execution_ids: Vec<ExecutionId>,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct ExecutionStatusBatchParams {
+    /// Stream SSE `statuses` events: first all listed executions, then only the ones whose
+    /// status or `max_version` changed. Finished executions are no longer followed and the
+    /// stream ends when none are left.
+    #[serde(default)]
+    follow: bool,
+}
+
+#[derive(Clone, PartialEq, Serialize, ToSchema)]
+struct ExecutionStatusBatchItem {
+    #[serde(flatten)]
+    status: ExecutionWithStateSer,
+    #[schema(value_type = u32)]
+    max_version: Version,
+}
+
+impl From<concepts::storage::ExecutionStateWithVersion> for ExecutionStatusBatchItem {
+    fn from(state: concepts::storage::ExecutionStateWithVersion) -> Self {
+        Self {
+            status: state.execution_with_state.into(),
+            max_version: state.max_version,
+        }
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/executions/status/batch",
+    tag = "executions",
+    params(ExecutionStatusBatchParams),
+    request_body = ExecutionStatusBatchRequest,
+    responses((status = 200, body = Vec<ExecutionStatusBatchItem>))
+)]
+async fn execution_status_batch(
+    state: State<Arc<WebApiState>>,
+    Query(params): Query<ExecutionStatusBatchParams>,
+    headers: HeaderMap,
+    Json(request): Json<ExecutionStatusBatchRequest>,
+) -> Result<Response, HttpResponse> {
+    let accept = streaming_accept(&headers, params.follow)?;
+    let mut seen = std::collections::HashSet::new();
+    let execution_ids: Vec<_> = request
+        .execution_ids
+        .into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .collect();
+    if execution_ids.is_empty() || execution_ids.len() > STATUS_BATCH_MAX_IDS {
+        return Err(HttpResponse::bad_request(
+            accept,
+            format!("execution_ids must contain 1 to {STATUS_BATCH_MAX_IDS} IDs"),
+        ));
+    }
+    if params.follow {
+        let source = StatusBatchFollow {
+            execution_ids,
+            last_sent: std::collections::HashMap::new(),
+        };
+        return follow_response(&state, source, accept).await;
+    }
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let states = conn
+        .get_pending_state_batch(&execution_ids)
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let response: Vec<_> = states
+        .into_iter()
+        .map(ExecutionStatusBatchItem::from)
+        .collect();
+    Ok(pretty_json_response(StatusCode::OK, &response))
+}
+
+struct StatusBatchFollow {
+    /// Executions not yet seen finished.
+    execution_ids: Vec<ExecutionId>,
+    last_sent: std::collections::HashMap<ExecutionId, ExecutionStatusBatchItem>,
+}
+
+#[async_trait::async_trait]
+impl FollowSource for StatusBatchFollow {
+    async fn next_page(&mut self, conn: &dyn DbExternalApi) -> Result<FollowPage, DbErrorRead> {
+        let states = conn.get_pending_state_batch(&self.execution_ids).await?;
+        let changed: Vec<_> = states
+            .into_iter()
+            .map(ExecutionStatusBatchItem::from)
+            .filter(|item| self.last_sent.get(&item.status.execution_id) != Some(item))
+            .collect();
+        for item in &changed {
+            if matches!(item.status.pending_state, PendingState::Finished(_)) {
+                self.execution_ids
+                    .retain(|id| *id != item.status.execution_id);
+                self.last_sent.remove(&item.status.execution_id);
+            } else {
+                self.last_sent
+                    .insert(item.status.execution_id.clone(), item.clone());
+            }
+        }
+        // Statuses have no position to resume from, a reconnect gets all of them again.
+        let event = (!changed.is_empty()).then(|| {
+            Event::default()
+                .event("statuses")
+                .data(serde_json::to_string(&changed).expect("statuses serialize"))
+        });
+        Ok(FollowPage {
+            event,
+            full: false,
+            finished: false,
+            exhausted: self.execution_ids.is_empty(),
+        })
+    }
+}
+
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 struct ExecutionEventsAndResponsesParams {
@@ -2026,10 +2160,7 @@ pub(crate) mod logs {
 
     #[async_trait::async_trait]
     impl FollowSource for LogsFollow {
-        async fn next_page(
-            &mut self,
-            conn: &dyn DbExternalApi,
-        ) -> Result<FollowPage, DbErrorRead> {
+        async fn next_page(&mut self, conn: &dyn DbExternalApi) -> Result<FollowPage, DbErrorRead> {
             let finished = is_finished(conn, &self.execution_id).await?;
             let length = self.budget.page_length();
             let result = conn
@@ -2052,7 +2183,9 @@ pub(crate) mod logs {
             let exhausted = self.budget.consume(result.items.len());
             let items: Vec<LogEntryRowSer> =
                 result.items.into_iter().map(LogEntryRowSer::from).collect();
-            let event = items.last().map(|last| json_event("logs", &last.cursor, &items));
+            let event = items
+                .last()
+                .map(|last| json_event("logs", &last.cursor, &items));
             Ok(FollowPage {
                 event,
                 full,
@@ -2122,7 +2255,10 @@ async fn execution_responses(
     if params.follow {
         follow_requires_newer(params.direction, accept)?;
         let (cursor, including_cursor) = match last_event_id(&headers) {
-            Some(id) => (id.parse().map_err(|_| invalid_last_event_id(accept))?, false),
+            Some(id) => (
+                id.parse().map_err(|_| invalid_last_event_id(accept))?,
+                false,
+            ),
             None => (params.cursor.unwrap_or(0), params.including_cursor),
         };
         let source = ResponsesFollow {
@@ -2716,9 +2852,9 @@ struct FollowBudget(Option<u16>);
 
 impl FollowBudget {
     fn page_length(self) -> NonZeroU16 {
-        let length = self
-            .0
-            .map_or(FOLLOW_PAGE_LENGTH, |remaining| remaining.min(FOLLOW_PAGE_LENGTH));
+        let length = self.0.map_or(FOLLOW_PAGE_LENGTH, |remaining| {
+            remaining.min(FOLLOW_PAGE_LENGTH)
+        });
         NonZeroU16::new(length).expect("an exhausted budget ends the stream")
     }
 

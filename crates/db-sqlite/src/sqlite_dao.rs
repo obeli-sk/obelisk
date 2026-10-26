@@ -5197,6 +5197,31 @@ impl DbExternalApi for SqlitePool {
     }
 
     #[instrument(skip(self))]
+    async fn get_pending_state_batch(
+        &self,
+        execution_ids: &[ExecutionId],
+    ) -> Result<Vec<concepts::storage::ExecutionStateWithVersion>, DbErrorRead> {
+        let execution_ids = execution_ids.to_vec();
+        self.transaction(
+            move |tx| {
+                execution_ids
+                    .iter()
+                    .map(|execution_id| {
+                        Ok(concepts::storage::ExecutionStateWithVersion {
+                            execution_with_state: Self::get_combined_state(tx, execution_id)?
+                                .execution_with_state,
+                            max_version: Self::get_max_version(tx, execution_id)?,
+                        })
+                    })
+                    .collect()
+            },
+            TxType::Other, // read only
+            "get_pending_state_batch",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
     async fn list_responses_filtered(
         &self,
         execution_id: &ExecutionId,
