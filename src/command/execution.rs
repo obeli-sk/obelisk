@@ -294,6 +294,7 @@ pub(crate) async fn submit(
             no_reconnect,
         } => (follow, follow_logs, no_reconnect, true),
     };
+    crate::client::trace(format_args!("Submitting execution ID: {execution_id}"));
     let url = format!("{api_url}/v1/executions/{execution_id}");
     loop {
         let response = client

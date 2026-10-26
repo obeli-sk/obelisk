@@ -13,6 +13,33 @@ pub(crate) struct ClientStartup {
     verbose: bool,
 }
 
+static TRACE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// Enables `--verbose` step tracing on stderr.
+pub(crate) fn enable_trace() {
+    *TRACE.lock().unwrap() = Some(std::time::Instant::now());
+}
+
+/// Prints a verbose step prefixed with the time elapsed since the previous step.
+pub(crate) fn trace(message: impl std::fmt::Display) {
+    print_step(message, false);
+}
+
+/// Prints a progress step, prefixed with the elapsed time when tracing.
+pub(crate) fn step(message: impl std::fmt::Display) {
+    print_step(message, true);
+}
+
+fn print_step(message: impl std::fmt::Display, always: bool) {
+    if let Some(last) = TRACE.lock().unwrap().as_mut() {
+        let now = std::time::Instant::now();
+        eprintln!("[+{:.3}s] {message}", (now - *last).as_secs_f64());
+        *last = now;
+    } else if always {
+        eprintln!("{message}");
+    }
+}
+
 pub(crate) async fn send_json<T: DeserializeOwned>(
     request: RequestBuilder,
 ) -> Result<T, anyhow::Error> {
@@ -190,7 +217,11 @@ impl RequestBuilder {
         let (client, request) = self.inner.build_split();
         let request = request?;
         if self.verbose {
-            eprintln!("> {} {}", request.method(), diagnostic_url(request.url()));
+            step(format_args!(
+                "> {} {}",
+                request.method(),
+                diagnostic_url(request.url())
+            ));
         }
         let response = client.execute(request).await;
         let response = if self.verbose {
@@ -200,8 +231,8 @@ impl RequestBuilder {
         };
         if self.verbose {
             match &response {
-                Ok(response) => eprintln!("< {}", response.status()),
-                Err(err) => eprintln!("< Request failed: {err}"),
+                Ok(response) => step(format_args!("< {}", response.status())),
+                Err(err) => step(format_args!("< Request failed: {err}")),
             }
         }
         response

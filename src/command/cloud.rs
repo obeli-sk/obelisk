@@ -164,9 +164,7 @@ impl Client {
         let mut request = self.http.request(method, self.url(path)?);
         let command_id = if let Kind::Command(id) | Kind::SecretCommand(id) = kind {
             let id = id.unwrap_or_else(ExecutionIdTopLevel::generate);
-            if self.verbose {
-                eprintln!("Cloud command execution ID: {id}");
-            }
+            crate::client::trace(format_args!("Cloud command execution ID: {id}"));
             request = request.header("Idempotency-Key", id.to_string());
             Some(id)
         } else {
@@ -431,6 +429,9 @@ impl CloudArgs {
         crate::command_future(command, Some(startup))?.await
     }
     pub(crate) async fn run(mut self) -> anyhow::Result<()> {
+        if self.verbose {
+            crate::client::enable_trace();
+        }
         if matches!(
             &self.command,
             Cloud::App(CloudAppTarget {
