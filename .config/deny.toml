@@ -101,4 +101,9 @@ skip = [
 ignore = [
     # paste is unmaintained; also pulled in by utoipa-axum so unavoidable
     { id = "RUSTSEC-2024-0436" },
+    # zstd 0.13 pinned by wasmtime-internal-cache, which only uses bulk encode_all/decode_all
+    # without default features: no with_context streams, seekable, or legacy decoding.
+    { id = "RUSTSEC-2026-0391" },
+    { id = "RUSTSEC-2026-0398" },
+    { id = "RUSTSEC-2026-0403" },
 ]
