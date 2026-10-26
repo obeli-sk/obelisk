@@ -34,7 +34,7 @@ use boa_common::graph::{GraphLoadError, register_source_modules};
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::module::MapModuleLoader;
-use boa_engine::{Context, JsResult, JsValue, Module, Source};
+use boa_engine::{Context, JsResult, JsValue, Module};
 use boa_runtime::extensions::FetchExtension;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -145,11 +145,10 @@ async fn execute_async(
     let args: Vec<JsValue> = params_json
         .iter()
         .map(|param| {
-            // Each param is a JSON value — parse it as a JS value
-            context
-                .borrow_mut()
-                .eval(Source::from_bytes(param))
-                .expect("already verified that params_json elements are parseable")
+            let param = serde_json::from_str(param)
+                .expect("already verified that params_json elements are parseable");
+            JsValue::from_json(&param, *context.borrow_mut())
+                .expect("JSON params must be representable as JS values")
         })
         .collect();
 

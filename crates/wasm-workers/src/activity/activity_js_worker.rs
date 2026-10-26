@@ -1522,6 +1522,48 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[tokio::test]
+    async fn custom_params_record(
+        #[values(ActivityJsRuntime::BoaWasm, ActivityJsRuntime::V8)] runtime: ActivityJsRuntime,
+    ) {
+        use val_json::type_wrapper::{TypeKey, indexmap::IndexMap};
+
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "greet-record");
+        let js_source = r#"
+            export default function greet_record(person) {
+                const greeting = "Hello, " + person.display_name + "!";
+                return Array(person.count).fill(person.uppercase ? greeting.toUpperCase() : greeting).join(" ");
+            }
+        "#;
+        let user_params = vec![ParameterType {
+            type_wrapper: TypeWrapper::Record(IndexMap::from([
+                (TypeKey::new_kebab("display-name"), TypeWrapper::String),
+                (TypeKey::new_kebab("count"), TypeWrapper::U32),
+                (TypeKey::new_kebab("uppercase"), TypeWrapper::Bool),
+            ])),
+            name: StrVariant::Static("person"),
+            wit_type: StrVariant::Static("person"),
+        }];
+
+        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+            .with_params(user_params)
+            .with_runtime(runtime)
+            .build()
+            .await;
+        let (ctx, _close_tx) = make_worker_context_custom(
+            ffqn,
+            vec![json!({"display_name": "World", "count": 2, "uppercase": true})],
+        );
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "HELLO, WORLD! HELLO, WORLD!");
+    }
+
     #[tokio::test]
     async fn custom_params_no_params() {
         test_utils::set_up();
