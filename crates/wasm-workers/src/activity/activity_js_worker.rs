@@ -1274,16 +1274,15 @@ mod tests {
         assert_eq!(extract_string(&output.value), "TypeError");
     }
 
-    /// V8 exposes the received HTTP/1 reason phrase like browsers do; Boa only sees the status
-    /// code through WASI HTTP and falls back to the canonical phrase.
+    /// Like WASM components (WASI HTTP carries no reason phrase), V8 reports the canonical phrase.
     #[rstest]
-    #[case::canonical_boa(ActivityJsRuntime::BoaWasm, "404 Not Found", r#"404 "Not Found""#)]
-    #[case::canonical_v8(ActivityJsRuntime::V8, "404 Not Found", r#"404 "Not Found""#)]
-    #[case::custom_v8(ActivityJsRuntime::V8, "200 Okay", r#"200 "Okay""#)]
-    #[case::empty_v8(ActivityJsRuntime::V8, "404 ", r#"404 """#)]
+    #[case::canonical("404 Not Found", r#"404 "Not Found""#)]
+    #[case::custom("200 Okay", r#"200 "OK""#)]
+    #[case::empty("404 ", r#"404 "Not Found""#)]
+    #[case::unknown("599 Whatever", r#"599 """#)]
     #[tokio::test]
     async fn fetch_status_text(
-        #[case] runtime: ActivityJsRuntime,
+        #[values(ActivityJsRuntime::BoaWasm, ActivityJsRuntime::V8)] runtime: ActivityJsRuntime,
         #[case] status_line: &'static str,
         #[case] expected: &str,
     ) {
