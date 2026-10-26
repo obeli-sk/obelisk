@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** *(cli)* `cloud app reactivate` and `cloud app deactivate` are renamed to
+  `cloud app enable` and `cloud app disable`.
+
 ## [0.43.0-rc.9](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.8...v0.43.0-rc.9)
 
 This release candidate skips overlapping cron executions by default, accepts HTTP/2 on webhook
