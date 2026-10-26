@@ -86,7 +86,7 @@
           };
           embeddedJsRuntimes = fetchOciAssets {
             pname = "obelisk-embedded-js-runtimes";
-            outputHash = "sha256-Hwjum1jnFMdMMW3JhI0sHGZMwPvHHHAUDBU6/8zCbL0=";
+            outputHash = "sha256-aL+OOVuf9KU5ZBEoYnRJqL/ghuS5F0k3Ksm9bAW/4zE=";
             assets = [
               { name = "activity"; versionFile = "activity-js-runtime-version.txt"; }
               { name = "workflow"; versionFile = "workflow-js-runtime-version.txt"; }

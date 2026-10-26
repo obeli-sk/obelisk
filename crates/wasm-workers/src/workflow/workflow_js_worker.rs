@@ -842,6 +842,27 @@ mod tests {
         db_tests::DbGuard,
         db_tests::DbPoolCloseableWrapper,
     ) {
+        new_js_workflow_worker_with_signature(
+            js_source,
+            user_ffqn,
+            &single_list_of_strings_params(),
+            return_type,
+            WorkflowJsRuntimeExt::V8(V8Executor::default()),
+        )
+        .await
+    }
+
+    async fn new_js_workflow_worker_with_signature(
+        js_source: &str,
+        user_ffqn: &FunctionFqn,
+        params: &[ParameterType],
+        return_type: ReturnTypeExtendable,
+        runtime: WorkflowJsRuntimeExt,
+    ) -> (
+        Arc<dyn Worker>,
+        db_tests::DbGuard,
+        db_tests::DbPoolCloseableWrapper,
+    ) {
         let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let cancel_registry = CancelRegistry::new();
         let clock_fn: Box<dyn ClockFn> = SimClock::epoch().clone_box();
@@ -884,7 +905,7 @@ mod tests {
             version_obelisk_test_imports(js_source),
             "index.js".to_string(),
             user_ffqn,
-            &single_list_of_strings_params(),
+            params,
             return_type,
         )
         .unwrap();
@@ -892,10 +913,7 @@ mod tests {
         let fn_registry: Arc<dyn FunctionRegistry> =
             TestingFnRegistry::new_from_components(Vec::new());
         let linked = js_compiled
-            .link_with_runtime_and_pool(
-                fn_registry,
-                WorkflowJsRuntimeExt::V8(V8Executor::default()),
-            )
+            .link_with_runtime_and_pool(fn_registry, runtime)
             .unwrap();
 
         let (guard, db_pool, db_close) = db_tests::Database::Sqlite.set_up().await;
@@ -1109,6 +1127,52 @@ mod tests {
         let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "Hello, World!");
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_with_record_param(
+        #[values(WorkflowJsRuntime::BoaWasm, WorkflowJsRuntime::V8)] runtime: WorkflowJsRuntime,
+    ) {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "greet-record");
+        let js_source = r#"
+            export default function greet_record(person) {
+                return Array(person.count).fill("Hello, " + person.display_name + "!").join(" ");
+            }
+        "#;
+        let params = vec![ParameterType {
+            type_wrapper: TypeWrapper::Record(IndexMap::from([
+                (TypeKey::new_kebab("display-name"), TypeWrapper::String),
+                (TypeKey::new_kebab("count"), TypeWrapper::U32),
+            ])),
+            name: StrVariant::Static("person"),
+            wit_type: StrVariant::Static("person"),
+        }];
+        let runtime = match runtime {
+            WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
+            WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Executor::default()),
+        };
+        let (worker, _guard, _db_close) = new_js_workflow_worker_with_signature(
+            js_source,
+            &ffqn,
+            &params,
+            default_return_type(),
+            runtime,
+        )
+        .await;
+        let ctx = WorkerContext {
+            params: Params::from_json_values_test(vec![
+                json!({"display_name": "World", "count": 2}),
+            ]),
+            ..make_worker_context(ffqn, &[])
+        };
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "Hello, World! Hello, World!");
     }
 
     #[tokio::test]
