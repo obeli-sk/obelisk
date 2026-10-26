@@ -842,10 +842,10 @@ pub fn execute(
     let args: Vec<JsValue> = params_json
         .iter()
         .map(|param| {
-            // Each param is a JSON value — parse it as a JS value
-            context
-                .eval(Source::from_bytes(param))
-                .expect("already verified that params_json elements are parseable")
+            let param = serde_json::from_str(param)
+                .expect("already verified that params_json elements are parseable");
+            JsValue::from_json(&param, &mut context)
+                .expect("JSON params must be representable as JS values")
         })
         .collect();
 
