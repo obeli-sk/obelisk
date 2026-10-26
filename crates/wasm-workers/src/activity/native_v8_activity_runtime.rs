@@ -229,11 +229,11 @@ async fn execute_inner(
     );
     let evaluated = async {
         let id = runtime.load_main_es_module_from_code(&main, source).await?;
-        let evaluation = runtime.mod_evaluate(id);
+        // Stop once the activity settles, abandoning orphaned timers and fetches.
+        let evaluation = std::pin::pin!(runtime.mod_evaluate(id));
         runtime
-            .run_event_loop(deno_core::PollEventLoopOptions::default())
-            .await?;
-        evaluation.await
+            .with_event_loop_promise(evaluation, deno_core::PollEventLoopOptions::default())
+            .await
     }
     .await;
     if let Err(err) = evaluated {
