@@ -1347,7 +1347,7 @@ mod tests {
             let (mut streamed, _) = listener.accept().await.unwrap();
             let _ = streamed.read(&mut request).await.unwrap();
             streamed
-                .write_all(b"HTTP/1.1 200 OK\r\nx-kind: streamed\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n5\r\nfirst\r\n")
+                .write_all(b"HTTP/1.1 200 OK\r\nx-kind: streamed\r\nset-cookie: a=1\r\nset-cookie: b=2\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n5\r\nfirst\r\n")
                 .await
                 .unwrap();
             let (mut next, _) = listener.accept().await.unwrap();
@@ -1374,7 +1374,7 @@ mod tests {
                 for (let next = await reader.read(); !next.done; next = await reader.read()) {{
                     rest += decoder.decode(next.value, {{ stream: true }});
                 }}
-                return [resp.headers.get("x-kind"), decoder.decode(first.value), rest].join(",");
+                return [resp.headers.get("x-kind"), resp.headers.getSetCookie().join("|"), decoder.decode(first.value), rest].join(",");
             }}
             "#
         );
@@ -1393,7 +1393,10 @@ mod tests {
             .expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
         let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(ok)) => ok);
-        assert_eq!(extract_string(&output.value), "streamed,first,second");
+        assert_eq!(
+            extract_string(&output.value),
+            "streamed,a=1|b=2,first,second"
+        );
         server.await.unwrap();
     }
 
