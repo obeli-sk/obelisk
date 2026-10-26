@@ -27,10 +27,11 @@ use concepts::{
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, NodeRunId, SystemEventId},
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
-        DbErrorWrite, DbErrorWriteNonRetriable, DbPool, DelayCancelOutcome, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionStateFilter, FunctionNameFilter,
-        ListExecutionsFilter, Pagination, PendingState, PendingStateFinishedError,
-        PendingStateFinishedResultKind, TimeoutOutcome, Version, VersionType,
+        DbErrorWrite, DbErrorWriteNonRetriable, DbExternalApi, DbPool, DelayCancelOutcome,
+        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionStateFilter,
+        FunctionNameFilter, ListExecutionsFilter, Pagination, PendingState,
+        PendingStateFinishedError, PendingStateFinishedResultKind, TimeoutOutcome, Version,
+        VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -124,6 +125,7 @@ async fn until_terminated<T>(
         execution_unpause,
         execution_events,
         execution_event_bounds_batch,
+        execution_status_batch,
         execution_events_and_responses,
         logs::execution_logs,
         execution_responses,
@@ -168,6 +170,8 @@ async fn until_terminated<T>(
         ExecutionEventsResponse,
         ExecutionEventBoundsBatchRequest,
         ExecutionEventBoundsBatchItem,
+        ExecutionStatusBatchRequest,
+        ExecutionStatusBatchItem,
         ExecutionEventsAndResponsesResponse,
         ExecutionResponsesResponse,
         ExecutionStubPayload,
@@ -292,6 +296,10 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
         .route(
             "/executions/events/batch",
             routing::post(execution_event_bounds_batch),
+        )
+        .route(
+            "/executions/status/batch",
+            routing::post(execution_status_batch),
         )
         .route(
             "/executions/{execution-id}/events-and-responses",
@@ -1584,19 +1592,152 @@ async fn execution_event_bounds_batch(
     Ok(pretty_json_response(StatusCode::OK, &response))
 }
 
+/// Most executions one status batch may list.
+const STATUS_BATCH_MAX_IDS: usize = 200;
+
+#[derive(Deserialize, ToSchema)]
+struct ExecutionStatusBatchRequest {
+    /// At most 200 executions, duplicates are ignored.
+    #[schema(value_type = Vec<String>)]
+    execution_ids: Vec<ExecutionId>,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct ExecutionStatusBatchParams {
+    /// Stream SSE `statuses` events: first all listed executions, then only the ones whose
+    /// status or `max_version` changed. Finished executions are no longer followed and the
+    /// stream ends when none are left.
+    #[serde(default)]
+    follow: bool,
+}
+
+#[derive(Clone, PartialEq, Serialize, ToSchema)]
+struct ExecutionStatusBatchItem {
+    #[serde(flatten)]
+    status: ExecutionWithStateSer,
+    #[schema(value_type = u32)]
+    max_version: Version,
+}
+
+impl From<concepts::storage::ExecutionStateWithVersion> for ExecutionStatusBatchItem {
+    fn from(state: concepts::storage::ExecutionStateWithVersion) -> Self {
+        Self {
+            status: state.execution_with_state.into(),
+            max_version: state.max_version,
+        }
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/executions/status/batch",
+    tag = "executions",
+    params(ExecutionStatusBatchParams),
+    request_body = ExecutionStatusBatchRequest,
+    responses((status = 200, body = Vec<ExecutionStatusBatchItem>))
+)]
+async fn execution_status_batch(
+    state: State<Arc<WebApiState>>,
+    Query(params): Query<ExecutionStatusBatchParams>,
+    headers: HeaderMap,
+    Json(request): Json<ExecutionStatusBatchRequest>,
+) -> Result<Response, HttpResponse> {
+    let accept = streaming_accept(&headers, params.follow)?;
+    let mut seen = std::collections::HashSet::new();
+    let execution_ids: Vec<_> = request
+        .execution_ids
+        .into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .collect();
+    if execution_ids.is_empty() || execution_ids.len() > STATUS_BATCH_MAX_IDS {
+        return Err(HttpResponse::bad_request(
+            accept,
+            format!("execution_ids must contain 1 to {STATUS_BATCH_MAX_IDS} IDs"),
+        ));
+    }
+    if params.follow {
+        let source = StatusBatchFollow {
+            execution_ids,
+            last_sent: std::collections::HashMap::new(),
+        };
+        return follow_response(&state, source, accept).await;
+    }
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let states = conn
+        .get_pending_state_batch(&execution_ids)
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let response: Vec<_> = states
+        .into_iter()
+        .map(ExecutionStatusBatchItem::from)
+        .collect();
+    Ok(pretty_json_response(StatusCode::OK, &response))
+}
+
+struct StatusBatchFollow {
+    /// Executions not yet seen finished.
+    execution_ids: Vec<ExecutionId>,
+    last_sent: std::collections::HashMap<ExecutionId, ExecutionStatusBatchItem>,
+}
+
+#[async_trait::async_trait]
+impl FollowSource for StatusBatchFollow {
+    async fn next_page(&mut self, conn: &dyn DbExternalApi) -> Result<FollowPage, DbErrorRead> {
+        let states = conn.get_pending_state_batch(&self.execution_ids).await?;
+        let changed: Vec<_> = states
+            .into_iter()
+            .map(ExecutionStatusBatchItem::from)
+            .filter(|item| self.last_sent.get(&item.status.execution_id) != Some(item))
+            .collect();
+        for item in &changed {
+            if matches!(item.status.pending_state, PendingState::Finished(_)) {
+                self.execution_ids
+                    .retain(|id| *id != item.status.execution_id);
+                self.last_sent.remove(&item.status.execution_id);
+            } else {
+                self.last_sent
+                    .insert(item.status.execution_id.clone(), item.clone());
+            }
+        }
+        // Statuses have no position to resume from, a reconnect gets all of them again.
+        let event = (!changed.is_empty()).then(|| {
+            Event::default()
+                .event("statuses")
+                .data(serde_json::to_string(&changed).expect("statuses serialize"))
+        });
+        Ok(FollowPage {
+            event,
+            full: false,
+            finished: false,
+            exhausted: self.execution_ids.is_empty(),
+        })
+    }
+}
+
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 struct ExecutionEventsAndResponsesParams {
     #[serde(default)]
     version_from: VersionType,
+    /// With `follow`, the total for the whole stream, unlimited by default.
     events_length: Option<u16>,
     #[serde(default)]
     include_backtrace_id: bool,
     #[serde(default)]
     responses_cursor_from: VersionType,
+    /// With `follow`, the total for the whole stream, unlimited by default.
     responses_length: Option<u16>,
     #[serde(default)]
     responses_including_cursor: bool,
+    /// Stream SSE `events_and_responses` events until the execution finishes or either
+    /// length is reached. The first event is always sent, later ones only with new rows.
+    #[serde(default)]
+    follow: bool,
 }
 
 #[utoipa::path(
@@ -1610,8 +1751,39 @@ async fn execution_events_and_responses(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
     Query(params): Query<ExecutionEventsAndResponsesParams>,
-    accept: AcceptHeader,
+    headers: HeaderMap,
 ) -> Result<Response, HttpResponse> {
+    let accept = streaming_accept(&headers, params.follow)?;
+    if params.follow {
+        let (version_from, responses_cursor, responses_including_cursor) =
+            match last_event_id(&headers) {
+                Some(id) => {
+                    let (version, cursor) = id
+                        .split_once(':')
+                        .and_then(|(version, cursor)| {
+                            Some((version.parse().ok()?, cursor.parse().ok()?))
+                        })
+                        .ok_or_else(|| invalid_last_event_id(accept))?;
+                    (version, cursor, false)
+                }
+                None => (
+                    params.version_from,
+                    params.responses_cursor_from,
+                    params.responses_including_cursor,
+                ),
+            };
+        let source = EventsAndResponsesFollow {
+            execution_id,
+            version_from,
+            include_backtrace_id: params.include_backtrace_id,
+            responses_cursor,
+            responses_including_cursor,
+            events_budget: follow_budget(params.events_length, accept)?,
+            responses_budget: follow_budget(params.responses_length, accept)?,
+            first: true,
+        };
+        return follow_response(&state, source, accept).await;
+    }
     let events_length = nonzero_page_length(params.events_length.unwrap_or(20), accept)?;
     let responses_length = nonzero_page_length(params.responses_length.unwrap_or(20), accept)?;
     let conn = state
@@ -1644,6 +1816,75 @@ async fn execution_events_and_responses(
         },
     ))
 }
+struct EventsAndResponsesFollow {
+    execution_id: ExecutionId,
+    version_from: VersionType,
+    include_backtrace_id: bool,
+    responses_cursor: VersionType,
+    responses_including_cursor: bool,
+    events_budget: FollowBudget,
+    responses_budget: FollowBudget,
+    first: bool,
+}
+
+#[async_trait::async_trait]
+impl FollowSource for EventsAndResponsesFollow {
+    async fn next_page(&mut self, conn: &dyn DbExternalApi) -> Result<FollowPage, DbErrorRead> {
+        let events_length = self.events_budget.page_length();
+        let responses_length = self.responses_budget.page_length();
+        let result = conn
+            .list_execution_events_responses(
+                &self.execution_id,
+                &Version::new(self.version_from),
+                events_length,
+                self.include_backtrace_id,
+                Pagination::NewerThan {
+                    length: responses_length,
+                    cursor: self.responses_cursor,
+                    including_cursor: self.responses_including_cursor,
+                },
+            )
+            .await?;
+        let full = result.events.len() >= usize::from(events_length.get())
+            || result.responses.len() >= usize::from(responses_length.get());
+        let finished = matches!(
+            result.execution_with_state.pending_state,
+            PendingState::Finished(_)
+        );
+        if let Some(last) = result.events.last() {
+            self.version_from = last.version.0 + 1;
+        }
+        if let Some(last) = result.responses.last() {
+            self.responses_cursor = last.cursor.0;
+            self.responses_including_cursor = false;
+        }
+        let events_exhausted = self.events_budget.consume(result.events.len());
+        let responses_exhausted = self.responses_budget.consume(result.responses.len());
+        let send = std::mem::take(&mut self.first)
+            || !result.events.is_empty()
+            || !result.responses.is_empty();
+        let event = send.then(|| {
+            json_event(
+                "events_and_responses",
+                &format!("{}:{}", self.version_from, self.responses_cursor),
+                &ExecutionEventsAndResponsesResponse {
+                    events: result.events,
+                    responses: result.responses,
+                    current_status: result.execution_with_state.into(),
+                    max_version: result.max_version,
+                    max_cursor: result.max_cursor,
+                },
+            )
+        });
+        Ok(FollowPage {
+            event,
+            full,
+            finished,
+            exhausted: events_exhausted || responses_exhausted,
+        })
+    }
+}
+
 /// Get execution events (history)
 #[utoipa::path(
     get,
@@ -1730,7 +1971,8 @@ pub(crate) mod logs {
         cursor: Option<String>,
         /// Only include entries created after this timestamp.
         after: Option<DateTime<Utc>>,
-        /// Number of entries to return
+        /// Number of entries to return. With `follow`, the total for the whole stream,
+        /// unlimited by default.
         #[param(minimum = 1)]
         length: Option<u16>,
         /// Include the cursor item in results
@@ -1739,6 +1981,9 @@ pub(crate) mod logs {
         /// Pagination direction
         #[serde(default)]
         direction: PaginationDirectionSortedFromOldest,
+        /// Stream new entries as SSE `logs` events until the execution finishes.
+        #[serde(default)]
+        follow: bool,
     }
 
     fn default_true() -> bool {
@@ -1801,28 +2046,21 @@ pub(crate) mod logs {
         Path(execution_id): Path<ExecutionId>,
         state: State<Arc<WebApiState>>,
         Query(params): Query<ExecutionLogsParams>,
-        accept: AcceptHeader,
+        headers: HeaderMap,
     ) -> Result<Response, HttpResponse> {
         const DEFAULT_LENGTH: u16 = 20;
         const MAX_LENGTH_INCLUSIVE: u16 = 200;
 
-        let cursor = match params.cursor.as_deref() {
-            Some(cursor) => {
-                let opaque = BASE64_STANDARD
-                    .decode(cursor)
-                    .ok()
-                    .and_then(|decoded| serde_json::from_slice::<LogCursor>(&decoded).ok());
-                if opaque.is_none() {
-                    return Err(HttpResponse {
-                        status: StatusCode::BAD_REQUEST,
-                        message: "invalid log cursor".to_string(),
-                        accept,
-                    });
-                }
-                opaque
-            }
-            None => None,
-        };
+        let accept = streaming_accept(&headers, params.follow)?;
+        let cursor = params
+            .cursor
+            .as_deref()
+            .map(|cursor| {
+                decode_cursor(cursor).ok_or_else(|| {
+                    HttpResponse::bad_request(accept, "invalid log cursor".to_string())
+                })
+            })
+            .transpose()?;
 
         let filter = match (params.show_logs, params.show_streams) {
             (true, true) => LogFilter::show_combined(
@@ -1844,6 +2082,29 @@ pub(crate) mod logs {
             }
         }
         .with_created_bounds(params.after, None);
+
+        if params.follow {
+            follow_requires_newer(params.direction, accept)?;
+            let (cursor, including_cursor) = match last_event_id(&headers) {
+                Some(id) => (
+                    decode_cursor(id).ok_or_else(|| invalid_last_event_id(accept))?,
+                    false,
+                ),
+                None => (
+                    cursor.unwrap_or(LogCursor(i64::MIN)),
+                    params.including_cursor,
+                ),
+            };
+            let source = LogsFollow {
+                execution_id,
+                show_derived: params.show_derived,
+                filter,
+                cursor,
+                including_cursor,
+                budget: follow_budget(params.length, accept)?,
+            };
+            return follow_response(&state, source, accept).await;
+        }
 
         let length = nonzero_page_length(
             MAX_LENGTH_INCLUSIVE.min(params.length.unwrap_or(DEFAULT_LENGTH)),
@@ -1880,6 +2141,59 @@ pub(crate) mod logs {
             pretty_json_response(StatusCode::OK, &items)
         })
     }
+
+    fn decode_cursor(cursor: &str) -> Option<LogCursor> {
+        BASE64_STANDARD
+            .decode(cursor)
+            .ok()
+            .and_then(|decoded| serde_json::from_slice::<LogCursor>(&decoded).ok())
+    }
+
+    struct LogsFollow {
+        execution_id: ExecutionId,
+        show_derived: bool,
+        filter: LogFilter,
+        cursor: LogCursor,
+        including_cursor: bool,
+        budget: FollowBudget,
+    }
+
+    #[async_trait::async_trait]
+    impl FollowSource for LogsFollow {
+        async fn next_page(&mut self, conn: &dyn DbExternalApi) -> Result<FollowPage, DbErrorRead> {
+            let finished = is_finished(conn, &self.execution_id).await?;
+            let length = self.budget.page_length();
+            let result = conn
+                .list_logs(
+                    &self.execution_id,
+                    self.show_derived,
+                    self.filter.clone(),
+                    Pagination::NewerThan {
+                        length,
+                        cursor: self.cursor,
+                        including_cursor: self.including_cursor,
+                    },
+                )
+                .await?;
+            let full = result.items.len() >= usize::from(length.get());
+            if let Some(last) = result.items.last() {
+                self.cursor = last.cursor;
+                self.including_cursor = false;
+            }
+            let exhausted = self.budget.consume(result.items.len());
+            let items: Vec<LogEntryRowSer> =
+                result.items.into_iter().map(LogEntryRowSer::from).collect();
+            let event = items
+                .last()
+                .map(|last| json_event("logs", &last.cursor, &items));
+            Ok(FollowPage {
+                event,
+                full,
+                finished,
+                exhausted,
+            })
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -1889,7 +2203,8 @@ struct ExecutionResponsesParams {
     join_set: Option<String>,
     /// Cursor for pagination
     cursor: Option<u32>,
-    /// Maximum number of responses to return
+    /// Maximum number of responses to return. With `follow`, the total for the whole stream,
+    /// unlimited by default.
     #[param(minimum = 1)]
     length: Option<u16>,
     /// Include the cursor item in results
@@ -1898,6 +2213,9 @@ struct ExecutionResponsesParams {
     /// Pagination direction
     #[serde(default)]
     direction: PaginationDirectionSortedFromOldest,
+    /// Stream new responses as SSE `responses` events until the execution finishes.
+    #[serde(default)]
+    follow: bool,
 }
 
 fn parse_join_set_filter(join_set: &str) -> Result<JoinSetId, String> {
@@ -1924,21 +2242,40 @@ async fn execution_responses(
     Path(execution_id): Path<ExecutionId>,
     state: State<Arc<WebApiState>>,
     Query(params): Query<ExecutionResponsesParams>,
-    accept: AcceptHeader,
+    headers: HeaderMap,
 ) -> Result<Response, HttpResponse> {
     const DEFAULT_LENGTH: u16 = 20;
-    let length = nonzero_page_length(params.length.unwrap_or(DEFAULT_LENGTH), accept)?;
-    let conn = state
-        .db_pool
-        .external_api_conn()
-        .await
-        .map_err(|e| ErrorWrapper(e, accept))?;
+    let accept = streaming_accept(&headers, params.follow)?;
     let join_set = params
         .join_set
         .as_deref()
         .map(parse_join_set_filter)
         .transpose()
         .map_err(|err| HttpResponse::bad_request(accept, err))?;
+    if params.follow {
+        follow_requires_newer(params.direction, accept)?;
+        let (cursor, including_cursor) = match last_event_id(&headers) {
+            Some(id) => (
+                id.parse().map_err(|_| invalid_last_event_id(accept))?,
+                false,
+            ),
+            None => (params.cursor.unwrap_or(0), params.including_cursor),
+        };
+        let source = ResponsesFollow {
+            execution_id,
+            join_set,
+            cursor,
+            including_cursor,
+            budget: follow_budget(params.length, accept)?,
+        };
+        return follow_response(&state, source, accept).await;
+    }
+    let length = nonzero_page_length(params.length.unwrap_or(DEFAULT_LENGTH), accept)?;
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
     let pagination = match params.direction {
         PaginationDirectionSortedFromOldest::Older => Pagination::OlderThan {
             length,
@@ -1964,6 +2301,55 @@ async fn execution_responses(
             scan_cursor: result.scan_cursor,
         },
     ))
+}
+
+struct ResponsesFollow {
+    execution_id: ExecutionId,
+    join_set: Option<JoinSetId>,
+    cursor: u32,
+    including_cursor: bool,
+    budget: FollowBudget,
+}
+
+#[async_trait::async_trait]
+impl FollowSource for ResponsesFollow {
+    async fn next_page(&mut self, conn: &dyn DbExternalApi) -> Result<FollowPage, DbErrorRead> {
+        let finished = is_finished(conn, &self.execution_id).await?;
+        let length = self.budget.page_length();
+        let result = conn
+            .list_responses_filtered(
+                &self.execution_id,
+                Pagination::NewerThan {
+                    length,
+                    cursor: self.cursor,
+                    including_cursor: self.including_cursor,
+                },
+                self.join_set.as_ref(),
+            )
+            .await?;
+        let full = result.responses.len() >= usize::from(length.get());
+        // The scan cursor also skips responses outside of the join set filter.
+        self.cursor = self.cursor.max(result.scan_cursor.0);
+        self.including_cursor = false;
+        let exhausted = self.budget.consume(result.responses.len());
+        let event = (!result.responses.is_empty()).then(|| {
+            json_event(
+                "responses",
+                &self.cursor.to_string(),
+                &ExecutionResponsesResponse {
+                    responses: result.responses,
+                    max_cursor: result.max_cursor,
+                    scan_cursor: result.scan_cursor,
+                },
+            )
+        });
+        Ok(FollowPage {
+            event,
+            full,
+            finished,
+            exhausted,
+        })
+    }
 }
 
 /// Get execution status
@@ -1999,10 +2385,7 @@ async fn execution_status_get(
         let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(1);
         let db_pool = state.db_pool.clone();
         let mut termination = state.termination_watcher.clone();
-        let last_event_id = headers
-            .get("last-event-id")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
+        let last_event_id = last_event_id(&headers).map(str::to_owned);
         utils::spawn::spawn_named("stream_execution_status", async move {
             let mut last_sent_id = last_event_id;
             let mut current = execution_with_state;
@@ -2077,13 +2460,7 @@ async fn execution_status_get(
                 current = next;
             }
         });
-        return Ok(Sse::new(ReceiverStream::new(rx))
-            .keep_alive(
-                KeepAlive::new()
-                    .interval(Duration::from_secs(15))
-                    .text("heartbeat"),
-            )
-            .into_response());
+        return Ok(sse_response(rx));
     }
     Ok(pretty_json_response(
         StatusCode::OK,
@@ -2376,10 +2753,7 @@ async fn execution_submit_put(
     Json(payload): Json<ExecutionSubmitPayload>,
 ) -> Result<http::Response<Body>, HttpResponse> {
     let accept = streaming_accept(&headers, params.follow)?;
-    let last_event_id = headers
-        .get("last-event-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
+    let last_event_id = last_event_id(&headers).map(str::to_owned);
     execution_submit(
         execution_id,
         state,
@@ -2410,10 +2784,7 @@ async fn execution_submit_post(
 ) -> Result<http::Response<Body>, HttpResponse> {
     let accept = streaming_accept(&headers, params.follow)?;
     let execution_id = ExecutionId::generate();
-    let last_event_id = headers
-        .get("last-event-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
+    let last_event_id = last_event_id(&headers).map(str::to_owned);
     execution_submit(
         execution_id,
         state,
@@ -2454,6 +2825,164 @@ fn streaming_accept(headers: &HeaderMap, follow: bool) -> Result<AcceptHeader, H
             accept: AcceptHeader::Json,
         })
     }
+}
+
+fn sse_response(rx: mpsc::Receiver<Result<Event, Infallible>>) -> Response {
+    Sse::new(ReceiverStream::new(rx))
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("heartbeat"),
+        )
+        .into_response()
+}
+
+fn last_event_id(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+}
+
+const FOLLOW_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const FOLLOW_PAGE_LENGTH: u16 = 200;
+
+/// Remaining number of items a follow stream may send, `None` means unlimited.
+#[derive(Clone, Copy, Debug)]
+struct FollowBudget(Option<u16>);
+
+impl FollowBudget {
+    fn page_length(self) -> NonZeroU16 {
+        let length = self.0.map_or(FOLLOW_PAGE_LENGTH, |remaining| {
+            remaining.min(FOLLOW_PAGE_LENGTH)
+        });
+        NonZeroU16::new(length).expect("an exhausted budget ends the stream")
+    }
+
+    /// Returns true when the budget is used up.
+    fn consume(&mut self, items: usize) -> bool {
+        let Some(remaining) = &mut self.0 else {
+            return false;
+        };
+        *remaining = remaining.saturating_sub(u16::try_from(items).unwrap_or(u16::MAX));
+        *remaining == 0
+    }
+}
+
+fn follow_budget(length: Option<u16>, accept: AcceptHeader) -> Result<FollowBudget, HttpResponse> {
+    length
+        .map(|length| nonzero_page_length(length, accept).map(NonZeroU16::get))
+        .transpose()
+        .map(FollowBudget)
+}
+
+fn follow_requires_newer(
+    direction: PaginationDirectionSortedFromOldest,
+    accept: AcceptHeader,
+) -> Result<(), HttpResponse> {
+    match direction {
+        PaginationDirectionSortedFromOldest::Newer => Ok(()),
+        PaginationDirectionSortedFromOldest::Older => Err(HttpResponse::bad_request(
+            accept,
+            "`follow` requires `direction=newer`".to_string(),
+        )),
+    }
+}
+
+fn invalid_last_event_id(accept: AcceptHeader) -> HttpResponse {
+    HttpResponse::bad_request(accept, "invalid Last-Event-ID".to_string())
+}
+
+/// One poll of a followed endpoint.
+struct FollowPage {
+    event: Option<Event>,
+    /// The page was full, more rows may be ready without waiting.
+    full: bool,
+    /// The execution was finished before the page was read.
+    finished: bool,
+    /// The requested length was reached.
+    exhausted: bool,
+}
+
+#[async_trait::async_trait]
+trait FollowSource: Send + 'static {
+    async fn next_page(&mut self, conn: &dyn DbExternalApi) -> Result<FollowPage, DbErrorRead>;
+}
+
+/// Read the first page inline so that errors like a missing execution become HTTP errors,
+/// then keep polling in a task. The stream ends when the budget is used up, or with the
+/// first non-full page read at least one poll interval after the execution finished, which
+/// leaves time for rows written right after the finish, such as forwarded logs.
+async fn follow_response(
+    state: &WebApiState,
+    mut source: impl FollowSource,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    let conn = state
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    let mut page = source
+        .next_page(conn.as_ref())
+        .await
+        .map_err(|e| ErrorWrapper(e, accept))?;
+    drop(conn);
+    let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(1);
+    let db_pool = state.db_pool.clone();
+    let mut termination = state.termination_watcher.clone();
+    utils::spawn::spawn_named(
+        "follow_execution",
+        async move {
+            let mut finished = false;
+            loop {
+                if let Some(event) = page.event.take()
+                    && tx.send(Ok(event)).await.is_err()
+                {
+                    break;
+                }
+                if page.exhausted || (finished && !page.full) {
+                    break;
+                }
+                finished |= page.finished;
+                if !page.full {
+                    select! {
+                        () = tx.closed() => break,
+                        _ = termination.changed() => break,
+                        () = tokio::time::sleep(FOLLOW_POLL_INTERVAL) => {}
+                    }
+                }
+                let Ok(conn) = db_pool.external_api_conn().await else {
+                    break;
+                };
+                match source.next_page(conn.as_ref()).await {
+                    Ok(next) => page = next,
+                    Err(err) => {
+                        debug!("Ending follow stream - {err:?}");
+                        break;
+                    }
+                }
+            }
+        }
+        .in_current_span(),
+    );
+    Ok(sse_response(rx))
+}
+
+fn json_event(name: &'static str, id: &str, data: &impl Serialize) -> Event {
+    Event::default()
+        .event(name)
+        .id(id)
+        .data(serde_json::to_string(data).expect("follow page serializes"))
+}
+
+async fn is_finished(
+    conn: &dyn DbExternalApi,
+    execution_id: &ExecutionId,
+) -> Result<bool, DbErrorRead> {
+    Ok(matches!(
+        conn.get_pending_state(execution_id).await?.pending_state,
+        PendingState::Finished(_)
+    ))
 }
 
 #[instrument(skip_all, fields(execution_id))]

@@ -5052,11 +5052,13 @@ async fn test_list_responses_pagination_direction(database: Database) {
     db_close.close().await;
 }
 
+#[expand_enum_database]
+#[rstest]
 #[tokio::test]
-async fn execution_event_bounds_batch_returns_created_and_optional_finished() {
+async fn batch_reads_return_bounds_and_states(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
-    let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+    let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection_test().await.unwrap();
     let api_conn = db_pool.external_api_conn().await.unwrap();
     let unfinished_id = ExecutionId::generate();
@@ -5109,6 +5111,19 @@ async fn execution_event_bounds_batch_returns_created_and_optional_finished() {
     assert_eq!(bounds[1].execution_id, unfinished_id);
     assert_matches!(&bounds[1].created.event, ExecutionRequest::Created(_));
     assert!(bounds[1].finished.is_none());
+
+    let states = api_conn
+        .get_pending_state_batch(&[finished_id.clone(), unfinished_id.clone()])
+        .await
+        .unwrap();
+    assert_eq!(states[0].execution_with_state.execution_id, finished_id);
+    assert_matches!(
+        states[0].execution_with_state.pending_state,
+        PendingState::Finished(_)
+    );
+    assert_eq!(states[0].max_version, Version::new(1));
+    assert_eq!(states[1].execution_with_state.execution_id, unfinished_id);
+    assert_eq!(states[1].max_version, Version::new(0));
 
     drop(api_conn);
     drop(db_connection);

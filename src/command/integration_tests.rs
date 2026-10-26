@@ -19,6 +19,7 @@ use toml_edit::{DocumentMut, value};
 mod activity_exec;
 mod activity_vm;
 mod crypto;
+mod follow;
 mod greet_activity;
 mod multifile;
 mod oidc;

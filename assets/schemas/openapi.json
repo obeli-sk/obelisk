@@ -1335,6 +1335,49 @@
         }
       }
     },
+    "/v1/executions/status/batch": {
+      "post": {
+        "tags": [
+          "executions"
+        ],
+        "operationId": "execution_status_batch",
+        "parameters": [
+          {
+            "name": "follow",
+            "in": "query",
+            "description": "Stream SSE `statuses` events: first all listed executions, then only the ones whose\nstatus or `max_version` changed. Finished executions are no longer followed and the\nstream ends when none are left.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionStatusBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExecutionStatusBatchItem"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/executions/{execution_id}": {
       "get": {
         "tags": [
@@ -1760,6 +1803,7 @@
           {
             "name": "events_length",
             "in": "query",
+            "description": "With `follow`, the total for the whole stream, unlimited by default.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1786,6 +1830,7 @@
           {
             "name": "responses_length",
             "in": "query",
+            "description": "With `follow`, the total for the whole stream, unlimited by default.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1796,6 +1841,15 @@
           {
             "name": "responses_including_cursor",
             "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "description": "Stream SSE `events_and_responses` events until the execution finishes or either\nlength is reached. The first event is always sent, later ones only with new rows.",
             "required": false,
             "schema": {
               "type": "boolean"
@@ -1905,7 +1959,7 @@
           {
             "name": "length",
             "in": "query",
-            "description": "Number of entries to return",
+            "description": "Number of entries to return. With `follow`, the total for the whole stream,\nunlimited by default.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1929,6 +1983,15 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/PaginationDirectionSortedFromOldest"
+            }
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "description": "Stream new entries as SSE `logs` events until the execution finishes.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -2059,7 +2122,7 @@
           {
             "name": "length",
             "in": "query",
-            "description": "Maximum number of responses to return",
+            "description": "Maximum number of responses to return. With `follow`, the total for the whole stream,\nunlimited by default.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2083,6 +2146,15 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/PaginationDirectionSortedFromOldest"
+            }
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "description": "Stream new responses as SSE `responses` events until the execution finishes.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -3761,6 +3833,41 @@
             "format": "int32",
             "description": "Cursor reached in the requested direction",
             "minimum": 0
+          }
+        }
+      },
+      "ExecutionStatusBatchItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ExecutionWithStateSer"
+          },
+          {
+            "type": "object",
+            "required": [
+              "max_version"
+            ],
+            "properties": {
+              "max_version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
+      "ExecutionStatusBatchRequest": {
+        "type": "object",
+        "required": [
+          "execution_ids"
+        ],
+        "properties": {
+          "execution_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 200 executions, duplicates are ignored."
           }
         }
       },

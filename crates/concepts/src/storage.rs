@@ -326,6 +326,12 @@ pub struct ExecutionEventBounds {
 }
 
 #[derive(Debug)]
+pub struct ExecutionStateWithVersion {
+    pub execution_with_state: ExecutionWithState,
+    pub max_version: Version,
+}
+
+#[derive(Debug)]
 pub struct ListResponsesResponse {
     pub responses: Vec<ResponseWithCursor>,
     pub max_cursor: ResponseCursor,
@@ -2347,6 +2353,12 @@ pub trait DbExternalApi: DbConnection {
         execution_ids: &[ExecutionId],
     ) -> Result<Vec<ExecutionEventBounds>, DbErrorRead>;
 
+    /// Reads the state and max version of each execution in one transaction.
+    async fn get_pending_state_batch(
+        &self,
+        execution_ids: &[ExecutionId],
+    ) -> Result<Vec<ExecutionStateWithVersion>, DbErrorRead>;
+
     /// Returns responses of an execution ordered as they arrived,
     /// enabling matching each `JoinNext` to its corresponding response.
     ///
@@ -2751,7 +2763,7 @@ pub struct ListLogsResponse {
     pub prev_page: Option<Pagination<LogCursor>>, // None if we are already at the beginning
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LogFilter {
     show_logs: bool,
     show_streams: bool,
