@@ -31,9 +31,8 @@ impl CloudArgs {
         let desired = desired_config(&config);
         let prepared = prepare_deployment_manifest_from_disk(&deployment).await?;
         eprintln!("Deploying {name}");
-        let step = |command: &str| {
-            eprintln!("→ obelisk cloud app {command}");
-        };
+        let step =
+            |command: &str| crate::client::step(format_args!("→ obelisk cloud app {command}"));
         let existing = client.lookup_app(&name).await?;
         let is_new = existing.is_none();
         let mut current = if existing.is_some() {
