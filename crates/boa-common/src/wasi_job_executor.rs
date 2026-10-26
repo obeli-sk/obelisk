@@ -10,6 +10,7 @@ use boa_engine::job::{GenericJob, Job, JobExecutor, NativeAsyncJob, PromiseJob, 
 use boa_engine::{Context, JsResult};
 use futures_concurrency::future::FutureGroup;
 use futures_lite::StreamExt as _;
+use futures_lite::future;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::mem;
@@ -62,12 +63,7 @@ impl WasiJobExecutor {
                 break;
             }
 
-            // 1. Move newly enqueued async jobs into the concurrent FutureGroup.
-            for job in mem::take(&mut *self.async_jobs.borrow_mut()) {
-                group.insert(job.call(context));
-            }
-
-            // 2. Run all ready synchronous jobs (promise microtasks, timeouts, generic).
+            // 1. Run all ready synchronous jobs (promise microtasks, timeouts, generic).
             self.run_sync_jobs(context)?;
 
             // Check done condition after sync jobs (promise might have resolved)
@@ -75,30 +71,42 @@ impl WasiJobExecutor {
                 break;
             }
 
+            // 2. Move async jobs enqueued so far, including by the sync jobs above, into the group.
+            for job in mem::take(&mut *self.async_jobs.borrow_mut()) {
+                group.insert(job.call(context));
+            }
+
             // 3. Check if there's any work left.
-            if group.is_empty()
-                && self.promise_jobs.borrow().is_empty()
-                && self.async_jobs.borrow().is_empty()
-                && self.generic_jobs.borrow().is_empty()
-                && self.timeout_jobs.borrow().is_empty()
-            {
+            let sync_ready =
+                !self.promise_jobs.borrow().is_empty() || !self.generic_jobs.borrow().is_empty();
+            let next_timeout = self.time_until_next_timeout(context);
+            if group.is_empty() && !sync_ready && next_timeout.is_none() {
                 break;
             }
 
-            // 4. If there are async futures in flight, await the next one.
-            if !group.is_empty() {
-                match group.next().await {
-                    Some(Ok(_)) => {}
-                    Some(Err(err)) => {
-                        self.clear();
-                        return Err(err);
+            // 4. Unless sync jobs are ready, wait for the next async job or the next timeout.
+            if !sync_ready {
+                let next_async = async {
+                    if group.is_empty() {
+                        future::pending().await
+                    } else {
+                        group.next().await
                     }
-                    None => {}
+                };
+                let timeout = async {
+                    match next_timeout {
+                        Some(duration) => {
+                            wstd::task::sleep(duration).await;
+                        }
+                        None => future::pending().await,
+                    }
+                    None
+                };
+                // Dropping `group.next()` keeps the futures in the group.
+                if let Some(Err(err)) = future::or(next_async, timeout).await {
+                    self.clear();
+                    return Err(err);
                 }
-            } else if let Some(sleep_duration) = self.time_until_next_timeout(context) {
-                // 5. No async jobs, but we have pending timeout jobs.
-                //    Sleep until the next timeout is ready.
-                wstd::task::sleep(sleep_duration).await;
             }
         }
 
