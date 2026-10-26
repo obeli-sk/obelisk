@@ -1345,7 +1345,7 @@
           {
             "name": "follow",
             "in": "query",
-            "description": "Stream SSE `statuses` events: first all listed executions, then only the ones whose\nstatus or `max_version` changed. Finished executions are no longer followed and the\nstream ends when none are left.",
+            "description": "Stream SSE `statuses` events: first all listed executions, then only the ones whose\nstatus or `max_version` changed. Missing executions are left out of the first event and\nare not followed. Finished executions are no longer followed and the stream ends when\nnone are left.",
             "required": false,
             "schema": {
               "type": "boolean"
@@ -3867,7 +3867,7 @@
             "items": {
               "type": "string"
             },
-            "description": "At most 200 executions, duplicates are ignored."
+            "description": "At most 200 executions, duplicates are ignored. Missing executions are left out of the\nresponse."
           }
         }
       },

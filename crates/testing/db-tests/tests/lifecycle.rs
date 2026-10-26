@@ -5113,9 +5113,14 @@ async fn batch_reads_return_bounds_and_states(database: Database) {
     assert!(bounds[1].finished.is_none());
 
     let states = api_conn
-        .get_pending_state_batch(&[finished_id.clone(), unfinished_id.clone()])
+        .get_pending_state_batch(&[
+            finished_id.clone(),
+            ExecutionId::generate(),
+            unfinished_id.clone(),
+        ])
         .await
         .unwrap();
+    assert_eq!(states.len(), 2, "missing executions are skipped");
     assert_eq!(states[0].execution_with_state.execution_id, finished_id);
     assert_matches!(
         states[0].execution_with_state.pending_state,

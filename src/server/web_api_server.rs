@@ -1597,7 +1597,8 @@ const STATUS_BATCH_MAX_IDS: usize = 200;
 
 #[derive(Deserialize, ToSchema)]
 struct ExecutionStatusBatchRequest {
-    /// At most 200 executions, duplicates are ignored.
+    /// At most 200 executions, duplicates are ignored. Missing executions are left out of the
+    /// response.
     #[schema(value_type = Vec<String>)]
     execution_ids: Vec<ExecutionId>,
 }
@@ -1606,8 +1607,9 @@ struct ExecutionStatusBatchRequest {
 #[into_params(parameter_in = Query)]
 struct ExecutionStatusBatchParams {
     /// Stream SSE `statuses` events: first all listed executions, then only the ones whose
-    /// status or `max_version` changed. Finished executions are no longer followed and the
-    /// stream ends when none are left.
+    /// status or `max_version` changed. Missing executions are left out of the first event and
+    /// are not followed. Finished executions are no longer followed and the stream ends when
+    /// none are left.
     #[serde(default)]
     follow: bool,
 }
@@ -1660,6 +1662,7 @@ async fn execution_status_batch(
         let source = StatusBatchFollow {
             execution_ids,
             last_sent: std::collections::HashMap::new(),
+            first: true,
         };
         return follow_response(&state, source, accept).await;
     }
@@ -1683,12 +1686,19 @@ struct StatusBatchFollow {
     /// Executions not yet seen finished.
     execution_ids: Vec<ExecutionId>,
     last_sent: std::collections::HashMap<ExecutionId, ExecutionStatusBatchItem>,
+    /// The first event is sent even when empty, so a client learns which executions are missing.
+    first: bool,
 }
 
 #[async_trait::async_trait]
 impl FollowSource for StatusBatchFollow {
     async fn next_page(&mut self, conn: &dyn DbExternalApi) -> Result<FollowPage, DbErrorRead> {
         let states = conn.get_pending_state_batch(&self.execution_ids).await?;
+        self.execution_ids.retain(|id| {
+            states
+                .iter()
+                .any(|state| state.execution_with_state.execution_id == *id)
+        });
         let changed: Vec<_> = states
             .into_iter()
             .map(ExecutionStatusBatchItem::from)
@@ -1705,11 +1715,12 @@ impl FollowSource for StatusBatchFollow {
             }
         }
         // Statuses have no position to resume from, a reconnect gets all of them again.
-        let event = (!changed.is_empty()).then(|| {
+        let event = (self.first || !changed.is_empty()).then(|| {
             Event::default()
                 .event("statuses")
                 .data(serde_json::to_string(&changed).expect("statuses serialize"))
         });
+        self.first = false;
         Ok(FollowPage {
             event,
             full: false,
