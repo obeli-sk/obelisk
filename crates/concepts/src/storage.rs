@@ -2354,6 +2354,7 @@ pub trait DbExternalApi: DbConnection {
     ) -> Result<Vec<ExecutionEventBounds>, DbErrorRead>;
 
     /// Reads the state and max version of each execution in one transaction.
+    /// Missing executions are left out.
     async fn get_pending_state_batch(
         &self,
         execution_ids: &[ExecutionId],

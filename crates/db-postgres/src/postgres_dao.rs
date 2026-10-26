@@ -5322,12 +5322,14 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let mut states = Vec::with_capacity(execution_ids.len());
         for execution_id in execution_ids {
-            states.push(concepts::storage::ExecutionStateWithVersion {
-                execution_with_state: get_combined_state(&tx, execution_id)
-                    .await?
-                    .execution_with_state,
-                max_version: get_max_version(&tx, execution_id).await?,
-            });
+            match get_combined_state(&tx, execution_id).await {
+                Ok(combined) => states.push(concepts::storage::ExecutionStateWithVersion {
+                    execution_with_state: combined.execution_with_state,
+                    max_version: get_max_version(&tx, execution_id).await?,
+                }),
+                Err(DbErrorRead::NotFound) => {} // skip missing executions
+                Err(err) => return Err(err),
+            }
         }
         tx.commit().await?;
         Ok(states)

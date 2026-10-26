@@ -5204,16 +5204,21 @@ impl DbExternalApi for SqlitePool {
         let execution_ids = execution_ids.to_vec();
         self.transaction(
             move |tx| {
-                execution_ids
-                    .iter()
-                    .map(|execution_id| {
+                let mut states = Vec::with_capacity(execution_ids.len());
+                for execution_id in &execution_ids {
+                    let state = Self::get_combined_state(tx, execution_id).and_then(|combined| {
                         Ok(concepts::storage::ExecutionStateWithVersion {
-                            execution_with_state: Self::get_combined_state(tx, execution_id)?
-                                .execution_with_state,
+                            execution_with_state: combined.execution_with_state,
                             max_version: Self::get_max_version(tx, execution_id)?,
                         })
-                    })
-                    .collect()
+                    });
+                    match state {
+                        Ok(state) => states.push(state),
+                        Err(DbErrorRead::NotFound) => {} // skip missing executions
+                        Err(err) => return Err(err),
+                    }
+                }
+                Ok(states)
             },
             TxType::Other, // read only
             "get_pending_state_batch",

@@ -275,16 +275,17 @@ async fn status_batch_follows_until_all_finish() {
     let server = TestServer::start_inline_deployment(test_addr!(40_160), "", DEPLOYMENT, &[]).await;
     let first_id = submit(&server).await;
     let second_id = submit(&server).await;
+    let missing_id = ExecutionId::generate().to_string();
     let batch_url = format!("{}/v1/executions/status/batch", server.base_url);
     let mut stream = SseReader::send(
         server
             .client
             .post(format!("{batch_url}?follow=true"))
-            .json(&json!({ "execution_ids": [first_id, second_id, first_id] })),
+            .json(&json!({ "execution_ids": [first_id, missing_id, second_id, first_id] })),
     )
     .await;
 
-    // The first event lists every execution once.
+    // The first event lists every existing execution once.
     let initial = stream.next().await.unwrap();
     assert_eq!(initial.event, "statuses");
     assert!(initial.id.is_none());
@@ -331,14 +332,28 @@ async fn status_batch_follows_until_all_finish() {
     let statuses: Value = server
         .client
         .post(&batch_url)
-        .json(&json!({ "execution_ids": [first_id] }))
+        .json(&json!({ "execution_ids": [missing_id, first_id] }))
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
+    assert_eq!(statuses.as_array().unwrap().len(), 1);
     assert_eq!(statuses[0]["pending_state"]["status"], "finished");
+
+    // A batch of only missing executions gets one empty event and ends.
+    let frames = SseReader::send(
+        server
+            .client
+            .post(format!("{batch_url}?follow=true"))
+            .json(&json!({ "execution_ids": [missing_id] })),
+    )
+    .await
+    .collect()
+    .await;
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].data, json!([]));
 
     let empty = server
         .client
