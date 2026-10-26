@@ -43,6 +43,9 @@
     "webhooks": {
       "$ref": "#/$defs/WebhooksGlobalConfigToml"
     },
+    "outbound_http_pool": {
+      "$ref": "#/$defs/OutboundHttpPoolToml"
+    },
     "workflows": {
       "$ref": "#/$defs/WorkflowsGlobalConfigToml"
     },
@@ -853,6 +856,27 @@
           "$ref": "#/$defs/DurationConfig",
           "default": {
             "seconds": 30
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "OutboundHttpPoolToml": {
+      "description": "Reuse of idle outbound HTTP/1 connections made by activities and webhooks.",
+      "type": "object",
+      "properties": {
+        "max_idle_per_host": {
+          "description": "Idle connections kept per scheme, host and port. `0` opens a new connection per request.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 16
+        },
+        "idle_timeout": {
+          "description": "How long an idle connection is kept before it is closed.",
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 90
           }
         }
       },

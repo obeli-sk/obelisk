@@ -314,6 +314,7 @@ impl ActivityWorker {
                 clock_fn: self.clock_fn.clone_box(),
                 http_client_traces: Vec::default(),
                 http_policy,
+                http_client: self.config.global_http_config.client().clone(),
                 component_logger,
                 config_section_hint: self.config.config_section_hint,
                 component_name: self.config.component_id.name.to_string(),

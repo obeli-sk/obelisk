@@ -10,6 +10,7 @@ pub mod component_logger;
 pub mod cron;
 pub mod engines;
 pub mod epoch_ticker;
+pub mod http_client;
 pub mod http_hooks;
 pub mod http_request_policy;
 pub mod js_imports;

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::Instrument;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
-use wasmtime_wasi_http::{Error, RequestOptions, WasiHttpHooks, default_send_request};
+use wasmtime_wasi_http::{Error, RequestOptions, WasiHttpHooks};
 
 pub type HttpClientTracesContainer = Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>;
 #[derive(serde::Serialize)]
@@ -78,6 +78,7 @@ pub(crate) struct HttpHooks {
     pub(crate) clock_fn: Box<dyn ClockFn>,
     pub(crate) http_client_traces: HttpClientTracesContainer,
     pub(crate) http_policy: HttpRequestPolicy,
+    pub(crate) http_client: crate::http_client::OutboundHttpClient,
     pub(crate) component_logger: ComponentLogger,
     /// The TOML config section type for error messages
     pub(crate) config_section_hint: ConfigSectionHint,
@@ -357,11 +358,12 @@ impl WasiHttpHooks for HttpHooks {
         );
         let clock_fn = self.clock_fn.clone_box();
         let http_policy = self.http_policy.clone();
+        let http_client = self.http_client.clone();
         span.in_scope(|| tracing::trace!("Sending {request:?}"));
         Box::new(
             async move {
                 http_policy.apply_body_replacement(&mut request).await;
-                let resp_result = default_send_request(request, options).await;
+                let resp_result = http_client.send(request, options).await;
                 tracing::trace!(
                     "Got response {:?}",
                     resp_result.as_ref().map(|(resp, _io)| resp.status())
@@ -373,11 +375,7 @@ impl WasiHttpHooks for HttpHooks {
                         .map(|(resp, _io)| resp.status().as_u16())
                         .map_err(std::string::ToString::to_string),
                 });
-                let (resp, io) = resp_result?;
-                Ok((
-                    resp.map(BodyExt::boxed_unsync),
-                    Box::new(io) as Box<dyn Future<Output = Result<(), Error>> + Send>,
-                ))
+                resp_result
             }
             .instrument(span),
         )
@@ -544,6 +542,7 @@ mod tests {
                 }],
                 ..HttpRequestPolicy::default()
             },
+            http_client: crate::http_client::OutboundHttpClient::default(),
             component_logger: ComponentLogger {
                 span: tracing::Span::none(),
                 execution_id: ExecutionId::generate(),

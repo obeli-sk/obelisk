@@ -121,6 +121,7 @@ pub(crate) fn store(
             clock_fn,
             http_client_traces: HttpClientTracesContainer::default(),
             http_policy,
+            http_client: config.global_http_config.client().clone(),
             component_logger: component_logger.clone(),
             config_section_hint: config.config_section_hint,
             component_name: config.component_id.name.to_string(),
