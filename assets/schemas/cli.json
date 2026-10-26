@@ -1118,7 +1118,7 @@
               ]
             },
             {
-              "name": "reactivate",
+              "name": "enable",
               "options": [
                 {
                   "name": "--command-id",
@@ -1127,7 +1127,7 @@
               ]
             },
             {
-              "name": "deactivate",
+              "name": "disable",
               "options": [
                 {
                   "name": "--command-id",

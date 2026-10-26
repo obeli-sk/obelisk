@@ -1774,11 +1774,11 @@ pub(crate) enum CloudApp {
         #[command(flatten)]
         command_id: CloudCommandId,
     },
-    Reactivate {
+    Enable {
         #[command(flatten)]
         command_id: CloudCommandId,
     },
-    Deactivate {
+    Disable {
         #[command(flatten)]
         command_id: CloudCommandId,
     },

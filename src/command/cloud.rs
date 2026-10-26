@@ -681,14 +681,14 @@ impl CloudArgs {
                             )
                             .await
                     }
-                    CloudApp::Reactivate { command_id } => {
+                    CloudApp::Enable { command_id } => {
                         client
-                            .app(name, Method::POST, &["reactivate"], None, command_id.into())
+                            .app(name, Method::POST, &["enable"], None, command_id.into())
                             .await
                     }
-                    CloudApp::Deactivate { command_id } => {
+                    CloudApp::Disable { command_id } => {
                         client
-                            .app(name, Method::POST, &["deactivate"], None, command_id.into())
+                            .app(name, Method::POST, &["disable"], None, command_id.into())
                             .await
                     }
                     CloudApp::Delete { command_id } => {
