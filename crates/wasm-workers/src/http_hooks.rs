@@ -472,18 +472,8 @@ impl HttpHooks {
                 .map_err(|err| format!("ErrorCode::{err:?}"))?;
             let io = wasmtime_wasi::runtime::spawn(Box::into_pin(io));
             let status = response.status();
-            // hyper keeps only non-canonical HTTP/1 reason phrases; HTTP/2+ has none (Fetch: "").
-            let status_text = match response.extensions().get::<hyper::ext::ReasonPhrase>() {
-                Some(reason) => reason
-                    .as_bytes()
-                    .iter()
-                    .map(|&byte| char::from(byte))
-                    .collect(),
-                None if response.version() < hyper::Version::HTTP_2 => {
-                    status.canonical_reason().unwrap_or_default().to_owned()
-                }
-                None => String::new(),
-            };
+            // Parity with WASM components: WASI HTTP carries no reason phrase.
+            let status_text = status.canonical_reason().unwrap_or_default().to_owned();
             let headers = response
                 .headers()
                 .iter()
