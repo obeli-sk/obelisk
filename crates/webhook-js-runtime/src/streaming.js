@@ -1,7 +1,6 @@
 // Streamed bodies for Boa webhooks. Called with the native helpers, returns `serve`.
 (native) => {
   const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
   const toBytes = (value) => {
     if (typeof value === "string") return encoder.encode(value);
     if (value instanceof Uint8Array) return value;
@@ -9,6 +8,48 @@
     if (value instanceof ArrayBuffer) return new Uint8Array(value);
     throw new TypeError("body chunk must be a string, an ArrayBuffer or an ArrayBufferView");
   };
+
+  // Start of a UTF-8 sequence cut off at the end of `bytes`, or `bytes.length` if complete.
+  const incompleteTail = (bytes) => {
+    for (let i = bytes.length - 1; i >= 0 && i >= bytes.length - 4; i--) {
+      const byte = bytes[i];
+      if ((byte & 0xc0) !== 0x80) {
+        const need = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+        return i + need > bytes.length ? i : bytes.length;
+      }
+    }
+    return bytes.length;
+  };
+
+  // The engine's TextDecoder ignores `{ stream: true }`; keep a cut-off UTF-8 tail for the next call.
+  const NativeTextDecoder = globalThis.TextDecoder;
+  class TextDecoder {
+    constructor(label, options) {
+      this._inner = new NativeTextDecoder(label, options);
+      this._pending = new Uint8Array(0);
+    }
+    get encoding() { return this._inner.encoding; }
+    get fatal() { return this._inner.fatal; }
+    get ignoreBOM() { return this._inner.ignoreBOM; }
+    decode(input, options) {
+      let bytes = input === undefined ? new Uint8Array(0) : toBytes(input);
+      if (this._pending.length) {
+        const joined = new Uint8Array(this._pending.length + bytes.length);
+        joined.set(this._pending);
+        joined.set(bytes, this._pending.length);
+        bytes = joined;
+      }
+      this._pending = new Uint8Array(0);
+      if (options?.stream && this._inner.encoding === "utf-8") {
+        const cut = incompleteTail(bytes);
+        this._pending = bytes.slice(cut);
+        bytes = bytes.subarray(0, cut);
+      }
+      return this._inner.decode(bytes);
+    }
+  }
+  globalThis.TextDecoder = TextDecoder;
+  const decoder = new TextDecoder();
 
   // Minimal ReadableStream: start, pull, cancel, highWaterMark, readers and async iteration.
   class ReadableStreamDefaultController {

@@ -4870,6 +4870,7 @@ pub(crate) mod tests {
 
         #[rstest::rstest]
         #[case::boa(WebhookJsRuntime::BoaWasm)]
+        #[case::v8(WebhookJsRuntime::V8)]
         #[tokio::test]
         async fn webhook_js_streams_response_body(#[case] runtime: WebhookJsRuntime) {
             test_utils::set_up();
@@ -4973,6 +4974,7 @@ pub(crate) mod tests {
 
         #[rstest::rstest]
         #[case::boa(WebhookJsRuntime::BoaWasm)]
+        #[case::v8(WebhookJsRuntime::V8)]
         #[tokio::test]
         async fn webhook_js_stream_pull_and_close(#[case] runtime: WebhookJsRuntime) {
             test_utils::set_up();
@@ -5002,6 +5004,7 @@ pub(crate) mod tests {
 
         #[rstest::rstest]
         #[case::boa(WebhookJsRuntime::BoaWasm)]
+        #[case::v8(WebhookJsRuntime::V8)]
         #[tokio::test]
         async fn webhook_js_stream_error_aborts_body(#[case] runtime: WebhookJsRuntime) {
             test_utils::set_up();
@@ -5030,6 +5033,7 @@ pub(crate) mod tests {
         /// Reading bodies through the stream API, for buffered, streamed and fetched responses.
         #[rstest::rstest]
         #[case::boa(WebhookJsRuntime::BoaWasm)]
+        #[case::v8(WebhookJsRuntime::V8)]
         #[tokio::test]
         async fn webhook_js_stream_body_readers(#[case] runtime: WebhookJsRuntime) {
             use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
@@ -5086,10 +5090,11 @@ pub(crate) mod tests {
 
         /// Returning a fetch response forwards its body as it arrives.
         #[rstest::rstest]
-        #[case::wrapped(true)]
-        #[case::returned(false)]
         #[tokio::test]
-        async fn webhook_js_boa_fetch_proxies_streamed_body(#[case] wrapped: bool) {
+        async fn webhook_js_fetch_proxies_streamed_body(
+            #[values(WebhookJsRuntime::BoaWasm, WebhookJsRuntime::V8)] runtime: WebhookJsRuntime,
+            #[values(true, false)] wrapped: bool,
+        ) {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             test_utils::set_up();
             // Upstream sends one event and then keeps the response open.
@@ -5126,13 +5131,8 @@ pub(crate) mod tests {
                 "
             );
             let allowed = format!("http://127.0.0.1:{upstream_port}");
-            let (_server, server_addr, _termination_sender) = start_js_webhook_server_with_http(
-                &js_source,
-                &allowed,
-                None,
-                WebhookJsRuntime::BoaWasm,
-            )
-            .await;
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_http(&js_source, &allowed, None, runtime).await;
             let mut resp = reqwest::get(format!("http://{server_addr}/"))
                 .await
                 .unwrap();
@@ -5151,8 +5151,13 @@ pub(crate) mod tests {
         }
 
         /// Timers fire while a fetch body read is still pending.
+        #[rstest::rstest]
+        #[case::boa(WebhookJsRuntime::BoaWasm)]
+        #[case::v8(WebhookJsRuntime::V8)]
         #[tokio::test]
-        async fn webhook_js_boa_timer_fires_during_pending_fetch_read() {
+        async fn webhook_js_timer_fires_during_pending_fetch_read(
+            #[case] runtime: WebhookJsRuntime,
+        ) {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             test_utils::set_up();
             // Upstream sends headers and then keeps the body open without data.
@@ -5188,13 +5193,8 @@ pub(crate) mod tests {
                 "
             );
             let allowed = format!("http://127.0.0.1:{upstream_port}");
-            let (_server, server_addr, _termination_sender) = start_js_webhook_server_with_http(
-                &js_source,
-                &allowed,
-                None,
-                WebhookJsRuntime::BoaWasm,
-            )
-            .await;
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_http(&js_source, &allowed, None, runtime).await;
             let body = tokio::time::timeout(
                 std::time::Duration::from_secs(10),
                 reqwest::get(format!("http://{server_addr}/"))
@@ -5207,42 +5207,6 @@ pub(crate) mod tests {
             .unwrap();
             assert_eq!(body, "timer");
             drop(upstream_done);
-        }
-
-        #[tokio::test]
-        async fn webhook_js_v8_streams_response_body() {
-            test_utils::set_up();
-            // The second event comes long after the first, so the first one must be flushed early.
-            let js_source = r"
-                export default function handle() {
-                    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-                    const stream = new ReadableStream({
-                        async start(controller) {
-                            controller.enqueue('data: first\n\n');
-                            await sleep(60000);
-                            controller.enqueue('data: second\n\n');
-                            controller.close();
-                        },
-                    });
-                    return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
-                }
-            ";
-            let (_server, server_addr, _termination_sender) =
-                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
-            let mut resp = reqwest::get(format!("http://{server_addr}/"))
-                .await
-                .unwrap();
-            assert_eq!(resp.status().as_u16(), 200);
-            assert_eq!(
-                resp.headers().get("content-type").unwrap(),
-                "text/event-stream"
-            );
-            let chunk = tokio::time::timeout(std::time::Duration::from_secs(10), resp.chunk())
-                .await
-                .expect("first event must arrive before the stream ends")
-                .unwrap()
-                .unwrap();
-            assert_eq!(&chunk[..], b"data: first\n\n");
         }
 
         #[tokio::test]
@@ -5324,113 +5288,11 @@ pub(crate) mod tests {
             db_close.close().await;
         }
 
+        #[rstest::rstest]
+        #[case::boa(WebhookJsRuntime::BoaWasm)]
+        #[case::v8(WebhookJsRuntime::V8)]
         #[tokio::test]
-        async fn webhook_js_v8_stream_pull_and_close() {
-            test_utils::set_up();
-            let js_source = r"
-                export default function handle() {
-                    let count = 0;
-                    const encoder = new TextEncoder();
-                    const stream = new ReadableStream({
-                        async pull(controller) {
-                            await new Promise(resolve => setTimeout(resolve, 5));
-                            count += 1;
-                            if (count > 3) controller.close();
-                            else controller.enqueue(count % 2 ? `chunk${count};` : encoder.encode(`chunk${count};`));
-                        },
-                    });
-                    return new Response(stream);
-                }
-            ";
-            let (_server, server_addr, _termination_sender) =
-                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
-            let resp = reqwest::get(format!("http://{server_addr}/"))
-                .await
-                .unwrap();
-            assert_eq!(resp.status().as_u16(), 200);
-            assert_eq!(resp.text().await.unwrap(), "chunk1;chunk2;chunk3;");
-        }
-
-        #[tokio::test]
-        async fn webhook_js_v8_stream_error_aborts_body() {
-            test_utils::set_up();
-            let js_source = r"
-                export default function handle() {
-                    const stream = new ReadableStream({
-                        start(controller) {
-                            controller.enqueue('partial');
-                            setTimeout(() => controller.error(new Error('boom')), 10);
-                        },
-                    });
-                    return new Response(stream);
-                }
-            ";
-            let (_server, server_addr, _termination_sender) =
-                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
-            let resp = reqwest::get(format!("http://{server_addr}/"))
-                .await
-                .unwrap();
-            assert_eq!(resp.status().as_u16(), 200);
-            resp.text()
-                .await
-                .expect_err("an errored stream must not end the body cleanly");
-        }
-
-        #[tokio::test]
-        async fn webhook_js_v8_fetch_proxies_streamed_body() {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            test_utils::set_up();
-            // Upstream sends one event and then keeps the response open.
-            let upstream = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
-                .await
-                .unwrap();
-            let upstream_port = upstream.local_addr().unwrap().port();
-            let (upstream_done, upstream_done_rx) = tokio::sync::oneshot::channel::<()>();
-            tokio::spawn(async move {
-                let (mut socket, _) = upstream.accept().await.unwrap();
-                let mut request = Vec::new();
-                while !request.ends_with(b"\r\n\r\n") {
-                    let mut byte = [0; 1];
-                    socket.read_exact(&mut byte).await.unwrap();
-                    request.push(byte[0]);
-                }
-                socket
-                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\nd\r\ndata: hello\n\n\r\n")
-                    .await
-                    .unwrap();
-                let _ = upstream_done_rx.await;
-            });
-            let js_source = format!(
-                r"
-                export default async function handle() {{
-                    const upstream = await fetch('http://127.0.0.1:{upstream_port}/events');
-                    return new Response(upstream.body, {{ headers: {{ 'content-type': upstream.headers.get('content-type') }} }});
-                }}
-                "
-            );
-            let allowed = format!("http://127.0.0.1:{upstream_port}");
-            let (_server, server_addr, _termination_sender) =
-                start_js_webhook_server_with_http(&js_source, &allowed, None, WebhookJsRuntime::V8)
-                    .await;
-            let mut resp = reqwest::get(format!("http://{server_addr}/"))
-                .await
-                .unwrap();
-            assert_eq!(resp.status().as_u16(), 200);
-            assert_eq!(
-                resp.headers().get("content-type").unwrap(),
-                "text/event-stream"
-            );
-            let chunk = tokio::time::timeout(std::time::Duration::from_secs(10), resp.chunk())
-                .await
-                .expect("upstream event must be forwarded before the upstream ends")
-                .unwrap()
-                .unwrap();
-            assert_eq!(&chunk[..], b"data: hello\n\n");
-            drop(upstream_done);
-        }
-
-        #[tokio::test]
-        async fn webhook_js_v8_text_decoder_stream() {
+        async fn webhook_js_text_decoder_stream(#[case] runtime: WebhookJsRuntime) {
             test_utils::set_up();
             let js_source = r"
                 export default function handle() {
@@ -5445,7 +5307,7 @@ pub(crate) mod tests {
                 }
             ";
             let (_server, server_addr, _termination_sender) =
-                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
+                start_js_webhook_server_with_runtime(js_source, runtime).await;
             let resp = reqwest::get(format!("http://{server_addr}/"))
                 .await
                 .unwrap();
