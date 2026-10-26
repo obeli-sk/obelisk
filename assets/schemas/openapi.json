@@ -1760,6 +1760,7 @@
           {
             "name": "events_length",
             "in": "query",
+            "description": "With `follow`, the total for the whole stream, unlimited by default.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1786,6 +1787,7 @@
           {
             "name": "responses_length",
             "in": "query",
+            "description": "With `follow`, the total for the whole stream, unlimited by default.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1796,6 +1798,15 @@
           {
             "name": "responses_including_cursor",
             "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "description": "Stream SSE `events_and_responses` events until the execution finishes or either\nlength is reached. The first event is always sent, later ones only with new rows.",
             "required": false,
             "schema": {
               "type": "boolean"
@@ -1905,7 +1916,7 @@
           {
             "name": "length",
             "in": "query",
-            "description": "Number of entries to return",
+            "description": "Number of entries to return. With `follow`, the total for the whole stream,\nunlimited by default.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1929,6 +1940,15 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/PaginationDirectionSortedFromOldest"
+            }
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "description": "Stream new entries as SSE `logs` events until the execution finishes.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -2059,7 +2079,7 @@
           {
             "name": "length",
             "in": "query",
-            "description": "Maximum number of responses to return",
+            "description": "Maximum number of responses to return. With `follow`, the total for the whole stream,\nunlimited by default.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2083,6 +2103,15 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/PaginationDirectionSortedFromOldest"
+            }
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "description": "Stream new responses as SSE `responses` events until the execution finishes.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],

@@ -2751,7 +2751,7 @@ pub struct ListLogsResponse {
     pub prev_page: Option<Pagination<LogCursor>>, // None if we are already at the beginning
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LogFilter {
     show_logs: bool,
     show_streams: bool,
