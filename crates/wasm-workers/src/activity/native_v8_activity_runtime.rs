@@ -10,7 +10,6 @@ use deno_core::{
     RuntimeOptions, op2, resolve_import,
 };
 use deno_error::JsErrorBox;
-use serde::Deserialize;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -28,16 +27,6 @@ pub(crate) enum NativeActivityFailure {
     CannotInstantiate(String),
     ResultParsing(String),
     Trap(String),
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FetchRequest {
-    url: String,
-    method: String,
-    #[serde(default)]
-    headers: Vec<(String, String)>,
-    body: Option<String>,
 }
 
 struct HostState {
@@ -96,54 +85,9 @@ async fn op_activity_sleep(
         .await
 }
 
-#[op2(async(deferred))]
-#[serde]
-async fn op_activity_fetch(
-    state: Rc<RefCell<OpState>>,
-    #[serde] request: FetchRequest,
-) -> Result<crate::http_hooks::NativeHttpResponse, JsErrorBox> {
-    let panic = state.borrow().borrow::<HostState>().panic.clone();
-    panic
-        .catch_async(op_activity_fetch_inner(state, request))
-        .await
-}
-
-async fn op_activity_fetch_inner(
-    state: Rc<RefCell<OpState>>,
-    request: FetchRequest,
-) -> Result<crate::http_hooks::NativeHttpResponse, JsErrorBox> {
-    let activity = state.borrow().borrow::<HostState>().activity.clone();
-    let method = request
-        .method
-        .parse()
-        .map_err(|err| JsErrorBox::type_error(format!("invalid HTTP method: {err}")))?;
-    let uri = request
-        .url
-        .parse()
-        .map_err(|err| JsErrorBox::type_error(format!("invalid URL: {err}")))?;
-    let mut activity = activity.lock().await;
-    activity
-        .http_hooks
-        .send_native_request(
-            method,
-            uri,
-            crate::http_hooks::native_request_headers(request.headers)
-                .map_err(JsErrorBox::type_error)?,
-            request.body.unwrap_or_default().into_bytes(),
-        )
-        .map_err(JsErrorBox::generic)?
-        .await
-        .map_err(JsErrorBox::generic)
-}
-
 deno_core::extension!(
     obelisk_activity_v8,
-    ops = [
-        op_activity_log,
-        op_activity_env,
-        op_activity_sleep,
-        op_activity_fetch
-    ]
+    ops = [op_activity_log, op_activity_env, op_activity_sleep]
 );
 
 pub(crate) async fn execute(
@@ -167,6 +111,7 @@ pub(crate) async fn execute(
             extensions: vec![
                 obelisk_activity_v8::init(),
                 crate::v8_crypto::obelisk_crypto_v8::init(),
+                crate::v8_fetch::obelisk_fetch_v8::init(),
             ],
             startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
             ..Default::default()
@@ -176,6 +121,22 @@ pub(crate) async fn execute(
     let isolate = runtime.v8_isolate().thread_safe_handle();
     let _ = isolate_tx.send(isolate.clone());
     let panic = crate::v8_panic::V8PanicState::new(isolate);
+    let fetch_state = shared.clone();
+    runtime
+        .op_state()
+        .borrow_mut()
+        .put(crate::v8_fetch::FetchHost::new(Box::new(
+            move |method, uri, headers, body| {
+                // Locked only to start the request, so logging and other fetches proceed meanwhile.
+                let mut activity = fetch_state
+                    .try_lock()
+                    .map_err(|_| "activity state is busy".to_owned())?;
+                let pending = activity
+                    .http_hooks
+                    .send_native_request_streaming(method, uri, headers, body)?;
+                Ok(Box::pin(pending) as crate::v8_fetch::PendingFetch)
+            },
+        )));
     runtime.op_state().borrow_mut().put(HostState {
         activity: shared.clone(),
         env,
@@ -205,6 +166,9 @@ async fn execute_inner(
     params: &Params,
     return_type: &ReturnTypeExtendable,
 ) -> Result<SupportedFunctionReturnValue, NativeActivityFailure> {
+    runtime
+        .execute_script("obelisk:fetch-bootstrap", crate::v8_fetch::FETCH_BOOTSTRAP)
+        .map_err(|err| NativeActivityFailure::CannotInstantiate(err.to_string()))?;
     runtime
         .execute_script("obelisk:activity-bootstrap", ACTIVITY_BOOTSTRAP)
         .map_err(|err| NativeActivityFailure::CannotInstantiate(err.to_string()))?;
@@ -383,21 +347,6 @@ class URL {
 }
 globalThis.URLSearchParams = URLSearchParams;
 globalThis.URL = URL;
-class TextEncoder { encode(value = '') { const encoded = unescape(encodeURIComponent(String(value))); return Uint8Array.from(encoded, char => char.charCodeAt(0)); } }
-class TextDecoder { decode(value = new Uint8Array()) { const bytes = value instanceof Uint8Array ? value : new Uint8Array(value); return decodeURIComponent(escape(String.fromCharCode(...bytes))); } }
-globalThis.TextEncoder = TextEncoder;
-globalThis.TextDecoder = TextDecoder;
-class Response {
-  constructor(data) { this.status = data.status; this.statusText = data.statusText; this.ok = data.status >= 200 && data.status < 300; this.headers = new Map(data.headers); this._body = data.body; }
-  async text() { return this._body; }
-  async json() { return JSON.parse(this._body); }
-}
-globalThis.fetch = async (input, options = {}) => {
-  const url = typeof input === 'string' ? input : input.url;
-  const headers = options.headers ? Object.entries(options.headers) : [];
-  const data = await Deno.core.ops.op_activity_fetch({ url, method: options.method || 'GET', headers, body: options.body });
-  return new Response(data);
-};
 ";
 
 #[cfg(test)]
@@ -414,10 +363,14 @@ mod tests {
                 extensions: vec![
                     obelisk_activity_v8::init(),
                     crate::v8_crypto::obelisk_crypto_v8::init(),
+                    crate::v8_fetch::obelisk_fetch_v8::init(),
                 ],
                 startup_snapshot,
                 ..Default::default()
             });
+            runtime
+                .execute_script("obelisk:snapshot-probe", crate::v8_fetch::FETCH_BOOTSTRAP)
+                .expect("fetch bootstrap must evaluate");
             runtime
                 .execute_script("obelisk:snapshot-probe", ACTIVITY_BOOTSTRAP)
                 .expect("bootstrap must evaluate");
@@ -427,7 +380,7 @@ mod tests {
             let value = runtime
                 .execute_script(
                     "obelisk:snapshot-probe",
-                    "JSON.stringify([new URL('http://a/b?c=1').search, new TextDecoder().decode(new TextEncoder().encode('ř')), Object.keys(Deno.core.ops).filter(op => op.startsWith('op_activity_') || op.startsWith('op_crypto_')).sort()])",
+                    "JSON.stringify([new URL('http://a/b?c=1').search, new TextDecoder().decode(new TextEncoder().encode('ř')), Object.keys(Deno.core.ops).filter(op => op.startsWith('op_activity_') || op.startsWith('op_crypto_') || op.startsWith('op_fetch')).sort()])",
                 )
                 .expect("probe must evaluate");
             deno_core::scope!(scope, runtime);

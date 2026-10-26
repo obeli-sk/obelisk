@@ -1331,6 +1331,75 @@ mod tests {
         server.await.unwrap();
     }
 
+    /// `fetch` resolves at the headers and `response.body` yields chunks as they arrive:
+    /// the server holds back the rest of the body until the activity has read the first chunk.
+    #[rstest]
+    #[tokio::test]
+    async fn fetch_streams_response_body(
+        #[values(ActivityJsRuntime::BoaWasm, ActivityJsRuntime::V8)] runtime: ActivityJsRuntime,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        test_utils::set_up();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let mut request = [0; 4096];
+            let (mut streamed, _) = listener.accept().await.unwrap();
+            let _ = streamed.read(&mut request).await.unwrap();
+            streamed
+                .write_all(b"HTTP/1.1 200 OK\r\nx-kind: streamed\r\nset-cookie: a=1\r\nset-cookie: b=2\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n5\r\nfirst\r\n")
+                .await
+                .unwrap();
+            let (mut next, _) = listener.accept().await.unwrap();
+            let _ = next.read(&mut request).await.unwrap();
+            next.write_all(b"HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            streamed
+                .write_all(b"6\r\nsecond\r\n0\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-fetch");
+        let js_source = format!(
+            r#"
+            export default async function do_fetch(params) {{
+                const resp = await fetch("http://127.0.0.1:{port}/stream");
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                const first = await reader.read();
+                await fetch("http://127.0.0.1:{port}/next");
+                let rest = "";
+                for (let next = await reader.read(); !next.done; next = await reader.read()) {{
+                    rest += decoder.decode(next.value, {{ stream: true }});
+                }}
+                return [resp.headers.get("x-kind"), resp.headers.getSetCookie().join("|"), decoder.decode(first.value), rest].join(",");
+            }}
+            "#
+        );
+
+        let allowed = format!("http://127.0.0.1:{port}");
+        let worker = JsWorkerBuilder::new(&js_source, ffqn.clone())
+            .with_allowed_host(&allowed)
+            .with_runtime(runtime)
+            .build()
+            .await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), worker.run(ctx))
+            .await
+            .expect("fetch must resolve before the whole body arrives")
+            .expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(ok)) => ok);
+        assert_eq!(
+            extract_string(&output.value),
+            "streamed,a=1|b=2,first,second"
+        );
+        server.await.unwrap();
+    }
+
     /// The outbound Host header must be derived from the URI authority (parity with
     /// the wasmtime path, where wasmtime-wasi-http sets it), and ordinary headers are
     /// forwarded, on both JS runtimes.
