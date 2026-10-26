@@ -7869,6 +7869,7 @@ version = "0.43.0-rc.9"
 dependencies = [
  "anyhow",
  "boa-common",
+ "futures",
  "http",
  "obeli-sk-boa-engine",
  "obeli-sk-boa-runtime",

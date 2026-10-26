@@ -1,3 +1,4 @@
+mod streaming;
 mod webhook_js_runtime;
 
 mod generated {

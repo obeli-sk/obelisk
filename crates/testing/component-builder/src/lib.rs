@@ -162,6 +162,37 @@ fn rustc_version_verbose() -> String {
     String::from_utf8(output.stdout).expect("rustc version output must be utf-8")
 }
 
+/// Local path dependencies of `package`, transitively, so their sources invalidate the cache too.
+fn local_path_dependencies<'a>(
+    meta: &'a cargo_metadata::Metadata,
+    package: &cargo_metadata::Package,
+) -> Vec<&'a cargo_metadata::Package> {
+    let dependency_dirs = |package: &cargo_metadata::Package| -> Vec<Utf8PathBuf> {
+        package
+            .dependencies
+            .iter()
+            .filter(|dep| dep.kind != cargo_metadata::DependencyKind::Development)
+            .filter_map(|dep| dep.path.clone())
+            .collect()
+    };
+    let mut found: Vec<&cargo_metadata::Package> = Vec::new();
+    let mut pending = dependency_dirs(package);
+    while let Some(dir) = pending.pop() {
+        let manifest_path = dir.join("Cargo.toml");
+        if let Some(dep) = meta
+            .packages
+            .iter()
+            .find(|p| p.manifest_path == manifest_path)
+            && !found.iter().any(|f| f.id == dep.id)
+        {
+            pending.extend(dependency_dirs(dep));
+            found.push(dep);
+        }
+    }
+    found.sort_by(|a, b| a.manifest_path.cmp(&b.manifest_path));
+    found
+}
+
 fn compute_inputs_hash(
     meta: &cargo_metadata::Metadata,
     package: &cargo_metadata::Package,
@@ -204,6 +235,18 @@ fn compute_inputs_hash(
     // Source files
     for src_path in package.targets.iter().map(|t| t.src_path.parent().unwrap()) {
         hash_directory_contents(&mut hasher, src_path.as_std_path(), pkg_root.as_std_path());
+    }
+
+    // Local path dependencies
+    for dep in local_path_dependencies(meta, package) {
+        let dep_root = dep.manifest_path.parent().unwrap();
+        hasher.update(dep.name.as_bytes());
+        hasher.update(b"\x00");
+        hasher.update(std::fs::read(dep.manifest_path.as_std_path()).unwrap());
+        hasher.update(b"\x00");
+        for src_path in dep.targets.iter().map(|t| t.src_path.parent().unwrap()) {
+            hash_directory_contents(&mut hasher, src_path.as_std_path(), dep_root.as_std_path());
+        }
     }
 
     // WIT files
@@ -299,6 +342,12 @@ fn build_internal(
     let wit_path = &package.manifest_path.parent().unwrap().join("wit");
     if wit_path.exists() && wit_path.is_dir() {
         add_dependency(wit_path);
+    }
+    for dep in local_path_dependencies(&meta, package) {
+        add_dependency(&dep.manifest_path);
+        for src_path in dep.targets.iter().map(|t| t.src_path.parent().unwrap()) {
+            add_dependency(src_path);
+        }
     }
     let lock_path = meta.workspace_root.join("Cargo.lock");
     if lock_path.exists() {

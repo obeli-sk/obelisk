@@ -24,6 +24,43 @@ pub(crate) struct NativeHttpResponse {
     body: String,
 }
 
+/// Status line and headers of a native outbound response; the body follows as [`NativeHttpBody`].
+pub(crate) struct NativeHttpHead {
+    pub(crate) status: u16,
+    pub(crate) status_text: String,
+    pub(crate) headers: Vec<(String, String)>,
+}
+
+/// Body of a native outbound response, read incrementally. Dropping it closes the connection.
+pub(crate) struct NativeHttpBody {
+    body: wasmtime_wasi_http::p2::body::HyperIncomingBody,
+    _io: wasmtime_wasi::runtime::AbortOnDropJoinHandle<Result<(), Error>>,
+}
+
+impl NativeHttpBody {
+    /// Next non-empty data chunk, `None` at the end of the body.
+    pub(crate) async fn next_chunk(&mut self) -> Result<Option<hyper::body::Bytes>, String> {
+        while let Some(frame) = self.body.frame().await {
+            let frame = frame.map_err(|err| err.to_string())?;
+            if let Ok(data) = frame.into_data()
+                && !data.is_empty()
+            {
+                return Ok(Some(data));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) async fn collect(self) -> Result<hyper::body::Bytes, String> {
+        Ok(self
+            .body
+            .collect()
+            .await
+            .map_err(|err| err.to_string())?
+            .to_bytes())
+    }
+}
+
 /// The TOML config section type for error messages.
 #[derive(Clone, Copy, Debug, derive_more::Display)]
 pub enum ConfigSectionHint {
@@ -384,6 +421,30 @@ impl HttpHooks {
         impl Future<Output = Result<NativeHttpResponse, String>> + Send + 'static + use<>,
         String,
     > {
+        let response = self.send_native_request_streaming(method, uri, headers, body)?;
+        Ok(async move {
+            let (head, body) = response.await?;
+            let body = body.collect().await?;
+            Ok(NativeHttpResponse {
+                status: head.status,
+                status_text: head.status_text,
+                headers: head.headers,
+                body: String::from_utf8_lossy(&body).into_owned(),
+            })
+        })
+    }
+
+    /// Like [`Self::send_native_request`], but resolves once the headers arrive.
+    pub(crate) fn send_native_request_streaming(
+        &mut self,
+        method: hyper::Method,
+        uri: hyper::Uri,
+        headers: Vec<(String, Vec<u8>)>,
+        body: Vec<u8>,
+    ) -> Result<
+        impl Future<Output = Result<(NativeHttpHead, NativeHttpBody), String>> + Send + 'static + use<>,
+        String,
+    > {
         let body = http_body_util::Full::new(hyper::body::Bytes::from(body))
             .map_err(|never| match never {})
             .boxed_unsync();
@@ -409,7 +470,7 @@ impl HttpHooks {
             let (response, io) = Box::into_pin(response)
                 .await
                 .map_err(|err| format!("ErrorCode::{err:?}"))?;
-            let io_task = tokio::spawn(Box::into_pin(io));
+            let io = wasmtime_wasi::runtime::spawn(Box::into_pin(io));
             let status = response.status();
             // hyper keeps only non-canonical HTTP/1 reason phrases; HTTP/2+ has none (Fetch: "").
             let status_text = match response.extensions().get::<hyper::ext::ReasonPhrase>() {
@@ -438,19 +499,17 @@ impl HttpHooks {
                     )
                 })
                 .collect();
-            let body = response
-                .into_body()
-                .collect()
-                .await
-                .map_err(|err| err.to_string())?
-                .to_bytes();
-            io_task.abort();
-            Ok(NativeHttpResponse {
-                status: status.as_u16(),
-                status_text,
-                headers,
-                body: String::from_utf8_lossy(&body).into_owned(),
-            })
+            Ok((
+                NativeHttpHead {
+                    status: status.as_u16(),
+                    status_text,
+                    headers,
+                },
+                NativeHttpBody {
+                    body: response.into_body(),
+                    _io: io,
+                },
+            ))
         })
     }
 }

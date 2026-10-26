@@ -1888,6 +1888,81 @@ mod tests {
         );
     }
 
+    /// A timer must win a race against a slow fetch, and the activity must not wait for the fetch.
+    #[rstest]
+    #[case::boa(ActivityJsRuntime::BoaWasm)]
+    #[case::v8(ActivityJsRuntime::V8)]
+    #[tokio::test]
+    async fn timer_wins_race_against_pending_fetch(#[case] runtime: ActivityJsRuntime) {
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+        test_utils::set_up();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(10)))
+            .mount(&server)
+            .await;
+        let url = server.uri();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "race");
+        let js_source = format!(
+            r#"
+            export default async function race() {{
+                const fetched = fetch("{url}/").then(() => "fetch");
+                const timer = new Promise(resolve => setTimeout(() => resolve("timer"), 50));
+                return await Promise.race([fetched, timer]);
+            }}
+            "#
+        );
+        let allowed = format!("http://127.0.0.1:{}", server.address().port());
+        let worker = JsWorkerBuilder::new(&js_source, ffqn.clone())
+            .with_allowed_host(&allowed)
+            .with_runtime(runtime)
+            .build()
+            .await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+        let started = std::time::Instant::now();
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let elapsed = started.elapsed();
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        assert_eq!(
+            extract_string(&output.expect("should have ok value").value),
+            "timer"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "activity waited for the abandoned fetch: {elapsed:?}"
+        );
+    }
+
+    /// An orphaned long timer must not delay the activity's result.
+    #[rstest]
+    #[case::boa(ActivityJsRuntime::BoaWasm)]
+    #[case::v8(ActivityJsRuntime::V8)]
+    #[tokio::test]
+    async fn orphaned_long_timer_does_not_delay_result(#[case] runtime: ActivityJsRuntime) {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "orphan");
+        let js_source = r#"
+            export default async function orphan() {
+                setTimeout(() => {}, 10000);
+                return "done";
+            }
+        "#;
+        let worker = JsWorkerBuilder::new(js_source, ffqn.clone())
+            .with_runtime(runtime)
+            .build()
+            .await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+        let started = std::time::Instant::now();
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let elapsed = started.elapsed();
+        assert_matches!(result, WorkerResultOk::RunFinished(_));
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "activity waited for the orphaned timer: {elapsed:?}"
+        );
+    }
+
     /// Creates a JS activity worker with allowed host configuration for HTTP tests.
     /// The JS function should have signature: `function(url: string) -> result<string, string>`
     async fn new_js_activity_worker_for_retry_test(
