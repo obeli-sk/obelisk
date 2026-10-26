@@ -2155,6 +2155,7 @@ impl WebhookEndpointCtx {
                 clock_fn,
                 http_client_traces: HttpClientTracesContainer::default(),
                 http_policy,
+                http_client: config.global_http_config.client().clone(),
                 component_logger,
                 config_section_hint: config.config_section_hint,
                 component_name: config.component_id.name.to_string(),
@@ -4517,6 +4518,41 @@ pub(crate) mod tests {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap();
             assert_eq!((status, body.as_str()), (200, "fetch works"));
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn webhook_js_fetch_reuses_pooled_connection(
+            #[values(WebhookJsRuntime::BoaWasm, WebhookJsRuntime::V8)] runtime: WebhookJsRuntime,
+        ) {
+            use std::sync::atomic::Ordering;
+            test_utils::set_up();
+            let (addr, accepted) = crate::http_client::tests::server().await;
+            let js_source = format!(
+                r#"
+                export default async function handle(request) {{
+                    let text = "";
+                    for (let i = 0; i < 3; i++) {{
+                        const resp = await fetch("http://{addr}/");
+                        text += await resp.text();
+                    }}
+                    return new Response(text);
+                }}
+                "#
+            );
+            let (_server, server_addr, _termination_sender) = start_js_webhook_server_with_http(
+                &js_source,
+                &format!("http://{addr}"),
+                None,
+                runtime,
+            )
+            .await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(200, resp.status().as_u16());
+            assert_eq!("okokok", resp.text().await.unwrap());
+            assert_eq!(1, accepted.load(Ordering::SeqCst));
         }
 
         #[rstest::rstest]

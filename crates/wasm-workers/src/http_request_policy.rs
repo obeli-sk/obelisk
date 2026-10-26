@@ -813,24 +813,40 @@ impl AllowedHostConfig {
 /// This wrapper keeps the global allowlist distinct from component-owned
 /// [`AllowedHostConfig`] entries when configuration is threaded into workers.
 #[derive(Clone, Debug, Default)]
-pub struct GlobalHttpConfig(Arc<[AllowedHostConfig]>);
+pub struct GlobalHttpConfig {
+    entries: Arc<[AllowedHostConfig]>,
+    client: crate::http_client::OutboundHttpClient,
+}
 
 impl GlobalHttpConfig {
     #[must_use]
     pub fn entries(&self) -> &[AllowedHostConfig] {
-        &self.0
+        &self.entries
+    }
+
+    #[must_use]
+    pub fn client(&self) -> &crate::http_client::OutboundHttpClient {
+        &self.client
+    }
+
+    #[must_use]
+    pub fn with_client(self, client: crate::http_client::OutboundHttpClient) -> Self {
+        Self { client, ..self }
     }
 }
 
 impl From<Arc<[AllowedHostConfig]>> for GlobalHttpConfig {
     fn from(entries: Arc<[AllowedHostConfig]>) -> Self {
-        Self(entries)
+        Self {
+            entries,
+            client: crate::http_client::OutboundHttpClient::default(),
+        }
     }
 }
 
 impl From<Vec<AllowedHostConfig>> for GlobalHttpConfig {
     fn from(entries: Vec<AllowedHostConfig>) -> Self {
-        Self(entries.into())
+        Self::from(Arc::<[AllowedHostConfig]>::from(entries))
     }
 }
 

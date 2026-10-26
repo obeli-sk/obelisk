@@ -178,6 +178,7 @@ use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
 use wasm_workers::epoch_ticker::EpochTicker;
+use wasm_workers::http_client::OutboundHttpClient;
 use wasm_workers::http_request_policy::{AllowedHostConfig, GlobalHttpConfig};
 use wasm_workers::js_imports::{WEBHOOK_BUILTIN_MODULES, WORKFLOW_BUILTIN_MODULES};
 use wasm_workers::log_db_forwarder;
@@ -751,7 +752,7 @@ fn webhook_global_http_allowlist(
     operator_global: &GlobalHttpConfig,
 ) -> GlobalHttpConfig {
     if self_authorize {
-        GlobalHttpConfig::from(allowed_hosts.clone())
+        GlobalHttpConfig::from(allowed_hosts.clone()).with_client(operator_global.client().clone())
     } else {
         operator_global.clone()
     }
@@ -2706,7 +2707,8 @@ impl ServerVerified {
         let (server_hosts, _advisories) =
             resolve_allowed_hosts(config.outbound_http.allowed_hosts, false, &secret_registry)
                 .context("invalid app.toml `[[outbound_http.allowed_host]]` entry")?;
-        let global_http_config = GlobalHttpConfig::from(server_hosts);
+        let global_http_config = GlobalHttpConfig::from(server_hosts)
+            .with_client(OutboundHttpClient::new(config.outbound_http_pool.into()));
         let (server_policy_hash, server_policy) =
             wasm_workers::http_request_policy::audit_http_policy(global_http_config.entries());
         let webui_server_policy = if config.webui.enabled {

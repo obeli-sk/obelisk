@@ -94,6 +94,8 @@ pub(crate) struct ServerConfigToml {
     pub(crate) v8: V8ConfigToml,
     #[serde(default)]
     pub(crate) webhooks: WebhooksGlobalConfigToml,
+    #[serde(default)]
+    pub(crate) outbound_http_pool: OutboundHttpPoolToml,
     #[serde(default, rename = "workflows")]
     pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
     #[serde(default)]
@@ -627,6 +629,44 @@ impl Default for WebhooksGlobalConfigToml {
 
 const fn default_webhook_request_timeout() -> DurationConfig {
     DurationConfig::Seconds(30)
+}
+
+/// Reuse of idle outbound HTTP/1 connections made by activities and webhooks.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OutboundHttpPoolToml {
+    /// Idle connections kept per scheme, host and port. `0` opens a new connection per request.
+    #[serde(default = "default_outbound_http_pool_max_idle_per_host")]
+    pub(crate) max_idle_per_host: usize,
+    /// How long an idle connection is kept before it is closed.
+    #[serde(default = "default_outbound_http_pool_idle_timeout")]
+    pub(crate) idle_timeout: DurationConfig,
+}
+
+impl Default for OutboundHttpPoolToml {
+    fn default() -> Self {
+        Self {
+            max_idle_per_host: default_outbound_http_pool_max_idle_per_host(),
+            idle_timeout: default_outbound_http_pool_idle_timeout(),
+        }
+    }
+}
+
+impl From<OutboundHttpPoolToml> for wasm_workers::http_client::HttpPoolConfig {
+    fn from(value: OutboundHttpPoolToml) -> Self {
+        Self {
+            max_idle_per_host: value.max_idle_per_host,
+            idle_timeout: value.idle_timeout.into(),
+        }
+    }
+}
+
+fn default_outbound_http_pool_max_idle_per_host() -> usize {
+    wasm_workers::http_client::HttpPoolConfig::default().max_idle_per_host
+}
+
+const fn default_outbound_http_pool_idle_timeout() -> DurationConfig {
+    DurationConfig::Seconds(90)
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
