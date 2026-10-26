@@ -15,15 +15,6 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{Error, RequestOptions, WasiHttpHooks};
 
 pub type HttpClientTracesContainer = Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>;
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct NativeHttpResponse {
-    status: u16,
-    status_text: String,
-    headers: Vec<(String, String)>,
-    body: String,
-}
-
 /// Status line and headers of a native outbound response; the body follows as [`NativeHttpBody`].
 pub(crate) struct NativeHttpHead {
     pub(crate) status: u16,
@@ -409,30 +400,7 @@ pub(crate) fn native_request_headers(
 }
 
 impl HttpHooks {
-    pub(crate) fn send_native_request(
-        &mut self,
-        method: hyper::Method,
-        uri: hyper::Uri,
-        headers: Vec<(String, Vec<u8>)>,
-        body: Vec<u8>,
-    ) -> Result<
-        impl Future<Output = Result<NativeHttpResponse, String>> + Send + 'static + use<>,
-        String,
-    > {
-        let response = self.send_native_request_streaming(method, uri, headers, body)?;
-        Ok(async move {
-            let (head, body) = response.await?;
-            let body = body.collect().await?;
-            Ok(NativeHttpResponse {
-                status: head.status,
-                status_text: head.status_text,
-                headers: head.headers,
-                body: String::from_utf8_lossy(&body).into_owned(),
-            })
-        })
-    }
-
-    /// Like [`Self::send_native_request`], but resolves once the headers arrive.
+    /// Send a request from a native JS runtime. Resolves once the headers arrive.
     pub(crate) fn send_native_request_streaming(
         &mut self,
         method: hyper::Method,

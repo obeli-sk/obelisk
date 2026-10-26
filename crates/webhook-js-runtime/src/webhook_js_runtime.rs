@@ -139,7 +139,6 @@ use boa_common::esm::{EsmError, get_default_export_from_module, resolve_promise}
 use boa_common::graph::{GraphLoadError, register_source_modules};
 use boa_common::helpers::{new_object, parse_ffqn};
 use boa_common::imports::{self, ProxyKind};
-use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::class::Class;
 use boa_engine::module::MapModuleLoader;
@@ -147,7 +146,6 @@ use boa_engine::{
     Context, JsArgs, JsError, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Source,
     js_string, object::builtins::JsDate,
 };
-use boa_runtime::extensions::FetchExtension;
 use boa_runtime::fetch::request::JsRequest;
 use boa_runtime::fetch::response::JsResponse;
 use futures::channel::oneshot;
@@ -470,8 +468,7 @@ async fn run_js_handler_inner(
     // Set up console.log -> obelisk:log
     setup_console(&mut context, Logger).expect("console setup must work");
 
-    // Set up fetch (this also registers the Request and Response classes in the context)
-    setup_fetch(&mut context).expect("fetch setup must work");
+    // Set up fetch, Request, Response and ReadableStream, plus the response streaming shim
     let serve = streaming::setup(&mut context).expect("streaming setup must work");
 
     // Set up crypto.subtle (HMAC-SHA-256/384/512)
@@ -549,11 +546,6 @@ async fn run_js_handler_inner(
     parts.status = StatusCode::from_u16(js_response.status()).unwrap_or(StatusCode::OK);
     parts.headers = js_response.headers().as_header_map().borrow().clone();
     Ok(Some(Response::from_parts(parts, body)))
-}
-
-/// Register the `fetch` API backed by WASIp2 HTTP.
-fn setup_fetch(context: &mut Context) -> JsResult<()> {
-    boa_runtime::register(FetchExtension(WasiFetcher), None, context)
 }
 
 /// Capture the current Boa JS stack trace when enabled by the webhook configuration.

@@ -2,7 +2,7 @@
 //!
 //! This runtime provides:
 //! - `console.*` → `obelisk:log` routing
-//! - `fetch()` → WASIp2 HTTP outgoing requests
+//! - `fetch()` → WASIp2 HTTP outgoing requests, with a streamed `response.body`
 //! - `process.env["MY_VAR"]` → environment variable access
 //! - ES Module support with `export default`
 //!
@@ -31,11 +31,9 @@ use boa_common::console::{ObeliskLogger, setup_console};
 use boa_common::crypto::setup_crypto;
 use boa_common::esm::{EsmError, get_default_export_from_module, resolve_promise};
 use boa_common::graph::{GraphLoadError, register_source_modules};
-use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::module::MapModuleLoader;
 use boa_engine::{Context, JsResult, JsValue, Module};
-use boa_runtime::extensions::FetchExtension;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -84,7 +82,7 @@ pub fn execute(
     setup_console(&mut context, Logger).expect("console setup must work");
 
     // Set up fetch
-    setup_fetch(&mut context).expect("fetch setup must work");
+    boa_common::fetch_stream::setup(&mut context).expect("fetch setup must work");
 
     // Set up crypto.subtle
     setup_crypto(&mut context).expect("crypto setup must work");
@@ -207,9 +205,4 @@ fn convert_result(
             Ok(Err(err_json))
         }
     }
-}
-
-/// Register the `fetch` API backed by WASIp2 HTTP.
-fn setup_fetch(context: &mut Context) -> JsResult<()> {
-    boa_runtime::register(FetchExtension(WasiFetcher), None, context)
 }
