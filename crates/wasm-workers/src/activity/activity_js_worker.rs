@@ -1154,6 +1154,126 @@ mod tests {
         assert_eq!(extract_string(&ok_val.value), "fetch works");
     }
 
+    #[rstest]
+    #[case::utf8("1µs".as_bytes(), "1Âµs")]
+    #[case::opaque(b"\x80\xff", "\u{80}ÿ")]
+    #[tokio::test]
+    async fn fetch_response_header_bytes(
+        #[values(ActivityJsRuntime::BoaWasm, ActivityJsRuntime::V8)] runtime: ActivityJsRuntime,
+        #[case] bytes: &[u8],
+        #[case] expected: &str,
+    ) {
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+        test_utils::set_up();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).insert_header(
+                "x-elapsed",
+                hyper::header::HeaderValue::from_bytes(bytes).unwrap(),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let url = server.uri();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-fetch");
+        let js_source = format!(
+            r#"
+            export default async function do_fetch() {{
+                const response = await fetch("{url}");
+                const entry = [...response.headers].find(([name]) => name === "x-elapsed");
+                return response.headers.get("x-elapsed") + "|" + entry[1];
+            }}
+            "#
+        );
+        let worker = JsWorkerBuilder::new(&js_source, ffqn.clone())
+            .with_allowed_host(&url)
+            .with_runtime(runtime)
+            .build()
+            .await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(ok)) => ok);
+        assert_eq!(
+            extract_string(&output.value),
+            format!("{expected}|{expected}")
+        );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn fetch_request_header_bytes(
+        #[values(ActivityJsRuntime::BoaWasm, ActivityJsRuntime::V8)] runtime: ActivityJsRuntime,
+    ) {
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+        test_utils::set_up();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(|request: &wiremock::Request| {
+                request
+                    .headers
+                    .get("x-value")
+                    .map(hyper::header::HeaderValue::as_bytes)
+                    == Some(b"1\xb5s\x80\xff".as_slice())
+            })
+            .respond_with(ResponseTemplate::new(200).set_body_string("accepted"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let url = server.uri();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-fetch");
+        let js_source = format!(
+            r#"
+            export default async function do_fetch() {{
+                const response = await fetch("{url}", {{headers: {{"x-value": "1µs\u0080\u00ff"}}}});
+                return await response.text();
+            }}
+            "#
+        );
+        let worker = JsWorkerBuilder::new(&js_source, ffqn.clone())
+            .with_allowed_host(&url)
+            .with_runtime(runtime)
+            .build()
+            .await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(ok)) => ok);
+        assert_eq!(extract_string(&output.value), "accepted");
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn fetch_request_header_rejects_non_byte_characters(
+        #[values(ActivityJsRuntime::BoaWasm, ActivityJsRuntime::V8)] runtime: ActivityJsRuntime,
+        #[values(r"\u0100", r"\u20ac", r"\ud83d\ude00")] value: &str,
+    ) {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-fetch");
+        let js_source = format!(
+            r#"
+            export default async function do_fetch() {{
+                try {{
+                    await fetch("http://127.0.0.1:1", {{headers: {{"x-value": "{value}"}}}});
+                    return "unexpected success";
+                }} catch (error) {{
+                    return error instanceof TypeError ? "TypeError" : String(error);
+                }}
+            }}
+            "#
+        );
+        let worker = JsWorkerBuilder::new(&js_source, ffqn.clone())
+            .with_allowed_host("http://127.0.0.1:1")
+            .with_runtime(runtime)
+            .build()
+            .await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(ok)) => ok);
+        assert_eq!(extract_string(&output.value), "TypeError");
+    }
+
     /// V8 exposes the received HTTP/1 reason phrase like browsers do; Boa only sees the status
     /// code through WASI HTTP and falls back to the canonical phrase.
     #[rstest]

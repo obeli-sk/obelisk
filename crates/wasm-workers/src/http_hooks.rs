@@ -357,12 +357,28 @@ pub fn is_forbidden_header(name: &str) -> bool {
         .is_ok_and(|name| wasmtime_wasi_http::DEFAULT_FORBIDDEN_HEADERS.contains(&name))
 }
 
+pub(crate) fn native_request_headers(
+    headers: Vec<(String, String)>,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    headers
+        .into_iter()
+        .map(|(name, value)| {
+            let value = value
+                .chars()
+                .map(|ch| u8::try_from(u32::from(ch)))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| format!("header `{name}` contains a character above 0xFF"))?;
+            Ok((name, value))
+        })
+        .collect()
+}
+
 impl HttpHooks {
     pub(crate) fn send_native_request(
         &mut self,
         method: hyper::Method,
         uri: hyper::Uri,
-        headers: Vec<(String, String)>,
+        headers: Vec<(String, Vec<u8>)>,
         body: Vec<u8>,
     ) -> Result<
         impl Future<Output = Result<NativeHttpResponse, String>> + Send + 'static + use<>,
@@ -414,7 +430,11 @@ impl HttpHooks {
                 .map(|(name, value)| {
                     (
                         name.as_str().to_owned(),
-                        value.to_str().unwrap_or_default().to_owned(),
+                        value
+                            .as_bytes()
+                            .iter()
+                            .map(|&byte| char::from(byte))
+                            .collect(),
                     )
                 })
                 .collect();

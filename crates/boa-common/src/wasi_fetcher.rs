@@ -31,7 +31,7 @@ impl Fetcher for WasiFetcher {
             .method(http_req.method().as_str())
             .uri(&uri);
         for (name, value) in http_req.headers() {
-            builder = builder.header(name.as_str(), value.to_str().map_err(to_js_err)?);
+            builder = builder.header(name.as_str(), value.as_bytes());
         }
         let body = http_req.into_body().map_or_else(Body::empty, Body::from);
         let wstd_req = builder.body(body).map_err(to_js_err)?;
@@ -48,8 +48,7 @@ impl Fetcher for WasiFetcher {
         // Build http::Response and convert to JsResponse
         let mut http_resp_builder = http::Response::builder().status(status);
         for (name, value) in headers.iter() {
-            http_resp_builder =
-                http_resp_builder.header(name.as_str(), value.to_str().map_err(to_js_err)?);
+            http_resp_builder = http_resp_builder.header(name.as_str(), value.as_bytes());
         }
         let http_resp = http_resp_builder.body(body_bytes).map_err(to_js_err)?;
 

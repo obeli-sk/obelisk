@@ -127,7 +127,8 @@ async fn op_activity_fetch_inner(
         .send_native_request(
             method,
             uri,
-            request.headers,
+            crate::http_hooks::native_request_headers(request.headers)
+                .map_err(JsErrorBox::type_error)?,
             request.body.unwrap_or_default().into_bytes(),
         )
         .map_err(JsErrorBox::generic)?
