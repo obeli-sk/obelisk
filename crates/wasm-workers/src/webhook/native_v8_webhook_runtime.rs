@@ -628,11 +628,11 @@ async fn execute_inner(
     );
     let evaluated = async {
         let id = runtime.load_main_es_module_from_code(&main, source).await?;
-        let evaluation = runtime.mod_evaluate(id);
+        // Stop once the handler and its body pump finish, abandoning orphaned timers and reads.
+        let evaluation = std::pin::pin!(runtime.mod_evaluate(id));
         runtime
-            .run_event_loop(deno_core::PollEventLoopOptions::default())
-            .await?;
-        evaluation.await
+            .with_event_loop_promise(evaluation, deno_core::PollEventLoopOptions::default())
+            .await
     }
     .await;
     if let Some(reason) = panic.take_trap() {
