@@ -29,6 +29,28 @@
 //! }
 //! ```
 //!
+//! ## Streaming Response
+//! Headers are sent when the handler returns; chunks are sent as they are enqueued.
+//! ```js
+//! export default function handle(request) {
+//!     const stream = new ReadableStream({
+//!         async pull(controller) {
+//!             await new Promise(resolve => setTimeout(resolve, 1000));
+//!             controller.enqueue("data: tick\n\n");
+//!         },
+//!     });
+//!     return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+//! }
+//! ```
+//!
+//! ## Proxying a Streamed Fetch Body
+//! ```js
+//! export default async function handle(request) {
+//!     const upstream = await fetch("https://api.example.com/events");
+//!     return new Response(upstream.body, { headers: { "content-type": "text/event-stream" } });
+//! }
+//! ```
+//!
 //! ## Reading the Request Body
 //! ```js
 //! // As plain text (returns Promise<string>)
@@ -109,6 +131,7 @@ use crate::generated::obelisk::webhook::webhook_dynamic_support_backtrace;
 use crate::generated::obelisk::webhook::webhook_support::{
     self, ExecutionStatus, ExecutionStatusFinished,
 };
+use crate::streaming;
 use boa_common::child_error::{ChildErrorParts, make_child_error};
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::crypto::setup_crypto;
@@ -127,12 +150,15 @@ use boa_engine::{
 use boa_runtime::extensions::FetchExtension;
 use boa_runtime::fetch::request::JsRequest;
 use boa_runtime::fetch::response::JsResponse;
+use futures::channel::oneshot;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
-use std::future::Future;
-use std::pin::Pin;
+use std::future::{Future, poll_fn};
+use std::pin::{Pin, pin};
 use std::rc::Rc;
+use wstd::__internal::wasip2::http::types::{IncomingRequest, ResponseOutparam};
 use wstd::http::body::Body;
+use wstd::http::server::Responder;
 use wstd::http::{Request, Response, StatusCode};
 
 /// Logger implementation using the generated obelisk:log bindings.
@@ -157,15 +183,58 @@ impl ObeliskLogger for Logger {
     }
 }
 
-#[wstd::http_server]
-async fn main(request: Request<Body>) -> Result<Response<Body>, wstd::http::Error> {
+struct Server;
+
+// A hand-written export instead of `#[wstd::http_server]`: the JS runtime keeps pumping a
+// streamed body while the responder sends it, and a client disconnect must not trap.
+impl wstd::__internal::wasip2::exports::http::incoming_handler::Guest for Server {
+    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
+        let responder = Responder::new(response_out);
+        wstd::runtime::block_on(async move {
+            let request = match wstd::http::request::try_from_incoming(request) {
+                Ok(request) => request,
+                Err(err) => return responder.fail(err),
+            };
+            let (response_tx, response_rx) = oneshot::channel();
+            streaming::install_responder(response_tx);
+            let mut handler = pin!(handle_request(request));
+            let mut send = pin!(async move {
+                match response_rx.await {
+                    Ok(response) => responder.respond(response).await,
+                    Err(_) => {
+                        responder.fail(wstd::http::Error::msg("webhook ended without a response"));
+                        Ok(())
+                    }
+                }
+            });
+            let mut handler_done = false;
+            let sent = poll_fn(|cx| {
+                if !handler_done {
+                    handler_done = handler.as_mut().poll(cx).is_ready();
+                }
+                send.as_mut().poll(cx)
+            })
+            .await;
+            match sent {
+                // The body is complete; let the handler finish any work after closing it.
+                Ok(()) if !handler_done => handler.await,
+                Ok(()) => {}
+                // The client is gone; abandon the handler.
+                Err(err) => log::debug(&format!("response body was not fully sent: {err:?}")),
+            }
+        });
+    }
+}
+
+wstd::__internal::wasip2::http::proxy::export!(Server with_types_in wstd::__internal::wasip2);
+
+async fn handle_request(request: Request<Body>) {
     // Load JS module graph from environment.
     let (entry_path, files) = match read_js_graph_env() {
         Ok(graph) => graph,
         Err(msg) => {
-            return Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(msg))?);
+            streaming::respond(error_response(msg));
+            return;
         }
     };
 
@@ -182,9 +251,8 @@ async fn main(request: Request<Body>) -> Result<Response<Body>, wstd::http::Erro
     let http_request_head = match builder.body(Vec::<u8>::new()) {
         Ok(r) => r,
         Err(e) => {
-            return Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(format!("Failed to construct request: {e}")))?);
+            streaming::respond(error_response(format!("Failed to construct request: {e}")));
+            return;
         }
     };
 
@@ -196,7 +264,25 @@ async fn main(request: Request<Body>) -> Result<Response<Body>, wstd::http::Erro
         }
     });
 
-    run_js_handler_async(&entry_path, &files, http_request_head, body_future).await
+    match run_js_handler_inner(&entry_path, &files, http_request_head, body_future).await {
+        Ok(Some(response)) => {
+            streaming::respond(response);
+        }
+        Ok(None) => {}
+        Err(msg) => {
+            log::error(&msg);
+            // Once streaming started, only the body can carry the failure.
+            if !streaming::respond(error_response(msg.clone())) {
+                streaming::abort_body(msg).await;
+            }
+        }
+    }
+}
+
+fn error_response(msg: String) -> Response<Body> {
+    let mut response = Response::new(Body::from(msg));
+    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+    response
 }
 
 type RequestBodyFuture = Pin<Box<dyn Future<Output = Vec<u8>>>>;
@@ -217,26 +303,6 @@ fn read_js_graph_env() -> Result<(String, BTreeMap<String, String>), String> {
             .into_iter()
             .collect();
     Ok((entry_path, files))
-}
-
-/// Run the JS handler and return the HTTP response.
-/// JS-level errors are converted to 500 responses; only transport errors propagate as `Err`.
-async fn run_js_handler_async(
-    entry_path: &str,
-    files: &BTreeMap<String, String>,
-    request_head: http::Request<Vec<u8>>,
-    body_future: RequestBodyFuture,
-) -> Result<Response<Body>, wstd::http::Error> {
-    match run_js_handler_inner(entry_path, files, request_head, body_future).await {
-        Ok(response) => Ok(response),
-        Err(msg) => {
-            log::error(&msg);
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(msg))
-                .map_err(wstd::http::Error::new)
-        }
-    }
 }
 
 /// Create a `NativeFunction` that proxies a direct call to `call-json`
@@ -392,7 +458,7 @@ async fn run_js_handler_inner(
     files: &BTreeMap<String, String>,
     request_head: http::Request<Vec<u8>>,
     body_future: RequestBodyFuture,
-) -> Result<Response<Body>, String> {
+) -> Result<Option<Response<Body>>, String> {
     let executor = Rc::new(WasiJobExecutor::default());
     let loader = Rc::new(MapModuleLoader::new());
     let mut context = Context::builder()
@@ -406,6 +472,7 @@ async fn run_js_handler_inner(
 
     // Set up fetch (this also registers the Request and Response classes in the context)
     setup_fetch(&mut context).expect("fetch setup must work");
+    let serve = streaming::setup(&mut context).expect("streaming setup must work");
 
     // Set up crypto.subtle (HMAC-SHA-256/384/512)
     setup_crypto(&mut context).expect("crypto setup must work");
@@ -459,25 +526,20 @@ async fn run_js_handler_inner(
         }
     };
 
-    // Call the default export function with the request (may return a Promise for async handlers)
-    let result = default_fn
+    // Run the handler through the streaming shim, which pumps a streamed body itself.
+    let result = serve
         .call(
             &JsValue::undefined(),
-            &[request_value],
+            &[default_fn.into(), request_value],
             *context.borrow_mut(),
         )
         .map_err(|e| format!("Failed to call handler: {e}"))?;
-
-    // If the result is a Promise, drive it to completion
     let result = resolve_promise(&result, &context, &executor)
         .await
         .map_err(|e| format!("Promise resolution failed: {e}"))?;
-
-    // Extract the Response object returned by the handler.
-    let obj = result
-        .as_object()
-        .ok_or("handler must return a Response object")?;
-
+    let Some(obj) = result.as_object() else {
+        return Ok(None);
+    };
     let js_response = obj.downcast_ref::<JsResponse>().ok_or(
         "handler must return a Response (e.g. `new Response(...)` or `Response.json(...)`)",
     )?;
@@ -486,7 +548,7 @@ async fn run_js_handler_inner(
         Response::new(Body::from(js_response.body().as_ref().clone())).into_parts();
     parts.status = StatusCode::from_u16(js_response.status()).unwrap_or(StatusCode::OK);
     parts.headers = js_response.headers().as_header_map().borrow().clone();
-    Ok(Response::from_parts(parts, body))
+    Ok(Some(Response::from_parts(parts, body)))
 }
 
 /// Register the `fetch` API backed by WASIp2 HTTP.
