@@ -2336,6 +2336,33 @@ struct RequestHandler {
     request_timeout: Duration,
 }
 
+/// Response body whose drop (after the last frame or on client disconnect) is
+/// observable through the dropped `_done` sender.
+struct NotifyOnDropBody {
+    body: HyperOutgoingBody,
+    _done: tokio::sync::oneshot::Sender<()>,
+}
+
+impl hyper::body::Body for NotifyOnDropBody {
+    type Data = Bytes;
+    type Error = wasmtime_wasi_http::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        std::pin::Pin::new(&mut self.body).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.body.size_hint()
+    }
+}
+
 fn respond(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
     let body = UnsyncBoxBody::new(http_body_util::BodyExt::map_err(
         http_body_util::Full::new(Bytes::copy_from_slice(body.as_bytes())),
@@ -2404,10 +2431,6 @@ impl RequestHandler {
         request_span: Span,
         request_deadline: tokio::time::Instant,
     ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
-        #[derive(Debug, thiserror::Error)]
-        #[error("timeout")]
-        struct TimeoutError;
-
         if let Some(instance_match) = self.router.find(req.method(), req.uri()) {
             let found_instance = instance_match.handler();
             // One permit for the matched endpoint's runtime, before the body is read. An
@@ -2519,12 +2542,8 @@ impl RequestHandler {
                                 ),
                                 Err(err) => err.into(),
                             };
-                            if err.downcast_ref::<TimeoutError>().is_some() {
-                                Err(HandleRequestError::Timeout)
-                            } else {
-                                info!("Webhook task ended with ExecutionError - {err:?}");
-                                Err(HandleRequestError::ExecutionError(err.into()))
-                            }
+                            info!("Webhook task ended with ExecutionError - {err:?}");
+                            Err(HandleRequestError::ExecutionError(err.into()))
                         }
                     }
                 }
@@ -2537,47 +2556,64 @@ impl RequestHandler {
                         store.data_mut().http().hooks,
                         req,
                     );
-                    let assigned_fuel = found_instance.config.fuel;
-                    let result = store
-                        .run_concurrent(async |accessor| {
-                            let response = async {
-                                let response =
-                                    proxy.handle(accessor, req).await?.map_err(|err| {
-                                        wasmtime::format_err!("WASIp3 HTTP handler failed: {err:?}")
+                    let (sender, receiver) = tokio::sync::oneshot::channel();
+                    // Like P2, the store lives in a task so the guest keeps streaming the
+                    // body after the headers are returned.
+                    let task = utils::spawn::spawn_named("webhook_request", {
+                        let assigned_fuel = found_instance.config.fuel;
+                        async move {
+                            let _wasm_guard = wasm_guard;
+                            let result = store
+                                .run_concurrent(async |accessor| {
+                                    let response = async {
+                                        let response =
+                                            proxy.handle(accessor, req).await?.map_err(|err| {
+                                                wasmtime::format_err!(
+                                                    "WASIp3 HTTP handler failed: {err:?}"
+                                                )
+                                            })?;
+                                        let response = accessor.with(|store| {
+                                            response.into_http(store, async { Ok(()) })
+                                        })?;
+                                        let (body_done_sender, body_done) =
+                                            tokio::sync::oneshot::channel::<()>();
+                                        let response = response.map(|body| {
+                                            UnsyncBoxBody::new(NotifyOnDropBody {
+                                                body,
+                                                _done: body_done_sender,
+                                            })
+                                        });
+                                        // A dropped receiver drops the body, which ends the wait below.
+                                        let _ = sender.send(response);
+                                        // Keep the event loop alive until hyper drops the body.
+                                        let _ = body_done.await;
+                                        wasmtime::Result::Ok(())
+                                    };
+                                    let ((), ()) = futures_util::try_join!(response, async {
+                                        request_io.await.map_err(wasmtime::Error::from)
                                     })?;
-                                let response = accessor
-                                    .with(|store| response.into_http(store, async { Ok(()) }))?;
-                                let (parts, body) = response.into_parts();
-                                let body = http_body_util::BodyExt::collect(body).await?.to_bytes();
-                                let body = UnsyncBoxBody::new(http_body_util::BodyExt::map_err(
-                                    http_body_util::Full::new(body),
-                                    |_| unreachable!(),
-                                ));
-                                wasmtime::Result::Ok(hyper::Response::from_parts(parts, body))
-                            };
-                            let (response, ()) = futures_util::try_join!(response, async {
-                                request_io.await.map_err(wasmtime::Error::from)
-                            })?;
-                            wasmtime::Result::Ok(response)
-                        })
-                        .await;
-                    let result = result.flatten();
-                    let ctx = store.into_data();
-                    match result {
-                        Ok(response) => {
-                            ctx.close(Ok(()), assigned_fuel)
+                                    wasmtime::Result::Ok(())
+                                })
                                 .await
-                                .map_err(|err| HandleRequestError::ExecutionError(err.into()))?;
-                            Ok(response)
+                                .flatten()
+                                .inspect_err(|err| {
+                                    debug!("Webhook instance finished with error: {err:?}");
+                                });
+                            let ctx = store.into_data();
+                            ctx.close(result, assigned_fuel).await
                         }
-                        Err(err) => match ctx.close(Err(err), assigned_fuel).await {
-                            Ok(()) => unreachable!("closing a failed webhook must return an error"),
-                            Err(err) if err.downcast_ref::<TimeoutError>().is_some() => {
-                                Err(HandleRequestError::Timeout)
-                            }
-                            Err(err) => Err(HandleRequestError::ExecutionError(err.into())),
-                        },
+                        .instrument(request_span)
+                    });
+                    if let Ok(resp) = receiver.await {
+                        return Ok(resp);
                     }
+                    let err = match task.await {
+                        Ok(result) => result
+                            .expect_err("if the receiver has an error, the task must have failed"),
+                        Err(err) => err.into(),
+                    };
+                    info!("Webhook task ended with ExecutionError - {err:?}");
+                    Err(HandleRequestError::ExecutionError(err.into()))
                 }
             }
         } else {
@@ -2873,6 +2909,125 @@ pub(crate) mod tests {
         )
         .await;
         assert_wasip3_webhook_links_as_http_service(wasm_file.path().to_str().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn wasip3_webhook_streams_response_body() {
+        use crate::http_hooks::ConfigSectionHint;
+        use crate::testing_fn_registry::TestingFnRegistry;
+        use crate::webhook::webhook_trigger::{
+            self, WebhookEndpointCompiled, WebhookEndpointConfig, WebhookServerState,
+        };
+        use concepts::component_id::ComponentDigest;
+        use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
+        use concepts::storage::DbPoolCloseable;
+        use concepts::time::{ClockFn, TokioSleep};
+        use concepts::{ComponentId, StrVariant};
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::{TcpListener, TcpStream};
+        use tokio::sync::{mpsc, watch};
+
+        // Read until `needle` shows up, failing if the server holds the body back.
+        async fn read_until(stream: &mut TcpStream, received: &mut Vec<u8>, needle: &str) {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while !String::from_utf8_lossy(received).contains(needle) {
+                    let mut buf = [0; 1024];
+                    let n = stream.read(&mut buf).await.unwrap();
+                    assert_ne!(0, n, "connection closed before {needle:?}");
+                    received.extend_from_slice(&buf[..n]);
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {needle:?}"));
+        }
+
+        test_utils::set_up();
+        let wasm_file = test_programs_wasip3_webhook_builder::TEST_PROGRAMS_WASIP3_WEBHOOK;
+        let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
+        let fn_registry = TestingFnRegistry::new_from_components(vec![]);
+        let instance = WebhookEndpointCompiled::new(
+            WebhookEndpointConfig {
+                memory: None,
+                component_id: ComponentId::new(
+                    ComponentType::WebhookEndpoint,
+                    StrVariant::empty(),
+                    ComponentDigest(
+                        utils::sha256sum::calculate_sha256_file(wasm_file)
+                            .await
+                            .unwrap()
+                            .0,
+                    ),
+                )
+                .unwrap(),
+                forward_stdout: None,
+                forward_stderr: None,
+                env_vars: Arc::from([]),
+                exposed_secrets: Arc::from([]),
+                fuel: None,
+                backtrace_persist: false,
+                subscription_interruption: None,
+                logs_store_min_level: None,
+                allowed_hosts: Arc::from([]),
+                global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
+                secrets: Arc::new(crate::http_request_policy::NoSecrets),
+                js_config: None,
+                config_section_hint: ConfigSectionHint::WebhookEndpointWasm,
+            },
+            RunnableComponent::new(wasm_file, &engine, ComponentType::WebhookEndpoint).unwrap(),
+        )
+        .unwrap()
+        .link(&engine, fn_registry.as_ref())
+        .unwrap();
+        let mut router = MethodAwareRouter::default();
+        router.add(Some(Method::POST), "/echo", instance);
+        let (_guard, db_pool, db_close) = db_tests::Database::Sqlite.set_up().await;
+        let tcp_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_addr = tcp_listener.local_addr().unwrap();
+        let (_server_termination_sender, server_termination_watcher) = watch::channel(());
+        let (_state_sender, state_watcher) = watch::channel(Arc::new(WebhookServerState {
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            router: Arc::new(router),
+            fn_registry,
+            max_persisted_value_size_bytes: 1024,
+            request_timeout: Duration::from_secs(30),
+        }));
+        let (log_sender, _log_receiver) = mpsc::channel(1);
+        let server = tokio::spawn(webhook_trigger::server(
+            "test".to_string(),
+            tcp_listener,
+            engine,
+            state_watcher,
+            log_sender,
+            db_pool,
+            test_utils::sim_clock::SimClock::default().clone_box(),
+            Arc::new(TokioSleep),
+            None,
+            server_termination_watcher,
+        ));
+
+        let mut stream = TcpStream::connect(server_addr).await.unwrap();
+        stream
+            .write_all(
+                b"POST /echo HTTP/1.1\r\nHost: test\r\nTransfer-Encoding: chunked\r\n\r\n\
+                  b\r\nfirst-chunk\r\n",
+            )
+            .await
+            .unwrap();
+        let mut received = Vec::new();
+        // The request body is still open, so a buffering server cannot answer yet.
+        read_until(&mut stream, &mut received, "first-chunk").await;
+        assert!(String::from_utf8_lossy(&received).starts_with("HTTP/1.1 200"));
+        stream
+            .write_all(b"c\r\nsecond-chunk\r\n0\r\n\r\n")
+            .await
+            .unwrap();
+        read_until(&mut stream, &mut received, "second-chunk").await;
+        read_until(&mut stream, &mut received, "\r\n0\r\n\r\n").await;
+
+        server.abort();
+        db_close.close().await;
     }
 
     pub(crate) mod fibo {
