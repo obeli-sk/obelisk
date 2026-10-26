@@ -3637,9 +3637,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-ast"
-version = "1.0.0-obeli-sk.14"
+version = "1.0.0-obeli-sk.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fdc3413627abdba73843c8c75727413b2705002427cd1f9a5cb0e3b91f7e2f9"
+checksum = "6fcb1f379fba1ec6dd6c947ff3a61ed08113eb8f1ceb2992c740b1b58a55c925"
 dependencies = [
  "bitflags 2.13.2",
  "indexmap 2.14.2",
@@ -3653,9 +3653,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-engine"
-version = "1.0.0-obeli-sk.14"
+version = "1.0.0-obeli-sk.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b58be7542f81061a2bc89343e88f4219947b4578e46a1dbee637216e392f91a9"
+checksum = "84f2990b087afd91be71a083218b1c1b5dacddb071fe14a3e47784273a3b91c4"
 dependencies = [
  "aligned-vec",
  "arrayvec",
@@ -3707,9 +3707,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-gc"
-version = "1.0.0-obeli-sk.14"
+version = "1.0.0-obeli-sk.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c69a6e8a90a7ded54d5d827a36925c39399c277c1dbcf56931d1a77755163854"
+checksum = "f66cb040287d3a7e1b186c0de1b883b1e4dded7ff774c5189f63e879c3cfb25d"
 dependencies = [
  "arrayvec",
  "either",
@@ -3721,9 +3721,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-interner"
-version = "1.0.0-obeli-sk.14"
+version = "1.0.0-obeli-sk.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cc0ac4af3e4b773fcd8b44f85424b622324ed4299782327b17d7a97e0bbba0e"
+checksum = "cb04ee78200102c41d7a7a28fad650857253f6d8530537026cae0085ae9b45d9"
 dependencies = [
  "hashbrown 0.17.1",
  "indexmap 2.14.2",
@@ -3737,9 +3737,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-macros"
-version = "1.0.0-obeli-sk.14"
+version = "1.0.0-obeli-sk.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "785615a5284abf7a571892ab2ec6f813b46900f285d29501ba5e468e2fdbed24"
+checksum = "1c0ef15cf295107c1282b94b5cc1f4fdd126fd595be9d147547ec65a7dd5eb36"
 dependencies = [
  "cfg-if",
  "cow-utils",
@@ -3751,9 +3751,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-parser"
-version = "1.0.0-obeli-sk.14"
+version = "1.0.0-obeli-sk.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59e102f85aa7c86e5cfcbeb0c14ad3588160e9b0d5abf417e8eee0176709b9d1"
+checksum = "d0850cbf307dc91cb56893af025e23117c273ee6b1787fc666000440ed19e811"
 dependencies = [
  "bitflags 2.13.2",
  "fast-float2",
@@ -3769,9 +3769,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-runtime"
-version = "1.0.0-obeli-sk.14"
+version = "1.0.0-obeli-sk.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8d53df82cc9ab8f3fa06e7cf490db58b45c7ff5f63bf16d5d8da12a73a83a7c"
+checksum = "0bdbd511c6169ef42915366d1d80b3d07675f19156a422589a976d0ffee7f44e"
 dependencies = [
  "bytemuck",
  "either",
@@ -3788,9 +3788,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-string"
-version = "1.0.0-obeli-sk.14"
+version = "1.0.0-obeli-sk.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "817cf7c86d8565482526a5387ebd7c6139347522fe98ec13bb0778535836f137"
+checksum = "8d6fc12dbd4a821b784c5385044c1687f422e7d730e3e79b3f28a62fc5251c10"
 dependencies = [
  "fast-float2",
  "itoa",
@@ -3802,9 +3802,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-wintertc"
-version = "1.0.0-obeli-sk.14"
+version = "1.0.0-obeli-sk.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c34a53e58168a88f32127b2c2b0802892baaac4a95567ee77c2b1a2f25307df3"
+checksum = "e8ffef2a9d8f984adada568d1670f3870953e25f9cd7f41d08afcece606f8f45"
 dependencies = [
  "base64 0.23.1",
  "comfy-table",
@@ -3989,18 +3989,18 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-small-btree"
-version = "1.0.0-obeli-sk.14"
+version = "1.0.0-obeli-sk.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbfd36edc3186242159049769aa50878466cc5b0d68a1bbd9164a7f3f8654800"
+checksum = "0af714e52b1a2543fb1e2c8e937b30e5c9c467f94043670adf253bcedd2388b0"
 dependencies = [
  "arrayvec",
 ]
 
 [[package]]
 name = "obeli-sk-tag-ptr"
-version = "1.0.0-obeli-sk.14"
+version = "1.0.0-obeli-sk.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f76755e48dc3c1a1a205c2c6a3d030f751be2ca7c5284958371cbad414d28708"
+checksum = "93305e2c35b99bc72b3fe3441c2df98897eeb77bd3b00b7b2e77b4949c9e738d"
 
 [[package]]
 name = "obeli-sk-utils"

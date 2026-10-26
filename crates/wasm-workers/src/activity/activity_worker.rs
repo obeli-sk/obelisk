@@ -1800,7 +1800,14 @@ pub(crate) mod tests {
         Mock::given(method("GET"))
             .and(path("/"))
             .and(header("host", server_address.to_string()))
-            .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header(
+                        "x-elapsed",
+                        hyper::header::HeaderValue::from_bytes("1µs".as_bytes()).unwrap(),
+                    )
+                    .set_body_string(BODY),
+            )
             .expect(1)
             .mount(&server)
             .await;
