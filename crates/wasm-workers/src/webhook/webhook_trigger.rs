@@ -2697,6 +2697,7 @@ async fn handle_native_v8_request(
     let handle = tokio::runtime::Handle::current();
     let max_heap_size = v8_executor.max_heap_size(crate::v8_executor::V8Workload::Webhook);
     let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
+    let (stream_tx, mut stream_rx) = tokio::sync::oneshot::channel();
     let mut task = tokio::spawn(async move {
         admission
             .run(move || async move {
@@ -2708,6 +2709,7 @@ async fn handle_native_v8_request(
                     &mut ctx,
                     handle,
                     isolate_tx,
+                    stream_tx,
                     max_heap_size,
                     request_deadline,
                 )
@@ -2727,16 +2729,75 @@ async fn handle_native_v8_request(
     let mut termination_guard = TerminateOnDrop(isolate_rx.await.ok());
     enum End<T> {
         Complete(T),
+        Streaming(hyper::Response<HyperOutgoingBody>),
         Interrupted,
         Timeout,
     }
     let end = tokio::select! {
+        // Before `task`: a short streamed response may finish together with the isolate.
+        biased;
+        Ok(response) = &mut stream_rx => End::Streaming(response),
         result = &mut task => End::Complete(result),
         _ = connection_drop_watcher.changed() => End::Interrupted,
         _ = server_termination_watcher.changed() => End::Interrupted,
         () = tokio::time::sleep_until(request_deadline) => End::Timeout,
     };
     let (result, ctx) = match end {
+        End::Streaming(response) => {
+            // The isolate keeps writing the body; finish the execution once it is done.
+            let fuel = config.fuel;
+            tokio::spawn(
+                async move {
+                    enum StreamEnd<T> {
+                        Complete(T),
+                        ClientGone,
+                        Shutdown,
+                    }
+                    let end = tokio::select! {
+                        result = &mut task => StreamEnd::Complete(result),
+                        _ = connection_drop_watcher.changed() => StreamEnd::ClientGone,
+                        _ = server_termination_watcher.changed() => StreamEnd::Shutdown,
+                    };
+                    let (result, close_result) = match end {
+                        StreamEnd::Complete(result) => {
+                            let result =
+                                result.expect("native V8 webhook supervisor task panicked");
+                            let close_result = result
+                                .as_ref()
+                                .ok()
+                                .map(|(result, _)| native_close_result(result));
+                            (result, close_result)
+                        }
+                        StreamEnd::ClientGone | StreamEnd::Shutdown => {
+                            if let Some(isolate) = &termination_guard.0 {
+                                isolate.terminate_execution();
+                            }
+                            let close_result = if matches!(end, StreamEnd::Shutdown) {
+                                Err(wasmtime::Error::msg("server shutdown requested"))
+                            } else {
+                                Ok(())
+                            };
+                            let result = task
+                                .await
+                                .expect("native V8 webhook supervisor task panicked");
+                            (result, Some(close_result))
+                        }
+                    };
+                    termination_guard.0.take();
+                    match result {
+                        Ok((_, ctx)) => {
+                            let close_result = close_result.expect("set when the task succeeded");
+                            if let Err(err) = ctx.close(close_result, fuel).await {
+                                warn!("Cannot finish the streamed webhook execution: {err:?}");
+                            }
+                        }
+                        Err(err) => warn!("Streamed webhook execution failed: {err:?}"),
+                    }
+                }
+                .instrument(Span::current()),
+            );
+            return Ok(response);
+        }
         End::Complete(result) => result
             .expect("native V8 webhook supervisor task panicked")
             .map_err(|err| HandleRequestError::ExecutionError(Box::new(err)))?,
@@ -2766,23 +2827,18 @@ async fn handle_native_v8_request(
         }
     };
     termination_guard.0 = None;
-    let close_result = match &result {
-        Ok(_) => Ok(()),
-        Err(err) => Err(wasmtime::Error::msg(match err {
-            NativeWebhookFailure::CannotInstantiate(reason)
-            | NativeWebhookFailure::Execution(reason) => reason.clone(),
-            NativeWebhookFailure::Timeout => "webhook request deadline reached".into(),
-        })),
-    };
-    ctx.close(close_result, config.fuel)
+    ctx.close(native_close_result(&result), config.fuel)
         .await
         .map_err(|err| match &result {
             Err(NativeWebhookFailure::Timeout) => HandleRequestError::Timeout,
             _ => HandleRequestError::ExecutionError(err.into()),
         })?;
     match result {
-        Ok(response) => into_hyper_response(response)
+        Ok(Some(response)) => into_hyper_response(response)
             .map_err(|err| HandleRequestError::ResponseCreationError(err.into())),
+        Ok(None) => Err(HandleRequestError::ResponseCreationError(
+            "streamed response was not delivered".into(),
+        )),
         Err(NativeWebhookFailure::CannotInstantiate(reason)) => Err(
             HandleRequestError::InstantiationError(std::io::Error::other(reason).into()),
         ),
@@ -2792,6 +2848,23 @@ async fn handle_native_v8_request(
         Err(NativeWebhookFailure::Timeout) => Err(HandleRequestError::Timeout),
     }
 }
+fn native_close_result(
+    result: &Result<
+        Option<crate::webhook::native_v8_webhook_runtime::NativeResponse>,
+        crate::webhook::native_v8_webhook_runtime::NativeWebhookFailure,
+    >,
+) -> Result<(), wasmtime::Error> {
+    use crate::webhook::native_v8_webhook_runtime::NativeWebhookFailure;
+    match result {
+        Ok(_) => Ok(()),
+        Err(err) => Err(wasmtime::Error::msg(match err {
+            NativeWebhookFailure::CannotInstantiate(reason)
+            | NativeWebhookFailure::Execution(reason) => reason.clone(),
+            NativeWebhookFailure::Timeout => "webhook request deadline reached".into(),
+        })),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum HandleRequestError {
     #[error("incoming request error: {0}")]
@@ -5134,6 +5207,252 @@ pub(crate) mod tests {
             .unwrap();
             assert_eq!(body, "timer");
             drop(upstream_done);
+        }
+
+        #[tokio::test]
+        async fn webhook_js_v8_streams_response_body() {
+            test_utils::set_up();
+            // The second event comes long after the first, so the first one must be flushed early.
+            let js_source = r"
+                export default function handle() {
+                    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+                    const stream = new ReadableStream({
+                        async start(controller) {
+                            controller.enqueue('data: first\n\n');
+                            await sleep(60000);
+                            controller.enqueue('data: second\n\n');
+                            controller.close();
+                        },
+                    });
+                    return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+                }
+            ";
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
+            let mut resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!(
+                resp.headers().get("content-type").unwrap(),
+                "text/event-stream"
+            );
+            let chunk = tokio::time::timeout(std::time::Duration::from_secs(10), resp.chunk())
+                .await
+                .expect("first event must arrive before the stream ends")
+                .unwrap()
+                .unwrap();
+            assert_eq!(&chunk[..], b"data: first\n\n");
+        }
+
+        #[tokio::test]
+        async fn webhook_js_v8_stream_client_disconnect_finishes_execution() {
+            use crate::v8_executor::{V8Cell, V8Executor, V8ExecutorConfig, V8Workload};
+            use concepts::storage::DbPoolCloseable as _;
+
+            test_utils::set_up();
+            let source = r"
+                import { executionIdCurrent } from 'obelisk:webhook@1.0.0';
+                export default function handle() {
+                    console.info('streaming');
+                    const stream = new ReadableStream({
+                        start(controller) { controller.enqueue('data: first\n\n'); setTimeout(() => controller.close(), 60000); },
+                    });
+                    return new Response(stream, { headers: { 'x-execution-id': executionIdCurrent() } });
+                }
+            ";
+            let executor = V8Executor::new(V8ExecutorConfig {
+                webhooks: V8Cell::standalone(1, 32 * 1024 * 1024),
+                ..V8ExecutorConfig::default()
+            });
+            let (mut server, addr, guard, db_pool, db_guard, db_close) =
+                start_js_webhook_server_with_http_and_db(
+                    source,
+                    "http://127.0.0.1:1",
+                    None,
+                    WebhookJsRuntime::V8,
+                    Some(concepts::storage::LogLevel::Info),
+                    Some(executor.clone()),
+                )
+                .await;
+            let mut resp = reqwest::get(format!("http://{addr}/")).await.unwrap();
+            let execution_id: concepts::ExecutionId = resp.headers()["x-execution-id"]
+                .to_str()
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert_eq!(
+                &resp.chunk().await.unwrap().unwrap()[..],
+                b"data: first\n\n"
+            );
+            drop(resp);
+            // The isolate slot is released once the stream supervisor sees the client leave.
+            drop(
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    executor.admit(V8Workload::Webhook),
+                )
+                .await
+                .expect("isolate must be released after the client disconnects")
+                .unwrap(),
+            );
+            let conn = db_pool.connection().await.unwrap();
+            let finished = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    if let Some(result) = conn
+                        .get(&execution_id)
+                        .await
+                        .ok()
+                        .and_then(|log| log.as_finished_result())
+                    {
+                        return result;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_matches::assert_matches!(
+                finished,
+                concepts::SupportedFunctionReturnValue::Ok(_)
+            );
+            drop(conn);
+            guard.server_termination_sender.send(()).unwrap();
+            server.join_next().await.unwrap().unwrap().unwrap();
+            drop(db_pool);
+            drop(db_guard);
+            db_close.close().await;
+        }
+
+        #[tokio::test]
+        async fn webhook_js_v8_stream_pull_and_close() {
+            test_utils::set_up();
+            let js_source = r"
+                export default function handle() {
+                    let count = 0;
+                    const encoder = new TextEncoder();
+                    const stream = new ReadableStream({
+                        async pull(controller) {
+                            await new Promise(resolve => setTimeout(resolve, 5));
+                            count += 1;
+                            if (count > 3) controller.close();
+                            else controller.enqueue(count % 2 ? `chunk${count};` : encoder.encode(`chunk${count};`));
+                        },
+                    });
+                    return new Response(stream);
+                }
+            ";
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!(resp.text().await.unwrap(), "chunk1;chunk2;chunk3;");
+        }
+
+        #[tokio::test]
+        async fn webhook_js_v8_stream_error_aborts_body() {
+            test_utils::set_up();
+            let js_source = r"
+                export default function handle() {
+                    const stream = new ReadableStream({
+                        start(controller) {
+                            controller.enqueue('partial');
+                            setTimeout(() => controller.error(new Error('boom')), 10);
+                        },
+                    });
+                    return new Response(stream);
+                }
+            ";
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            resp.text()
+                .await
+                .expect_err("an errored stream must not end the body cleanly");
+        }
+
+        #[tokio::test]
+        async fn webhook_js_v8_fetch_proxies_streamed_body() {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            test_utils::set_up();
+            // Upstream sends one event and then keeps the response open.
+            let upstream = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+                .await
+                .unwrap();
+            let upstream_port = upstream.local_addr().unwrap().port();
+            let (upstream_done, upstream_done_rx) = tokio::sync::oneshot::channel::<()>();
+            tokio::spawn(async move {
+                let (mut socket, _) = upstream.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0; 1];
+                    socket.read_exact(&mut byte).await.unwrap();
+                    request.push(byte[0]);
+                }
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\nd\r\ndata: hello\n\n\r\n")
+                    .await
+                    .unwrap();
+                let _ = upstream_done_rx.await;
+            });
+            let js_source = format!(
+                r"
+                export default async function handle() {{
+                    const upstream = await fetch('http://127.0.0.1:{upstream_port}/events');
+                    return new Response(upstream.body, {{ headers: {{ 'content-type': upstream.headers.get('content-type') }} }});
+                }}
+                "
+            );
+            let allowed = format!("http://127.0.0.1:{upstream_port}");
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_http(&js_source, &allowed, None, WebhookJsRuntime::V8)
+                    .await;
+            let mut resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!(
+                resp.headers().get("content-type").unwrap(),
+                "text/event-stream"
+            );
+            let chunk = tokio::time::timeout(std::time::Duration::from_secs(10), resp.chunk())
+                .await
+                .expect("upstream event must be forwarded before the upstream ends")
+                .unwrap()
+                .unwrap();
+            assert_eq!(&chunk[..], b"data: hello\n\n");
+            drop(upstream_done);
+        }
+
+        #[tokio::test]
+        async fn webhook_js_v8_text_decoder_stream() {
+            test_utils::set_up();
+            let js_source = r"
+                export default function handle() {
+                    const text = 'až€\u{1F600}b';
+                    const bytes = new TextEncoder().encode(text);
+                    const results = [];
+                    for (let split = 0; split <= bytes.length; split++) {
+                        const decoder = new TextDecoder();
+                        results.push(decoder.decode(bytes.subarray(0, split), { stream: true }) + decoder.decode(bytes.subarray(split)) === text);
+                    }
+                    return Response.json({ length: bytes.length, ok: results.every(Boolean), lossy: new TextDecoder().decode(new Uint8Array([0x61, 0xff])) });
+                }
+            ";
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.json::<serde_json::Value>().await.unwrap(),
+                serde_json::json!({ "length": 11, "ok": true, "lossy": "a\u{FFFD}" })
+            );
         }
 
         #[tokio::test]

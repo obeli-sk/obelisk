@@ -15,13 +15,17 @@ use hyper::{HeaderMap, Response, StatusCode, body::Bytes};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, HashMap},
     rc::Rc,
     sync::Arc,
 };
+use tokio::sync::{mpsc, oneshot};
 use types::obelisk::webhook::webhook_support::Host as WebhookSupportHost;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
+
+/// Response whose body the isolate keeps writing after the headers were sent.
+pub(super) type StreamedResponse = Response<HyperOutgoingBody>;
 
 pub(super) struct NativeRequest {
     pub method: String,
@@ -37,6 +41,62 @@ pub(super) struct NativeResponse {
     pub status_text: String,
     pub headers: Vec<(String, String)>,
     pub body: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeResponseHead {
+    status: u16,
+    status_text: String,
+    headers: Vec<(String, String)>,
+}
+
+enum BodyEvent {
+    Data(Bytes),
+    End,
+    Error(String),
+}
+
+/// Response body fed by the isolate; ends with an error unless JS closed it.
+struct ChannelBody {
+    events: mpsc::Receiver<BodyEvent>,
+    done: bool,
+}
+
+impl hyper::body::Body for ChannelBody {
+    type Data = Bytes;
+    type Error = wasmtime_wasi_http::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+        if self.done {
+            return std::task::Poll::Ready(None);
+        }
+        let event = std::task::ready!(self.events.poll_recv(cx));
+        std::task::Poll::Ready(match event {
+            Some(BodyEvent::Data(data)) => Some(Ok(hyper::body::Frame::data(data))),
+            Some(BodyEvent::End) => {
+                self.done = true;
+                None
+            }
+            Some(BodyEvent::Error(reason)) => {
+                self.done = true;
+                Some(Err(wasmtime_wasi_http::Error::InternalError(Some(reason))))
+            }
+            None => {
+                self.done = true;
+                Some(Err(wasmtime_wasi_http::Error::InternalError(Some(
+                    "webhook ended without finishing the response body".into(),
+                ))))
+            }
+        })
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.done
+    }
 }
 
 pub(super) enum NativeWebhookFailure {
@@ -76,6 +136,13 @@ struct HostState {
     panic: crate::v8_panic::V8PanicState,
     /// Module specifier -> deployment-relative file name, for backtrace frames.
     user_module_paths: HashMap<String, String>,
+    /// Taken by the first `op_webhook_respond_stream`.
+    stream: Option<oneshot::Sender<StreamedResponse>>,
+    body: Option<mpsc::Sender<BodyEvent>>,
+    /// Set once headers were sent; the request deadline no longer applies.
+    responded: Rc<Cell<bool>>,
+    fetch_bodies: HashMap<u32, crate::http_hooks::NativeHttpBody>,
+    next_fetch_rid: u32,
 }
 
 impl HostState {
@@ -177,17 +244,27 @@ async fn op_webhook_sleep(
 async fn op_webhook_fetch(
     state: Rc<RefCell<OpState>>,
     #[serde] request: FetchRequest,
-) -> Result<crate::http_hooks::NativeHttpResponse, JsErrorBox> {
+) -> Result<FetchHead, JsErrorBox> {
     let panic = state.borrow().borrow::<HostState>().panic.clone();
     panic
         .catch_async(op_webhook_fetch_inner(state, request))
         .await
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FetchHead {
+    status: u16,
+    status_text: String,
+    headers: Vec<(String, String)>,
+    /// Handle of the body for `op_webhook_fetch_read`.
+    rid: u32,
+}
+
 async fn op_webhook_fetch_inner(
     state: Rc<RefCell<OpState>>,
     request: FetchRequest,
-) -> Result<crate::http_hooks::NativeHttpResponse, JsErrorBox> {
+) -> Result<FetchHead, JsErrorBox> {
     let method = request
         .method
         .parse()
@@ -201,7 +278,7 @@ async fn op_webhook_fetch_inner(
         let host = state.borrow_mut::<HostState>();
         host.ctx()
             .http_hooks
-            .send_native_request(
+            .send_native_request_streaming(
                 method,
                 uri,
                 crate::http_hooks::native_request_headers(request.headers)
@@ -210,7 +287,157 @@ async fn op_webhook_fetch_inner(
             )
             .map_err(JsErrorBox::generic)?
     };
-    pending_request.await.map_err(JsErrorBox::generic)
+    let (head, body) = pending_request.await.map_err(JsErrorBox::generic)?;
+    let mut state = state.borrow_mut();
+    let host = state.borrow_mut::<HostState>();
+    let rid = host.next_fetch_rid;
+    host.next_fetch_rid += 1;
+    host.fetch_bodies.insert(rid, body);
+    Ok(FetchHead {
+        status: head.status,
+        status_text: head.status_text,
+        headers: head.headers,
+        rid,
+    })
+}
+
+fn take_fetch_body(
+    state: &RefCell<OpState>,
+    rid: u32,
+) -> Result<crate::http_hooks::NativeHttpBody, JsErrorBox> {
+    state
+        .borrow_mut()
+        .borrow_mut::<HostState>()
+        .fetch_bodies
+        .remove(&rid)
+        .ok_or_else(|| JsErrorBox::type_error("fetch response body is already consumed"))
+}
+
+/// Next chunk of a fetch response body; empty at the end.
+#[op2(async(deferred), fast)]
+#[buffer]
+async fn op_webhook_fetch_read(
+    state: Rc<RefCell<OpState>>,
+    #[smi] rid: u32,
+) -> Result<Vec<u8>, JsErrorBox> {
+    let panic = state.borrow().borrow::<HostState>().panic.clone();
+    panic
+        .catch_async(async move {
+            let mut body = take_fetch_body(&state, rid)?;
+            let chunk = body.next_chunk().await.map_err(JsErrorBox::generic)?;
+            Ok(if let Some(chunk) = chunk {
+                state
+                    .borrow_mut()
+                    .borrow_mut::<HostState>()
+                    .fetch_bodies
+                    .insert(rid, body);
+                chunk.to_vec()
+            } else {
+                Vec::new()
+            })
+        })
+        .await
+}
+
+#[op2(async(deferred), fast)]
+#[string]
+async fn op_webhook_fetch_text(
+    state: Rc<RefCell<OpState>>,
+    #[smi] rid: u32,
+) -> Result<String, JsErrorBox> {
+    let panic = state.borrow().borrow::<HostState>().panic.clone();
+    panic
+        .catch_async(async move {
+            let body = take_fetch_body(&state, rid)?
+                .collect()
+                .await
+                .map_err(JsErrorBox::generic)?;
+            Ok(String::from_utf8_lossy(&body).into_owned())
+        })
+        .await
+}
+
+#[op2(fast)]
+fn op_webhook_fetch_close(state: &mut OpState, #[smi] rid: u32) {
+    state.borrow_mut::<HostState>().fetch_bodies.remove(&rid);
+}
+
+/// Sends the response headers; the body follows through `op_webhook_body_*`.
+#[op2]
+fn op_webhook_respond_stream(
+    state: &mut OpState,
+    #[serde] head: NativeResponseHead,
+) -> Result<(), JsErrorBox> {
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic.catch(|| {
+        let host = state.borrow_mut::<HostState>();
+        let stream = host
+            .stream
+            .take()
+            .ok_or_else(|| JsErrorBox::generic("response was already sent"))?;
+        let (sender, events) = mpsc::channel(8);
+        let response = hyper_response(
+            head,
+            UnsyncBoxBody::new(ChannelBody {
+                events,
+                done: false,
+            }),
+        )
+        .map_err(JsErrorBox::type_error)?;
+        host.body = Some(sender);
+        host.responded.set(true);
+        // The supervisor only drops the receiver after giving up on the request.
+        let _ = stream.send(response);
+        Ok(())
+    })
+}
+
+/// Returns false once the client stopped reading.
+#[op2(async(deferred), fast)]
+async fn op_webhook_body_write(
+    state: Rc<RefCell<OpState>>,
+    #[buffer(copy)] chunk: Bytes,
+) -> Result<bool, JsErrorBox> {
+    let (panic, sender) = {
+        let state = state.borrow();
+        let host = state.borrow::<HostState>();
+        (host.panic.clone(), host.body.clone())
+    };
+    panic
+        .catch_async(async move {
+            let sender = sender.ok_or_else(|| JsErrorBox::generic("response body is not open"))?;
+            Ok(sender.send(BodyEvent::Data(chunk)).await.is_ok())
+        })
+        .await
+}
+
+async fn finish_body(state: Rc<RefCell<OpState>>, event: BodyEvent) -> Result<(), JsErrorBox> {
+    let (panic, sender) = {
+        let mut state = state.borrow_mut();
+        let host = state.borrow_mut::<HostState>();
+        (host.panic.clone(), host.body.take())
+    };
+    panic
+        .catch_async(async move {
+            if let Some(sender) = sender {
+                let _ = sender.send(event).await;
+            }
+            Ok(())
+        })
+        .await
+}
+
+#[op2(async(deferred), fast)]
+async fn op_webhook_body_close(state: Rc<RefCell<OpState>>) -> Result<(), JsErrorBox> {
+    finish_body(state, BodyEvent::End).await
+}
+
+#[op2(async(deferred), fast)]
+async fn op_webhook_body_abort(
+    state: Rc<RefCell<OpState>>,
+    #[string] reason: String,
+) -> Result<(), JsErrorBox> {
+    finish_body(state, BodyEvent::Error(reason)).await
 }
 
 #[op2]
@@ -258,6 +485,13 @@ deno_core::extension!(
         op_webhook_env,
         op_webhook_sleep,
         op_webhook_fetch,
+        op_webhook_fetch_read,
+        op_webhook_fetch_text,
+        op_webhook_fetch_close,
+        op_webhook_respond_stream,
+        op_webhook_body_write,
+        op_webhook_body_close,
+        op_webhook_body_abort,
         op_webhook_host
     ]
 );
@@ -271,9 +505,10 @@ pub(super) async fn execute(
     ctx: &mut WebhookEndpointCtx,
     handle: tokio::runtime::Handle,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
+    stream_tx: oneshot::Sender<StreamedResponse>,
     max_heap_size: Option<usize>,
     request_deadline: tokio::time::Instant,
-) -> Result<NativeResponse, NativeWebhookFailure> {
+) -> Result<Option<NativeResponse>, NativeWebhookFailure> {
     let mut connection_drop_watcher = ctx.connection_drop_watcher.clone();
     let mut server_termination_watcher = ctx.server_termination_watcher.clone();
     let loader = Rc::new(InMemoryModuleLoader::new(
@@ -293,6 +528,7 @@ pub(super) async fn execute(
         },
         max_heap_size,
     );
+    let responded = Rc::new(Cell::new(false));
     let execution = execute_inner(
         &mut runtime,
         &loader,
@@ -302,13 +538,29 @@ pub(super) async fn execute(
         ctx,
         handle,
         isolate_tx,
+        StreamState {
+            sender: stream_tx,
+            responded: responded.clone(),
+        },
         imports.dispatch_policy.clone(),
     );
+    // The deadline bounds the time to headers only.
+    let deadline = async {
+        tokio::time::sleep_until(request_deadline).await;
+        if responded.get() {
+            std::future::pending::<()>().await;
+        }
+    };
     let result = tokio::select! {
         result = execution => result,
-        _ = connection_drop_watcher.changed() => Err(NativeWebhookFailure::Execution("connection closed".into())),
+        // A client leaving a streamed response is the normal end of e.g. an SSE stream.
+        _ = connection_drop_watcher.changed() => if responded.get() {
+            Ok(None)
+        } else {
+            Err(NativeWebhookFailure::Execution("connection closed".into()))
+        },
         _ = server_termination_watcher.changed() => Err(NativeWebhookFailure::Execution("server shutdown requested".into())),
-        () = tokio::time::sleep_until(request_deadline) => Err(NativeWebhookFailure::Timeout),
+        () = deadline => Err(NativeWebhookFailure::Timeout),
     };
     if heap.exhausted() {
         Err(NativeWebhookFailure::Execution(
@@ -317,6 +569,11 @@ pub(super) async fn execute(
     } else {
         result
     }
+}
+
+struct StreamState {
+    sender: oneshot::Sender<StreamedResponse>,
+    responded: Rc<Cell<bool>>,
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -329,8 +586,10 @@ async fn execute_inner(
     ctx: &mut WebhookEndpointCtx,
     handle: tokio::runtime::Handle,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
+    stream: StreamState,
     dispatch_policy: Arc<JsDispatchPolicy>,
-) -> Result<NativeResponse, NativeWebhookFailure> {
+) -> Result<Option<NativeResponse>, NativeWebhookFailure> {
+    let responded = stream.responded.clone();
     let isolate = runtime.v8_isolate().thread_safe_handle();
     let _ = isolate_tx.send(isolate.clone());
     let panic = crate::v8_panic::V8PanicState::new(isolate);
@@ -341,6 +600,11 @@ async fn execute_inner(
         env,
         panic: panic.clone(),
         user_module_paths: crate::v8_backtrace::user_module_paths(&loader.paths),
+        stream: Some(stream.sender),
+        body: None,
+        responded: stream.responded,
+        fetch_bodies: HashMap::new(),
+        next_fetch_rid: 0,
     });
     runtime.op_state().borrow_mut().put(panic.clone());
     runtime
@@ -383,12 +647,16 @@ async fn execute_inner(
         }
         return Err(NativeWebhookFailure::Execution(reason));
     }
+    if responded.get() {
+        return Ok(None);
+    }
     let value = runtime
         .execute_script("obelisk:webhook-response", "globalThis.__obeliskResponse")
         .map_err(|err| NativeWebhookFailure::Execution(err.to_string()))?;
     deno_core::scope!(scope, runtime);
     let local = deno_core::v8::Local::new(scope, value);
     deno_core::serde_v8::from_v8::<NativeResponse>(scope, local)
+        .map(Some)
         .map_err(|err| NativeWebhookFailure::Execution(err.to_string()))
 }
 
@@ -404,6 +672,23 @@ fn request_to_json(request: NativeRequest) -> Value {
 pub(super) fn into_hyper_response(
     response: NativeResponse,
 ) -> Result<Response<HyperOutgoingBody>, String> {
+    hyper_response(
+        NativeResponseHead {
+            status: response.status,
+            status_text: response.status_text,
+            headers: response.headers,
+        },
+        UnsyncBoxBody::new(http_body_util::BodyExt::map_err(
+            http_body_util::Full::new(Bytes::from(response.body)),
+            |_| unreachable!(),
+        )),
+    )
+}
+
+fn hyper_response(
+    response: NativeResponseHead,
+    body: HyperOutgoingBody,
+) -> Result<Response<HyperOutgoingBody>, String> {
     let mut headers = HeaderMap::new();
     for (name, value) in response.headers {
         let name = name
@@ -414,10 +699,7 @@ pub(super) fn into_hyper_response(
             .map_err(|e| e.to_string())?;
         headers.append(name, value);
     }
-    let mut result = Response::new(UnsyncBoxBody::new(http_body_util::BodyExt::map_err(
-        http_body_util::Full::new(Bytes::from(response.body)),
-        |_| unreachable!(),
-    )));
+    let mut result = Response::new(body);
     let status = StatusCode::from_u16(response.status).map_err(|e| e.to_string())?;
     // `""` is the Fetch default, so treat it as unset and let hyper write the canonical phrase.
     if !response.status_text.is_empty() {
@@ -819,15 +1101,67 @@ class URLSearchParams {
 class URL { constructor(input,base){const value=String(input);const match=/^(https?):\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/.exec(value);if(!match)throw new TypeError(`Invalid URL: ${value}`);this.protocol=`${match[1]}:`;this.host=match[2];this.hostname=this.host.split(':')[0];this.pathname=match[3]||'/';this.hash=match[5]?`#${match[5]}`:'';this.searchParams=new URLSearchParams(match[4]||'',query=>{this.search=query?`?${query}`:'';});this.search=match[4]?`?${match[4]}`:'';} get origin(){return `${this.protocol}//${this.host}`;} get href(){return `${this.origin}${this.pathname}${this.search}${this.hash}`;} toString(){return this.href;} }
 globalThis.URLSearchParams = URLSearchParams;
 globalThis.URL = URL;
-class TextEncoder { encode(value = '') { const encoded = unescape(encodeURIComponent(String(value))); return Uint8Array.from(encoded, char => char.charCodeAt(0)); } }
-class TextDecoder { decode(value = new Uint8Array()) { const bytes = value instanceof Uint8Array ? value : new Uint8Array(value); return decodeURIComponent(escape(String.fromCharCode(...bytes))); } }
+const toBytes = value => { if (typeof value === 'string') return Deno.core.encode(value); if (value instanceof Uint8Array) return value; if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength); if (value instanceof ArrayBuffer) return new Uint8Array(value); throw new TypeError('body chunk must be a string, an ArrayBuffer or an ArrayBufferView'); };
+const concatBytes = (a, b) => { const joined = new Uint8Array(a.length + b.length); joined.set(a); joined.set(b, a.length); return joined; };
+// Length of an incomplete UTF-8 sequence at the end of `bytes`.
+const incompleteTail = bytes => { for (let back = 1; back <= Math.min(3, bytes.length); back++) { const byte = bytes[bytes.length - back]; if ((byte & 0xc0) !== 0x80) { const need = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1; return need > back ? back : 0; } } return 0; };
+class TextEncoder { get encoding() { return 'utf-8'; } encode(value = '') { return Deno.core.encode(String(value)); } }
+class TextDecoder { constructor(label = 'utf-8') { if (!/^utf-?8$/i.test(String(label))) throw new RangeError(`unsupported encoding: ${label}`); this._pending = new Uint8Array(0); } get encoding() { return 'utf-8'; } decode(value = new Uint8Array(), options = {}) { let bytes = value instanceof ArrayBuffer || ArrayBuffer.isView(value) ? toBytes(value) : new Uint8Array(value); if (this._pending.length) { bytes = concatBytes(this._pending, bytes); this._pending = new Uint8Array(0); } const keep = options.stream ? incompleteTail(bytes) : 0; if (keep) { this._pending = bytes.slice(bytes.length - keep); bytes = bytes.subarray(0, bytes.length - keep); } return Deno.core.decode(bytes); } }
+class ReadableStreamDefaultController {
+  constructor(stream) { this._stream = stream; }
+  get desiredSize() { const stream = this._stream; return stream._state === 'errored' ? null : stream._state === 'closed' ? 0 : stream._highWaterMark - stream._queue.length; }
+  enqueue(chunk) { const stream = this._stream; if (stream._closeRequested || stream._state !== 'readable') throw new TypeError('ReadableStream is closed'); if (stream._waiters.length) stream._waiters.shift().resolve({ value: chunk, done: false }); else stream._queue.push(chunk); stream._pullIfNeeded(); }
+  close() { const stream = this._stream; if (stream._closeRequested || stream._state !== 'readable') throw new TypeError('ReadableStream is closed'); stream._closeRequested = true; if (!stream._queue.length) stream._finish(); }
+  error(reason) { this._stream._fail(reason); }
+}
+class ReadableStreamDefaultReader {
+  constructor(stream) { if (stream._locked) throw new TypeError('ReadableStream is locked'); stream._locked = true; this._stream = stream; }
+  read() { return this._stream ? this._stream._read() : Promise.reject(new TypeError('reader was released')); }
+  cancel(reason) { return this._stream ? this._stream._cancel(reason) : Promise.reject(new TypeError('reader was released')); }
+  releaseLock() { if (this._stream) { this._stream._locked = false; this._stream = null; } }
+}
+class ReadableStream {
+  constructor(source = {}, strategy = {}) {
+    Object.assign(this, { _source: source, _queue: [], _waiters: [], _state: 'readable', _closeRequested: false, _started: false, _pulling: false, _pullAgain: false, _locked: false, _highWaterMark: strategy.highWaterMark ?? 1 });
+    this._controller = new ReadableStreamDefaultController(this);
+    Promise.resolve(source.start?.(this._controller)).then(() => { this._started = true; this._pullIfNeeded(); }, reason => this._fail(reason));
+  }
+  _pullIfNeeded() {
+    if (!this._started || this._state !== 'readable' || this._closeRequested || !this._source.pull || (!this._waiters.length && this._queue.length >= this._highWaterMark)) return;
+    if (this._pulling) { this._pullAgain = true; return; }
+    this._pulling = true;
+    Promise.resolve().then(() => this._source.pull(this._controller)).then(() => { this._pulling = false; if (this._pullAgain) { this._pullAgain = false; this._pullIfNeeded(); } }, reason => this._fail(reason));
+  }
+  _finish() { this._state = 'closed'; for (const waiter of this._waiters.splice(0)) waiter.resolve({ value: undefined, done: true }); }
+  _fail(reason) { if (this._state !== 'readable') return; this._state = 'errored'; this._error = reason; this._queue = []; for (const waiter of this._waiters.splice(0)) waiter.reject(reason); }
+  _read() {
+    if (this._queue.length) { const value = this._queue.shift(); if (this._closeRequested && !this._queue.length) this._finish(); else this._pullIfNeeded(); return Promise.resolve({ value, done: false }); }
+    if (this._state === 'closed') return Promise.resolve({ value: undefined, done: true });
+    if (this._state === 'errored') return Promise.reject(this._error);
+    return new Promise((resolve, reject) => { this._waiters.push({ resolve, reject }); this._pullIfNeeded(); });
+  }
+  async _cancel(reason) { if (this._state === 'errored') throw this._error; if (this._state === 'closed') return; this._queue = []; this._finish(); await this._source.cancel?.(reason); }
+  get locked() { return this._locked; }
+  getReader() { return new ReadableStreamDefaultReader(this); }
+  cancel(reason) { return this._locked ? Promise.reject(new TypeError('ReadableStream is locked')) : this._cancel(reason); }
+  values() { const reader = this.getReader(); return { next: () => reader.read(), return: async value => { await reader.cancel(); reader.releaseLock(); return { value, done: true }; }, [Symbol.asyncIterator]() { return this; } }; }
+  [Symbol.asyncIterator]() { return this.values(); }
+}
+globalThis.ReadableStream = ReadableStream; globalThis.ReadableStreamDefaultReader = ReadableStreamDefaultReader; globalThis.ReadableStreamDefaultController = ReadableStreamDefaultController;
 globalThis.TextEncoder = TextEncoder; globalThis.TextDecoder = TextDecoder;
 class Headers { constructor(init = []) { this.entries = init instanceof Headers ? [...init] : Array.isArray(init) ? init.map(([k,v]) => [String(k).toLowerCase(), String(v)]) : Object.entries(init).map(([k,v]) => [k.toLowerCase(), String(v)]); } get(name) { const values=this.entries.filter(([k]) => k === String(name).toLowerCase()).map(([,v])=>v); return values.length ? values.join(', ') : null; } has(name) { return this.get(name) !== null; } set(name,value) { const key=String(name).toLowerCase(); this.entries=this.entries.filter(([k])=>k!==key); this.entries.push([key,String(value)]); } append(name,value) { this.entries.push([String(name).toLowerCase(),String(value)]); } [Symbol.iterator]() { return this.entries[Symbol.iterator](); } }
 globalThis.Headers = Headers;
 class Request { constructor(input, options = {}) { if (typeof input === 'object' && input.__native) { Object.assign(this,input); this.headers=new Headers(input.headers); } else { this.url=String(input); this.method=options.method||'GET'; this.headers=new Headers(options.headers); this._body=options.body??''; } } async text(){return this._body??this.body??'';} async json(){return JSON.parse(await this.text());} async formData(){return Object.fromEntries(new URLSearchParams(await this.text()));} }
 globalThis.Request = Request;
-class Response { constructor(body = '', options = {}) { this._body=body == null ? '' : String(body); this.status=options.status??200; this.statusText=options.statusText===undefined?'':String(options.statusText); if(!/^[\t\x20-\x7e\x80-\xff]*$/.test(this.statusText)) throw new TypeError(`Invalid statusText: ${JSON.stringify(this.statusText)}`); this.ok=this.status>=200&&this.status<300; this.headers=new Headers(options.headers); } async text(){return this._body;} async json(){return JSON.parse(this._body);} static json(value, options = {}) { const response=new Response(JSON.stringify(value),options); if(!response.headers.has('content-type')) response.headers.set('content-type','application/json'); return response; } }
+class Response { constructor(body = '', options = {}) { this._rid=null; this._stream=null; if (body instanceof ReadableStream) { this._stream=body; this._body=null; } else { this._body=body == null ? '' : String(body); } this.status=options.status??200; this.statusText=options.statusText===undefined?'':String(options.statusText); if(!/^[\t\x20-\x7e\x80-\xff]*$/.test(this.statusText)) throw new TypeError(`Invalid statusText: ${JSON.stringify(this.statusText)}`); this.ok=this.status>=200&&this.status<300; this.headers=new Headers(options.headers); }
+  get body() { if (this._stream === null && this._rid !== null) { const rid=this._rid; this._rid=null; this._stream=new ReadableStream({ pull: async controller => { const chunk=await Deno.core.ops.op_webhook_fetch_read(rid); if (chunk.length) controller.enqueue(chunk); else controller.close(); }, cancel: () => Deno.core.ops.op_webhook_fetch_close(rid) }, { highWaterMark: 0 }); } else if (this._stream === null) { const text=this._body; this._body=null; this._stream=new ReadableStream({ start: controller => { if (text) controller.enqueue(Deno.core.encode(text)); controller.close(); } }); } return this._stream; }
+  async text() { if (this._body !== null) return this._body; if (this._rid !== null) { const rid=this._rid; this._rid=null; this._body=await Deno.core.ops.op_webhook_fetch_text(rid); return this._body; } const reader=this._stream.getReader(); let bytes=new Uint8Array(0); for (let next=await reader.read(); !next.done; next=await reader.read()) bytes=concatBytes(bytes, toBytes(next.value)); reader.releaseLock(); this._stream=null; this._body=Deno.core.decode(bytes); return this._body; }
+  async json(){return JSON.parse(await this.text());} static json(value, options = {}) { const response=new Response(JSON.stringify(value),options); if(!response.headers.has('content-type')) response.headers.set('content-type','application/json'); return response; } }
 globalThis.Response = Response;
-globalThis.fetch = async (input, options = {}) => { const request=input instanceof Request?input:new Request(input,options); const data=await Deno.core.ops.op_webhook_fetch({url:request.url,method:request.method,headers:[...request.headers],body:request._body}); return new Response(data.body,{status:data.status,statusText:data.statusText,headers:data.headers}); };
-globalThis.__obeliskInvoke = async (handler, data) => { const request=new Request({__native:true,url:data.url,method:data.method,headers:data.headers,_body:data.body}); const response=await handler(request); if(!(response instanceof Response)) throw new TypeError('handler must return a Response (e.g. `new Response(...)` or `Response.json(...)`)'); return {status:response.status,statusText:response.statusText,headers:[...response.headers],body:await response.text()}; };
+globalThis.fetch = async (input, options = {}) => { const request=input instanceof Request?input:new Request(input,options); const data=await Deno.core.ops.op_webhook_fetch({url:request.url,method:request.method,headers:[...request.headers],body:request._body}); const response=new Response(null,{status:data.status,statusText:data.statusText,headers:data.headers}); response._body=null; response._rid=data.rid; return response; };
+globalThis.__obeliskInvoke = async (handler, data) => { const request=new Request({__native:true,url:data.url,method:data.method,headers:data.headers,_body:data.body}); const response=await handler(request); if(!(response instanceof Response)) throw new TypeError('handler must return a Response (e.g. `new Response(...)` or `Response.json(...)`)'); const head={status:response.status,statusText:response.statusText,headers:[...response.headers]}; if (response._stream === null && response._rid === null) return {...head,body:await response.text()};
+  const reader=response.body.getReader(); Deno.core.ops.op_webhook_respond_stream(head);
+  try { let open=true; for (let next=await reader.read(); open && !next.done; next=open ? await reader.read() : next) { const bytes=toBytes(next.value); if (bytes.length && !await Deno.core.ops.op_webhook_body_write(bytes)) { open=false; await reader.cancel(); } } }
+  catch (err) { await Deno.core.ops.op_webhook_body_abort(String(err)); throw err; }
+  await Deno.core.ops.op_webhook_body_close(); return undefined; };
 ";
