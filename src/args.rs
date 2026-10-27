@@ -989,6 +989,9 @@ pub(crate) enum Execution {
         /// Follow logs until the execution finishes, then print its result.
         #[arg(long)]
         follow_logs: bool,
+        /// Include logs from child (derived) executions while following logs.
+        #[arg(long, requires = "follow_logs")]
+        show_derived: bool,
         /// Do not attempt to reconnect on connection error while following the status stream.
         #[arg(long)]
         no_reconnect: bool,
@@ -1438,6 +1441,7 @@ mod tests {
             "submit",
             "--follow-logs",
             "--no-reconnect",
+            "--show-derived",
             "example:pkg/interface.function",
         ])
         .unwrap();
@@ -1447,6 +1451,7 @@ mod tests {
                 Execution::Submit {
                     follow,
                     follow_logs,
+                    show_derived,
                     no_reconnect,
                     ..
                 },
@@ -1458,6 +1463,17 @@ mod tests {
         assert!(!follow);
         assert!(follow_logs);
         assert!(no_reconnect);
+        assert!(show_derived);
+
+        let err = Args::try_parse_from([
+            "obelisk",
+            "execution",
+            "submit",
+            "--show-derived",
+            "example:pkg/interface.function",
+        ])
+        .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 
     #[test]
