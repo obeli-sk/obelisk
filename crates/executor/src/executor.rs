@@ -677,6 +677,7 @@ impl ExecTask {
                 event: ExecutionRequest::Finished {
                     retval: result,
                     http_client_traces: None,
+                    http_response: None,
                 },
             },
             execution_id,
@@ -791,6 +792,7 @@ impl ExecTask {
                     event: ExecutionRequest::Finished {
                         retval: result,
                         http_client_traces,
+                        http_response: None,
                     },
                 };
 
@@ -859,6 +861,7 @@ impl ExecTask {
                                 ExecutionRequest::Finished {
                                     retval: result,
                                     http_client_traces,
+                                    http_response: None,
                                 },
                                 child_finished,
                                 version,
@@ -913,6 +916,7 @@ impl ExecTask {
                                 ExecutionRequest::Finished {
                                     retval: result,
                                     http_client_traces,
+                                    http_response: None,
                                 },
                                 child_finished,
                                 version,
@@ -958,6 +962,7 @@ impl ExecTask {
                             ExecutionRequest::Finished {
                                 retval: result,
                                 http_client_traces: None,
+                                http_response: None,
                             },
                             child_finished,
                             version,
@@ -1432,7 +1437,8 @@ mod tests {
             ExecutionEvent {
                 event: ExecutionRequest::Finished {
                     retval: SupportedFunctionReturnValue::Ok(None),
-                    http_client_traces: None
+                    http_client_traces: None,
+                    http_response: None
                 },
                 created_at: _,
                 backtrace_id: None,
@@ -1490,7 +1496,8 @@ mod tests {
             ExecutionEvent {
                 event: ExecutionRequest::Finished {
                     retval: SupportedFunctionReturnValue::Ok(None),
-                    http_client_traces: None
+                    http_client_traces: None,
+                    http_response: None
                 },
                 created_at: _,
                 backtrace_id: None,
@@ -1772,7 +1779,8 @@ mod tests {
             ExecutionEvent {
                 event: ExecutionRequest::Finished {
                     retval: SupportedFunctionReturnValue::Ok(None),
-                    http_client_traces: None
+                    http_client_traces: None,
+                    http_response: None
                 },
                 created_at: finished_at,
                 backtrace_id: None,
@@ -1835,7 +1843,8 @@ mod tests {
             ExecutionEvent {
                 event: ExecutionRequest::Finished{
                     retval: SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure{reason, kind, detail}),
-                    http_client_traces: None
+                    http_client_traces: None,
+                    http_response: None
                 },
                 created_at: at,
                 backtrace_id: None,
@@ -2068,7 +2077,8 @@ mod tests {
         assert_eq!(
             ExecutionRequest::Finished {
                 retval: SupportedFunctionReturnValue::ExecutionFailure(expected_child_err),
-                http_client_traces: None
+                http_client_traces: None,
+                http_response: None,
             },
             child_log.last_event().event
         );

@@ -198,6 +198,7 @@ impl Worker for CronWorker {
                 event: ExecutionRequest::Finished {
                     retval: concepts::SupportedFunctionReturnValue::Ok(None),
                     http_client_traces: None,
+                    http_response: None,
                 },
             },
             Some(next_fire) => {
@@ -698,6 +699,7 @@ mod tests {
                 event: ExecutionRequest::Finished {
                     retval: concepts::SupportedFunctionReturnValue::Ok(None),
                     http_client_traces: None,
+                    http_response: None,
                 },
             },
         )

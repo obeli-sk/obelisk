@@ -165,6 +165,7 @@ pub(crate) async fn tick(
                             event: ExecutionRequest::Finished {
                                 retval: finished_exec_result,
                                 http_client_traces: None,
+                                http_response: None,
                             },
                         },
                         execution_id: execution_id.clone(),

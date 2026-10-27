@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(webhook)* Setting `webhooks.persist_on_outbound_http = true` in `server.toml` also persists a
+  webhook execution when it sends an outbound HTTP request, so its HTTP client traces are kept.
+  It is off by default as it costs a database write per such request. The `Created` event's metadata records the incoming request
+  as `http:method` and `http:uri` (absolute URL including the query), and `created_at` is the
+  time the request was received. The `Finished` event gains `http_response` with the response
+  status, or the error when the webhook produced no response.
+
 ## [0.43.0-rc.10](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.9...v0.43.0-rc.10)
 
 This release candidate streams webhook response bodies from WASIp3 and JS webhooks, pools

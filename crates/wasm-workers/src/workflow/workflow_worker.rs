@@ -4855,6 +4855,7 @@ pub(crate) mod tests {
             event: ExecutionRequest::Finished {
                 retval: result.clone(),
                 http_client_traces: None,
+                http_response: None,
             },
         };
         db_connection

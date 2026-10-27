@@ -257,6 +257,7 @@ async fn persisted_value_guard_drops_oversized_http_traces(database: Database) {
                         },
                         resp: None,
                     }]),
+                    http_response: None,
                 },
             },
         )
@@ -397,6 +398,7 @@ async fn append_after_finish_should_not_be_possible(
             event: ExecutionRequest::Finished {
                 retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
+                http_response: None,
             },
             created_at,
         };
@@ -412,6 +414,7 @@ async fn append_after_finish_should_not_be_possible(
             event: ExecutionRequest::Finished {
                 retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
+                http_response: None,
             },
             created_at,
         };
@@ -1245,6 +1248,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
                         event: ExecutionRequest::Finished {
                             retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                             http_client_traces: None,
+                            http_response: None,
                         },
                     }],
                 },
@@ -1292,6 +1296,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
             event: ExecutionRequest::Finished {
                 retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                 http_client_traces: None,
+                http_response: None,
             },
         }];
 
@@ -2576,6 +2581,7 @@ async fn pause_finished_execution_should_fail(database: Database) {
                 event: ExecutionRequest::Finished {
                     retval: SupportedFunctionReturnValue::Ok(None),
                     http_client_traces: None,
+                    http_response: None,
                 },
             },
         )
@@ -3149,6 +3155,7 @@ async fn cannot_cancel_finished_execution(database: Database) {
                 event: ExecutionRequest::Finished {
                     retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                     http_client_traces: None,
+                    http_response: None,
                 },
             },
         )
@@ -4352,6 +4359,7 @@ async fn wait_for_finished_result_should_fetch_before_racing_with_timeout(databa
                 event: ExecutionRequest::Finished {
                     retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                     http_client_traces: None,
+                    http_response: None,
                 },
                 created_at: sim_clock.now(),
             },
@@ -5092,6 +5100,7 @@ async fn batch_reads_return_bounds_and_states(database: Database) {
                 event: ExecutionRequest::Finished {
                     retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                     http_client_traces: None,
+                    http_response: None,
                 },
             },
         )

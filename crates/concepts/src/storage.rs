@@ -481,6 +481,11 @@ pub enum ExecutionRequest {
         retval: SupportedFunctionReturnValue,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
         http_client_traces: Option<Vec<HttpClientTrace>>,
+        /// Response sent by a webhook endpoint execution.
+        // backcompat: 0.43.0-rc.10 events lack the field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
+        http_response: Option<http_client_trace::ResponseTrace>,
     },
 
     #[display("HistoryEvent({event})")]
@@ -3202,6 +3207,7 @@ async fn upsert_stub_finished(
         event: ExecutionRequest::Finished {
             retval: return_value.clone(),
             http_client_traces: None,
+            http_response: None,
         },
     };
     db_connection

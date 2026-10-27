@@ -5103,6 +5103,7 @@ mod tests {
             ExecutionRequest::Finished {
                 retval: SupportedFunctionReturnValue::Err(None),
                 http_client_traces: None,
+                http_response: None,
             }
             .to_string(),
             "Finished: Error"
@@ -5117,6 +5118,7 @@ mod tests {
                     },
                 ),
                 http_client_traces: None,
+                http_response: None,
             }
             .to_string(),
             "Finished: Execution failure (Uncategorized)"

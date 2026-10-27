@@ -857,6 +857,11 @@
           "default": {
             "seconds": 30
           }
+        },
+        "persist_on_outbound_http": {
+          "description": "Persist a webhook execution once it sends an outbound HTTP request, keeping its HTTP\nclient traces. Costs a database write per such request. Executions that schedule or call\nother executions, or store logs, are persisted regardless.",
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false

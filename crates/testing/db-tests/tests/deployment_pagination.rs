@@ -138,6 +138,7 @@ async fn finish_execution(
                 event: ExecutionRequest::Finished {
                     retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                     http_client_traces: None,
+                    http_response: None,
                 },
             },
         )

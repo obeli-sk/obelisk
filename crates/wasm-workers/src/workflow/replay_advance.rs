@@ -470,9 +470,11 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
         ExecutionRequest::Finished {
             retval,
             http_client_traces,
+            http_response,
         } => ExecutionRequest::Finished {
             retval,
             http_client_traces,
+            http_response,
         },
         ExecutionRequest::HistoryEvent { event } => ExecutionRequest::HistoryEvent {
             event: normalize_history_event_for_matching(event),
