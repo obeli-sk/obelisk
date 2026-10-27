@@ -6,12 +6,13 @@ on:
       - created
 
 permissions:
-  contents: write
+  contents: read
   issues: read
   pull-requests: read
 
+# Unrelated comments must not cancel a running fix.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.issue.number }}
+  group: ${{ github.workflow }}-${{ github.event.issue.number }}-${{ github.event.comment.body == 'fix' }}
   cancel-in-progress: true
 
 defaults:
@@ -51,8 +52,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Reject fork PRs
+        env:
+          HEAD_REPO: ${{ steps.pr.outputs.head_repo }}
+          BASE_REPO: ${{ steps.pr.outputs.base_repo }}
         run: |
-          if [ "${{ steps.pr.outputs.head_repo }}" != "${{ steps.pr.outputs.base_repo }}" ]; then
+          if [ "${HEAD_REPO}" != "${BASE_REPO}" ]; then
             echo "::error::fix only supports pull requests from branches in ${GITHUB_REPOSITORY}."
             exit 1
           fi
@@ -60,30 +64,43 @@ jobs:
   fix-part:
     needs: load-pr
     runs-on: ubuntu-24.04
+    env:
+      # kache 0.12 can report build-script hits without restoring Cargo's expected executable.
+      KACHE_CACHE_EXECUTABLES: "0"
     strategy:
       fail-fast: false
       matrix:
         include:
-          - part: cargo-hash
-            artifact: pr-fix-cargo-hash
-            commit_message: "chore: Update cargoHash"
+          - part: embedded-assets-hash
+            artifact: pr-fix-embedded-assets-hash
+            commit_message: "chore: Update embedded assets hash"
             needs_postgres: "false"
-            needs_rust_cache: "false"
+            cache: none
+            prepare_v8: "false"
+          - part: api-types
+            artifact: pr-fix-api-types
+            commit_message: "chore: Update API types"
+            needs_postgres: "false"
+            cache: kache
+            prepare_v8: "false"
           - part: schemas
             artifact: pr-fix-schemas
             commit_message: "chore: Update schemas"
             needs_postgres: "false"
-            needs_rust_cache: "false"
+            cache: kache
+            prepare_v8: "true"
           - part: snapshots
             artifact: pr-fix-snapshots
             commit_message: "chore: Update snapshots"
             needs_postgres: "true"
-            needs_rust_cache: "true"
+            cache: kache
+            prepare_v8: "true"
           - part: clippy
             artifact: pr-fix-clippy
-            commit_message: "chore: Run clippy"
+            commit_message: "style: Run clippy"
             needs_postgres: "false"
-            needs_rust_cache: "true"
+            cache: rust-cache
+            prepare_v8: "true"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -119,14 +136,40 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: matrix.needs_rust_cache == 'true'
+      # Wasmtime's codegen cache key includes the host CPU features, which differ across runner SKUs.
+      - id: cpu
+        if: matrix.part == 'snapshots'
+        run: |
+          grep -m1 '^model name' /proc/cpuinfo
+          echo "flags=$(grep -m1 '^flags' /proc/cpuinfo | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
+      # Reuse the test WASMs cached by check-test's `test.sh` job.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.part == 'snapshots'
         with:
-          cache-on-failure: true
-          key: pr-fix-${{ matrix.part }}
+          path: |
+            target/wasm-cache
+            test-codegen-cache
+            test-wasm-cache
+          key: wasm-cache-junit-default.xml-${{ runner.os }}-${{ steps.cpu.outputs.flags }}-${{ github.run_id }}
+          restore-keys: |
+            wasm-cache-junit-default.xml-${{ runner.os }}-${{ steps.cpu.outputs.flags }}-
+            wasm-cache-junit-default.xml-${{ runner.os }}-
+
+      - uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # main, post-v1: adds pr-comment input
+        if: matrix.cache == 'kache'
+        with:
+          pr-comment: false
+
+      # Restore the cache of check's `clippy` job without overwriting it with PR builds.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: matrix.cache == 'rust-cache'
+        with:
+          shared-key: clippy
+          save-if: false
 
       - name: Prepare V8
-        if: matrix.needs_rust_cache == 'true'
+        if: matrix.prepare_v8 == 'true'
         run: nix develop --command scripts/ci-prepare-v8.sh
 
       - name: Run fixer
@@ -139,8 +182,11 @@ jobs:
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
         run: |
           case "${{ matrix.part }}" in
-            cargo-hash)
-              ./scripts/update-cargo-hash.sh
+            embedded-assets-hash)
+              ./scripts/update-embedded-assets-hash.sh
+              ;;
+            api-types)
+              nix develop --command scripts/update-api-types.sh
               ;;
             schemas)
               nix develop --command scripts/update-schemas.sh
@@ -178,6 +224,10 @@ jobs:
     needs:
       - load-pr
       - fix-part
+    # Push the parts that succeeded even if another part failed.
+    if: ${{ !cancelled() && needs.load-pr.result == 'success' }}
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
 
     steps:
@@ -193,31 +243,31 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: pr-fix-*
           path: /tmp/pr-fix-artifacts
 
       - name: Apply patches
         run: |
-          for part in cargo-hash schemas snapshots clippy; do
+          for part in embedded-assets-hash api-types schemas snapshots clippy; do
             patch_file="/tmp/pr-fix-artifacts/pr-fix-${part}/update.patch"
-            if [ ! -f "${patch_file}" ]; then
+            if [ -f "${patch_file}" ]; then
+              git am --3way "${patch_file}"
+            else
               echo "No patch for ${part}"
-              continue
             fi
-
-            git am --3way "${patch_file}"
           done
 
       - name: Push changes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ needs.load-pr.outputs.head_ref }}
         run: |
-          if git diff --quiet HEAD origin/"${{ needs.load-pr.outputs.head_ref }}"; then
+          if git diff --quiet HEAD "origin/${HEAD_REF}"; then
             echo "No commits to push"
             exit 0
           fi
 
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            HEAD:${{ needs.load-pr.outputs.head_ref }}
+            "HEAD:refs/heads/${HEAD_REF}"
