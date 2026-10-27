@@ -614,6 +614,7 @@ pub struct WebhookServerState {
     pub fn_registry: Arc<dyn FunctionRegistry>,
     pub max_persisted_value_size_bytes: u64,
     pub request_timeout: Duration,
+    pub persist_on_outbound_http: bool,
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -683,6 +684,7 @@ pub async fn server(
                                         server_termination_watcher: server_termination_watcher.clone(),
                                         log_forwarder_sender: log_forwarder_sender.clone(),
                                         request_timeout: state.request_timeout,
+                                        persist_on_outbound_http: state.persist_on_outbound_http,
                                     }
                                     .handle_request(req, webhooks_wasm_cell.clone())
                                 }.instrument(info_span!(parent: &connection_span, "request", %deployment_id))
@@ -2100,6 +2102,7 @@ impl WebhookEndpointCtx {
         execution_id: ExecutionIdTopLevel,
         request_span: Span,
         incoming_request: IncomingRequest,
+        persist_on_outbound_http: bool,
         connection_drop_watcher: watch::Receiver<()>,
         server_termination_watcher: watch::Receiver<()>,
         stdout: Option<StdOutput>,
@@ -2218,7 +2221,7 @@ impl WebhookEndpointCtx {
                 component_name: config.component_id.name.to_string(),
                 deployment_id: Some(deployment_id),
                 db_pool: Some(db_pool),
-                webhook_execution_row: Some(execution_row),
+                webhook_execution_row: persist_on_outbound_http.then_some(execution_row),
             },
             last_direct_call_id: None,
             backtrace_persist: config.backtrace_persist,
@@ -2405,6 +2408,7 @@ struct RequestHandler {
     server_termination_watcher: watch::Receiver<()>,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     request_timeout: Duration,
+    persist_on_outbound_http: bool,
 }
 
 /// Response body whose drop (after the last frame or on client disconnect) is
@@ -2548,6 +2552,7 @@ impl RequestHandler {
                 self.execution_id,
                 request_span.clone(),
                 incoming_request,
+                self.persist_on_outbound_http,
                 self.connection_drop_watcher,
                 self.server_termination_watcher,
                 stdout,
@@ -3190,6 +3195,7 @@ pub(crate) mod tests {
             fn_registry,
             max_persisted_value_size_bytes: 1024,
             request_timeout: Duration::from_secs(30),
+            persist_on_outbound_http: false,
         }));
         let (log_sender, _log_receiver) = mpsc::channel(1);
         let server = tokio::spawn(webhook_trigger::server(
@@ -3386,6 +3392,7 @@ pub(crate) mod tests {
                     fn_registry,
                     max_persisted_value_size_bytes: MAX_PERSISTED_VALUE_SIZE_BYTES,
                     request_timeout: std::time::Duration::from_secs(30),
+                    persist_on_outbound_http: false,
                 });
                 let (wh_server_state_sender, wh_server_state_watcher) =
                     watch::channel(initial_state);
@@ -3520,6 +3527,7 @@ pub(crate) mod tests {
                     fn_registry: previous.fn_registry.clone(),
                     max_persisted_value_size_bytes: previous.max_persisted_value_size_bytes,
                     request_timeout: previous.request_timeout,
+                    persist_on_outbound_http: previous.persist_on_outbound_http,
                 }));
             assert_eq!(
                 harness
@@ -3907,6 +3915,7 @@ pub(crate) mod tests {
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
                     request_timeout: std::time::Duration::from_secs(30),
+                    persist_on_outbound_http: false,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -4097,6 +4106,7 @@ pub(crate) mod tests {
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
                     request_timeout: std::time::Duration::from_secs(30),
+                    persist_on_outbound_http: false,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -4266,6 +4276,7 @@ pub(crate) mod tests {
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
                     request_timeout: std::time::Duration::from_secs(30),
+                    persist_on_outbound_http: false,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -4464,6 +4475,7 @@ pub(crate) mod tests {
                 runtime,
                 None,
                 None,
+                false,
             )
             .await;
             (set, server_addr, guard)
@@ -4476,6 +4488,7 @@ pub(crate) mod tests {
             runtime: WebhookJsRuntime,
             logs_store_min_level: Option<concepts::storage::LogLevel>,
             v8_executor: Option<crate::v8_executor::V8Executor>,
+            persist_on_outbound_http: bool,
         ) -> (
             tokio::task::JoinSet<Result<(), WebhookServerError>>,
             SocketAddr,
@@ -4584,6 +4597,7 @@ pub(crate) mod tests {
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
                     request_timeout: std::time::Duration::from_secs(30),
+                    persist_on_outbound_http,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -4692,6 +4706,7 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn webhook_js_persists_http_client_traces(
             #[values(WebhookJsRuntime::BoaWasm, WebhookJsRuntime::V8)] runtime: WebhookJsRuntime,
+            #[values(false, true)] persist_on_outbound_http: bool,
         ) {
             use concepts::storage::{
                 ExecutionListPagination, ExecutionRequest, ListExecutionsFilter,
@@ -4711,7 +4726,7 @@ pub(crate) mod tests {
                 .mount(&mock_server)
                 .await;
             let url = mock_server.uri();
-            // No logs and no child executions: the outbound request alone persists the execution.
+            // No logs and no child executions: only the opt-in outbound request persistence applies.
             let js_source = format!(
                 r#"
                 export default async function handle(request) {{
@@ -4724,7 +4739,13 @@ pub(crate) mod tests {
             let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
             let (_server, server_addr, _termination_sender, db_pool, _db_guard, _db_close) =
                 start_js_webhook_server_with_http_and_db(
-                    &js_source, &allowed, None, runtime, None, None,
+                    &js_source,
+                    &allowed,
+                    None,
+                    runtime,
+                    None,
+                    None,
+                    persist_on_outbound_http,
                 )
                 .await;
             let resp = reqwest::get(format!("http://{server_addr}/?q=1"))
@@ -4740,6 +4761,10 @@ pub(crate) mod tests {
                 )
                 .await
                 .unwrap();
+            if !persist_on_outbound_http {
+                assert!(executions.is_empty(), "{executions:?}");
+                return;
+            }
             let [execution] = executions.as_slice() else {
                 panic!("expected one webhook execution, got {executions:?}");
             };
@@ -4906,6 +4931,7 @@ pub(crate) mod tests {
                     WebhookJsRuntime::V8,
                     Some(concepts::storage::LogLevel::Info),
                     Some(executor.clone()),
+                    false,
                 )
                 .await;
             let mut request = tokio::task::JoinSet::new();
@@ -5119,6 +5145,7 @@ pub(crate) mod tests {
                     WebhookJsRuntime::BoaWasm,
                     Some(concepts::storage::LogLevel::Info),
                     None,
+                    false,
                 )
                 .await;
             let mut resp = reqwest::get(format!("http://{addr}/")).await.unwrap();
@@ -5422,6 +5449,7 @@ pub(crate) mod tests {
                     WebhookJsRuntime::V8,
                     Some(concepts::storage::LogLevel::Info),
                     Some(executor.clone()),
+                    false,
                 )
                 .await;
             let mut resp = reqwest::get(format!("http://{addr}/")).await.unwrap();
@@ -5871,6 +5899,7 @@ pub(crate) mod tests {
                         fn_registry,
                         max_persisted_value_size_bytes: u64::MAX,
                         request_timeout: std::time::Duration::from_secs(30),
+                        persist_on_outbound_http: false,
                     }));
                 let mut server_set = tokio::task::JoinSet::new();
                 server_set.spawn(webhook_trigger::server(

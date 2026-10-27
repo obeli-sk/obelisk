@@ -2598,6 +2598,7 @@ struct ServerVerifiedLaunch {
     /// `limits.webhooks.wasm.memory`, applied to every WASM webhook store.
     webhooks_wasm_memory: Option<u64>,
     webhook_request_timeout: Duration,
+    webhook_persist_on_outbound_http: bool,
     build_semaphore: Option<u64>,
     max_persisted_value_size_bytes: u64,
     /// Bound on captured writes collected during a single replay pass. See
@@ -2759,6 +2760,7 @@ impl ServerVerified {
                 v8_executor,
                 webhooks_wasm_memory: component_cells.webhooks_wasm.memory(),
                 webhook_request_timeout,
+                webhook_persist_on_outbound_http: config.webhooks.persist_on_outbound_http,
                 build_semaphore,
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
                 workflows_max_replay_captured_writes,
@@ -2904,6 +2906,7 @@ impl ServerCompiledLinked {
                     fn_registry.clone(),
                     server_verified.max_persisted_value_size_bytes,
                     server_verified.webhook_request_timeout,
+                    server_verified.webhook_persist_on_outbound_http,
                 ));
                 (http_server, (webhooks, state))
             })
@@ -4637,6 +4640,7 @@ pub(crate) fn build_webhook_server_state(
     fn_registry: Arc<dyn FunctionRegistry>,
     max_persisted_value_size_bytes: u64,
     request_timeout: Duration,
+    persist_on_outbound_http: bool,
 ) -> WebhookServerState {
     let mut router = MethodAwareRouter::default();
     for (webhook_instance_linked, routes) in webhooks {
@@ -4660,6 +4664,7 @@ pub(crate) fn build_webhook_server_state(
         fn_registry,
         max_persisted_value_size_bytes,
         request_timeout,
+        persist_on_outbound_http,
     }
 }
 

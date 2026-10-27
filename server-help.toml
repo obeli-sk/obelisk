@@ -105,6 +105,10 @@
 ## return its HTTP response. It does not limit a streaming response body after the response
 ## has been returned.
 # request_timeout.seconds = 30
+## Persist a webhook execution once it sends an outbound HTTP request, keeping its HTTP client
+## traces. Costs a database write per such request. Executions that schedule or call other
+## executions, or store logs, are persisted regardless.
+# persist_on_outbound_http = false
 
 ## Outbound HTTP connection pool shared by all activities and webhooks.
 ## Idle HTTP/1 connections are reused per scheme, host and port.

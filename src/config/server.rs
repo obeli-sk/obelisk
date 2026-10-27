@@ -617,12 +617,18 @@ pub(crate) struct WebhooksGlobalConfigToml {
     /// deadline does not limit the lifetime of a streaming response body.
     #[serde(default = "default_webhook_request_timeout")]
     pub(crate) request_timeout: DurationConfig,
+    /// Persist a webhook execution once it sends an outbound HTTP request, keeping its HTTP
+    /// client traces. Costs a database write per such request. Executions that schedule or call
+    /// other executions, or store logs, are persisted regardless.
+    #[serde(default)]
+    pub(crate) persist_on_outbound_http: bool,
 }
 
 impl Default for WebhooksGlobalConfigToml {
     fn default() -> Self {
         Self {
             request_timeout: default_webhook_request_timeout(),
+            persist_on_outbound_http: false,
         }
     }
 }
