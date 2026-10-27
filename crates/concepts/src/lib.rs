@@ -1899,6 +1899,8 @@ pub struct ExecutionMetadata(MetadataMap, #[serde(skip)] Option<u64>);
 impl ExecutionMetadata {
     #[cfg(feature = "runtime")]
     const LINKED_KEY: &str = "obelisk-tracing-linked";
+    pub const HTTP_METHOD_KEY: &str = "http:method";
+    pub const HTTP_URI_KEY: &str = "http:uri";
 
     const EMPTY_MAP: MetadataMap = hashbrown::HashMap::with_hasher(BuildHasherDefault::new());
 
@@ -1929,6 +1931,19 @@ impl ExecutionMetadata {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Record the incoming request of a webhook endpoint execution.
+    #[must_use]
+    pub fn with_http_request(mut self, method: String, uri: String) -> Self {
+        self.0.insert(Self::HTTP_METHOD_KEY.to_string(), method);
+        self.0.insert(Self::HTTP_URI_KEY.to_string(), uri);
+        self
+    }
+
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).map(String::as_str)
     }
 
     #[cfg(feature = "runtime")]

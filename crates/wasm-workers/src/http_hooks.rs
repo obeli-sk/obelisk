@@ -77,6 +77,9 @@ pub(crate) struct HttpHooks {
     pub(crate) component_name: String,
     pub(crate) deployment_id: Option<DeploymentId>,
     pub(crate) db_pool: Option<Arc<dyn DbPool>>,
+    /// Webhook executions are persisted once they send an outbound request.
+    pub(crate) webhook_execution_row:
+        Option<Arc<crate::webhook::webhook_trigger::WebhookExecutionRow>>,
 }
 
 /// Generate a simplified host pattern for the TOML snippet.
@@ -211,9 +214,26 @@ type SendRequestFuture = Box<
 impl WasiHttpHooks for HttpHooks {
     fn send_request(
         &mut self,
-        mut request: hyper::Request<HyperOutgoingBody>,
+        request: hyper::Request<HyperOutgoingBody>,
         options: Option<RequestOptions>,
         _fut: Box<dyn Future<Output = Result<(), Error>> + Send>,
+    ) -> SendRequestFuture {
+        let response = self.send_request_traced(request, options);
+        match self.webhook_execution_row.clone() {
+            Some(execution_row) => Box::new(async move {
+                execution_row.ensure_created().await;
+                Box::into_pin(response).await
+            }),
+            None => response,
+        }
+    }
+}
+
+impl HttpHooks {
+    fn send_request_traced(
+        &mut self,
+        mut request: hyper::Request<HyperOutgoingBody>,
+        options: Option<RequestOptions>,
     ) -> SendRequestFuture {
         // Prepare request trace & channel
         let req = RequestTrace {
@@ -521,6 +541,7 @@ mod tests {
             component_name: "redirect-test".to_owned(),
             deployment_id: None,
             db_pool: None,
+            webhook_execution_row: None,
         };
 
         for status in [301, 302, 303, 307, 308] {

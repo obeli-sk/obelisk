@@ -129,6 +129,7 @@ pub(crate) fn store(
                 .as_ref()
                 .map(|(deployment_id, _)| *deployment_id),
             db_pool: system_events.map(|(_, db_pool)| db_pool),
+            webhook_execution_row: None,
         },
         component_logger,
     };

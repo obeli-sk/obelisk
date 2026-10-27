@@ -365,6 +365,7 @@ async fn append_finish_cancelled(
         event: ExecutionRequest::Finished {
             retval: retval.clone(),
             http_client_traces: None,
+            http_response: None,
         },
     });
     if let ExecutionId::Derived(derived) = &log.execution_id {

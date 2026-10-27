@@ -220,6 +220,17 @@
                   "items": {
                     "$ref": "#/$defs/HttpClientTrace"
                   }
+                },
+                "http_response": {
+                  "description": "Response sent by a webhook endpoint execution.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/ResponseTrace"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [

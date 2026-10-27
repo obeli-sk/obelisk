@@ -327,6 +327,7 @@ async fn apply_captured_write(
                         event: ExecutionRequest::Finished {
                             retval: retval.clone(),
                             http_client_traces: None,
+                            http_response: None,
                         },
                     }],
                 };
@@ -350,6 +351,7 @@ async fn apply_captured_write(
                         event: ExecutionRequest::Finished {
                             retval,
                             http_client_traces: None,
+                            http_response: None,
                         },
                     },
                 )

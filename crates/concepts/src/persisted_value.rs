@@ -492,6 +492,7 @@ mod tests {
                 },
                 resp: None,
             }]),
+            http_response: None,
         };
 
         assert!(event.drop_http_client_traces_to_fit(64));

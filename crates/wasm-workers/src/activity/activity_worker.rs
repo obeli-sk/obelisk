@@ -320,6 +320,7 @@ impl ActivityWorker {
                 component_name: self.config.component_id.name.to_string(),
                 deployment_id: self.system_events.as_ref().map(|(id, _)| *id),
                 db_pool: self.system_events.as_ref().map(|(_, db)| db.clone()),
+                webhook_execution_row: None,
             },
             env,
         };
@@ -1825,7 +1826,7 @@ pub(crate) mod tests {
         let exec_log = db_connection.get(&execution_id).await.unwrap();
         let (res, http_client_traces) = assert_matches!(
                 exec_log.last_event().event.clone(),
-                ExecutionRequest::Finished { retval, http_client_traces: Some(http_client_traces) }
+                ExecutionRequest::Finished { retval, http_client_traces: Some(http_client_traces), http_response: None }
                 => (retval, http_client_traces));
         let wast_val_with_type = assert_matches!(res, SupportedFunctionReturnValue::Ok(Some(wast_val_with_type)) => wast_val_with_type);
         let val = assert_matches!(wast_val_with_type.value, WastVal::String(val) => val);
@@ -1954,7 +1955,7 @@ pub(crate) mod tests {
         let exec_log = db_connection.get(&execution_id).await.unwrap();
         let (res, http_client_traces) = assert_matches!(
                 exec_log.last_event().event.clone(),
-                ExecutionRequest::Finished { retval, http_client_traces: Some(http_client_traces) }
+                ExecutionRequest::Finished { retval, http_client_traces: Some(http_client_traces), http_response: None }
                 => (retval, http_client_traces));
         let res = assert_matches!(res, SupportedFunctionReturnValue::ExecutionFailure(err) => err);
         let reason = assert_matches!(

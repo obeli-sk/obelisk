@@ -202,6 +202,7 @@ fn normalize_timestamps(
         | ExecutionRequest::Finished {
             retval: _,
             http_client_traces: _,
+            http_response: _,
         }
         | ExecutionRequest::Paused
         | ExecutionRequest::Unpaused
@@ -385,6 +386,7 @@ async fn persist_finished_event(
     let finished = ExecutionRequest::Finished {
         retval: SupportedFunctionReturnValue::Ok(Some(wast_val_with_type)),
         http_client_traces: None,
+        http_response: None,
     };
     // Finished
     let version = {

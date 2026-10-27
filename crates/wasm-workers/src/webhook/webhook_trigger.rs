@@ -19,7 +19,8 @@ use concepts::storage::{
     DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent,
     HistoryEventScheduleAt, JoinSetRequest, LogInfoAppendRow, LogLevel, LogStreamType,
     PendingState, PendingStateFinishedError, PendingStateFinishedResultKind, TimeoutOutcome,
-    Version, http_client_trace::HttpClientTrace,
+    Version,
+    http_client_trace::{HttpClientTrace, ResponseTrace},
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -762,7 +763,9 @@ pub(super) struct WebhookEndpointCtx {
     http_ctx: WasiHttpCtx,
     pub(super) execution_id: ExecutionIdTopLevel,
     next_join_set_idx: u64,
+    // Latest version after this context's own appends; `None` until it writes.
     version: Option<Version>,
+    execution_row: Arc<WebhookExecutionRow>,
     component_logger: ComponentLogger,
     subscription_interruption: Option<Duration>,
     pub(super) connection_drop_watcher: watch::Receiver<()>,
@@ -771,6 +774,55 @@ pub(super) struct WebhookEndpointCtx {
     // Execution id of the last `call-json`, for `last-direct-call-id`.
     pub(super) last_direct_call_id: Option<ExecutionIdDerived>,
     pub(super) backtrace_persist: bool,
+}
+
+pub(super) struct IncomingRequest {
+    received_at: chrono::DateTime<chrono::Utc>,
+    method: String,
+    uri: String,
+}
+
+/// Absolute URL of an incoming request, falling back to the `Host` header for the authority.
+fn absolute_request_url(uri: &Uri, headers: &hyper::HeaderMap) -> String {
+    if uri.scheme().is_some() {
+        uri.to_string()
+    } else if let Some(authority) = uri.authority().map(ToString::to_string).or_else(|| {
+        headers
+            .get(hyper::header::HOST)?
+            .to_str()
+            .ok()
+            .map(str::to_owned)
+    }) {
+        format!("http://{authority}{uri}")
+    } else {
+        uri.to_string()
+    }
+}
+
+/// Creates the webhook execution row at most once, shared with outbound HTTP hooks.
+pub(crate) struct WebhookExecutionRow {
+    db_pool: Arc<dyn DbPool>,
+    create_request: CreateRequest,
+    created: tokio::sync::OnceCell<Version>,
+}
+
+impl WebhookExecutionRow {
+    async fn get_or_create(&self) -> Result<Version, DbErrorWrite> {
+        self.created
+            .get_or_try_init(|| async {
+                let conn = self.db_pool.connection().await?;
+                conn.create(self.create_request.clone()).await
+            })
+            .await
+            .cloned()
+    }
+
+    /// Best-effort creation so the outbound HTTP traces get persisted on finish.
+    pub(crate) async fn ensure_created(&self) {
+        if let Err(err) = self.get_or_create().await {
+            debug!("Cannot persist outbound HTTP traces: failed to create execution row: {err:?}");
+        }
+    }
 }
 
 impl HostJoinSet for WebhookEndpointCtx {
@@ -1578,30 +1630,12 @@ impl WebhookEndpointCtx {
         }
     }
 
-    // Create new execution if this is the first call of the request/response cycle
+    // Create new execution if this is the first write of the request/response cycle
     async fn get_version_or_create(&mut self) -> Result<Version, DbErrorWrite> {
         if let Some(found) = &self.version {
             return Ok(found.clone());
         }
-        let created_at = self.clock_fn.now();
-        // Associate the top level execution with the request span. Allows to find the trace by execution id.
-        let metadata = concepts::ExecutionMetadata::from_parent_span(&self.component_logger.span);
-        let create_request = CreateRequest {
-            created_at,
-            execution_id: ExecutionId::TopLevel(self.execution_id),
-            ffqn: HTTP_HANDLER_FFQN,
-            params: Params::empty(),
-            parent: None,
-            metadata,
-            scheduled_at: created_at,
-            component_id: self.component_id.clone(),
-            deployment_id: self.deployment_id,
-            scheduled_by: None,
-            paused: false,
-            max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
-        };
-        let conn = self.db_pool.connection().await?;
-        let version = conn.create(create_request).await?;
+        let version = self.execution_row.get_or_create().await?;
         self.version = Some(version.clone());
         Ok(version)
     }
@@ -1611,6 +1645,7 @@ impl WebhookEndpointCtx {
     // configured min_level (no row would be appended anyway).
     async fn ensure_execution_row_for_log(&mut self, level: LogLevel) {
         if self.version.is_none()
+            && self.execution_row.created.get().is_none()
             && let Some(config) = &self.component_logger.logs_storage_config
             && (level as u8) >= (config.min_level as u8)
         {
@@ -2064,6 +2099,7 @@ impl WebhookEndpointCtx {
         params: impl Iterator<Item = (&'a str, &'a str)>,
         execution_id: ExecutionIdTopLevel,
         request_span: Span,
+        incoming_request: IncomingRequest,
         connection_drop_watcher: watch::Receiver<()>,
         server_termination_watcher: watch::Receiver<()>,
         stdout: Option<StdOutput>,
@@ -2131,6 +2167,26 @@ impl WebhookEndpointCtx {
             run_id,
             logs_storage_config,
         };
+        let execution_row = Arc::new(WebhookExecutionRow {
+            db_pool: db_pool.clone(),
+            create_request: CreateRequest {
+                created_at: incoming_request.received_at,
+                execution_id: ExecutionId::TopLevel(execution_id),
+                ffqn: HTTP_HANDLER_FFQN,
+                params: Params::empty(),
+                parent: None,
+                // Associate the top level execution with the request span. Allows to find the trace by execution id.
+                metadata: ExecutionMetadata::from_parent_span(&component_logger.span)
+                    .with_http_request(incoming_request.method, incoming_request.uri),
+                scheduled_at: incoming_request.received_at,
+                component_id: config.component_id.clone(),
+                deployment_id,
+                scheduled_by: None,
+                paused: false,
+                max_persisted_value_size_bytes,
+            },
+            created: tokio::sync::OnceCell::new(),
+        });
         // All child executions are part of the same join set.
         let ctx = WebhookEndpointCtx {
             memory_limiter: crate::store_limits::StoreMemoryLimiter::new(config.memory),
@@ -2142,6 +2198,7 @@ impl WebhookEndpointCtx {
             wasi_ctx,
             http_ctx: WasiHttpCtx::new(),
             version: None,
+            execution_row: execution_row.clone(),
             component_id: config.component_id.clone(),
             deployment_id,
             max_persisted_value_size_bytes,
@@ -2161,6 +2218,7 @@ impl WebhookEndpointCtx {
                 component_name: config.component_id.name.to_string(),
                 deployment_id: Some(deployment_id),
                 db_pool: Some(db_pool),
+                webhook_execution_row: Some(execution_row),
             },
             last_direct_call_id: None,
             backtrace_persist: config.backtrace_persist,
@@ -2188,10 +2246,12 @@ impl WebhookEndpointCtx {
         store
     }
 
+    /// `http_response` is the response head sent to the client, if any.
     async fn close(
         self,
         original_result: wasmtime::Result<()>,
         assigned_fuel: Option<u64>,
+        http_response: Option<ResponseTrace>,
     ) -> wasmtime::Result<()> {
         #[derive(Debug, thiserror::Error)]
         #[error("webhook {trap_kind}: {reason}")]
@@ -2240,7 +2300,16 @@ impl WebhookEndpointCtx {
                 })
             }
         };
-        if let Some(version) = self.version {
+        let http_response = http_response.or_else(|| {
+            original_result.as_ref().err().map(|err| ResponseTrace {
+                finished_at: self.clock_fn.now(),
+                status: Err(err.to_string()),
+            })
+        });
+        if let Some(version) = self
+            .version
+            .or_else(|| self.execution_row.created.get().cloned())
+        {
             let http_client_traces = Some(
                 self.http_hooks
                     .http_client_traces
@@ -2262,6 +2331,7 @@ impl WebhookEndpointCtx {
                         event: ExecutionRequest::Finished {
                             retval: result,
                             http_client_traces,
+                            http_response,
                         },
                     },
                 )
@@ -2452,6 +2522,11 @@ impl RequestHandler {
                 (None, None)
             };
             let found_instance = found_instance.build(&self.log_forwarder_sender);
+            let incoming_request = IncomingRequest {
+                received_at: self.clock_fn.now(),
+                method: req.method().to_string(),
+                uri: absolute_request_url(req.uri(), req.headers()),
+            };
             let run_id = RunId::generate();
             let stdout = found_instance.stdout.as_ref().map(|stdoutput| {
                 stdoutput.build(&ExecutionId::TopLevel(self.execution_id), run_id)
@@ -2472,6 +2547,7 @@ impl RequestHandler {
                 instance_match.params().iter(),
                 self.execution_id,
                 request_span.clone(),
+                incoming_request,
                 self.connection_drop_watcher,
                 self.server_termination_watcher,
                 stdout,
@@ -2502,6 +2578,7 @@ impl RequestHandler {
                 .expect("WASM webhooks are linked with a proxy")
             {
                 WebhookProxyPre::P2(proxy_pre) => {
+                    let (guest_sender, guest_receiver) = tokio::sync::oneshot::channel();
                     let (sender, receiver) = tokio::sync::oneshot::channel();
                     let req = store
                         .data_mut()
@@ -2511,7 +2588,7 @@ impl RequestHandler {
                     let out = store
                         .data_mut()
                         .http()
-                        .new_response_outparam(sender)
+                        .new_response_outparam(guest_sender)
                         .map_err(|err| HandleRequestError::ResponseCreationError(err.into()))?;
                     let proxy = proxy_pre
                         .instantiate_async(&mut store)
@@ -2521,15 +2598,31 @@ impl RequestHandler {
                         let assigned_fuel = found_instance.config.fuel;
                         async move {
                             let _wasm_guard = wasm_guard;
-                            let result = proxy
-                                .wasi_http_incoming_handler()
-                                .call_handle(&mut store, req, out)
-                                .await
-                                .inspect_err(|err| {
-                                    debug!("Webhook instance finished with error: {err:?}");
-                                });
+                            let clock_fn = store.data().clock_fn.clone_box();
+                            let forward = async move {
+                                let response = guest_receiver.await.ok()?;
+                                let status = match &response {
+                                    Ok(response) => Ok(response.status().as_u16()),
+                                    Err(code) => Err(code.to_string()),
+                                };
+                                let _ = sender.send(response);
+                                Some(ResponseTrace {
+                                    finished_at: clock_fn.now(),
+                                    status,
+                                })
+                            };
+                            let (result, http_response) = run_forwarding_response(
+                                proxy
+                                    .wasi_http_incoming_handler()
+                                    .call_handle(&mut store, req, out),
+                                forward,
+                            )
+                            .await;
+                            let result = result.inspect_err(|err| {
+                                debug!("Webhook instance finished with error: {err:?}");
+                            });
                             let ctx = store.into_data();
-                            ctx.close(result, assigned_fuel).await
+                            ctx.close(result, assigned_fuel, http_response).await
                         }
                         .instrument(request_span)
                     });
@@ -2564,6 +2657,8 @@ impl RequestHandler {
                         let assigned_fuel = found_instance.config.fuel;
                         async move {
                             let _wasm_guard = wasm_guard;
+                            let clock_fn = store.data().clock_fn.clone_box();
+                            let mut http_response = None;
                             let result = store
                                 .run_concurrent(async |accessor| {
                                     let response = async {
@@ -2576,6 +2671,10 @@ impl RequestHandler {
                                         let response = accessor.with(|store| {
                                             response.into_http(store, async { Ok(()) })
                                         })?;
+                                        http_response = Some(ResponseTrace {
+                                            finished_at: clock_fn.now(),
+                                            status: Ok(response.status().as_u16()),
+                                        });
                                         let (body_done_sender, body_done) =
                                             tokio::sync::oneshot::channel::<()>();
                                         let response = response.map(|body| {
@@ -2601,7 +2700,7 @@ impl RequestHandler {
                                     debug!("Webhook instance finished with error: {err:?}");
                                 });
                             let ctx = store.into_data();
-                            ctx.close(result, assigned_fuel).await
+                            ctx.close(result, assigned_fuel, http_response).await
                         }
                         .instrument(request_span)
                     });
@@ -2644,20 +2743,7 @@ async fn handle_native_v8_request(
         .await
         .map_err(|err| HandleRequestError::IncomingRequestError(err.into()))?
         .to_bytes();
-    let url = if parts.uri.scheme().is_some() {
-        parts.uri.to_string()
-    } else if let Some(authority) = parts.uri.authority().map(ToString::to_string).or_else(|| {
-        parts
-            .headers
-            .get(hyper::header::HOST)?
-            .to_str()
-            .ok()
-            .map(str::to_owned)
-    }) {
-        format!("http://{authority}{}", parts.uri)
-    } else {
-        parts.uri.to_string()
-    };
+    let url = absolute_request_url(&parts.uri, &parts.headers);
     let request = NativeRequest {
         method: parts.method.to_string(),
         url,
@@ -2695,6 +2781,7 @@ async fn handle_native_v8_request(
     env.extend(placeholders);
     let mut connection_drop_watcher = ctx.connection_drop_watcher.clone();
     let mut server_termination_watcher = ctx.server_termination_watcher.clone();
+    let clock_fn = ctx.clock_fn.clone_box();
     let handle = tokio::runtime::Handle::current();
     let max_heap_size = v8_executor.max_heap_size(crate::v8_executor::V8Workload::Webhook);
     let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
@@ -2747,6 +2834,10 @@ async fn handle_native_v8_request(
         End::Streaming(response) => {
             // The isolate keeps writing the body; finish the execution once it is done.
             let fuel = config.fuel;
+            let http_response = ResponseTrace {
+                finished_at: clock_fn.now(),
+                status: Ok(response.status().as_u16()),
+            };
             tokio::spawn(
                 async move {
                     enum StreamEnd<T> {
@@ -2788,7 +2879,9 @@ async fn handle_native_v8_request(
                     match result {
                         Ok((_, ctx)) => {
                             let close_result = close_result.expect("set when the task succeeded");
-                            if let Err(err) = ctx.close(close_result, fuel).await {
+                            if let Err(err) =
+                                ctx.close(close_result, fuel, Some(http_response)).await
+                            {
                                 warn!("Cannot finish the streamed webhook execution: {err:?}");
                             }
                         }
@@ -2821,6 +2914,7 @@ async fn handle_native_v8_request(
             ctx.close(
                 Err(wasmtime::Error::msg("webhook request deadline reached")),
                 config.fuel,
+                None,
             )
             .await
             .map_err(|_| HandleRequestError::Timeout)?;
@@ -2828,7 +2922,14 @@ async fn handle_native_v8_request(
         }
     };
     termination_guard.0 = None;
-    ctx.close(native_close_result(&result), config.fuel)
+    let http_response = match &result {
+        Ok(Some(response)) => Some(ResponseTrace {
+            finished_at: clock_fn.now(),
+            status: Ok(response.status),
+        }),
+        _ => None,
+    };
+    ctx.close(native_close_result(&result), config.fuel, http_response)
         .await
         .map_err(|err| match &result {
             Err(NativeWebhookFailure::Timeout) => HandleRequestError::Timeout,
@@ -2849,6 +2950,29 @@ async fn handle_native_v8_request(
         Err(NativeWebhookFailure::Timeout) => Err(HandleRequestError::Timeout),
     }
 }
+/// Runs a `WASIp2` guest while `forward` relays its response head to the client.
+/// The head is set synchronously by the guest, so it is either relayed or missing once the guest returns.
+async fn run_forwarding_response<T>(
+    call: impl Future<Output = T>,
+    forward: impl Future<Output = Option<ResponseTrace>>,
+) -> (T, Option<ResponseTrace>) {
+    use futures_util::FutureExt as _;
+    let mut call = std::pin::pin!(call);
+    let mut forward = std::pin::pin!(forward);
+    let mut forwarded = None;
+    let result = loop {
+        select! {
+            result = &mut call => break result,
+            response = &mut forward, if forwarded.is_none() => forwarded = Some(response),
+        }
+    };
+    let http_response = match forwarded {
+        Some(response) => response,
+        None => forward.now_or_never().flatten(),
+    };
+    (result, http_response)
+}
+
 fn native_close_result(
     result: &Result<
         Option<crate::webhook::native_v8_webhook_runtime::NativeResponse>,
@@ -3818,16 +3942,25 @@ pub(crate) mod tests {
                 .expect("child must have scheduled_by set");
 
             // Poll until the Finished event is persisted
-            let finished_event = loop {
+            let (finished_event, http_response) = loop {
                 let exec_log = conn.get(&webhook_exec_id).await.unwrap();
                 if let ExecutionRequest::Finished {
-                    http_client_traces, ..
+                    http_client_traces,
+                    http_response,
+                    ..
                 } = &exec_log.last_event().event
                 {
-                    break http_client_traces.clone();
+                    break (http_client_traces.clone(), http_response.clone());
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             };
+            assert_matches!(
+                http_response,
+                Some(ResponseTrace {
+                    status: Ok(200),
+                    ..
+                })
+            );
 
             let http_client_traces = finished_event
                 .as_ref()
@@ -4560,11 +4693,11 @@ pub(crate) mod tests {
         async fn webhook_js_persists_http_client_traces(
             #[values(WebhookJsRuntime::BoaWasm, WebhookJsRuntime::V8)] runtime: WebhookJsRuntime,
         ) {
-            use concepts::ExecutionId;
             use concepts::storage::{
-                ExecutionListPagination, ExecutionRequest, ListExecutionsFilter, LogLevel,
+                ExecutionListPagination, ExecutionRequest, ListExecutionsFilter,
                 http_client_trace::ResponseTrace,
             };
+            use concepts::{ExecutionId, ExecutionMetadata};
             use wiremock::{
                 Mock, MockServer, ResponseTemplate,
                 matchers::{method, path},
@@ -4578,32 +4711,26 @@ pub(crate) mod tests {
                 .mount(&mock_server)
                 .await;
             let url = mock_server.uri();
-            // Logging persists the webhook execution row, so its Finished event is written.
+            // No logs and no child executions: the outbound request alone persists the execution.
             let js_source = format!(
                 r#"
                 export default async function handle(request) {{
                     const resp = await fetch("{url}/hello");
                     const text = await resp.text();
-                    console.log(text);
-                    return new Response(text);
+                    return new Response(text, {{ status: 201 }});
                 }}
                 "#
             );
             let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
             let (_server, server_addr, _termination_sender, db_pool, _db_guard, _db_close) =
                 start_js_webhook_server_with_http_and_db(
-                    &js_source,
-                    &allowed,
-                    None,
-                    runtime,
-                    Some(LogLevel::Info),
-                    None,
+                    &js_source, &allowed, None, runtime, None, None,
                 )
                 .await;
-            let resp = reqwest::get(format!("http://{server_addr}/"))
+            let resp = reqwest::get(format!("http://{server_addr}/?q=1"))
                 .await
                 .unwrap();
-            assert_eq!(200, resp.status().as_u16());
+            assert_eq!(201, resp.status().as_u16());
 
             let conn = db_pool.external_api_conn().await.unwrap();
             let executions = conn
@@ -4620,17 +4747,39 @@ pub(crate) mod tests {
                 panic!("webhook execution must be top-level");
             };
             let conn = db_pool.connection().await.unwrap();
-            let http_client_traces = loop {
+            let metadata = conn
+                .get_create_request(&execution.execution_id)
+                .await
+                .unwrap()
+                .metadata;
+            assert_eq!(
+                Some("GET"),
+                metadata.get(ExecutionMetadata::HTTP_METHOD_KEY)
+            );
+            assert_eq!(
+                Some(format!("http://{server_addr}/?q=1").as_str()),
+                metadata.get(ExecutionMetadata::HTTP_URI_KEY)
+            );
+            let (http_client_traces, http_response) = loop {
                 let exec_log = conn.get(&execution.execution_id).await.unwrap();
                 if let ExecutionRequest::Finished {
-                    http_client_traces, ..
+                    http_client_traces,
+                    http_response,
+                    ..
                 } = &exec_log.last_event().event
                 {
-                    break http_client_traces.clone();
+                    break (http_client_traces.clone(), http_response.clone());
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-            .expect("http_client_traces must be Some");
+            };
+            assert_matches::assert_matches!(
+                http_response,
+                Some(ResponseTrace {
+                    status: Ok(201),
+                    ..
+                })
+            );
+            let http_client_traces = http_client_traces.expect("http_client_traces must be Some");
             let [trace] = http_client_traces.as_slice() else {
                 panic!("expected one trace, got {http_client_traces:?}");
             };

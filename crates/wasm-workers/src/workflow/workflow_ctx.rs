@@ -4107,6 +4107,7 @@ pub(crate) mod tests {
                                 event: ExecutionRequest::Finished {
                                     retval,
                                     http_client_traces,
+                                    http_response: None,
                                 },
                             },
                         )
@@ -4433,6 +4434,7 @@ pub(crate) mod tests {
                         event: concepts::storage::ExecutionRequest::Finished {
                             retval: finished_value,
                             http_client_traces: None,
+                            http_response: None,
                         },
                     },
                 )
@@ -4753,6 +4755,7 @@ pub(crate) mod tests {
                         event: concepts::storage::ExecutionRequest::Finished {
                             retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
                             http_client_traces: None,
+                            http_response: None,
                         },
                     }],
                 },

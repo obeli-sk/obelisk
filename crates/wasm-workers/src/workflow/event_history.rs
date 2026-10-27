@@ -1937,6 +1937,7 @@ impl EventHistory {
                             event: ExecutionRequest::Finished {
                                 retval: retval_intent.clone(),
                                 http_client_traces: None,
+                                http_response: None,
                             },
                         };
                         // Display-only backtrace keyed to the parent's stub-event version (`version`), where the HistoryEvent::Stub below lands.
@@ -5452,6 +5453,7 @@ mod tests {
                     event: ExecutionRequest::Finished {
                         retval: result,
                         http_client_traces: None,
+                        http_response: None,
                     },
                 },
             )
