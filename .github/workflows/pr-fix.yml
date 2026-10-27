@@ -201,24 +201,22 @@ jobs:
           esac
 
       - name: Create patch artifact
+        # Write outside the checkout, or `git add -A` commits the artifact itself.
         run: |
-          mkdir -p ".pr-fix/${{ matrix.part }}"
-          printf '%s\n' "${{ matrix.part }}" > ".pr-fix/${{ matrix.part }}/part.txt"
-
+          mkdir -p "${RUNNER_TEMP}/pr-fix"
           git add -A
           if git diff --cached --quiet; then
             echo "No changes for ${{ matrix.part }}"
-            printf 'false\n' > ".pr-fix/${{ matrix.part }}/changed.txt"
           else
             git commit -m "${{ matrix.commit_message }}"
-            git format-patch --stdout HEAD~1 > ".pr-fix/${{ matrix.part }}/update.patch"
-            printf 'true\n' > ".pr-fix/${{ matrix.part }}/changed.txt"
+            git format-patch --stdout HEAD~1 > "${RUNNER_TEMP}/pr-fix/update.patch"
           fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ matrix.artifact }}
-          path: .pr-fix/${{ matrix.part }}
+          path: ${{ runner.temp }}/pr-fix
+          if-no-files-found: ignore
 
   combine-fixes:
     needs:
