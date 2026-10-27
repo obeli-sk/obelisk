@@ -6,14 +6,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.11](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.10...v0.43.0-rc.11)
+
+This release candidate streams `fetch` response bodies in JS activities, uploads deployment
+files one request at a time, and can persist webhook executions that send outbound HTTP
+requests.
+
 ### Added
 
+- *(js)* JS activity `fetch` (Boa and V8) resolves once headers arrive and exposes
+  `Response.body` as a `ReadableStream`, like JS webhooks. V8 `Headers` gains `getSetCookie()`.
+  Logs written during a V8 `fetch` are kept and parallel fetches run concurrently.
+  [#1219](https://github.com/obeli-sk/obelisk/pull/1219)
+- *(deployment)* `PUT /v1/files/{digest}` uploads a single deployment file. The CLI uploads each
+  file the server reports missing in its own request, then resubmits the manifest, falling back
+  to the multipart submit on older servers. Uploaded files not yet referenced by a deployment
+  are kept for `maintenance.gc.upload_grace_period` (default 1 hour).
+  [#1220](https://github.com/obeli-sk/obelisk/pull/1220)
+- *(cli)* `--verbose` traces elapsed time for direct API commands and logs the path, size and
+  digest of each uploaded file. [#1220](https://github.com/obeli-sk/obelisk/pull/1220)
 - *(webhook)* Setting `webhooks.persist_on_outbound_http = true` in `server.toml` also persists a
   webhook execution when it sends an outbound HTTP request, so its HTTP client traces are kept.
-  It is off by default as it costs a database write per such request. The `Created` event's metadata records the incoming request
-  as `http:method` and `http:uri` (absolute URL including the query), and `created_at` is the
-  time the request was received. The `Finished` event gains `http_response` with the response
-  status, or the error when the webhook produced no response.
+  It is off by default as it costs a database write per such execution. The `Created` event's
+  metadata records the incoming request as `http:method` and `http:uri` (absolute URL including
+  the query), and `created_at` is the time the request was received. The `Finished` event gains
+  `http_response` with the response status, or the error when the webhook produced no response.
+  [#1223](https://github.com/obeli-sk/obelisk/pull/1223),
+  [#1224](https://github.com/obeli-sk/obelisk/pull/1224)
+
+### Changed
+
+- **Breaking:** *(js)* V8 JS activity `response.headers` is a `Headers` object instead of a
+  `Map`: `get` returns `null` for a missing name and there is no `size`.
+  [#1219](https://github.com/obeli-sk/obelisk/pull/1219)
+- *(api)* `POST /v1/executions/status/batch` skips missing executions instead of failing the
+  whole batch. With `follow=true` the first event is always sent, even when empty, and
+  executions that disappear are dropped. [#1218](https://github.com/obeli-sk/obelisk/pull/1218)
 
 ## [0.43.0-rc.10](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.9...v0.43.0-rc.10)
 
