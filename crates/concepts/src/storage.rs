@@ -1845,7 +1845,20 @@ pub struct StorageStatus {
 #[cfg(feature = "runtime")]
 #[async_trait]
 pub trait CasGc: Send + Sync {
-    async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite>;
+    /// Store a blob ahead of the deployment referencing it, protected from `gc_cas` until `uploaded_at` falls before its cutoff.
+    async fn upload_blob(
+        &self,
+        content: Vec<u8>,
+        uploaded_at: DateTime<Utc>,
+    ) -> Result<ContentDigest, DbErrorWrite>;
+
+    /// Delete unreferenced blobs, except those uploaded at or after `uploaded_before`.
+    async fn gc_cas(
+        &self,
+        dry_run: bool,
+        batch_size: u32,
+        uploaded_before: DateTime<Utc>,
+    ) -> Result<CasGcResult, DbErrorWrite>;
 }
 
 /// CAS GC byte budget per transaction; one larger blob is allowed so collection makes progress.

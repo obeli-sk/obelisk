@@ -1110,6 +1110,9 @@ pub(crate) struct GarbageCollectionTomlConfig {
     pub(crate) batch_size: u32,
     #[serde(default = "default_gc_batch_delay")]
     pub(crate) batch_delay: DurationConfig,
+    /// How long an uploaded deployment file is kept while no deployment references it yet.
+    #[serde(default = "default_gc_upload_grace_period")]
+    pub(crate) upload_grace_period: DurationConfig,
     #[serde(default)]
     pub(crate) retention: RetentionTomlConfig,
 }
@@ -1150,6 +1153,7 @@ impl Default for GarbageCollectionTomlConfig {
             interval: default_gc_interval(),
             batch_size: default_gc_batch_size(),
             batch_delay: default_gc_batch_delay(),
+            upload_grace_period: default_gc_upload_grace_period(),
             retention: RetentionTomlConfig::default(),
         }
     }
@@ -1480,6 +1484,10 @@ const fn default_gc_batch_size() -> u32 {
 
 const fn default_gc_batch_delay() -> DurationConfig {
     DurationConfig::Milliseconds(25)
+}
+
+const fn default_gc_upload_grace_period() -> DurationConfig {
+    DurationConfig::Hours(1)
 }
 
 const fn default_retention_enabled() -> bool {

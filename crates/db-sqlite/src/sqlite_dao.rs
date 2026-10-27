@@ -6275,16 +6275,56 @@ impl DbAdmin for SqlitePool {
 
 #[async_trait]
 impl CasGc for SqlitePool {
+    #[instrument(skip_all)]
+    async fn upload_blob(
+        &self,
+        content: Vec<u8>,
+        uploaded_at: DateTime<Utc>,
+    ) -> Result<ContentDigest, DbErrorWrite> {
+        let digest = Self::compute_file_digest(&content);
+        {
+            let digest = digest.clone();
+            self.transaction(
+                move |tx| {
+                    Self::upload_file_tx(tx, &digest, &content)?;
+                    tx.execute(
+                        "INSERT INTO t_file_upload (digest, uploaded_at) VALUES (?1, ?2) \
+                         ON CONFLICT (digest) DO UPDATE SET uploaded_at = excluded.uploaded_at",
+                        rusqlite::params![digest.to_string(), uploaded_at],
+                    )
+                    .map_err(RusqliteError::from)?;
+                    Ok::<_, DbErrorWrite>(())
+                },
+                TxType::MultipleWrites,
+                "upload_blob",
+            )
+            .await?;
+        }
+        Ok(digest)
+    }
+
     #[instrument(skip(self))]
-    async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite> {
+    async fn gc_cas(
+        &self,
+        dry_run: bool,
+        batch_size: u32,
+        uploaded_before: DateTime<Utc>,
+    ) -> Result<CasGcResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
                 let limit = batch_size.clamp(1, 10_000);
+                if !dry_run {
+                    tx.execute(
+                        "DELETE FROM t_file_upload WHERE uploaded_at < ?1",
+                        [uploaded_before],
+                    )?;
+                }
                 let orphans = tx
                     .prepare(
                         "WITH candidates AS (\
                              SELECT digest, size FROM t_file WHERE digest NOT IN \
-                             (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) \
+                             (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL \
+                              UNION SELECT digest FROM t_file_upload WHERE uploaded_at >= ?4) \
                              ORDER BY digest LIMIT ?1\
                          ), measured AS (\
                              SELECT digest, size, ROW_NUMBER() OVER (ORDER BY digest) AS ordinal, \
@@ -6299,7 +6339,8 @@ impl CasGc for SqlitePool {
                         rusqlite::params![
                             i64::from(limit) + 1,
                             i64::from(limit),
-                            i64::try_from(CAS_GC_BATCH_SIZE_BYTES).unwrap()
+                            i64::try_from(CAS_GC_BATCH_SIZE_BYTES).unwrap(),
+                            uploaded_before
                         ],
                         |row| {
                             Ok((

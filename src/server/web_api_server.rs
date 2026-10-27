@@ -151,6 +151,7 @@ async fn until_terminated<T>(
         deployment::submit_post,
         deployment::submit_put,
         deployment::get_file,
+        deployment::put_file,
         app_config::get,
         app_config::digest,
         admin::delete_execution_tree,
@@ -352,7 +353,10 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
             routing::get(deployment::get).put(deployment::submit_put),
         )
         .nest("/admin", admin_router())
-        .route("/files/{digest}", routing::get(deployment::get_file))
+        .route(
+            "/files/{digest}",
+            routing::get(deployment::get_file).put(deployment::put_file),
+        )
         .route(
             "/deployments/{deployment-id}/switch",
             routing::put(deployment::switch),
@@ -4417,6 +4421,56 @@ pub(crate) mod deployment {
             })?
             .ok_or_else(|| HttpResponse::not_found(accept, Some("file")))?;
         Ok(content.into_response())
+    }
+
+    /// Upload a deployment file blob ahead of the submit that references it. The blob is
+    /// kept for `maintenance.gc.upload_grace_period` while no deployment references it.
+    #[utoipa::path(
+        put,
+        path = "/v1/files/{digest}",
+        tag = "deployments",
+        params(("digest" = String, Path, description = "Content digest (sha256:...)")),
+        request_body(content = Vec<u8>, content_type = "application/octet-stream"),
+        responses(
+            (status = 204, description = "Blob stored"),
+            (status = 400, description = "Invalid digest or digest mismatch"),
+            (status = 413, description = "Blob exceeds the per-file limit")
+        )
+    )]
+    #[instrument(skip_all, fields(%digest))]
+    pub(crate) async fn put_file(
+        Path(digest): Path<String>,
+        state: State<Arc<WebApiState>>,
+        accept: AcceptHeader,
+        body: axum::body::Bytes,
+    ) -> Result<Response, HttpResponse> {
+        let digest: concepts::ContentDigest = digest
+            .parse()
+            .map_err(|err| HttpResponse::bad_request(accept, format!("invalid digest: {err}")))?;
+        let max_bytes = state.server_verified.max_deployment_file_bytes();
+        if body.len() > max_bytes as usize {
+            return Err(HttpResponse {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                message: format!("file exceeds the {max_bytes}-byte per-file limit"),
+                accept,
+            });
+        }
+        let actual = concepts::cas::content_digest(&body);
+        if actual != digest {
+            return Err(HttpResponse::bad_request(
+                accept,
+                format!("file digest mismatch: expected {digest}, got {actual}"),
+            ));
+        }
+        state
+            .db_pool
+            .cas_gc_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?
+            .upload_blob(body.into(), chrono::Utc::now())
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+        Ok(StatusCode::NO_CONTENT.into_response())
     }
 
     #[instrument(skip_all, fields(deployment_id))]

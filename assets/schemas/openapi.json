@@ -2362,6 +2362,50 @@
             "description": "Blob not found"
           }
         }
+      },
+      "put": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Upload a deployment file blob ahead of the submit that references it. The blob is\nkept for `maintenance.gc.upload_grace_period` while no deployment references it.",
+        "operationId": "put_file",
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "description": "Content digest (sha256:...)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Blob stored"
+          },
+          "400": {
+            "description": "Invalid digest or digest mismatch"
+          },
+          "413": {
+            "description": "Blob exceeds the per-file limit"
+          }
+        }
       }
     },
     "/v1/functions": {

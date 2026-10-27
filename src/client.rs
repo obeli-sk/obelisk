@@ -17,7 +17,10 @@ static TRACE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::n
 
 /// Enables `--verbose` step tracing on stderr.
 pub(crate) fn enable_trace() {
-    *TRACE.lock().unwrap() = Some(std::time::Instant::now());
+    TRACE
+        .lock()
+        .unwrap()
+        .get_or_insert_with(std::time::Instant::now);
 }
 
 /// Prints a verbose step prefixed with the time elapsed since the previous step.
@@ -75,7 +78,9 @@ pub(crate) async fn send_bytes(request: RequestBuilder) -> Result<bytes::Bytes, 
 impl ClientStartup {
     pub(crate) fn new(api_url: String, flag: Option<SecretString>, verbose: bool) -> Self {
         let api_token = flag.filter(|token| !token.expose_secret().is_empty());
-
+        if verbose {
+            enable_trace();
+        }
         Self {
             api_token,
             api_url,
@@ -202,6 +207,13 @@ impl RequestBuilder {
     pub(crate) fn query<T: serde::Serialize + ?Sized>(self, query: &T) -> Self {
         Self {
             inner: self.inner.query(query),
+            ..self
+        }
+    }
+
+    pub(crate) fn body(self, body: impl Into<reqwest::Body>) -> Self {
+        Self {
+            inner: self.inner.body(body),
             ..self
         }
     }

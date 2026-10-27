@@ -382,17 +382,68 @@ async fn system_event_cas_details_are_retained_with_the_event(database: Database
         .unwrap();
 
     let gc = db_pool.cas_gc_conn().await.unwrap();
-    assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 0);
+    assert_eq!(
+        gc.gc_cas(false, 100, chrono::Utc::now())
+            .await
+            .unwrap()
+            .deleted_blobs,
+        0
+    );
     assert!(cas.contains_blob(&digest).await.unwrap());
 
     admin
         .retain_system_events(chrono::Utc::now() + Duration::seconds(1), 100, false)
         .await
         .unwrap();
-    assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 1);
+    assert_eq!(
+        gc.gc_cas(false, 100, chrono::Utc::now())
+            .await
+            .unwrap()
+            .deleted_blobs,
+        1
+    );
     assert!(!cas.contains_blob(&digest).await.unwrap());
 
     drop((admin, gc, cas));
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn uploaded_blob_survives_gc_until_grace_period_ends(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let cas = db_pool.cas_conn().await.unwrap();
+    let gc = db_pool.cas_gc_conn().await.unwrap();
+    let uploaded_at = chrono::Utc::now();
+    let digest = gc
+        .upload_blob(b"uploaded".to_vec(), uploaded_at)
+        .await
+        .unwrap();
+
+    let within_grace = gc.gc_cas(false, 100, uploaded_at).await.unwrap();
+    assert_eq!(within_grace.orphan_blobs, 0);
+    assert!(cas.contains_blob(&digest).await.unwrap());
+
+    // Re-uploading refreshes the grace period.
+    let reuploaded_at = uploaded_at + Duration::seconds(10);
+    gc.upload_blob(b"uploaded".to_vec(), reuploaded_at)
+        .await
+        .unwrap();
+    gc.gc_cas(false, 100, uploaded_at + Duration::seconds(1))
+        .await
+        .unwrap();
+    assert!(cas.contains_blob(&digest).await.unwrap());
+
+    let expired = gc
+        .gc_cas(false, 100, reuploaded_at + Duration::seconds(1))
+        .await
+        .unwrap();
+    assert_eq!(expired.deleted_blobs, 1);
+    assert!(!cas.contains_blob(&digest).await.unwrap());
+
+    drop((gc, cas));
     db_close.close().await;
 }
 
@@ -666,7 +717,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .cas_gc_conn()
         .await
         .unwrap()
-        .gc_cas(true, 10)
+        .gc_cas(true, 10, chrono::Utc::now())
         .await
         .unwrap();
     assert_eq!(dry_run.orphan_blobs, 2);
@@ -676,7 +727,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .cas_gc_conn()
         .await
         .unwrap()
-        .gc_cas(false, 1)
+        .gc_cas(false, 1, chrono::Utc::now())
         .await
         .unwrap();
     assert_eq!(collected.deleted_blobs, 1);
@@ -691,7 +742,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .cas_gc_conn()
         .await
         .unwrap()
-        .gc_cas(false, 1)
+        .gc_cas(false, 1, chrono::Utc::now())
         .await
         .unwrap();
     assert_eq!(collected.deleted_blobs, 1);
@@ -765,7 +816,7 @@ async fn cas_gc_batches_are_bounded_by_bytes(database: Database) {
     let second_digest = cas.write_blob(&vec![2; blob_size]).await.unwrap();
     let gc = db_pool.cas_gc_conn().await.unwrap();
 
-    let first = gc.gc_cas(false, 100).await.unwrap();
+    let first = gc.gc_cas(false, 100, chrono::Utc::now()).await.unwrap();
     assert_eq!(first.orphan_blobs, 1);
     assert_eq!(first.deleted_blobs, 1);
     assert_eq!(first.deleted_bytes, blob_size as u64);
@@ -775,14 +826,14 @@ async fn cas_gc_batches_are_bounded_by_bytes(database: Database) {
         cas.contains_blob(&second_digest).await.unwrap()
     );
 
-    let second = gc.gc_cas(false, 100).await.unwrap();
+    let second = gc.gc_cas(false, 100, chrono::Utc::now()).await.unwrap();
     assert_eq!(second.deleted_blobs, 1);
     assert_eq!(second.deleted_bytes, blob_size as u64);
     assert!(!second.has_more);
 
     let oversized_size = usize::try_from(CAS_GC_BATCH_SIZE_BYTES + 1).unwrap();
     let oversized_digest = cas.write_blob(&vec![3; oversized_size]).await.unwrap();
-    let oversized = gc.gc_cas(false, 100).await.unwrap();
+    let oversized = gc.gc_cas(false, 100, chrono::Utc::now()).await.unwrap();
     assert_eq!(oversized.deleted_blobs, 1);
     assert_eq!(oversized.deleted_bytes, oversized_size as u64);
     assert!(!oversized.has_more);

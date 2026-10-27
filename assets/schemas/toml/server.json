@@ -957,6 +957,9 @@
             "batch_delay": {
               "milliseconds": 25
             },
+            "upload_grace_period": {
+              "hours": 1
+            },
             "retention": {
               "executions": {
                 "enabled": true,
@@ -1005,6 +1008,13 @@
           "$ref": "#/$defs/DurationConfig",
           "default": {
             "milliseconds": 25
+          }
+        },
+        "upload_grace_period": {
+          "description": "How long an uploaded deployment file is kept while no deployment references it yet.",
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "hours": 1
           }
         },
         "retention": {

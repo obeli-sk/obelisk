@@ -318,6 +318,7 @@ impl DeploymentSwitchManagerHandle {
         &self,
         dry_run: bool,
         batch_size: u32,
+        uploaded_before: chrono::DateTime<chrono::Utc>,
     ) -> Result<concepts::storage::CasGcResult, SubmitDeploymentError> {
         let _permit = self.try_acquire_submit_permit()?;
         self.inner
@@ -325,7 +326,7 @@ impl DeploymentSwitchManagerHandle {
             .cas_gc_conn()
             .await
             .map_err(|err| SubmitDeploymentError::Other(err.into()))?
-            .gc_cas(dry_run, batch_size)
+            .gc_cas(dry_run, batch_size, uploaded_before)
             .await
             .map_err(|err| SubmitDeploymentError::Other(err.into()))
     }
@@ -2612,6 +2613,10 @@ impl ServerVerified {
         self.max_persisted_value_size_bytes
     }
 
+    pub(crate) const fn max_deployment_file_bytes(&self) -> u32 {
+        self.max_deployment_file_bytes
+    }
+
     #[expect(clippy::cast_possible_truncation)]
     pub(crate) const fn max_transport_message_size_bytes(&self) -> usize {
         self.max_transport_message_size_bytes as usize
@@ -3560,10 +3565,14 @@ async fn submit_deployment_manifest(
             // submit in flight, the only unreferenced blobs are this rejected submit's. If
             // `DEFAULT_SUBMIT_CONCURRENCY` is ever raised, a concurrent submit's not-yet-referenced
             // blobs would be swept too; delete exactly this submit's `to_write` digests instead.
+            // The epoch cutoff keeps every blob uploaded through `PUT /v1/files/{digest}`.
             // Keep the original rejection reason regardless of the sweep's outcome.
             const { assert!(DEFAULT_SUBMIT_CONCURRENCY == 1) };
             let gc_result = match db_pool.cas_gc_conn().await {
-                Ok(gc) => gc.gc_cas(false, 10_000).await.map_err(anyhow::Error::from),
+                Ok(gc) => gc
+                    .gc_cas(false, 10_000, chrono::DateTime::UNIX_EPOCH)
+                    .await
+                    .map_err(anyhow::Error::from),
                 Err(err) => Err(anyhow::Error::from(err)),
             };
             if let Err(gc_err) = gc_result {

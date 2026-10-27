@@ -71,6 +71,7 @@
 # interval.seconds = 30
 # batch_size = 1000
 # batch_delay.milliseconds = 25
+# upload_grace_period.hours = 1 # Keep uploaded deployment files this long before a deployment references them.
 # [maintenance.gc.retention.executions]
 # enabled = true
 # max_age.hours = 720
