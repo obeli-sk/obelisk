@@ -237,7 +237,7 @@ impl Worker for ActivityJsWorker {
 
         let (retval, version, http_client_traces) = match inner_worker_ok {
             WorkerResultOk::DbUpdatedByWorkerOrWatcher => {
-                return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
+                unreachable!("activity worker never returns DbUpdatedByWorkerOrWatcher")
             }
             WorkerResultOk::RunFinished(RunFinished {
                 retval,

@@ -806,6 +806,8 @@ pub(crate) struct WebhookExecutionRow {
     db_pool: Arc<dyn DbPool>,
     create_request: CreateRequest,
     created: tokio::sync::OnceCell<Version>,
+    // V8 hooks run on a per-isolate runtime that is dropped with the isolate, cancelling the insert.
+    runtime: tokio::runtime::Handle,
 }
 
 impl WebhookExecutionRow {
@@ -822,7 +824,7 @@ impl WebhookExecutionRow {
     /// Start a best-effort creation without delaying the outbound request; `close` awaits it.
     pub(crate) fn request_creation(self: Arc<Self>) {
         if !self.created.initialized() {
-            tokio::spawn(async move {
+            self.runtime.clone().spawn(async move {
                 if let Err(err) = self.get_or_create().await {
                     debug!(
                         "Cannot persist outbound HTTP traces: failed to create execution row: {err:?}"
@@ -2207,6 +2209,7 @@ impl WebhookEndpointCtx {
                 max_persisted_value_size_bytes,
             },
             created: tokio::sync::OnceCell::new(),
+            runtime: tokio::runtime::Handle::current(),
         });
         // All child executions are part of the same join set.
         let ctx = WebhookEndpointCtx {
