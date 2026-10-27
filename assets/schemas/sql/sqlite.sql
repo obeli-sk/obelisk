@@ -380,3 +380,7 @@ CREATE TABLE t_app_checkpoint (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     checkpoint TEXT NOT NULL CHECK (json_valid(checkpoint))
 );
+CREATE TABLE t_file_upload (
+    digest      TEXT NOT NULL PRIMARY KEY,
+    uploaded_at TEXT NOT NULL
+) STRICT;

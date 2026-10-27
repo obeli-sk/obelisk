@@ -181,6 +181,16 @@ CREATE TABLE public.t_file (
 
 
 --
+-- Name: t_file_upload; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.t_file_upload (
+    digest text NOT NULL,
+    uploaded_at timestamp with time zone NOT NULL
+);
+
+
+--
 -- Name: t_join_set_response; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -405,6 +415,14 @@ ALTER TABLE ONLY public.t_execution_log
 
 ALTER TABLE ONLY public.t_file
     ADD CONSTRAINT t_file_pkey PRIMARY KEY (digest);
+
+
+--
+-- Name: t_file_upload t_file_upload_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.t_file_upload
+    ADD CONSTRAINT t_file_upload_pkey PRIMARY KEY (digest);
 
 
 --
