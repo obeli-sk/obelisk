@@ -462,6 +462,10 @@
                       "help": "Follow logs until the execution finishes, then print its result"
                     },
                     {
+                      "name": "--show-derived",
+                      "help": "Include logs from child (derived) executions while following logs"
+                    },
+                    {
                       "name": "--no-reconnect",
                       "help": "Do not attempt to reconnect on connection error while following the status stream"
                     },
@@ -1593,6 +1597,10 @@
             {
               "name": "--follow-logs",
               "help": "Follow logs until the execution finishes, then print its result"
+            },
+            {
+              "name": "--show-derived",
+              "help": "Include logs from child (derived) executions while following logs"
             },
             {
               "name": "--no-reconnect",

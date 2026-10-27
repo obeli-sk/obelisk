@@ -94,6 +94,7 @@ impl args::Execution {
                 params,
                 follow,
                 follow_logs,
+                show_derived,
                 no_reconnect,
                 paused,
                 json,
@@ -103,12 +104,14 @@ impl args::Execution {
                     SubmitOutputOpts::Json {
                         follow,
                         follow_logs,
+                        show_derived,
                         no_reconnect,
                     }
                 } else {
                     SubmitOutputOpts::Plain {
                         follow,
                         follow_logs,
+                        show_derived,
                         no_reconnect,
                     }
                 };
@@ -225,11 +228,13 @@ pub(crate) enum SubmitOutputOpts {
     Plain {
         follow: bool,
         follow_logs: bool,
+        show_derived: bool,
         no_reconnect: bool,
     },
     Json {
         follow: bool,
         follow_logs: bool,
+        show_derived: bool,
         no_reconnect: bool,
     },
 }
@@ -282,17 +287,19 @@ pub(crate) async fn submit(
         FunctionFqnOrShort::Ffqn(ffqn) => ffqn,
     };
     let execution_id = execution_id.unwrap_or_else(ExecutionId::generate);
-    let (follow, follow_logs_enabled, no_reconnect, json) = match opts {
+    let (follow, follow_logs_enabled, show_derived, no_reconnect, json) = match opts {
         SubmitOutputOpts::Plain {
             follow,
             follow_logs,
+            show_derived,
             no_reconnect,
-        } => (follow, follow_logs, no_reconnect, false),
+        } => (follow, follow_logs, show_derived, no_reconnect, false),
         SubmitOutputOpts::Json {
             follow,
             follow_logs,
+            show_derived,
             no_reconnect,
-        } => (follow, follow_logs, no_reconnect, true),
+        } => (follow, follow_logs, show_derived, no_reconnect, true),
     };
     crate::client::trace(format_args!("Submitting execution ID: {execution_id}"));
     let url = format!("{api_url}/v1/executions/{execution_id}");
@@ -320,8 +327,13 @@ pub(crate) async fn submit(
                     println!("{}", response.ok);
                 }
                 return if follow_logs_enabled {
-                    let logs_opts =
-                        LogsOpts::from_args(args::LogLevelArg::Debug, None, false, false, 20)?;
+                    let logs_opts = LogsOpts::from_args(
+                        args::LogLevelArg::Debug,
+                        None,
+                        show_derived,
+                        false,
+                        20,
+                    )?;
                     follow_logs(
                         client_startup,
                         api_url,
