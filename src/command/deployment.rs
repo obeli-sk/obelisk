@@ -3,11 +3,11 @@ use crate::args::{self, DeploymentSource};
 use crate::client::{ClientStartup, send_bytes, send_json};
 use crate::config::deployment::sanitize_deployment_relative_path;
 use crate::config::deployment::{
-    PreparedDeploymentManifest, prepare_deployment_manifest_from_disk,
+    DeploymentManifestFile, PreparedDeploymentManifest, prepare_deployment_manifest_from_disk,
 };
 use anyhow::{Context as _, bail};
 use concepts::prefixed_ulid::DeploymentId;
-use http::header::ACCEPT;
+use http::header::{ACCEPT, CONTENT_TYPE};
 use rest_types::deployment::{
     DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitPayload,
     DeploymentSwitchPayload, MissingRuntimeConfigErrorBody, SubmitPackageErrorBody,
@@ -361,10 +361,10 @@ async fn submit_prepared(
     Ok(id)
 }
 
-/// Submit the enriched manifest as a CAS-efficient package: first without file
-/// blobs, and if the server reports missing files, retry the same submit with only
-/// those blobs attached. The requested TOML is identical on both attempts.
-async fn upload_and_submit_manifest(
+/// Submit the enriched manifest without file blobs, upload each file the server reports
+/// missing via `PUT /v1/files/{digest}`, then submit again. The requested TOML is identical on
+/// every attempt. A file the GC reclaimed between upload and submit is reported missing again.
+pub(super) async fn upload_and_submit_manifest(
     client_startup: &ClientStartup,
     api_url: &str,
     prepared: PreparedDeploymentManifest,
@@ -372,48 +372,88 @@ async fn upload_and_submit_manifest(
     description: Option<String>,
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
+    const MAX_UPLOAD_ROUNDS: usize = 3;
     let client = client_startup.web_api_client()?;
     let deployment_id = deployment_id.unwrap_or_else(DeploymentId::generate);
-    // Preflight: no blobs, so digests already in the CAS are not re-uploaded.
-    let missing = match submit_attempt(
-        &client,
-        api_url,
-        &prepared,
-        allow_unavailable_runtime_config,
-        description.as_deref(),
-        deployment_id,
-        &[],
-    )
-    .await?
-    {
-        SubmitAttempt::Stored(id) => return Ok(id),
-        SubmitAttempt::Missing(digests) => digests,
-    };
-
-    // Retry with only the blobs the server is missing.
-    let files: Vec<_> = prepared
-        .files
-        .iter()
-        .filter(|file| missing.contains(&file.digest.to_string()))
-        .collect();
-    match submit_attempt(
-        &client,
-        api_url,
-        &prepared,
-        allow_unavailable_runtime_config,
-        description.as_deref(),
-        deployment_id,
-        &files,
-    )
-    .await?
-    {
-        SubmitAttempt::Stored(id) => Ok(id),
-        SubmitAttempt::Missing(digests) => bail!(
-            "server is still missing {} file blob(s) after upload: {}",
-            digests.len(),
-            digests.join(", ")
-        ),
+    let mut attached = Vec::new();
+    let mut rounds = 0;
+    loop {
+        let missing = match submit_attempt(
+            &client,
+            api_url,
+            &prepared,
+            allow_unavailable_runtime_config,
+            description.as_deref(),
+            deployment_id,
+            &attached,
+        )
+        .await?
+        {
+            SubmitAttempt::Stored(id) => return Ok(id),
+            SubmitAttempt::Missing(digests) => digests,
+        };
+        if !attached.is_empty() || rounds == MAX_UPLOAD_ROUNDS {
+            bail!(
+                "server is still missing {} file blob(s) after upload: {}",
+                missing.len(),
+                missing.join(", ")
+            );
+        }
+        rounds += 1;
+        let files: Vec<_> = prepared
+            .files
+            .iter()
+            .filter(|file| missing.contains(&file.digest.to_string()))
+            .collect();
+        crate::client::trace(format_args!(
+            "Server is missing {} of {} file(s), {} bytes total",
+            files.len(),
+            prepared.files.len(),
+            files.iter().map(|file| file.bytes.len()).sum::<usize>()
+        ));
+        if !upload_files(&client, api_url, &files).await? {
+            // backcompat: 0.43.0-rc.10 servers lack `PUT /v1/files/{digest}`; attach blobs to the submit.
+            crate::client::trace(
+                "Server does not accept file uploads, attaching files to the submit",
+            );
+            attached = files;
+        }
     }
+}
+
+/// Upload each file separately. Returns `false` if the server has no upload endpoint.
+async fn upload_files(
+    client: &crate::client::HttpClient,
+    api_url: &str,
+    files: &[&DeploymentManifestFile],
+) -> anyhow::Result<bool> {
+    for file in files {
+        crate::client::trace(format_args!(
+            "Uploading {} ({} bytes, {})",
+            file.path,
+            file.bytes.len(),
+            file.digest
+        ));
+        let response = client
+            .put(format!("{api_url}/v1/files/{}", file.digest))
+            .header(ACCEPT, "application/json")
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .body(file.bytes.clone())
+            .send()
+            .await?;
+        let status = response.status();
+        if status == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            return Ok(false);
+        }
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            bail!(
+                "cannot upload {}: server returned {status}: {body}",
+                file.path
+            );
+        }
+    }
+    Ok(true)
 }
 
 enum SubmitAttempt {
@@ -430,7 +470,7 @@ async fn submit_attempt(
     allow_unavailable_runtime_config: bool,
     description: Option<&str>,
     deployment_id: DeploymentId,
-    files: &[&crate::config::deployment::DeploymentManifestFile],
+    files: &[&DeploymentManifestFile],
 ) -> anyhow::Result<SubmitAttempt> {
     let url = format!("{api_url}/v1/deployments/{deployment_id}");
     let request = if files.is_empty() {

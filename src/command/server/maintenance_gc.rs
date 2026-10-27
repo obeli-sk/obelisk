@@ -15,6 +15,7 @@ pub(super) struct ValidatedConfig {
     interval: Duration,
     batch_size: u32,
     batch_delay: Duration,
+    upload_grace_period: chrono::Duration,
     executions: Option<Duration>,
     deployments: Option<Duration>,
     system_events: Option<Duration>,
@@ -29,10 +30,23 @@ impl ValidatedConfig {
         if config.batch_size == 0 {
             bail!("`maintenance.gc.batch_size` must be greater than zero");
         }
+        let upload_grace_period = duration(
+            "maintenance.gc.upload_grace_period",
+            config.upload_grace_period,
+        )?;
+        if upload_grace_period.is_zero() {
+            bail!("`maintenance.gc.upload_grace_period` must be greater than zero");
+        }
+        let upload_grace_period = chrono::Duration::from_std(upload_grace_period)
+            .context("`maintenance.gc.upload_grace_period` is too large")?;
+        chrono::Utc::now()
+            .checked_sub_signed(upload_grace_period)
+            .context("`maintenance.gc.upload_grace_period` is too large")?;
         Ok(Self {
             interval,
             batch_size: config.batch_size,
             batch_delay: duration("maintenance.gc.batch_delay", config.batch_delay)?,
+            upload_grace_period,
             executions: retention_duration("executions", config.retention.executions)?,
             deployments: retention_duration("deployments", config.retention.deployments)?,
             system_events: retention_duration("system_events", config.retention.system_events)?,
@@ -206,7 +220,11 @@ pub(super) fn spawn(
                 &mut deployment_retention_warned,
                 || async {
                     deployment_switch_manager
-                        .gc_cas(false, config.batch_size)
+                        .gc_cas(
+                            false,
+                            config.batch_size,
+                            chrono::Utc::now() - config.upload_grace_period,
+                        )
                         .await
                         .map_err(|err| anyhow::anyhow!(err))
                 },
@@ -436,6 +454,7 @@ mod tests {
             interval: Duration::from_secs(60),
             batch_size: 1,
             batch_delay: Duration::ZERO,
+            upload_grace_period: chrono::Duration::hours(1),
             executions: None,
             deployments: Some(Duration::from_secs(60)),
             system_events: Some(Duration::from_secs(60)),
@@ -546,7 +565,11 @@ mod tests {
             let stats = tokio::time::timeout(
                 Duration::from_secs(10),
                 run_sweep(&db_pool, sweep_config(), &mut warned, || async {
-                    Ok(db_pool.cas_gc_conn().await?.gc_cas(false, 1).await?)
+                    Ok(db_pool
+                        .cas_gc_conn()
+                        .await?
+                        .gc_cas(false, 1, chrono::Utc::now())
+                        .await?)
                 }),
             )
             .await
@@ -597,7 +620,11 @@ mod tests {
             .await
             .unwrap();
         run_sweep(&db_pool, sweep_config(), &mut warned, || async {
-            Ok(db_pool.cas_gc_conn().await?.gc_cas(false, 1).await?)
+            Ok(db_pool
+                .cas_gc_conn()
+                .await?
+                .gc_cas(false, 1, chrono::Utc::now())
+                .await?)
         })
         .await
         .unwrap_or_else(|failure| panic!("{}", failure.source));
@@ -605,7 +632,11 @@ mod tests {
         let blocked = insert_deployment(db_pool.as_ref(), 1).await;
         create_execution(db_pool.as_ref(), blocked, false).await;
         run_sweep(&db_pool, sweep_config(), &mut warned, || async {
-            Ok(db_pool.cas_gc_conn().await?.gc_cas(false, 1).await?)
+            Ok(db_pool
+                .cas_gc_conn()
+                .await?
+                .gc_cas(false, 1, chrono::Utc::now())
+                .await?)
         })
         .await
         .unwrap_or_else(|failure| panic!("{}", failure.source));
@@ -626,7 +657,11 @@ mod tests {
         create_execution(db_pool.as_ref(), deployment, true).await;
         let mut warned = false;
         let stats = run_sweep(&db_pool, sweep_config(), &mut warned, || async {
-            Ok(db_pool.cas_gc_conn().await?.gc_cas(false, 1).await?)
+            Ok(db_pool
+                .cas_gc_conn()
+                .await?
+                .gc_cas(false, 1, chrono::Utc::now())
+                .await?)
         })
         .await
         .unwrap_or_else(|failure| panic!("{}", failure.source));

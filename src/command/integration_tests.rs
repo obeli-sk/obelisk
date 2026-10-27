@@ -1391,9 +1391,7 @@ impl TestServer {
         }
     }
 
-    /// Submit a manifest as a CAS-efficient package: preflight without blobs,
-    /// then retry attaching only the files the server reports missing.
-    /// Returns the new deployment ID.
+    /// Submit a manifest the way the CLI does, uploading each missing file separately.
     async fn webapi_upload_and_submit_manifest(
         &self,
         deployment_toml_path: &std::path::Path,
@@ -1402,36 +1400,16 @@ impl TestServer {
             crate::config::deployment::prepare_deployment_manifest_from_disk(deployment_toml_path)
                 .await
                 .expect("cannot prepare deployment manifest");
-        let deployment_id = DeploymentId::generate();
-        let mut resp = self
-            .webapi_submit_package(deployment_id, &prepared.deployment_toml, Vec::new(), false)
-            .await;
-        if resp.status() == reqwest::StatusCode::CONFLICT {
-            let body: Value = resp.json().await.unwrap();
-            let missing: Vec<&str> = body["missing_files"]
-                .as_array()
-                .expect("409 must list missing_files")
-                .iter()
-                .filter_map(|issue| issue["digest"].as_str())
-                .collect();
-            let files = prepared
-                .files
-                .iter()
-                .filter(|file| missing.contains(&file.digest.to_string().as_str()))
-                .map(|file| {
-                    (
-                        file.digest.to_string(),
-                        file.path.clone(),
-                        file.bytes.clone(),
-                    )
-                })
-                .collect();
-            resp = self
-                .webapi_submit_package(deployment_id, &prepared.deployment_toml, files, false)
-                .await;
-        }
-        assert_eq!(resp.status(), reqwest::StatusCode::NO_CONTENT);
-        deployment_id
+        super::deployment::upload_and_submit_manifest(
+            &crate::client::ClientStartup::new(self.base_url.clone(), None, false),
+            &self.base_url,
+            prepared,
+            false,
+            None,
+            None,
+        )
+        .await
+        .expect("cannot submit deployment")
     }
 
     /// Hot-redeploy to the given deployment via the Web API.
