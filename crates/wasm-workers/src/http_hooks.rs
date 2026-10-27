@@ -221,7 +221,7 @@ impl WasiHttpHooks for HttpHooks {
         let response = self.send_request_traced(request, options);
         match self.webhook_execution_row.clone() {
             Some(execution_row) => Box::new(async move {
-                execution_row.ensure_created().await;
+                execution_row.request_creation();
                 Box::into_pin(response).await
             }),
             None => response,

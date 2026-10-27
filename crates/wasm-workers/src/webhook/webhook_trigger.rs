@@ -819,11 +819,29 @@ impl WebhookExecutionRow {
             .cloned()
     }
 
-    /// Best-effort creation so the outbound HTTP traces get persisted on finish.
-    pub(crate) async fn ensure_created(&self) {
-        if let Err(err) = self.get_or_create().await {
-            debug!("Cannot persist outbound HTTP traces: failed to create execution row: {err:?}");
+    /// Start a best-effort creation without delaying the outbound request; `close` awaits it.
+    pub(crate) fn request_creation(self: Arc<Self>) {
+        if !self.created.initialized() {
+            tokio::spawn(async move {
+                if let Err(err) = self.get_or_create().await {
+                    debug!(
+                        "Cannot persist outbound HTTP traces: failed to create execution row: {err:?}"
+                    );
+                }
+            });
         }
+    }
+
+    /// Await the creation started by `request_creation`, retrying it if it failed.
+    async fn await_requested_creation(&self) -> Option<Version> {
+        self.get_or_create()
+            .await
+            .inspect_err(|err| {
+                debug!(
+                    "Cannot persist outbound HTTP traces: failed to create execution row: {err:?}"
+                );
+            })
+            .ok()
     }
 }
 
@@ -2309,10 +2327,17 @@ impl WebhookEndpointCtx {
                 status: Err(err.to_string()),
             })
         });
-        if let Some(version) = self
+        let sent_outbound_http = self.http_hooks.webhook_execution_row.is_some()
+            && !self.http_hooks.http_client_traces.is_empty();
+        let version = match self
             .version
             .or_else(|| self.execution_row.created.get().cloned())
         {
+            Some(version) => Some(version),
+            None if sent_outbound_http => self.execution_row.await_requested_creation().await,
+            None => None,
+        };
+        if let Some(version) = version {
             let http_client_traces = Some(
                 self.http_hooks
                     .http_client_traces
