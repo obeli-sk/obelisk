@@ -209,7 +209,7 @@ jobs:
             echo "No changes for ${{ matrix.part }}"
           else
             git commit -m "${{ matrix.commit_message }}"
-            git format-patch --stdout HEAD~1 > "${RUNNER_TEMP}/pr-fix/update.patch"
+            git format-patch --stdout HEAD~1 > "${RUNNER_TEMP}/pr-fix/${{ matrix.part }}.patch"
           fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -245,11 +245,13 @@ jobs:
         with:
           pattern: pr-fix-*
           path: /tmp/pr-fix-artifacts
+          # A lone matching artifact would otherwise skip its per-artifact subdirectory.
+          merge-multiple: true
 
       - name: Apply patches
         run: |
           for part in embedded-assets-hash api-types schemas snapshots clippy; do
-            patch_file="/tmp/pr-fix-artifacts/pr-fix-${part}/update.patch"
+            patch_file="/tmp/pr-fix-artifacts/${part}.patch"
             if [ -f "${patch_file}" ]; then
               git am --3way "${patch_file}"
             else
