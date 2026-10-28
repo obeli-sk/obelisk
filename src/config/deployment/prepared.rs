@@ -24,7 +24,6 @@ pub(crate) struct DeploymentManifestFile {
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedDeploymentManifest {
     pub(crate) deployment_toml: String,
-    #[allow(dead_code)] // digest is recomputed server-side from the stored manifest
     pub(crate) digest: ContentDigest,
     pub(crate) files: Vec<DeploymentManifestFile>,
 }
