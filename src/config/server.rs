@@ -936,6 +936,9 @@ pub(crate) struct WasmGlobalConfigToml {
     pub(crate) codegen_cache: CodegenCache,
     #[serde(default)]
     cache_directory: Option<String>,
+    /// Soft artifact cache size limit; files used by the active deployment are never evicted.
+    #[serde(default = "default_cache_size")]
+    pub(crate) cache_max_size: ByteSizeConfig,
     #[serde(default)]
     pub(crate) allocator_config: WasmtimeAllocatorConfig,
     #[serde(default)]
@@ -955,6 +958,7 @@ impl Default for WasmGlobalConfigToml {
         WasmGlobalConfigToml {
             codegen_cache: CodegenCache::default(),
             cache_directory: Option::default(),
+            cache_max_size: default_cache_size(),
             allocator_config: WasmtimeAllocatorConfig::default(),
             fuel: ValueOrUnlimited::default(),
             build_semaphore: ValueOrUnlimited::default(),
@@ -1033,6 +1037,13 @@ pub(crate) struct CodegenCache {
     enabled: bool,
     #[serde(default)]
     directory: Option<String>,
+    /// Soft size limit excluding metadata; Wasmtime evicts LRU entries on cache writes at most hourly.
+    #[serde(default = "default_cache_size")]
+    pub(crate) max_size: ByteSizeConfig,
+}
+
+const fn default_cache_size() -> ByteSizeConfig {
+    ByteSizeConfig::Mib(256)
 }
 
 impl Default for CodegenCache {
@@ -1040,6 +1051,7 @@ impl Default for CodegenCache {
         Self {
             enabled: default_codegen_enabled(),
             directory: None,
+            max_size: default_cache_size(),
         }
     }
 }

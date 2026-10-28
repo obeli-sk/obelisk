@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(cli)* `obelisk execution submit --follow-logs --show-derived` also streams logs of child
   (derived) executions, prefixed with their execution ID.
 - *(js)* Boa and V8 support `crypto.subtle.digest` with SHA-256, SHA-384, and SHA-512.
+- *(server)* Periodic GC evicts least recently used artifacts from the WASM cache, including
+  JS, exec scripts and VM bundles, while protecting active and prepared deployments across
+  processes sharing the cache. Configure its soft limit with `wasm.cache_max_size.mib` in
+  `server.toml` (default 256); eviction targets 70% of the limit.
 
 ### Changed
 
@@ -19,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(http)* The outbound HTTP pool honors the server's `Keep-Alive: timeout` hint, expiring idle
   connections one second early so requests do not race the server closing them. Without a
   hint, `outbound_http_pool.idle_timeout` now defaults to 4 seconds instead of 90.
+- *(server)* The Wasmtime codegen cache soft limit defaults to 256 MiB instead of 512 MiB
+  and is configurable with `wasm.codegen_cache.max_size.mib` in `server.toml`.
+
+### Fixed
+
+- *(deployment)* Deployment retention preserves the last-good checkpoint even when its
+  deployment is inactive, keeping it available for rollback.
 
 ## [0.43.0-rc.11](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.10...v0.43.0-rc.11)
 

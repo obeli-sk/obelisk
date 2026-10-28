@@ -76,6 +76,7 @@
 # enabled = true
 # max_age.hours = 720
 # [maintenance.gc.retention.deployments]
+## Active, enqueued and last-good checkpoint deployments are excluded.
 # enabled = true
 # max_age.hours = 720
 # [maintenance.gc.retention.system_events]
@@ -88,6 +89,10 @@
 ## Path to directory where downloaded or transformed WASM files are stored. Supports path prefixes.
 ## By default "${CACHE_DIR}/wasm" or "./cache/wasm" if no valid home directory path could be retrieved from the operating system.
 # cache_directory = "${CACHE_DIR}/wasm"
+## Soft size limit for all cached artifacts, including JS, exec scripts and VM bundles.
+## Periodic GC evicts least recently used entries down to 70%; active deployment files
+## and prepared deployment files are excluded, so the cache can exceed this limit.
+# cache_max_size.mib = 256
 # allocator_config = "auto"                      # One of "auto"|"on_demand"|"pooling"
 # fuel = "unlimited"                             # If set to an integer, WASM instances consume fuel, details: https://docs.wasmtime.dev/api/wasmtime/struct.Store.html#method.set_fuel
 # build_semaphore = "unlimited"                  # If set to an integer, limit the number of AOT compilations that can run in parallel
@@ -127,6 +132,9 @@
 ## Defaults:
 # enabled = true
 # directory = "${CACHE_DIR}/codegen" # Path to directory where AOT generated code is cached. Supports path prefixes.
+## Soft limit excluding metadata; Wasmtime evicts least recently used entries on cache writes,
+## at most once per hour, down to 70% of the limit. This is not a hard disk quota.
+# max_size.mib = 256
 
 ## Timers Watcher Configuration
 # [timers_watcher]

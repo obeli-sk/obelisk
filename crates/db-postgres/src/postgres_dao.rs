@@ -6390,13 +6390,13 @@ impl DbAdmin for PostgresConnection {
             RetentionPolicy::Count(count) => tx.query(
                 "SELECT deployment_id FROM (\
                      SELECT deployment_id, created_at FROM t_deployment \
-                     WHERE status = 'inactive' \
+                     WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) \
                      ORDER BY created_at DESC, deployment_id DESC OFFSET $1\
                  ) retained ORDER BY created_at ASC, deployment_id ASC LIMIT $2",
                 &[&i64::from(count), &(i64::from(batch_size) + 1)],
             ).await?,
             RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
-                "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND inactive_at < $1 ORDER BY inactive_at ASC, deployment_id ASC LIMIT $2",
+                "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) AND inactive_at < $1 ORDER BY inactive_at ASC, deployment_id ASC LIMIT $2",
                 &[&cutoff, &(i64::from(batch_size) + 1)],
             ).await?,
         };
