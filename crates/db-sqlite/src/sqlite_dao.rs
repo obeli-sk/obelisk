@@ -12,15 +12,15 @@ use concepts::{
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
         CAS_GC_BATCH_SIZE_BYTES, CancelOutcome, CasGc, CasGcResult, CleanupResult,
         ComponentFileRole, ComponentMetadataRecord, ComponentUpgradeOutcome,
-        ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
-        DbAdmin, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
-        DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
-        DbPool, DbPoolCloseable, DeleteDeploymentResult, DeleteExecutionTreeResult,
-        DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
-        DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
-        DeploymentRecord, DeploymentRetentionCursor, DeploymentState, DeploymentStatus,
-        EnqueueOutcome, ExecutionEvent, ExecutionGcResult, ExecutionListPagination,
-        ExecutionRequest, ExecutionRetentionCursor, ExecutionWithState,
+        ComponentUpgradeReason, CreateRequest, Created, CronAdvanceRequest, CronRecord,
+        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbAdmin, DbConnection, DbErrorGeneric, DbErrorRead,
+        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
+        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeleteDeploymentResult,
+        DeleteExecutionTreeResult, DeploymentComponentDetail, DeploymentComponentFileDetail,
+        DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentExecutionCounts,
+        DeploymentFileRecord, DeploymentRecord, DeploymentRetentionCursor, DeploymentState,
+        DeploymentStatus, EnqueueOutcome, ExecutionEvent, ExecutionGcResult,
+        ExecutionListPagination, ExecutionRequest, ExecutionRetentionCursor, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds, JoinSetRequest,
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE,
@@ -708,6 +708,7 @@ impl SqlitePool {
             // Loop until shutdown is set to true.
         }
         debug!("Closing command thread");
+        drop(conn);
         shutdown_finished.store(true, Ordering::Release);
     }
 
@@ -5675,6 +5676,34 @@ impl DbExternalApi for SqlitePool {
 }
 
 impl SqlitePool {
+    fn get_cron_tx(
+        tx: &Transaction<'_>,
+        digest: &ComponentDigest,
+    ) -> Result<CronRecord, DbErrorRead> {
+        tx.query_row(
+            "SELECT tracking_execution_id, last_target_execution_id, last_submitted_at, created_at FROM t_cron WHERE cron_digest = ?1",
+            [digest],
+            |row| Ok(CronRecord {
+                cron_digest: digest.clone(),
+                tracking_execution_id: row.get(0)?,
+                last_target_execution_id: row.get(1)?,
+                last_submitted_at: row.get(2)?,
+                created_at: row.get(3)?,
+            }),
+        ).map_err(DbErrorRead::from)
+    }
+
+    fn execution_is_cron_tracker_tx(
+        tx: &Transaction<'_>,
+        execution_id: &ExecutionId,
+    ) -> Result<bool, RusqliteError> {
+        // backcompat: 0.43.0-rc.11 legacy trackers need protection until a deployment switch adopts them.
+        Ok(tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM t_state s WHERE s.execution_id = ?1 AND s.component_type = 'cron' AND (EXISTS (SELECT 1 FROM t_cron c WHERE c.tracking_execution_id = s.execution_id) OR NOT EXISTS (SELECT 1 FROM t_cron c WHERE c.cron_digest = s.component_id_input_digest)))",
+            [execution_id.to_string()], |row| row.get(0),
+        )?)
+    }
+
     fn delete_execution_tree_tx(
         tx: &Transaction<'_>,
         execution_id: &ExecutionId,
@@ -5693,6 +5722,9 @@ impl SqlitePool {
         };
         if tombstoned {
             return Ok(DeleteExecutionTreeResult::AlreadyDeleted);
+        }
+        if Self::execution_is_cron_tracker_tx(tx, execution_id)? {
+            return Ok(DeleteExecutionTreeResult::CronTracker);
         }
         if Self::execution_is_non_terminal_tx(tx, execution_id)? {
             if !force_non_terminal {
@@ -5755,6 +5787,13 @@ impl SqlitePool {
             });
         }
         if delete_executions {
+            for root in &roots {
+                if Self::execution_is_cron_tracker_tx(tx, root)? {
+                    return Ok(DeleteDeploymentResult::Referenced {
+                        execution_trees: roots.len() as u64,
+                    });
+                }
+            }
             let non_terminal_roots = roots
                 .iter()
                 .map(|root| Ok((root, Self::execution_is_non_terminal_tx(tx, root)?)))
@@ -6052,8 +6091,9 @@ impl DbAdmin for SqlitePool {
                 };
                 for candidate in ids {
                     let id = ExecutionId::TopLevel(candidate.execution_id);
-                    if dry_run && Self::execution_is_non_terminal_tx(tx, &id)?
-                        && (!force_non_terminal || Self::execution_tree_references_active_deployment_tx(tx, &id)?) {
+                    if dry_run && (Self::execution_is_cron_tracker_tx(tx, &id)?
+                        || (Self::execution_is_non_terminal_tx(tx, &id)?
+                        && (!force_non_terminal || Self::execution_tree_references_active_deployment_tx(tx, &id)?))) {
                         result.blocked_non_terminal += 1;
                     } else if dry_run {
                         result.deleted_execution_trees += 1;
@@ -6063,7 +6103,8 @@ impl DbAdmin for SqlitePool {
                                 result.deleted_execution_trees += 1;
                             }
                             DeleteExecutionTreeResult::NonTerminal
-                            | DeleteExecutionTreeResult::ActiveDeployment => {
+                            | DeleteExecutionTreeResult::ActiveDeployment
+                            | DeleteExecutionTreeResult::CronTracker => {
                                 result.blocked_non_terminal += 1;
                             }
                             DeleteExecutionTreeResult::AlreadyDeleted => {}
@@ -6195,7 +6236,7 @@ impl DbAdmin for SqlitePool {
                         if delete_executions {
                             for root in &roots {
                                 let non_terminal = Self::execution_is_non_terminal_tx(tx, root)?;
-                                blocked |= non_terminal
+                                blocked |= Self::execution_is_cron_tracker_tx(tx, root)? || non_terminal
                                     && (!force_non_terminal
                                         || Self::execution_tree_references_active_deployment_tx(
                                             tx, root,
@@ -6469,6 +6510,99 @@ impl Cas for SqlitePool {
 
 #[async_trait]
 impl DbConnection for SqlitePool {
+    async fn register_cron(
+        &self,
+        tracker: CreateRequest,
+        once: bool,
+    ) -> Result<CronRecord, DbErrorWrite> {
+        tracker.validate_for_storage()?;
+        let now = tracker.created_at;
+        let (record, notifiers) = self.transaction(move |tx| {
+            let digest = &tracker.component_id.component_digest;
+            let inserted = tx.execute(
+                "INSERT INTO t_cron (cron_digest, tracking_execution_id, created_at) VALUES (?1, ?2, ?3) ON CONFLICT (cron_digest) DO NOTHING",
+                rusqlite::params![digest, tracker.execution_id.to_string(), now],
+            )?;
+            let mut notifiers = Vec::new();
+            if inserted == 1 {
+                // backcompat: 0.43.0-rc.11 and earlier use deterministic cron tracker IDs; adopt on every deployment switch.
+                let legacy_id = ExecutionId::deterministic_at_unix_epoch(&digest.0.0);
+                let legacy = tx.query_row(
+                    "SELECT created_at, state, tombstoned FROM t_state WHERE execution_id = ?1",
+                    [legacy_id.to_string()],
+                    |row| Ok((row.get::<_, DateTime<Utc>>(0)?, row.get::<_, String>(1)?, row.get::<_, bool>(2)?)),
+                ).optional()?;
+                if let Some((created_at, state, tombstoned)) = legacy {
+                    if tombstoned {
+                        return Err(DbErrorWriteNonRetriable::Conflict.into());
+                    }
+                    let last = tx.query_row(
+                        "SELECT created_at, json_value FROM t_execution_log WHERE execution_id = ?1 AND history_event_type = 'schedule' ORDER BY version DESC LIMIT 1",
+                        [legacy_id.to_string()],
+                        |row| Ok((row.get::<_, DateTime<Utc>>(0)?, row.get::<_, JsonWrapper<ExecutionRequest>>(1)?.0)),
+                    ).optional()?;
+                    let submission = last.and_then(|(at, event)| match event {
+                        ExecutionRequest::HistoryEvent { event: HistoryEvent::Schedule { execution_id, result: Ok(()), .. } } => Some((execution_id, at)),
+                        _ => None,
+                    });
+                    let tracking = if once && state == STATE_FINISHED && submission.is_some() { None } else { Some(legacy_id.to_string()) };
+                    tx.execute(
+                        "UPDATE t_cron SET tracking_execution_id = ?2, last_target_execution_id = ?3, last_submitted_at = ?4, created_at = ?5 WHERE cron_digest = ?1",
+                        rusqlite::params![digest, tracking, submission.as_ref().map(|s| s.0.to_string()), submission.map(|s| s.1), created_at],
+                    )?;
+                } else {
+                    let (_, notifier) = Self::create_inner(tx, tracker.clone())?;
+                    notifiers.push(notifier);
+                }
+            }
+            Ok::<_, DbErrorWrite>((Self::get_cron_tx(tx, digest)?, notifiers))
+        }, TxType::MultipleWrites, "register_cron").await?;
+        self.notify_all(notifiers, now);
+        Ok(record)
+    }
+
+    async fn get_cron(&self, digest: &ComponentDigest) -> Result<CronRecord, DbErrorRead> {
+        let digest = digest.clone();
+        self.transaction(
+            move |tx| Self::get_cron_tx(tx, &digest),
+            TxType::Other,
+            "get_cron",
+        )
+        .await
+    }
+
+    async fn advance_cron(&self, request: CronAdvanceRequest) -> Result<(), DbErrorWrite> {
+        for create in request.target.iter().chain(request.successor.iter()) {
+            create.validate_for_storage()?;
+        }
+        let now = request.current_time;
+        let notifiers = self.transaction(move |tx| {
+            let changed = tx.execute(
+                "UPDATE t_cron SET tracking_execution_id = ?3, last_target_execution_id = COALESCE(?4, last_target_execution_id), last_submitted_at = CASE WHEN ?4 IS NULL THEN last_submitted_at ELSE ?5 END WHERE cron_digest = ?1 AND tracking_execution_id = ?2",
+                rusqlite::params![request.cron_digest, request.execution_id.to_string(), request.tracking_execution_id.as_ref().map(ToString::to_string), request.target.as_ref().map(|r| r.execution_id.to_string()), now],
+            )?;
+            if changed != 1 {
+                return Err(DbErrorWriteNonRetriable::Conflict.into());
+            }
+            let mut batch = request.batch.clone();
+            Self::validate_append_requests(tx, &request.execution_id, &mut batch)?;
+            let mut version = request.version.clone();
+            let mut notifiers = Vec::new();
+            for event in batch {
+                let (next, notifier) = Self::append(tx, &request.execution_id, event, version)?;
+                version = next;
+                notifiers.push(notifier);
+            }
+            for create in request.target.iter().chain(request.successor.iter()) {
+                let (_, notifier) = Self::create_inner(tx, create.clone())?;
+                notifiers.push(notifier);
+            }
+            Ok::<_, DbErrorWrite>(notifiers)
+        }, TxType::MultipleWrites, "advance_cron").await?;
+        self.notify_all(notifiers, now);
+        Ok(())
+    }
+
     #[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         debug!("create");

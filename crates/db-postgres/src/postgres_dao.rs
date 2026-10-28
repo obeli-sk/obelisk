@@ -12,15 +12,15 @@ use concepts::{
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
         CAS_GC_BATCH_SIZE_BYTES, CancelOutcome, CasGc, CasGcResult, CleanupResult,
         ComponentFileRole, ComponentMetadataRecord, ComponentUpgradeOutcome,
-        ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
-        DbAdmin, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
-        DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
-        DbPool, DbPoolCloseable, DeleteDeploymentResult, DeleteExecutionTreeResult,
-        DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
-        DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
-        DeploymentRecord, DeploymentRetentionCursor, DeploymentState, DeploymentStatus,
-        EnqueueOutcome, ExecutionEvent, ExecutionGcResult, ExecutionListPagination,
-        ExecutionRequest, ExecutionRetentionCursor, ExecutionWithState,
+        ComponentUpgradeReason, CreateRequest, Created, CronAdvanceRequest, CronRecord,
+        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbAdmin, DbConnection, DbErrorGeneric, DbErrorRead,
+        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
+        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeleteDeploymentResult,
+        DeleteExecutionTreeResult, DeploymentComponentDetail, DeploymentComponentFileDetail,
+        DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentExecutionCounts,
+        DeploymentFileRecord, DeploymentRecord, DeploymentRetentionCursor, DeploymentState,
+        DeploymentStatus, EnqueueOutcome, ExecutionEvent, ExecutionGcResult,
+        ExecutionListPagination, ExecutionRequest, ExecutionRetentionCursor, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds, JoinSetRequest,
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE,
@@ -4311,6 +4311,115 @@ impl DbExecutor for PostgresConnection {
 }
 #[async_trait]
 impl DbConnection for PostgresConnection {
+    async fn register_cron(
+        &self,
+        tracker: CreateRequest,
+        once: bool,
+    ) -> Result<CronRecord, DbErrorWrite> {
+        tracker.validate_for_storage()?;
+        let now = tracker.created_at;
+        let digest = &tracker.component_id.component_digest;
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await?;
+        let inserted = tx.execute(
+            "INSERT INTO t_cron (cron_digest, tracking_execution_id, created_at) VALUES ($1, $2, $3) ON CONFLICT (cron_digest) DO NOTHING",
+            &[digest, &tracker.execution_id.to_string(), &now],
+        ).await?;
+        let mut notifiers = Vec::new();
+        if inserted == 1 {
+            // backcompat: 0.43.0-rc.11 and earlier use deterministic cron tracker IDs; adopt on every deployment switch.
+            let legacy_id = ExecutionId::deterministic_at_unix_epoch(&digest.0.0);
+            let legacy = tx.query_opt(
+                "SELECT created_at, state, tombstoned FROM t_state WHERE execution_id = $1 FOR UPDATE",
+                &[&legacy_id.to_string()],
+            ).await?;
+            if let Some(legacy) = legacy {
+                if legacy.get::<_, bool>("tombstoned") {
+                    return Err(DbErrorWriteNonRetriable::Conflict.into());
+                }
+                let last = tx.query_opt(
+                    "SELECT created_at, json_value FROM t_execution_log WHERE execution_id = $1 AND history_event_type = 'schedule' ORDER BY version DESC LIMIT 1",
+                    &[&legacy_id.to_string()],
+                ).await?;
+                let submission = last.and_then(|row| {
+                    match row.get::<_, Json<ExecutionRequest>>("json_value").0 {
+                        ExecutionRequest::HistoryEvent {
+                            event:
+                                HistoryEvent::Schedule {
+                                    execution_id,
+                                    result: Ok(()),
+                                    ..
+                                },
+                        } => Some((
+                            execution_id.to_string(),
+                            row.get::<_, DateTime<Utc>>("created_at"),
+                        )),
+                        _ => None,
+                    }
+                });
+                let tracking = if once
+                    && legacy.get::<_, String>("state") == STATE_FINISHED
+                    && submission.is_some()
+                {
+                    None
+                } else {
+                    Some(legacy_id.to_string())
+                };
+                tx.execute(
+                    "UPDATE t_cron SET tracking_execution_id = $2, last_target_execution_id = $3, last_submitted_at = $4, created_at = $5 WHERE cron_digest = $1",
+                    &[digest, &tracking, &submission.as_ref().map(|s| &s.0), &submission.as_ref().map(|s| s.1), &legacy.get::<_, DateTime<Utc>>("created_at")],
+                ).await?;
+            } else {
+                let (_, notifier) = create_inner(&tx, tracker.clone()).await?;
+                notifiers.push(notifier);
+            }
+        }
+        let record = get_cron_tx(&tx, digest).await?;
+        tx.commit().await?;
+        drop(client);
+        self.notify_all(notifiers, now);
+        Ok(record)
+    }
+
+    async fn get_cron(&self, digest: &ComponentDigest) -> Result<CronRecord, DbErrorRead> {
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await?;
+        let record = get_cron_tx(&tx, digest).await?;
+        tx.commit().await?;
+        Ok(record)
+    }
+
+    async fn advance_cron(&self, mut request: CronAdvanceRequest) -> Result<(), DbErrorWrite> {
+        for create in request.target.iter().chain(request.successor.iter()) {
+            create.validate_for_storage()?;
+        }
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await?;
+        let changed = tx.execute(
+            "UPDATE t_cron SET tracking_execution_id = $3, last_target_execution_id = COALESCE($4, last_target_execution_id), last_submitted_at = CASE WHEN $4::text IS NULL THEN last_submitted_at ELSE $5 END WHERE cron_digest = $1 AND tracking_execution_id = $2",
+            &[&request.cron_digest, &request.execution_id.to_string(), &request.tracking_execution_id.as_ref().map(ToString::to_string), &request.target.as_ref().map(|r| r.execution_id.to_string()), &request.current_time],
+        ).await?;
+        if changed != 1 {
+            return Err(DbErrorWriteNonRetriable::Conflict.into());
+        }
+        validate_append_requests(&tx, &request.execution_id, &mut request.batch).await?;
+        let mut version = request.version;
+        let mut notifiers = Vec::new();
+        for event in request.batch {
+            let (next, notifier) = append(&tx, &request.execution_id, event, version).await?;
+            version = next;
+            notifiers.push(notifier);
+        }
+        for create in request.target.into_iter().chain(request.successor) {
+            let (_, notifier) = create_inner(&tx, create).await?;
+            notifiers.push(notifier);
+        }
+        tx.commit().await?;
+        drop(client);
+        self.notify_all(notifiers, request.current_time);
+        Ok(())
+    }
+
     #[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         debug!("create");
@@ -5952,6 +6061,43 @@ async fn execution_tree_references_active_deployment_tx(
         .is_some_and(|row| row.get::<_, &str>(0) == "active"))
 }
 
+async fn get_cron_tx(
+    tx: &Transaction<'_>,
+    digest: &ComponentDigest,
+) -> Result<CronRecord, DbErrorRead> {
+    let row = tx.query_opt(
+        "SELECT tracking_execution_id, last_target_execution_id, last_submitted_at, created_at FROM t_cron WHERE cron_digest = $1",
+        &[digest],
+    ).await?.ok_or(DbErrorRead::NotFound)?;
+    let parse_id = |name| -> Result<Option<ExecutionId>, DbErrorRead> {
+        row.get::<_, Option<String>>(name)
+            .map(|id| {
+                id.parse().map_err(|err| {
+                    consistency_db_err(format!("Invalid cron execution ID: {err}")).into()
+                })
+            })
+            .transpose()
+    };
+    Ok(CronRecord {
+        cron_digest: digest.clone(),
+        tracking_execution_id: parse_id("tracking_execution_id")?,
+        last_target_execution_id: parse_id("last_target_execution_id")?,
+        last_submitted_at: row.get("last_submitted_at"),
+        created_at: row.get("created_at"),
+    })
+}
+
+async fn execution_is_cron_tracker_tx(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+) -> Result<bool, DbErrorWrite> {
+    // backcompat: 0.43.0-rc.11 legacy trackers need protection until a deployment switch adopts them.
+    Ok(tx.query_one(
+        "SELECT EXISTS(SELECT 1 FROM t_state s WHERE s.execution_id = $1 AND s.component_type = 'cron' AND (EXISTS (SELECT 1 FROM t_cron c WHERE c.tracking_execution_id = s.execution_id) OR NOT EXISTS (SELECT 1 FROM t_cron c WHERE c.cron_digest = s.component_id_input_digest)))",
+        &[&execution_id.to_string()],
+    ).await?.get(0))
+}
+
 async fn delete_execution_tree_tx(
     tx: &tokio_postgres::Transaction<'_>,
     execution_id: &ExecutionId,
@@ -5969,6 +6115,9 @@ async fn delete_execution_tree_tx(
     };
     if state.get::<_, bool>(0) {
         return Ok(DeleteExecutionTreeResult::AlreadyDeleted);
+    }
+    if execution_is_cron_tracker_tx(tx, execution_id).await? {
+        return Ok(DeleteExecutionTreeResult::CronTracker);
     }
     let non_terminal = execution_is_non_terminal_tx(tx, execution_id).await?;
     if non_terminal {
@@ -6043,6 +6192,11 @@ async fn delete_deployment_tx(
     }
     if delete_executions {
         for root in &roots {
+            if execution_is_cron_tracker_tx(tx, root).await? {
+                return Ok(DeleteDeploymentResult::Referenced {
+                    execution_trees: roots.len() as u64,
+                });
+            }
             if execution_is_non_terminal_tx(tx, root).await? {
                 if !force_non_terminal {
                     return Ok(DeleteDeploymentResult::ReferencedByNonTerminal {
@@ -6316,9 +6470,10 @@ impl DbAdmin for PostgresConnection {
             };
             let id = ExecutionId::TopLevel(candidate.execution_id);
             if dry_run
-                && execution_is_non_terminal_tx(&tx, &id).await?
-                && (!force_non_terminal
-                    || execution_tree_references_active_deployment_tx(&tx, &id).await?)
+                && (execution_is_cron_tracker_tx(&tx, &id).await?
+                    || (execution_is_non_terminal_tx(&tx, &id).await?
+                        && (!force_non_terminal
+                            || execution_tree_references_active_deployment_tx(&tx, &id).await?)))
             {
                 result.blocked_non_terminal += 1;
             } else if dry_run {
@@ -6327,7 +6482,8 @@ impl DbAdmin for PostgresConnection {
                 match delete_execution_tree_tx(&tx, &id, force_non_terminal).await? {
                     DeleteExecutionTreeResult::Deleted => result.deleted_execution_trees += 1,
                     DeleteExecutionTreeResult::NonTerminal
-                    | DeleteExecutionTreeResult::ActiveDeployment => {
+                    | DeleteExecutionTreeResult::ActiveDeployment
+                    | DeleteExecutionTreeResult::CronTracker => {
                         result.blocked_non_terminal += 1;
                     }
                     DeleteExecutionTreeResult::AlreadyDeleted => {}
@@ -6445,10 +6601,11 @@ impl DbAdmin for PostgresConnection {
                 if delete_executions {
                     for root in &roots {
                         let non_terminal = execution_is_non_terminal_tx(&tx, root).await?;
-                        blocked |= non_terminal
-                            && (!force_non_terminal
-                                || execution_tree_references_active_deployment_tx(&tx, root)
-                                    .await?);
+                        blocked |= execution_is_cron_tracker_tx(&tx, root).await?
+                            || non_terminal
+                                && (!force_non_terminal
+                                    || execution_tree_references_active_deployment_tx(&tx, root)
+                                        .await?);
                     }
                 }
                 if blocked {

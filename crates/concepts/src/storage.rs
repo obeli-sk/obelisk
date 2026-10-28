@@ -1524,6 +1524,7 @@ pub enum DeleteExecutionTreeResult {
     AlreadyDeleted,
     NonTerminal,
     ActiveDeployment,
+    CronTracker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2898,9 +2899,40 @@ pub struct ExecutionWithStateRequestsResponses {
     pub max_cursor: ResponseCursor,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CronRecord {
+    pub cron_digest: ComponentDigest,
+    pub tracking_execution_id: Option<ExecutionId>,
+    pub last_target_execution_id: Option<ExecutionId>,
+    pub last_submitted_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CronAdvanceRequest {
+    pub cron_digest: ComponentDigest,
+    pub execution_id: ExecutionId,
+    pub version: Version,
+    pub current_time: DateTime<Utc>,
+    pub batch: Vec<AppendRequest>,
+    pub target: Option<CreateRequest>,
+    pub successor: Option<CreateRequest>,
+    pub tracking_execution_id: Option<ExecutionId>,
+}
+
 #[cfg(feature = "runtime")]
 #[async_trait]
 pub trait DbConnection: DbExecutor {
+    async fn register_cron(
+        &self,
+        tracker: CreateRequest,
+        once: bool,
+    ) -> Result<CronRecord, DbErrorWrite>;
+
+    async fn get_cron(&self, digest: &ComponentDigest) -> Result<CronRecord, DbErrorRead>;
+
+    async fn advance_cron(&self, request: CronAdvanceRequest) -> Result<(), DbErrorWrite>;
+
     /// Get execution log.
     async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead>;
 

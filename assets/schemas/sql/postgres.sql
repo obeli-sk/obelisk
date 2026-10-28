@@ -71,6 +71,20 @@ CREATE TABLE public.t_component_source (
 
 
 --
+-- Name: t_cron; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.t_cron (
+    cron_digest bytea NOT NULL,
+    tracking_execution_id text,
+    last_target_execution_id text,
+    last_submitted_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT t_cron_check CHECK (((last_target_execution_id IS NULL) = (last_submitted_at IS NULL)))
+);
+
+
+--
 -- Name: t_delay; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -354,6 +368,14 @@ ALTER TABLE ONLY public.t_component_source
 
 
 --
+-- Name: t_cron t_cron_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.t_cron
+    ADD CONSTRAINT t_cron_pkey PRIMARY KEY (cron_digest);
+
+
+--
 -- Name: t_delay t_delay_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -485,6 +507,13 @@ CREATE UNIQUE INDEX idx_join_set_response_unique_child_id ON public.t_join_set_r
 --
 
 CREATE UNIQUE INDEX idx_join_set_response_unique_delay_id ON public.t_join_set_response USING btree (delay_id) WHERE (delay_id IS NOT NULL);
+
+
+--
+-- Name: idx_t_cron_tracking_execution; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_t_cron_tracking_execution ON public.t_cron USING btree (tracking_execution_id);
 
 
 --

@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(cron)* Cron registration persists independently of execution history, so GC of an
+  `@once` tracker cannot cause resubmission. Recurring trackers roll over at a 1,000-event
+  watermark, allowing GC of their old history while preserving overlap checks. Existing
+  deterministic trackers are adopted on startup and subsequent deployment switches.
 - *(sqlite)* Databases use incremental auto-vacuum, and periodic GC reclaims up to 100 free
   pages per sweep. Existing databases are converted once at startup with a full `VACUUM`,
   which can increase startup time and requires additional temporary disk space.
@@ -31,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(sqlite)* Pool shutdown waits for connection cleanup and the final WAL checkpoint
+  before reporting completion.
 - *(gc)* Deployment retention processes multiple deployments with execution trees per batch
   and reports remaining work correctly. Blocked deployments and protected execution trees
   are skipped, with continuation cursors allowing periodic GC to reach newer eligible
