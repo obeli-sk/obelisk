@@ -116,7 +116,9 @@ use concepts::storage::DeploymentFileRecord;
 use concepts::storage::EnqueueOutcome;
 use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
-use concepts::storage::{ComponentMetadataRecord, DeploymentRecord, DeploymentStatus};
+use concepts::storage::{
+    ComponentMetadataRecord, DeploymentRecord, DeploymentStatus, SourceMapping,
+};
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::time::TokioSleep;
@@ -3015,31 +3017,40 @@ pub(crate) async fn upsert_backtrace_sources(
     // Persist the (component, frame_key) -> digest mapping so GetBacktraceSource can serve
     // sources without filesystem access. WASM backtrace sources are already CAS blobs (a
     // digest reference); inlined JS/exec sources are written to the CAS here.
+    let mut mappings = Vec::new();
     for (component_digest, frame_files) in &server_compiled_linked.frame_files {
         for (config_key, source) in frame_files {
-            // Keys starting with ".../" become suffix keys (strip "...", prepend "/").
-            let (frame_key, is_suffix) = if let Some(stripped) = config_key.strip_prefix(".../") {
-                (format!("/{stripped}"), true)
-            } else {
-                (config_key.clone(), false)
-            };
             let digest = match source {
-                FrameSource::Digest(digest) => digest.clone(),
-                FrameSource::Content(content) => match cas.write_blob(content.as_bytes()).await {
-                    Ok(digest) => digest,
-                    Err(err) => {
+                FrameSource::Digest(digest) => Some(digest.clone()),
+                FrameSource::Content(content) => cas
+                    .write_blob(content.as_bytes())
+                    .await
+                    .inspect_err(|err| {
                         warn!("Cannot store backtrace source {config_key:?} in CAS: {err:?}");
-                        continue;
-                    }
-                },
+                    })
+                    .ok(),
             };
-            if let Err(err) = conn
-                .upsert_source_mapping(component_digest, &frame_key, is_suffix, &digest)
-                .await
-            {
-                warn!("Cannot store backtrace source mapping {config_key:?} in DB: {err:?}");
+            if let Some(digest) = digest {
+                // Keys starting with ".../" become suffix keys (strip "...", prepend "/").
+                let (frame_key, is_suffix) = if let Some(stripped) = config_key.strip_prefix(".../")
+                {
+                    (format!("/{stripped}"), true)
+                } else {
+                    (config_key.clone(), false)
+                };
+                mappings.push(SourceMapping {
+                    component_digest: component_digest.clone(),
+                    frame_key,
+                    is_suffix,
+                    digest,
+                });
             }
         }
+    }
+    if !mappings.is_empty()
+        && let Err(err) = conn.upsert_source_mappings(&mappings).await
+    {
+        warn!("Cannot store backtrace source mappings in DB: {err:?}");
     }
 }
 

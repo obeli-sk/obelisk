@@ -1,7 +1,6 @@
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, RunId};
-use concepts::storage::DeploymentFileRecord;
 use concepts::storage::http_client_trace::{HttpClientTrace, RequestTrace};
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
@@ -17,6 +16,7 @@ use concepts::storage::{
     DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus, EnqueueOutcome,
 };
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent, ListExecutionsFilter};
+use concepts::storage::{DeploymentFileRecord, SourceMapping};
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent, LogFilter};
 use concepts::storage::{LogCursor, LogEntry, LogInfoAppendRow};
 use concepts::time::ClockFn;
@@ -4291,7 +4291,12 @@ async fn source_file_upsert_replaces_existing_mapping(database: Database) {
     let upsert = async |frame_key: &str, is_suffix: bool, content: &str| {
         let digest = cas.write_blob(content.as_bytes()).await.unwrap();
         api_conn
-            .upsert_source_mapping(&component_digest, frame_key, is_suffix, &digest)
+            .upsert_source_mappings(&[SourceMapping {
+                component_digest: component_digest.clone(),
+                frame_key: frame_key.to_string(),
+                is_suffix,
+                digest,
+            }])
             .await
             .unwrap();
     };

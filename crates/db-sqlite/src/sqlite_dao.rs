@@ -31,9 +31,9 @@ use concepts::{
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
         RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
         ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError, SystemEvent,
-        SystemEventFilter, SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked,
-        Version, VersionType,
+        STATE_LOCKED, STATE_PENDING_AT, SourceMapping, StorageStatus, SubscribeToResponsesError,
+        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
+        TimeoutOutcome, Unlocked, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -4938,35 +4938,29 @@ impl DbExternalApi for SqlitePool {
     }
 
     #[instrument(skip_all)]
-    async fn upsert_source_mapping(
-        &self,
-        component_digest: &ComponentDigest,
-        frame_key: &str,
-        is_suffix: bool,
-        digest: &ContentDigest,
-    ) -> Result<(), DbErrorWrite> {
-        let component_digest = component_digest.clone();
-        let frame_key = frame_key.to_owned();
-        let digest = digest.to_string();
+    async fn upsert_source_mappings(&self, mappings: &[SourceMapping]) -> Result<(), DbErrorWrite> {
+        let mappings = mappings.to_vec();
         self.transaction(
             move |tx| {
-                tx.prepare(
+                let mut stmt = tx.prepare(
                     "INSERT INTO t_component_source \
                      (component_digest, frame_key, is_suffix, digest) \
                      VALUES (:component_digest, :frame_key, :is_suffix, :digest) \
                      ON CONFLICT (component_digest, frame_key, is_suffix) \
                      DO UPDATE SET digest = excluded.digest",
-                )?
-                .execute(named_params! {
-                    ":component_digest": component_digest,
-                    ":frame_key": frame_key,
-                    ":is_suffix": is_suffix,
-                    ":digest": digest,
-                })?;
+                )?;
+                for mapping in &mappings {
+                    stmt.execute(named_params! {
+                        ":component_digest": mapping.component_digest,
+                        ":frame_key": mapping.frame_key,
+                        ":is_suffix": mapping.is_suffix,
+                        ":digest": mapping.digest.to_string(),
+                    })?;
+                }
                 Ok(())
             },
             TxType::Other,
-            "upsert_source_mapping",
+            "upsert_source_mappings",
         )
         .await
     }
