@@ -18,6 +18,7 @@ use crate::component_id::ComponentDigest;
 use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::DeploymentId;
 use crate::prefixed_ulid::ExecutionIdDerived;
+use crate::prefixed_ulid::ExecutionIdTopLevel;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::NodeRunId;
 use crate::prefixed_ulid::RunId;
@@ -1494,11 +1495,19 @@ pub struct CleanupResult {
     pub blocked_by_execution_reference: u64,
     pub has_more: bool,
     pub next_deployment_cursor: Option<DeploymentRetentionCursor>,
+    pub next_execution_cursor: Option<ExecutionRetentionCursor>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionRetentionCursor {
+    /// Ordering timestamp: `created_at` for count retention, `updated_at` for age retention.
+    pub timestamp: DateTime<Utc>,
+    pub execution_id: ExecutionIdTopLevel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeploymentRetentionCursor {
-    /// Ordering timestamp: created_at for count retention, inactive_at for age retention.
+    /// Ordering timestamp: `created_at` for count retention, `inactive_at` for age retention.
     pub timestamp: DateTime<Utc>,
     pub deployment_id: DeploymentId,
 }
@@ -1936,6 +1945,7 @@ pub trait DbAdmin: Send + Sync {
         batch_size: u32,
         force_non_terminal: bool,
         dry_run: bool,
+        cursor: Option<ExecutionRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite>;
 
     async fn delete_deployment(

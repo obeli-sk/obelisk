@@ -615,7 +615,7 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
     clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
     let newer = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
     let result = admin
-        .retain_executions(RetentionPolicy::Count(1), 1, false, false)
+        .retain_executions(RetentionPolicy::Count(1), 1, false, false, None)
         .await
         .unwrap();
     assert_eq!(result.deleted_execution_trees, 1);
@@ -649,7 +649,7 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
             .is_ok()
     );
     let result = admin
-        .retain_executions(RetentionPolicy::Count(1), 1, false, false)
+        .retain_executions(RetentionPolicy::Count(1), 1, false, false, None)
         .await
         .unwrap();
     assert_eq!(result.deleted_execution_trees, 1);
@@ -1284,6 +1284,78 @@ async fn deployment_retention_resumes_after_an_execution_batch(database: Databas
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
+async fn execution_retention_skips_protected_trees_across_batches(
+    database: Database,
+    #[values(false, true)] force: bool,
+    #[values(1, 3)] batch_size: u32,
+    #[values(false, true)] retain_by_age: bool,
+) {
+    set_up();
+    let clock = SimClock::new(chrono::Utc::now());
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let active = DeploymentId::generate();
+    let inactive = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), active, clock.now()).await;
+    insert_deployment(db_pool.as_ref(), inactive, clock.now()).await;
+    let conn = db_pool.external_api_conn().await.unwrap();
+    conn.activate_deployment(active, clock.now(), Some("test-app-config"))
+        .await
+        .unwrap();
+    let mut protected = Vec::new();
+    for _ in 0..2 {
+        protected.push(create_execution(db_pool.as_ref(), &clock, active, false).await);
+        clock.move_time_forward(std::time::Duration::from_secs(1));
+    }
+    let eligible = create_execution(db_pool.as_ref(), &clock, inactive, true).await;
+    let policy = if retain_by_age {
+        RetentionPolicy::CreatedAtOrAfter(clock.now() + Duration::days(1))
+    } else {
+        RetentionPolicy::Count(0)
+    };
+    let admin = db_pool.admin_conn().await.unwrap();
+    let mut cursor = None;
+    let mut deleted = 0;
+    let mut blocked = 0;
+    for batch in 0..3 {
+        let preview = admin
+            .retain_executions(policy, batch_size, force, true, cursor)
+            .await
+            .unwrap();
+        let result = admin
+            .retain_executions(policy, batch_size, force, false, cursor)
+            .await
+            .unwrap();
+        assert_eq!(preview, result);
+        deleted += result.deleted_execution_trees;
+        blocked += result.blocked_non_terminal;
+        if !result.has_more {
+            break;
+        }
+        assert!(
+            batch < 2,
+            "execution retention must advance past protected trees"
+        );
+        assert_ne!(result.next_execution_cursor, cursor);
+        cursor = result.next_execution_cursor;
+    }
+    assert_eq!(deleted, 1);
+    assert_eq!(blocked, if force { 2 } else { 0 });
+    assert_eq!(
+        admin.delete_execution_tree(&eligible, false).await.unwrap(),
+        DeleteExecutionTreeResult::AlreadyDeleted
+    );
+    let execution_conn = db_pool.connection().await.unwrap();
+    for execution in protected {
+        let log = execution_conn.get(&execution).await.unwrap();
+        assert!(!log.pending_state.is_finished());
+    }
+    drop((admin, conn, execution_conn));
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
 async fn age_retention_uses_completion_and_inactive_times(database: Database) {
     set_up();
     // State transition timestamps use the database clock. Start near wall-clock time so
@@ -1315,7 +1387,13 @@ async fn age_retention_uses_completion_and_inactive_times(database: Database) {
     let cutoff = clock.now() - Duration::days(30);
     let admin = db_pool.admin_conn().await.unwrap();
     let executions = admin
-        .retain_executions(RetentionPolicy::CreatedAtOrAfter(cutoff), 10, false, false)
+        .retain_executions(
+            RetentionPolicy::CreatedAtOrAfter(cutoff),
+            10,
+            false,
+            false,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(executions.deleted_execution_trees, 1);
@@ -1327,7 +1405,13 @@ async fn age_retention_uses_completion_and_inactive_times(database: Database) {
         DeleteExecutionTreeResult::AlreadyDeleted
     );
     let forced = admin
-        .retain_executions(RetentionPolicy::CreatedAtOrAfter(cutoff), 10, true, false)
+        .retain_executions(
+            RetentionPolicy::CreatedAtOrAfter(cutoff),
+            10,
+            true,
+            false,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(forced.deleted_execution_trees, 1);

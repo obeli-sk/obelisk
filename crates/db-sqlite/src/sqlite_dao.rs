@@ -20,19 +20,20 @@ use concepts::{
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
         DeploymentRecord, DeploymentRetentionCursor, DeploymentState, DeploymentStatus,
         EnqueueOutcome, ExecutionEvent, ExecutionGcResult, ExecutionListPagination,
-        ExecutionRequest, ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay,
-        ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds,
-        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
-        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
-        LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
-        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
-        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
-        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
-        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
-        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
-        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
-        TimeoutOutcome, Unlocked, Version, VersionType,
+        ExecutionRequest, ExecutionRetentionCursor, ExecutionWithState,
+        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds, JoinSetRequest,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE,
+        LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse,
+        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
+        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
+        LogLevel, LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
+        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
+        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
+        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError, SystemEvent,
+        SystemEventFilter, SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked,
+        Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -5971,32 +5972,25 @@ impl DbAdmin for SqlitePool {
         batch_size: u32,
         force_non_terminal: bool,
         dry_run: bool,
+        cursor: Option<ExecutionRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
-                let mut ids = match (retention, force_non_terminal) {
-                    (RetentionPolicy::Count(count), false) => tx
-                        .prepare("SELECT execution_id FROM (\
+                let mut ids = match retention {
+                    RetentionPolicy::Count(count) => tx.prepare(
+                        "SELECT execution_id, created_at FROM (\
                              SELECT execution_id, created_at FROM t_state \
-                             WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE \
+                             WHERE is_top_level = TRUE AND (?3 OR state = 'finished') AND tombstoned = FALSE \
                              ORDER BY created_at DESC, execution_id DESC LIMIT -1 OFFSET ?2\
-                         ) ORDER BY created_at ASC, execution_id ASC LIMIT ?1")?
-                        .query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count)],
-                        |row| row.get::<_, ExecutionId>(0),
-                    )?
-                        .collect::<Result<Vec<_>, _>>()?,
-                    (RetentionPolicy::CreatedAtOrAfter(cutoff), false) => tx
-                        .prepare("SELECT execution_id FROM t_state WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE AND updated_at < ?2 ORDER BY updated_at ASC, execution_id ASC LIMIT ?1")?
-                        .query_map(rusqlite::params![i64::from(batch_size) + 1, cutoff], |row| row.get::<_, ExecutionId>(0))?
-                        .collect::<Result<Vec<_>, _>>()?,
-                    (RetentionPolicy::Count(count), true) => tx
-                        .prepare("SELECT execution_id FROM (SELECT execution_id, created_at FROM t_state WHERE is_top_level = true AND tombstoned = FALSE ORDER BY created_at DESC, execution_id DESC LIMIT -1 OFFSET ?2) ORDER BY created_at ASC, execution_id ASC LIMIT ?1")?
-                        .query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count)], |row| row.get::<_, ExecutionId>(0))?
-                        .collect::<Result<Vec<_>, _>>()?,
-                    (RetentionPolicy::CreatedAtOrAfter(cutoff), true) => tx
-                        .prepare("SELECT execution_id FROM t_state WHERE is_top_level = true AND tombstoned = FALSE AND updated_at < ?2 ORDER BY updated_at ASC, execution_id ASC LIMIT ?1")?
-                        .query_map(rusqlite::params![i64::from(batch_size) + 1, cutoff], |row| row.get::<_, ExecutionId>(0))?
-                        .collect::<Result<Vec<_>, _>>()?,
+                         ) WHERE (?4 IS NULL OR (created_at, execution_id) > (?4, ?5)) ORDER BY created_at ASC, execution_id ASC LIMIT ?1"
+                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count), force_non_terminal, cursor.map(|c| c.timestamp), cursor.map(|c| c.execution_id.to_string())], |row| {
+                        Ok(ExecutionRetentionCursor { execution_id: row.get::<_, ExecutionId>(0)?.get_top_level(), timestamp: row.get(1)? })
+                    })?.collect::<Result<Vec<_>, _>>()?,
+                    RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
+                        "SELECT execution_id, updated_at FROM t_state WHERE is_top_level = TRUE AND (?3 OR state = 'finished') AND tombstoned = FALSE AND updated_at < ?2 AND (?4 IS NULL OR (updated_at, execution_id) > (datetime(?4), ?5)) ORDER BY updated_at ASC, execution_id ASC LIMIT ?1"
+                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, cutoff, force_non_terminal, cursor.map(|c| c.timestamp), cursor.map(|c| c.execution_id.to_string())], |row| {
+                        Ok(ExecutionRetentionCursor { execution_id: row.get::<_, ExecutionId>(0)?.get_top_level(), timestamp: row.get(1)? })
+                    })?.collect::<Result<Vec<_>, _>>()?,
                 };
                 let has_more = ids.len() > batch_size as usize;
                 ids.truncate(batch_size as usize);
@@ -6006,10 +6000,15 @@ impl DbAdmin for SqlitePool {
                         RetentionPolicy::CreatedAtOrAfter(_) => 0,
                     },
                     has_more,
+                    next_execution_cursor: cursor,
                     ..Default::default()
                 };
-                for id in ids {
-                    if dry_run {
+                for candidate in ids {
+                    let id = ExecutionId::TopLevel(candidate.execution_id);
+                    if dry_run && Self::execution_is_non_terminal_tx(tx, &id)?
+                        && (!force_non_terminal || Self::execution_tree_references_active_deployment_tx(tx, &id)?) {
+                        result.blocked_non_terminal += 1;
+                    } else if dry_run {
                         result.deleted_execution_trees += 1;
                     } else {
                         match Self::delete_execution_tree_tx(tx, &id, force_non_terminal)? {
@@ -6023,6 +6022,7 @@ impl DbAdmin for SqlitePool {
                             DeleteExecutionTreeResult::AlreadyDeleted => {}
                         }
                     }
+                    result.next_execution_cursor = Some(candidate);
                 }
                 Ok(result)
             },

@@ -304,6 +304,7 @@ where
     let mut stats = SweepStats::default();
     if let Some(max_age) = config.executions {
         let cutoff = cutoff(max_age);
+        let mut cursor = None;
         loop {
             let started = std::time::Instant::now();
             let result = async {
@@ -315,6 +316,7 @@ where
                         config.batch_size,
                         false,
                         false,
+                        cursor,
                     )
                     .await
             }
@@ -322,8 +324,14 @@ where
             .map_err(|source| Box::new(SweepFailure::new("execution_retention", stats, source)))?;
             stats.execution_retention.active += started.elapsed();
             stats.execution_retention.affected += result.deleted_execution_trees;
-            delay_after_work(result.deleted_execution_trees, config.batch_delay).await;
-            if !result.has_more {
+            delay_after_work(
+                result.deleted_execution_trees + result.blocked_non_terminal,
+                config.batch_delay,
+            )
+            .await;
+            let advanced = result.next_execution_cursor != cursor;
+            cursor = result.next_execution_cursor;
+            if !result.has_more || (result.deleted_execution_trees == 0 && !advanced) {
                 break;
             }
         }
@@ -682,6 +690,42 @@ mod tests {
         .unwrap_or_else(|failure| panic!("{}", failure.source));
         assert_eq!(admin.list_system_events(filter).await.unwrap().len(), 2);
         drop(admin);
+        db_close.close().await;
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn execution_retention_skips_non_terminal_roots(
+        #[values(Database::Sqlite, Database::Postgres)] database: Database,
+    ) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let deployment = insert_deployment(db_pool.as_ref(), 1).await;
+        let paused = create_execution(db_pool.as_ref(), deployment, false).await;
+        let first = create_execution(db_pool.as_ref(), deployment, true).await;
+        let second = create_execution(db_pool.as_ref(), deployment, true).await;
+        let config = ValidatedConfig {
+            executions: Some(Duration::from_nanos(1)),
+            deployments: None,
+            system_events: None,
+            ..sweep_config()
+        };
+        let stats = tokio::time::timeout(
+            Duration::from_secs(10),
+            run_sweep(&db_pool, config, &mut false, || async {
+                Ok(CasGcResult::default())
+            }),
+        )
+        .await
+        .expect("execution retention must finish with a non-terminal root")
+        .unwrap_or_else(|failure| panic!("{}: {}", failure.category, failure.source));
+        assert_eq!(stats.execution_retention.affected, 2);
+        assert!(stats.execution_gc.affected > 0);
+        let conn = db_pool.connection().await.unwrap();
+        assert!(conn.get(&paused).await.unwrap().pending_state.is_paused());
+        assert!(conn.get(&first).await.is_err());
+        assert!(conn.get(&second).await.is_err());
+        drop(conn);
         db_close.close().await;
     }
 

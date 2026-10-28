@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use concepts::{
     ExecutionId,
-    prefixed_ulid::{DeploymentId, NodeRunId, SystemEventId},
+    prefixed_ulid::{DeploymentId, ExecutionIdTopLevel, NodeRunId, SystemEventId},
     storage,
 };
 use serde::{Deserialize, Serialize};
@@ -77,11 +77,40 @@ pub struct CleanupRequest {
     pub force_non_terminal: bool,
     #[serde(default)]
     pub dry_run: bool,
+    // backcompat: 0.43.0-rc.11 execution retention requests had no cursor.
+    #[serde(default)]
+    pub cursor: Option<ExecutionRetentionCursor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ExecutionRetentionCursor {
+    /// Ordering timestamp: `created_at` for count retention, `updated_at` for age retention.
+    pub timestamp: DateTime<Utc>,
+    #[schema(value_type = String)]
+    pub execution_id: ExecutionIdTopLevel,
+}
+
+impl From<storage::ExecutionRetentionCursor> for ExecutionRetentionCursor {
+    fn from(value: storage::ExecutionRetentionCursor) -> Self {
+        Self {
+            timestamp: value.timestamp,
+            execution_id: value.execution_id,
+        }
+    }
+}
+
+impl From<ExecutionRetentionCursor> for storage::ExecutionRetentionCursor {
+    fn from(value: ExecutionRetentionCursor) -> Self {
+        Self {
+            timestamp: value.timestamp,
+            execution_id: value.execution_id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DeploymentRetentionCursor {
-    /// Ordering timestamp: created_at for count retention, inactive_at for age retention.
+    /// Ordering timestamp: `created_at` for count retention, `inactive_at` for age retention.
     pub timestamp: DateTime<Utc>,
     #[schema(value_type = String)]
     pub deployment_id: DeploymentId,
@@ -133,6 +162,9 @@ pub struct CleanupResponse {
     // backcompat: 0.43.0-rc.11 cleanup responses had no deployment cursor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_deployment_cursor: Option<DeploymentRetentionCursor>,
+    // backcompat: 0.43.0-rc.11 cleanup responses had no execution cursor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_execution_cursor: Option<ExecutionRetentionCursor>,
 }
 
 impl From<storage::CleanupResult> for CleanupResponse {
@@ -146,6 +178,10 @@ impl From<storage::CleanupResult> for CleanupResponse {
             has_more: value.has_more,
             next_deployment_cursor: value
                 .next_deployment_cursor
+                .filter(|_| value.has_more)
+                .map(Into::into),
+            next_execution_cursor: value
+                .next_execution_cursor
                 .filter(|_| value.has_more)
                 .map(Into::into),
         }

@@ -20,19 +20,20 @@ use concepts::{
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
         DeploymentRecord, DeploymentRetentionCursor, DeploymentState, DeploymentStatus,
         EnqueueOutcome, ExecutionEvent, ExecutionGcResult, ExecutionListPagination,
-        ExecutionRequest, ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay,
-        ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds,
-        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
-        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
-        LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
-        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
-        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
-        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
-        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
-        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
-        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
-        TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
+        ExecutionRequest, ExecutionRetentionCursor, ExecutionWithState,
+        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds, JoinSetRequest,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE,
+        LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse,
+        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
+        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
+        LogLevel, LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
+        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
+        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
+        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError, SystemEvent,
+        SystemEventFilter, SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked,
+        Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -6277,29 +6278,22 @@ impl DbAdmin for PostgresConnection {
         batch_size: u32,
         force_non_terminal: bool,
         dry_run: bool,
+        cursor: Option<ExecutionRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let rows = match (retention, force_non_terminal) {
-            (RetentionPolicy::Count(count), false) => tx.query(
-                "SELECT execution_id FROM (\
+        let rows = match retention {
+            RetentionPolicy::Count(count) => tx.query(
+                "SELECT execution_id, created_at FROM (\
                      SELECT execution_id, created_at FROM t_state \
-                     WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE \
+                     WHERE is_top_level = TRUE AND ($3 OR state = 'finished') AND tombstoned = FALSE \
                      ORDER BY created_at DESC, execution_id DESC OFFSET $2\
-                 ) retained ORDER BY created_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &i64::from(count)],
+                 ) retained WHERE ($4::timestamptz IS NULL OR (created_at, execution_id) > ($4, $5)) ORDER BY created_at ASC, execution_id ASC LIMIT $1",
+                &[&(i64::from(batch_size) + 1), &i64::from(count), &force_non_terminal, &cursor.map(|c| c.timestamp), &cursor.map(|c| c.execution_id.to_string())],
             ).await?,
-            (RetentionPolicy::CreatedAtOrAfter(cutoff), false) => tx.query(
-                "SELECT execution_id FROM t_state WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE AND updated_at < $2 ORDER BY updated_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &cutoff],
-            ).await?,
-            (RetentionPolicy::Count(count), true) => tx.query(
-                "SELECT execution_id FROM (SELECT execution_id, created_at FROM t_state WHERE is_top_level = true AND tombstoned = FALSE ORDER BY created_at DESC, execution_id DESC OFFSET $2) retained ORDER BY created_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &i64::from(count)],
-            ).await?,
-            (RetentionPolicy::CreatedAtOrAfter(cutoff), true) => tx.query(
-                "SELECT execution_id FROM t_state WHERE is_top_level = true AND tombstoned = FALSE AND updated_at < $2 ORDER BY updated_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &cutoff],
+            RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
+                "SELECT execution_id, updated_at FROM t_state WHERE is_top_level = TRUE AND ($3 OR state = 'finished') AND tombstoned = FALSE AND updated_at < $2 AND ($4::timestamptz IS NULL OR (updated_at, execution_id) > ($4, $5)) ORDER BY updated_at ASC, execution_id ASC LIMIT $1",
+                &[&(i64::from(batch_size) + 1), &cutoff, &force_non_terminal, &cursor.map(|c| c.timestamp), &cursor.map(|c| c.execution_id.to_string())],
             ).await?,
         };
         let has_more = rows.len() > batch_size as usize;
@@ -6309,16 +6303,27 @@ impl DbAdmin for PostgresConnection {
                 RetentionPolicy::CreatedAtOrAfter(_) => 0,
             },
             has_more,
+            next_execution_cursor: cursor,
             ..Default::default()
         };
         for row in rows.into_iter().take(batch_size as usize) {
-            if dry_run {
+            let candidate = ExecutionRetentionCursor {
+                execution_id: row
+                    .get::<_, String>(0)
+                    .parse()
+                    .expect("database execution id must be top-level"),
+                timestamp: row.get(1),
+            };
+            let id = ExecutionId::TopLevel(candidate.execution_id);
+            if dry_run
+                && execution_is_non_terminal_tx(&tx, &id).await?
+                && (!force_non_terminal
+                    || execution_tree_references_active_deployment_tx(&tx, &id).await?)
+            {
+                result.blocked_non_terminal += 1;
+            } else if dry_run {
                 result.deleted_execution_trees += 1;
             } else {
-                let id = row
-                    .get::<_, String>(0)
-                    .parse::<ExecutionId>()
-                    .expect("database execution id must be valid");
                 match delete_execution_tree_tx(&tx, &id, force_non_terminal).await? {
                     DeleteExecutionTreeResult::Deleted => result.deleted_execution_trees += 1,
                     DeleteExecutionTreeResult::NonTerminal
@@ -6328,6 +6333,7 @@ impl DbAdmin for PostgresConnection {
                     DeleteExecutionTreeResult::AlreadyDeleted => {}
                 }
             }
+            result.next_execution_cursor = Some(candidate);
         }
         tx.commit().await?;
         Ok(result)
