@@ -34,6 +34,22 @@ params = [
 return_type = "result<string, string>"
 
 [[activity_js]]
+name = "test_digest_activity"
+ffqn = "testing:integration/activity-digest.digest"
+content = '''
+export default async function digest(message) {
+    const hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+    const data = new TextEncoder().encode(`xx${message}xx`).subarray(2, -2);
+    return [
+        hex(await crypto.subtle.digest('SHA-256', data)),
+        hex(await crypto.subtle.digest({ name: 'sha-512' }, data.slice().buffer)),
+    ].join(':');
+}
+'''
+params = [{ name = "message", type = "string" }]
+return_type = "result<string, string>"
+
+[[activity_js]]
 name = "test_get_random_values_activity"
 ffqn = "testing:integration/activity-random.get-random-values"
 content = '''
@@ -107,6 +123,54 @@ async fn hmac_sign_verify(#[case] runtime: JsRuntime) {
         js_hex,
         expected,
         "JS HMAC signatures must match Rust using {}",
+        runtime.name()
+    );
+    server.shutdown().await;
+}
+
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
+#[tokio::test]
+async fn digest(#[case] runtime: JsRuntime) {
+    use sha2::Digest as _;
+    const MSG: &str = "hello world";
+
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(192),
+        JsRuntime::V8 => test_addr!(193),
+    };
+    let server = TestServer::start_inline_deployment_with_js_runtime(
+        ip,
+        "",
+        DEPLOYMENT,
+        &[],
+        runtime.mode(),
+    )
+    .await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/activity-digest.digest",
+            vec![json!(MSG)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    let hex = |bytes: &[u8]| {
+        bytes.iter().fold(String::new(), |mut acc, b| {
+            write!(acc, "{b:02x}").unwrap();
+            acc
+        })
+    };
+    let expected = format!(
+        "{}:{}",
+        hex(&Sha256::digest(MSG)),
+        hex(&Sha512::digest(MSG))
+    );
+    assert_eq!(
+        body["ok"].as_str(),
+        Some(expected.as_str()),
+        "{body} using {}",
         runtime.name()
     );
     server.shutdown().await;

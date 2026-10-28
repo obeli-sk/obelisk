@@ -1,16 +1,16 @@
 //! Web Crypto API (`crypto.subtle`) for Boa-based Obelisk runtimes.
 //!
-//! Implements the subset of the [Web Crypto API][spec] needed for HMAC-SHA-256/384/512
-//! signature generation and verification — the minimum required for GitHub webhook
-//! signature verification.
+//! Implements the subset of the [Web Crypto API][spec] needed for SHA-256/384/512 digests
+//! and HMAC signature generation and verification.
 //!
 //! Supported operations:
+//! - `crypto.subtle.digest("SHA-256", data)`
 //! - `crypto.subtle.importKey("raw", keyData, {name:"HMAC", hash:"SHA-256"}, extractable, usages)`
 //! - `crypto.subtle.sign({name:"HMAC"}, key, data)`
 //! - `crypto.subtle.verify({name:"HMAC"}, key, signature, data)`
 //! - `crypto.getRandomValues(integerTypedArray)`
 //!
-//! All `subtle.*` methods return immediately-resolved `Promise`s (HMAC is synchronous).
+//! All `subtle.*` methods return immediately-resolved `Promise`s (hashing is synchronous).
 //! The Promise return is required by the spec and allows callers to use `await`.
 //!
 //! [spec]: https://www.w3.org/TR/WebCryptoAPI/
@@ -22,7 +22,7 @@ use boa_engine::{
     property::Attribute,
 };
 use boa_gc::{Finalize, Trace};
-use js_crypto::HmacHash;
+use js_crypto::HashAlgorithm;
 
 // ── Key material ──────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ pub struct CryptoKeyData {
     #[unsafe_ignore_trace]
     key_bytes: Vec<u8>,
     #[unsafe_ignore_trace]
-    hash: HmacHash,
+    hash: HashAlgorithm,
     extractable: bool,
     #[unsafe_ignore_trace]
     usages: Vec<String>,
@@ -83,7 +83,7 @@ fn bytes_to_array_buffer(bytes: Vec<u8>, context: &mut Context) -> JsResult<JsVa
 // ── Algorithm parsing ─────────────────────────────────────────────────────────
 
 /// Parse a hash algorithm from a string `"SHA-256"` or object `{name: "SHA-256"}`.
-fn parse_hash(val: &JsValue, context: &mut Context) -> JsResult<HmacHash> {
+fn parse_hash(val: &JsValue, context: &mut Context) -> JsResult<HashAlgorithm> {
     let name = if let Some(s) = val.as_string() {
         s.to_std_string_escaped()
     } else {
@@ -96,7 +96,7 @@ fn parse_hash(val: &JsValue, context: &mut Context) -> JsResult<HmacHash> {
             .ok_or_else(|| JsNativeError::typ().with_message("hash.name must be a string"))?
             .to_std_string_escaped()
     };
-    HmacHash::parse(&name).map_err(|err| JsNativeError::error().with_message(err).into())
+    HashAlgorithm::parse(&name).map_err(|err| JsNativeError::error().with_message(err).into())
 }
 
 /// Parse an algorithm argument for `importKey` / `sign` / `verify`.
@@ -106,7 +106,10 @@ fn parse_hash(val: &JsValue, context: &mut Context) -> JsResult<HmacHash> {
 /// - Object `{ name: "HMAC", hash: "SHA-256" | { name: "SHA-256" } }`
 ///
 /// Returns `(algorithm_name, optional_hash)`.
-fn parse_algorithm(val: &JsValue, context: &mut Context) -> JsResult<(String, Option<HmacHash>)> {
+fn parse_algorithm(
+    val: &JsValue,
+    context: &mut Context,
+) -> JsResult<(String, Option<HashAlgorithm>)> {
     if let Some(s) = val.as_string() {
         return Ok((s.to_std_string_escaped(), None));
     }
@@ -131,7 +134,7 @@ fn parse_algorithm(val: &JsValue, context: &mut Context) -> JsResult<(String, Op
 
 fn make_crypto_key(
     key_bytes: Vec<u8>,
-    hash: HmacHash,
+    hash: HashAlgorithm,
     extractable: bool,
     usages: Vec<String>,
     context: &mut Context,
@@ -179,6 +182,17 @@ fn make_crypto_key(
 }
 
 // ── SubtleCrypto methods ──────────────────────────────────────────────────────
+
+/// `subtle.digest(algorithm, data) → Promise<ArrayBuffer>`
+///
+/// Spec: <https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-digest>
+fn digest(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let hash = parse_hash(args.get_or_undefined(0), context)?;
+    let data = buffer_source_to_bytes(args.get_or_undefined(1), context)?;
+    let ab = bytes_to_array_buffer(hash.digest(&data), context)?;
+    let promise = JsPromise::resolve(ab, context)?;
+    Ok(promise.into())
+}
 
 /// `subtle.importKey(format, keyData, algorithm, extractable, keyUsages) → Promise<CryptoKey>`
 ///
@@ -370,6 +384,7 @@ fn get_random_values(
 ///
 /// After this call, JS code can use:
 /// ```js
+/// const hash = await crypto.subtle.digest("SHA-256", data);
 /// const key = await crypto.subtle.importKey("raw", keyBytes,
 ///     { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
 /// const sig = await crypto.subtle.sign({ name: "HMAC" }, key, data);
@@ -379,6 +394,12 @@ pub fn setup_crypto(context: &mut Context) -> JsResult<()> {
     use crate::helpers::new_object;
 
     let subtle = new_object(context);
+    subtle.set(
+        js_string!("digest"),
+        NativeFunction::from_fn_ptr(digest).to_js_function(context.realm()),
+        false,
+        context,
+    )?;
     subtle.set(
         js_string!("importKey"),
         NativeFunction::from_fn_ptr(import_key).to_js_function(context.realm()),

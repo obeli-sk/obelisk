@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(cli)* `obelisk execution submit --follow-logs --show-derived` also streams logs of child
   (derived) executions, prefixed with their execution ID.
+- *(js)* Boa and V8 support `crypto.subtle.digest` with SHA-256, SHA-384, and SHA-512.
 
 ### Changed
 
