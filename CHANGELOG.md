@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(js)* Native V8 is now the default JS runtime. Set `OBELISK_JS_RUNTIME=boa-wasm` to keep
+  running JS components on Boa compiled to WASM.
 - *(http)* The outbound HTTP pool honors the server's `Keep-Alive: timeout` hint, expiring idle
   connections one second early so requests do not race the server closing them. Without a
   hint, `outbound_http_pool.idle_timeout` now defaults to 4 seconds instead of 90.
