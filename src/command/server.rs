@@ -242,7 +242,18 @@ pub(crate) struct DeploymentSwitchManagerHandle {
 struct SwitchPermit(#[expect(dead_code)] OwnedSemaphorePermit);
 
 /// Permit for the submit lane, held for its `Drop` which releases a slot.
-struct SubmitPermit(#[expect(dead_code)] OwnedSemaphorePermit);
+struct SubmitPermit {
+    _permit: OwnedSemaphorePermit,
+    in_flight: Option<Arc<std::sync::Mutex<Option<DeploymentId>>>>,
+}
+
+impl Drop for SubmitPermit {
+    fn drop(&mut self) {
+        if let Some(in_flight) = &self.in_flight {
+            *in_flight.lock().unwrap() = None;
+        }
+    }
+}
 
 struct DeploymentSwitchManager {
     /// Independent lane for submit, so a long hot switch does not block submissions.
@@ -254,6 +265,8 @@ struct DeploymentSwitchManager {
     switch_gate: Arc<Semaphore>,
     /// Permit count of `submit_gate`, retained so `close()` can drain every permit.
     submit_concurrency: u32,
+    /// Deployment ID of the submit holding the submit lane, so a retry of it can wait instead of failing with `Busy`.
+    in_flight_submit: Arc<std::sync::Mutex<Option<DeploymentId>>>,
     latest_prepared: Mutex<Option<PreparedDeploymentSwitch>>,
     server_verified: ServerVerified,
     prepared_dirs: PreparedDirs,
@@ -283,6 +296,7 @@ impl DeploymentSwitchManagerHandle {
                 submit_lane: Arc::new(Semaphore::new(submit_concurrency as usize)),
                 switch_gate: Arc::new(Semaphore::new(1)), // at most 1
                 submit_concurrency,
+                in_flight_submit: Arc::default(),
                 latest_prepared: Mutex::new(None),
                 server_verified,
                 prepared_dirs,
@@ -308,12 +322,46 @@ impl DeploymentSwitchManagerHandle {
 
     fn try_acquire_submit_permit(&self) -> Result<SubmitPermit, SubmitDeploymentError> {
         match self.inner.submit_lane.clone().try_acquire_owned() {
-            Ok(permit) => Ok(SubmitPermit(permit)),
+            Ok(permit) => Ok(SubmitPermit {
+                _permit: permit,
+                in_flight: None,
+            }),
             Err(TryAcquireError::NoPermits) => Err(SubmitDeploymentError::Busy),
-            Err(TryAcquireError::Closed) => Err(SubmitDeploymentError::Other(anyhow::anyhow!(
-                "server is being shut down"
-            ))),
+            Err(TryAcquireError::Closed) => Err(Self::submit_lane_closed()),
         }
+    }
+
+    /// Like [`Self::try_acquire_submit_permit`], but a retry of the in-flight submit with the
+    /// same deployment ID waits for it instead of failing with `Busy`.
+    async fn acquire_submit_permit(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<SubmitPermit, SubmitDeploymentError> {
+        let permit = match self.inner.submit_lane.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(TryAcquireError::NoPermits) => {
+                if *self.inner.in_flight_submit.lock().unwrap() != Some(deployment_id) {
+                    return Err(SubmitDeploymentError::Busy);
+                }
+                info!("Waiting for the in-flight submit of the same deployment");
+                self.inner
+                    .submit_lane
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| Self::submit_lane_closed())?
+            }
+            Err(TryAcquireError::Closed) => return Err(Self::submit_lane_closed()),
+        };
+        *self.inner.in_flight_submit.lock().unwrap() = Some(deployment_id);
+        Ok(SubmitPermit {
+            _permit: permit,
+            in_flight: Some(self.inner.in_flight_submit.clone()),
+        })
+    }
+
+    fn submit_lane_closed() -> SubmitDeploymentError {
+        SubmitDeploymentError::Other(anyhow::anyhow!("server is being shut down"))
     }
 
     pub(crate) async fn gc_cas(
@@ -3343,7 +3391,10 @@ pub(crate) async fn submit_deployment(
     .await;
     let event_db_pool = db_pool.clone();
 
-    let result = match deployment_switch_manager.try_acquire_submit_permit() {
+    let result = match deployment_switch_manager
+        .acquire_submit_permit(deployment_id)
+        .await
+    {
         Ok(_submit_permit) => {
             match DeploymentManifest::try_from_toml(deployment_toml, &cas_deployment_dir())
                 .context("cannot read deployment file references from manifest")
@@ -3562,11 +3613,9 @@ async fn submit_deployment_manifest(
 
             // Persist the deployment row together with its verified component metadata in a
             // single transaction so the DB-backed ListComponents / GetWit see this deployment
-            // without waiting for a server restart, and so the submit is cancel-safe: this
-            // future runs inline in the request handler and is dropped if the client
-            // disconnects, so the row that makes a deployment queryable and its component rows
-            // must commit together or not at all. Verification above already compiled and
-            // linked every component.
+            // without waiting for a server restart, and so the submit is cancel-safe: the row
+            // that makes a deployment queryable and its component rows must commit together or
+            // not at all. Verification above already compiled and linked every component.
             let (component_metadata, deployment_components) = build_component_metadata_records(
                 deployment_id,
                 &compiled_linked.component_registry_ro,

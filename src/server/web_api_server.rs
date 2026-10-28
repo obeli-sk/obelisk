@@ -4312,25 +4312,35 @@ pub(crate) mod deployment {
             }
         };
 
-        let mut termination_watcher = state.termination_watcher.clone();
-        let result = super::until_terminated(
-            &state,
-            accept,
-            Box::pin(crate::command::server::submit_deployment(
-                state.server_verified.clone(),
-                &inputs.deployment_toml,
-                runtime_config_availability_from_bool(inputs.allow_unavailable_runtime_config),
-                Some("web-api".to_string()),
-                inputs.description,
-                deployment_id,
-                &state.prepared_dirs,
-                inputs.files,
-                state.db_pool.clone(),
-                &mut termination_watcher,
-                state.deployment_switch_manager.clone(),
-            )),
-        )
-        .await?;
+        // Detached from the request so a client disconnect (e.g. a timed-out CLI) does not
+        // discard the work; a retry with the same ID waits for it and returns the stored deployment.
+        let submit_task = {
+            let state = state.0.clone();
+            tokio::spawn(tracing::Instrument::in_current_span(async move {
+                let mut termination_watcher = state.termination_watcher.clone();
+                Box::pin(crate::command::server::submit_deployment(
+                    state.server_verified.clone(),
+                    &inputs.deployment_toml,
+                    runtime_config_availability_from_bool(inputs.allow_unavailable_runtime_config),
+                    Some("web-api".to_string()),
+                    inputs.description,
+                    deployment_id,
+                    &state.prepared_dirs,
+                    inputs.files,
+                    state.db_pool.clone(),
+                    &mut termination_watcher,
+                    state.deployment_switch_manager.clone(),
+                ))
+                .await
+            }))
+        };
+        let result = super::until_terminated(&state, accept, submit_task)
+            .await?
+            .map_err(|err| HttpResponse {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("deployment submit task failed: {err}"),
+                accept,
+            })?;
 
         match result {
             Ok(_) => {}

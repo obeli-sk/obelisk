@@ -2409,6 +2409,24 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
     server.shutdown().await;
 }
 
+/// A retry of an in-flight submit (same ID, e.g. after a client timeout) waits for it instead of
+/// failing with `Busy`.
+#[tokio::test]
+async fn concurrent_submit_with_same_id_waits_webapi() {
+    let server = TestServer::start(test_addr!(40_202)).await;
+    let deployment_toml = server.active_deployment_toml().await;
+    let deployment_id = DeploymentId::generate();
+
+    let (resp1, resp2) = tokio::join!(
+        server.webapi_submit_deployment_with_id(&deployment_toml, deployment_id),
+        server.webapi_submit_deployment_with_id(&deployment_toml, deployment_id),
+    );
+    assert_eq!(resp1.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(resp2.status(), reqwest::StatusCode::NO_CONTENT);
+
+    server.shutdown().await;
+}
+
 /// A deployment whose JS imports an interface that no component exports fails to
 /// compile+link on the server. This is a structural error that no runtime config can
 /// resolve, so it must be rejected regardless of `allow_unavailable_runtime_config` and persist
