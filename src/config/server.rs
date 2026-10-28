@@ -644,7 +644,8 @@ pub(crate) struct OutboundHttpPoolToml {
     /// Idle connections kept per scheme, host and port. `0` opens a new connection per request.
     #[serde(default = "default_outbound_http_pool_max_idle_per_host")]
     pub(crate) max_idle_per_host: usize,
-    /// How long an idle connection is kept before it is closed.
+    /// How long an idle connection is kept when the server sends no `Keep-Alive: timeout` hint.
+    /// A hint is honored minus one second, up to 10 minutes.
     #[serde(default = "default_outbound_http_pool_idle_timeout")]
     pub(crate) idle_timeout: DurationConfig,
 }
@@ -672,7 +673,7 @@ fn default_outbound_http_pool_max_idle_per_host() -> usize {
 }
 
 const fn default_outbound_http_pool_idle_timeout() -> DurationConfig {
-    DurationConfig::Seconds(90)
+    DurationConfig::Seconds(4)
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
