@@ -708,6 +708,7 @@ impl SqlitePool {
             // Loop until shutdown is set to true.
         }
         debug!("Closing command thread");
+        drop(conn);
         shutdown_finished.store(true, Ordering::Release);
     }
 

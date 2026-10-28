@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(sqlite)* Pool shutdown waits for connection cleanup and the final WAL checkpoint
+  before reporting completion.
 - *(gc)* Deployment retention processes multiple deployments with execution trees per batch
   and reports remaining work correctly. Blocked deployments and protected execution trees
   are skipped, with continuation cursors allowing periodic GC to reach newer eligible
