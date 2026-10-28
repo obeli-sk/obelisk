@@ -6411,14 +6411,21 @@ impl DbAdmin for PostgresConnection {
             ..Default::default()
         };
         for row in rows {
+            let root_limit = batch_size
+                - u32::try_from(result.deleted_execution_trees)
+                    .expect("deleted execution trees are bounded by batch_size");
+            if root_limit == 0 {
+                result.has_more = true;
+                break;
+            }
             let id = row
                 .get::<_, String>(0)
                 .parse::<DeploymentId>()
                 .expect("database deployment id must be valid");
             let mut roots =
-                deployment_execution_roots_tx(&tx, id, batch_size.saturating_add(1)).await?;
-            let more_roots = roots.len() > batch_size as usize;
-            roots.truncate(batch_size as usize);
+                deployment_execution_roots_tx(&tx, id, root_limit.saturating_add(1)).await?;
+            let more_roots = roots.len() > root_limit as usize;
+            roots.truncate(root_limit as usize);
             if !roots.is_empty() && !delete_executions {
                 result.blocked_by_execution_reference += 1;
             } else {
@@ -6451,13 +6458,13 @@ impl DbAdmin for PostgresConnection {
                         id,
                         delete_executions,
                         force_non_terminal,
-                        batch_size,
+                        root_limit,
                     )
                     .await?;
                     debug_assert!(matches!(outcome, DeleteDeploymentResult::Deleted { .. }));
                 }
             }
-            if !roots.is_empty() {
+            if more_roots {
                 break;
             }
         }

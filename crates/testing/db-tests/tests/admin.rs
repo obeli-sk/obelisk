@@ -1024,6 +1024,81 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
+async fn deployment_retention_batches_multiple_execution_trees(
+    database: Database,
+    #[values(2, 3, 4, 10)] batch_size: u32,
+) {
+    set_up();
+    let clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let mut deployments = Vec::new();
+    let mut executions = Vec::new();
+    for _ in 0..3 {
+        let deployment = DeploymentId::generate();
+        insert_deployment(db_pool.as_ref(), deployment, clock.now()).await;
+        deployments.push(deployment);
+        for _ in 0..2 {
+            executions.push(create_execution(db_pool.as_ref(), &clock, deployment, true).await);
+        }
+        clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
+    }
+    let admin = db_pool.admin_conn().await.unwrap();
+    let preview = admin
+        .retain_deployments(RetentionPolicy::Count(1), batch_size, true, false, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        preview.deleted_execution_trees,
+        u64::from(batch_size.min(4))
+    );
+    assert_eq!(
+        preview.deleted_deployments,
+        if batch_size < 4 { 1 } else { 2 }
+    );
+    assert_eq!(preview.has_more, batch_size < 4);
+    assert_eq!(preview.blocked_non_terminal, 0);
+    assert_eq!(preview.blocked_by_execution_reference, 0);
+    let conn = db_pool.external_api_conn().await.unwrap();
+    for deployment in &deployments {
+        assert!(conn.get_deployment(*deployment).await.unwrap().is_some());
+    }
+    let execution_conn = db_pool.connection().await.unwrap();
+    for execution in &executions {
+        execution_conn.get(execution).await.unwrap();
+    }
+    let deleted = admin
+        .retain_deployments(RetentionPolicy::Count(1), batch_size, true, false, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted.deleted_execution_trees,
+        preview.deleted_execution_trees
+    );
+    assert_eq!(deleted.deleted_deployments, preview.deleted_deployments);
+    assert_eq!(deleted.has_more, preview.has_more);
+    assert!(conn.get_deployment(deployments[0]).await.unwrap().is_none());
+    assert_eq!(
+        conn.get_deployment(deployments[1]).await.unwrap().is_some(),
+        batch_size < 4
+    );
+    assert!(conn.get_deployment(deployments[2]).await.unwrap().is_some());
+    if batch_size < 4 {
+        let remainder = admin
+            .retain_deployments(RetentionPolicy::Count(1), batch_size, true, false, false)
+            .await
+            .unwrap();
+        assert_eq!(remainder.deleted_execution_trees, u64::from(4 - batch_size));
+        assert_eq!(remainder.deleted_deployments, 1);
+        assert!(!remainder.has_more);
+        assert!(conn.get_deployment(deployments[1]).await.unwrap().is_none());
+    }
+    drop((admin, conn, execution_conn));
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
 async fn deployment_retention_can_force_non_terminal_trees(database: Database) {
     set_up();
     let clock = SimClock::default();
