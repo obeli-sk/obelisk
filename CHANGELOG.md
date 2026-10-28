@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(cli)* `obelisk execution submit --follow-logs --show-derived` also streams logs of child
   (derived) executions, prefixed with their execution ID.
 
+### Changed
+
+- *(js)* Native V8 is now the default JS runtime. Set `OBELISK_JS_RUNTIME=boa-wasm` to keep
+  running JS components on Boa compiled to WASM.
+
 ## [0.43.0-rc.11](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.10...v0.43.0-rc.11)
 
 This release candidate streams `fetch` response bodies in JS activities, uploads deployment
