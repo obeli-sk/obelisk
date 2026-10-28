@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(gc)* Deployment retention processes multiple deployments with execution trees per batch
+  and reports remaining work correctly. Blocked deployments and protected execution trees
+  are skipped, with continuation cursors allowing periodic GC to reach newer eligible
+  records even when blockers fill a batch.
+- *(gc)* Execution retention dry runs report unfinished trees belonging to the active
+  deployment as blocked instead of counting them as deletable.
 - *(deployment)* Deployment retention preserves the last-good checkpoint even when its
   deployment is inactive, keeping it available for rollback.
 
