@@ -4392,7 +4392,22 @@ pub(crate) mod tests {
                     const url = new URL("https://example.com/p?foo=bar&foo=baz");
                     url.searchParams.set("foo", "updated");
                     url.searchParams.append("extra", "hello world");
-                    return new Response(url.href + "|" + url.searchParams.getAll("foo").join(","));
+                    const login = new URL("https://example.com/authorize");
+                    login.search = new URLSearchParams({ redirect_uri: "https://a.example/cb", scope: "x y" }).toString();
+                    login.hash = "frag ment";
+                    const pairs = new URLSearchParams([["a", "1"], ["a", 2]]);
+                    return new Response([
+                        url.href,
+                        url.searchParams.getAll("foo").join(","),
+                        login.href,
+                        login.searchParams.get("redirect_uri"),
+                        pairs.toString(),
+                        JSON.stringify(Object.fromEntries(new URLSearchParams(pairs))),
+                        ...["c/d?q=1", "../x", "./", "/abs/./y", "//other.example/z", "?only", '#h', ""]
+                            .map(reference => new URL(reference, "https://example.com/a/b?s=1#f").href),
+                        new URL("../up", new URL("https://example.com/a/b/c")).href,
+                        new URL("https://absolute.example/p", "https://ignored.example/").href,
+                    ].join("|"));
                 }
             "#;
             let (_server, server_addr, _termination_sender) =
@@ -4401,7 +4416,11 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             assert_eq!(
-                "https://example.com/p?foo=updated&extra=hello+world|updated",
+                "https://example.com/p?foo=updated&extra=hello+world|updated|https://example.com/authorize?redirect_uri=https%3A%2F%2Fa.example%2Fcb&scope=x+y#frag%20ment|https://a.example/cb|a=1&a=2|{\"a\":\"2\"}\
+                |https://example.com/a/c/d?q=1|https://example.com/x|https://example.com/a/\
+                |https://example.com/abs/y|https://other.example/z|https://example.com/a/b?only\
+                |https://example.com/a/b?s=1#h|https://example.com/a/b?s=1\
+                |https://example.com/a/up|https://absolute.example/p",
                 resp.text().await.unwrap()
             );
         }

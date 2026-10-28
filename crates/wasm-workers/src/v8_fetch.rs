@@ -170,8 +170,8 @@ deno_core::extension!(
     ops = [op_fetch, op_fetch_read, op_fetch_text, op_fetch_close]
 );
 
-/// Defines `TextEncoder`, `TextDecoder`, `ReadableStream`, `Headers`, `Request`, `Response`
-/// and `fetch`, plus the script-scope helpers `toBytes` and `concatBytes`.
+/// Defines `TextEncoder`, `TextDecoder`, `ReadableStream`, `URL`, `URLSearchParams`, `Headers`,
+/// `Request`, `Response` and `fetch`, plus the script-scope helpers `toBytes` and `concatBytes`.
 pub(crate) const FETCH_BOOTSTRAP: &str = r"
 const toBytes = value => { if (typeof value === 'string') return Deno.core.encode(value); if (value instanceof Uint8Array) return value; if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength); if (value instanceof ArrayBuffer) return new Uint8Array(value); throw new TypeError('body chunk must be a string, an ArrayBuffer or an ArrayBufferView'); };
 const concatBytes = (a, b) => { const joined = new Uint8Array(a.length + b.length); joined.set(a); joined.set(b, a.length); return joined; };
@@ -221,6 +221,45 @@ class ReadableStream {
 }
 globalThis.ReadableStream = ReadableStream; globalThis.ReadableStreamDefaultReader = ReadableStreamDefaultReader; globalThis.ReadableStreamDefaultController = ReadableStreamDefaultController;
 globalThis.TextEncoder = TextEncoder; globalThis.TextDecoder = TextDecoder;
+const decodeQuery = value => decodeURIComponent(value.replace(/\+/g, ' '));
+const encodeQuery = value => encodeURIComponent(String(value)).replace(/%20/g, '+');
+class URLSearchParams {
+  constructor(init = '', update = null) { if (init !== null && (typeof init === 'object' || typeof init === 'function')) { this._pairs = []; if (typeof init[Symbol.iterator] === 'function') { for (const pair of init) { const entry = [...pair]; if (entry.length !== 2) throw new TypeError('URLSearchParams init pair must have exactly two elements'); this._pairs.push([String(entry[0]), String(entry[1])]); } } else for (const name of Object.keys(init)) this._pairs.push([name, String(init[name])]); } else this._parse(String(init).replace(/^\?/, '')); this._update = update; }
+  _parse(query) { this._pairs = []; for (const part of query.split('&')) { if (part) { const at = part.indexOf('='); this._pairs.push(at < 0 ? [decodeQuery(part), ''] : [decodeQuery(part.slice(0, at)), decodeQuery(part.slice(at + 1))]); } } }
+  _changed() { if (this._update) this._update(this.toString()); }
+  append(name, value) { this._pairs.push([String(name), String(value)]); this._changed(); }
+  set(name, value) { name = String(name); const first = this._pairs.findIndex(pair => pair[0] === name); this._pairs = this._pairs.filter(pair => pair[0] !== name); this._pairs.splice(first < 0 ? this._pairs.length : first, 0, [name, String(value)]); this._changed(); }
+  get(name) { const pair = this._pairs.find(pair => pair[0] === String(name)); return pair ? pair[1] : null; }
+  getAll(name) { return this._pairs.filter(pair => pair[0] === String(name)).map(pair => pair[1]); }
+  has(name) { return this._pairs.some(pair => pair[0] === String(name)); }
+  delete(name) { this._pairs = this._pairs.filter(pair => pair[0] !== String(name)); this._changed(); }
+  sort() { this._pairs = this._pairs.map((pair, index) => [pair, index]).sort((a, b) => a[0][0].localeCompare(b[0][0]) || a[1] - b[1]).map(item => item[0]); this._changed(); }
+  forEach(callback, thisArg) { for (const [name, value] of this._pairs) callback.call(thisArg, value, name, this); }
+  entries() { return this._pairs.map(pair => [...pair])[Symbol.iterator](); }
+  keys() { return this._pairs.map(pair => pair[0])[Symbol.iterator](); }
+  values() { return this._pairs.map(pair => pair[1])[Symbol.iterator](); }
+  get size() { return this._pairs.length; }
+  toString() { return this._pairs.map(pair => `${encodeQuery(pair[0])}=${encodeQuery(pair[1])}`).join('&'); }
+  [Symbol.iterator]() { return this.entries(); }
+}
+// Percent-encodes what the WHATWG query and fragment encode sets require, leaving existing escapes intact.
+const encodeComponent = (value, extra) => String(value).replace(new RegExp(`[\\u0000-\\u0020\\u0022<>\\u007f-\\u{10ffff}${extra}]`, 'gu'), char => encodeURIComponent(char));
+const removeDotSegments = path => { const segments = path.split('/'); const out = []; for (const [index, segment] of segments.entries()) { const last = index === segments.length - 1; if (segment === '..') { if (out.length > 1) out.pop(); if (last) out.push(''); } else if (segment === '.') { if (last) out.push(''); } else out.push(segment); } return out.join('/') || '/'; };
+// RFC 3986 reference resolution for `new URL(input, base)` when `input` has no scheme.
+const resolveReference = (reference, base) => reference.startsWith('//') ? `${base.protocol}${reference}` : reference.startsWith('/') ? `${base.origin}${reference}` : reference === '' ? `${base.origin}${base.pathname}${base.search}` : reference.startsWith('?') ? `${base.origin}${base.pathname}${reference}` : reference.startsWith('#') ? `${base.origin}${base.pathname}${base.search}${reference}` : `${base.origin}${base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1)}${reference}`;
+class URL {
+  constructor(input, base) { const value = base === undefined || /^[a-z][a-z0-9+.-]*:/i.test(String(input)) ? String(input) : resolveReference(String(input), base instanceof URL ? base : new URL(base)); const match = /^(https?):\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/.exec(value); if (!match) throw new TypeError(`Invalid URL: ${value}`); this.protocol = `${match[1]}:`; this.host = match[2]; this.hostname = this.host.split(':')[0]; this.pathname = removeDotSegments(match[3] || '/'); this._hash = match[5] ? `#${match[5]}` : ''; this._search = match[4] ? `?${match[4]}` : ''; this.searchParams = new URLSearchParams(match[4] || '', query => { this._search = query ? `?${query}` : ''; }); }
+  get search() { return this._search; }
+  set search(value) { const query = encodeComponent(String(value).replace(/^\?/, ''), `#'`); this._search = query ? `?${query}` : ''; this.searchParams._parse(query); }
+  get hash() { return this._hash; }
+  set hash(value) { const fragment = encodeComponent(String(value).replace(/^#/, ''), '`'); this._hash = fragment ? `#${fragment}` : ''; }
+  get origin() { return `${this.protocol}//${this.host}`; }
+  get href() { return `${this.origin}${this.pathname}${this._search}${this._hash}`; }
+  toString() { return this.href; }
+  toJSON() { return this.href; }
+}
+globalThis.URLSearchParams = URLSearchParams;
+globalThis.URL = URL;
 class Headers { constructor(init = []) { this._list = init instanceof Headers ? [...init] : Array.isArray(init) || init instanceof Map ? [...init].map(([k,v]) => [String(k).toLowerCase(), String(v)]) : Object.entries(init).map(([k,v]) => [k.toLowerCase(), String(v)]); } get(name) { const values=this._list.filter(([k]) => k === String(name).toLowerCase()).map(([,v])=>v); return values.length ? values.join(', ') : null; } has(name) { return this.get(name) !== null; } set(name,value) { const key=String(name).toLowerCase(); this._list=this._list.filter(([k])=>k!==key); this._list.push([key,String(value)]); } append(name,value) { this._list.push([String(name).toLowerCase(),String(value)]); } delete(name) { const key=String(name).toLowerCase(); this._list=this._list.filter(([k])=>k!==key); } entries() { return this._list[Symbol.iterator](); } keys() { return this._list.map(([k]) => k)[Symbol.iterator](); } values() { return this._list.map(([,v]) => v)[Symbol.iterator](); } getSetCookie() { return this._list.filter(([k]) => k === 'set-cookie').map(([,v]) => v); } forEach(callback, thisArg) { for (const [k,v] of this._list) callback.call(thisArg, v, k, this); } [Symbol.iterator]() { return this.entries(); } }
 globalThis.Headers = Headers;
 class Request { constructor(input, options = {}) { if (typeof input === 'object' && input.__native) { Object.assign(this,input); this.headers=new Headers(input.headers); } else { this.url=String(input); this.method=options.method||'GET'; this.headers=new Headers(options.headers); this._body=options.body??''; } } async text(){return this._body??this.body??'';} async json(){return JSON.parse(await this.text());} async formData(){return Object.fromEntries(new URLSearchParams(await this.text()));} }
