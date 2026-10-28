@@ -61,12 +61,16 @@ impl std::fmt::Debug for OutboundHttpClient {
 
 impl OutboundHttpClient {
     #[must_use]
+    /// Connections outlive individual isolates and run on the runtime that creates the pool.
     pub fn new(config: HttpPoolConfig) -> Self {
         Self((config.max_idle_per_host > 0).then(|| {
             Arc::new(Pool {
                 config,
                 idle: Mutex::default(),
                 tls: OnceLock::new(),
+                runtime: wasmtime_wasi::runtime::with_ambient_tokio_runtime(
+                    tokio::runtime::Handle::current,
+                ),
             })
         }))
     }
@@ -115,6 +119,7 @@ struct Pool {
     config: HttpPoolConfig,
     idle: Mutex<HashMap<PoolKey, Vec<IdleConnection>>>,
     tls: OnceLock<tokio_rustls::TlsConnector>,
+    runtime: tokio::runtime::Handle,
 }
 
 struct Timeouts {
@@ -224,7 +229,7 @@ impl Pool {
             self.insert_idle(key, sender, idle_timeout);
             return;
         }
-        tokio::spawn(async move {
+        self.runtime.clone().spawn(async move {
             // The connection accepts a new request once the previous exchange is fully finished.
             if let Ok(Ok(())) = tokio::time::timeout(idle_timeout, sender.ready()).await {
                 self.insert_idle(key, sender, idle_timeout);
@@ -247,7 +252,7 @@ impl Pool {
             }
             connections.push(IdleConnection { sender, expires_at });
         }
-        tokio::spawn(async move {
+        self.runtime.clone().spawn(async move {
             tokio::time::sleep_until(expires_at.into()).await;
             self.evict_expired(&key);
         });
@@ -266,28 +271,39 @@ impl Pool {
     }
 
     async fn connect(
-        &self,
+        self: &Arc<Self>,
         key: &PoolKey,
         connect_timeout: Duration,
     ) -> Result<SendRequest<HyperOutgoingBody>, Error> {
-        tokio::time::timeout(connect_timeout, async {
-            let stream = TcpStream::connect(&key.authority)
+        let pool = self.clone();
+        let key = key.clone();
+        let mut task: wasmtime_wasi::runtime::AbortOnDropJoinHandle<_> = self
+            .runtime
+            .spawn(async move {
+                tokio::time::timeout(connect_timeout, async {
+                    let stream = TcpStream::connect(&key.authority)
+                        .await
+                        .map_err(Error::Connect)?;
+                    if key.use_tls {
+                        let domain =
+                            tls_server_name(&key.authority).map_err(Error::InvalidDnsNameError)?;
+                        let stream = pool
+                            .tls_connector()
+                            .connect(domain, stream)
+                            .await
+                            .map_err(Error::Tls)?;
+                        handshake(stream).await
+                    } else {
+                        handshake(stream).await
+                    }
+                })
                 .await
-                .map_err(Error::Connect)?;
-            if key.use_tls {
-                let domain = tls_server_name(&key.authority).map_err(Error::InvalidDnsNameError)?;
-                let stream = self
-                    .tls_connector()
-                    .connect(domain, stream)
-                    .await
-                    .map_err(Error::Tls)?;
-                handshake(stream).await
-            } else {
-                handshake(stream).await
-            }
-        })
-        .await
-        .map_err(|_| Error::ConnectionTimeout)?
+                .map_err(|_| Error::ConnectionTimeout)?
+            })
+            .into();
+        (&mut *task)
+            .await
+            .map_err(|error| Error::InternalError(Some(error.to_string())))?
     }
 
     fn tls_connector(&self) -> &tokio_rustls::TlsConnector {
@@ -482,6 +498,39 @@ pub(crate) mod tests {
         });
         get_sequentially(&client, addr).await;
         assert_eq!(3, accepted.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn pooled_connection_survives_blocked_origin_runtime() {
+        let (addr, accepted) = server().await;
+        let client = OutboundHttpClient::default();
+        let origin_client = client.clone();
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let origin = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                get_sequentially(&origin_client, addr).await;
+                ready_tx.send(()).unwrap();
+                // Native V8 blocks its thread while a host call runs on the server runtime.
+                release_rx.recv().unwrap();
+            });
+        });
+        ready_rx.await.unwrap();
+        let result =
+            tokio::time::timeout(Duration::from_secs(2), get_sequentially(&client, addr)).await;
+        release_tx.send(()).unwrap();
+        tokio::task::spawn_blocking(move || origin.join().unwrap())
+            .await
+            .unwrap();
+        assert!(
+            result.is_ok(),
+            "pooled connection depends on the blocked runtime"
+        );
+        assert_eq!(1, accepted.load(Ordering::SeqCst));
     }
 
     #[tokio::test]
