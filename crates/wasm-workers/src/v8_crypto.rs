@@ -1,7 +1,7 @@
 use crate::v8_panic::V8PanicState;
 use deno_core::{OpState, op2};
 use deno_error::JsErrorBox;
-use js_crypto::HmacHash;
+use js_crypto::HashAlgorithm;
 use rand::RngCore as _;
 
 fn catch<T>(state: &mut OpState, f: impl FnOnce() -> Result<T, String>) -> Result<T, JsErrorBox> {
@@ -22,8 +22,18 @@ fn op_crypto_random(state: &mut OpState, #[anybuffer] buf: &mut [u8]) -> Result<
 #[string]
 fn op_crypto_hmac_hash(state: &mut OpState, #[string] hash: &str) -> Result<String, JsErrorBox> {
     catch(state, || {
-        HmacHash::parse(hash).map(|hash| hash.name().to_owned())
+        HashAlgorithm::parse(hash).map(|hash| hash.name().to_owned())
     })
+}
+
+#[op2]
+#[buffer]
+fn op_crypto_digest(
+    state: &mut OpState,
+    #[string] hash: &str,
+    #[anybuffer] data: &[u8],
+) -> Result<Vec<u8>, JsErrorBox> {
+    catch(state, || Ok(HashAlgorithm::parse(hash)?.digest(data)))
 }
 
 #[op2]
@@ -34,7 +44,7 @@ fn op_crypto_hmac_sign(
     #[anybuffer] key: &[u8],
     #[anybuffer] data: &[u8],
 ) -> Result<Vec<u8>, JsErrorBox> {
-    catch(state, || Ok(HmacHash::parse(hash)?.sign(key, data)))
+    catch(state, || Ok(HashAlgorithm::parse(hash)?.sign(key, data)))
 }
 
 #[op2]
@@ -46,7 +56,7 @@ fn op_crypto_hmac_verify(
     #[anybuffer] data: &[u8],
 ) -> Result<bool, JsErrorBox> {
     catch(state, || {
-        Ok(HmacHash::parse(hash)?.verify(key, data, signature))
+        Ok(HashAlgorithm::parse(hash)?.verify(key, data, signature))
     })
 }
 
@@ -55,6 +65,7 @@ deno_core::extension!(
     obelisk_crypto_v8,
     ops = [
         op_crypto_random,
+        op_crypto_digest,
         op_crypto_hmac_hash,
         op_crypto_hmac_sign,
         op_crypto_hmac_verify
@@ -81,6 +92,9 @@ globalThis.crypto = {
     return array;
   },
   subtle: {
+    async digest(algorithm, data) {
+      return ops.op_crypto_digest(String(typeof algorithm === 'string' ? algorithm : algorithm?.name), toBytes(data)).buffer;
+    },
     async importKey(format, keyData, algorithm, extractable, usages) {
       if (format !== 'raw') throw new Error(`NotSupportedError: key format '${format}' is not supported`);
       if (String(algorithm?.name).toUpperCase() !== 'HMAC') throw new Error(`NotSupportedError: algorithm '${algorithm?.name}' is not supported`);

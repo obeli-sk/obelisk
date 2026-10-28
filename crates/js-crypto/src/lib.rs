@@ -1,19 +1,19 @@
 //! Web Crypto primitives shared by the Boa and V8 JS runtimes; JS glue lives in each runtime.
 
 use hmac::{Hmac, KeyInit as _, Mac as _};
-use sha2::{Sha256, Sha384, Sha512};
+use sha2::{Digest as _, Sha256, Sha384, Sha512};
 
 /// `getRandomValues` throws `QuotaExceededError` above this many bytes.
 pub const RANDOM_VALUES_MAX_BYTES: usize = 65_536;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HmacHash {
+pub enum HashAlgorithm {
     Sha256,
     Sha384,
     Sha512,
 }
 
-impl HmacHash {
+impl HashAlgorithm {
     /// Parse a Web Crypto hash name; matching is case-insensitive as the spec requires.
     pub fn parse(name: &str) -> Result<Self, String> {
         match name.to_ascii_uppercase().as_str() {
@@ -32,6 +32,15 @@ impl HmacHash {
             Self::Sha256 => "SHA-256",
             Self::Sha384 => "SHA-384",
             Self::Sha512 => "SHA-512",
+        }
+    }
+
+    #[must_use]
+    pub fn digest(self, data: &[u8]) -> Vec<u8> {
+        match self {
+            Self::Sha256 => Sha256::digest(data).to_vec(),
+            Self::Sha384 => Sha384::digest(data).to_vec(),
+            Self::Sha512 => Sha512::digest(data).to_vec(),
         }
     }
 
