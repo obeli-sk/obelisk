@@ -6,6 +6,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.13](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.12...v0.43.0-rc.13)
+
+This release candidate adds a deployment digest command, lets deployment submits finish
+after the client disconnects, and extends the V8 `URL` and `URLSearchParams` support.
+
+### Added
+
+- *(cli)* `obelisk deployment digest [PATH|ID]` prints the content digest of a deployment
+  TOML or of an existing deployment, so tooling can skip resubmitting content that is
+  already active. [#1240](https://github.com/obeli-sk/obelisk/pull/1240)
+- *(v8)* `URLSearchParams` accepts record and pair-list initializers, `URL` supports the
+  `search` and `hash` setters, and `new URL(relative, base)` resolves against the base and
+  removes dot segments. [#1237](https://github.com/obeli-sk/obelisk/pull/1237)
+
+### Changed
+
+- *(server)* A deployment submit over the web API keeps compiling and persisting after the
+  client disconnects or times out. Resubmitting the same deployment ID while it is in flight
+  waits for it instead of failing as busy. [#1239](https://github.com/obeli-sk/obelisk/pull/1239)
+- *(db)* Backtrace source mappings are written in a single transaction during deployment
+  submit and server startup. [#1238](https://github.com/obeli-sk/obelisk/pull/1238)
+
 ## [0.43.0-rc.12](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.11...v0.43.0-rc.12)
 
 This release candidate makes native V8 the default JS runtime, bounds the WASM cache and
