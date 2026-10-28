@@ -6101,7 +6101,7 @@ impl DbAdmin for SqlitePool {
                     RetentionPolicy::Count(count) => tx.prepare(
                         "SELECT deployment_id FROM (\
                              SELECT deployment_id, created_at FROM t_deployment \
-                             WHERE status = 'inactive' \
+                             WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) \
                              ORDER BY created_at DESC, deployment_id DESC LIMIT -1 OFFSET ?1\
                          ) ORDER BY created_at ASC, deployment_id ASC LIMIT ?2",
                     )?
@@ -6110,7 +6110,7 @@ impl DbAdmin for SqlitePool {
                     })?
                     .collect::<Result<Vec<_>, _>>()?,
                     RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
-                        "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND inactive_at < ?1 ORDER BY inactive_at ASC, deployment_id ASC LIMIT ?2",
+                        "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) AND inactive_at < ?1 ORDER BY inactive_at ASC, deployment_id ASC LIMIT ?2",
                     )?.query_map(rusqlite::params![cutoff, i64::from(batch_size) + 1], |row| row.get::<_, DeploymentId>(0))?
                     .collect::<Result<Vec<_>, _>>()?,
                 };

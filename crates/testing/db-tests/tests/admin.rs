@@ -847,6 +847,88 @@ async fn cas_gc_batches_are_bounded_by_bytes(database: Database) {
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
+async fn deployment_retention_preserves_inactive_checkpoint(database: Database) {
+    set_up();
+    let (_guard, pool, close) = database.set_up().await;
+    let conn = pool.external_api_conn().await.unwrap();
+    let admin = pool.admin_conn().await.unwrap();
+    let now = chrono::Utc::now();
+    let last_good = DeploymentId::generate();
+    let candidate = DeploymentId::generate();
+    let unused = DeploymentId::generate();
+    for id in [last_good, candidate, unused] {
+        insert_deployment(pool.as_ref(), id, now).await;
+    }
+    conn.commit_app_checkpoint(
+        concepts::storage::AppCheckpoint {
+            deployment_id: last_good,
+            app_toml: "app_name='test'".into(),
+            app_env_prefix: "V1_".into(),
+        },
+        now,
+        "policy".into(),
+    )
+    .await
+    .unwrap();
+    conn.activate_deployment(candidate, now, Some("policy"))
+        .await
+        .unwrap();
+    assert_eq!(
+        conn.get_deployment(last_good)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        DeploymentStatus::Inactive
+    );
+    for policy in [
+        RetentionPolicy::Count(0),
+        RetentionPolicy::CreatedAtOrAfter(now + Duration::days(1)),
+    ] {
+        let preview = admin
+            .retain_deployments(policy, 10, true, true, true)
+            .await
+            .unwrap();
+        assert_eq!(preview.deleted_deployments, 1);
+    }
+    let result = admin
+        .retain_deployments(
+            RetentionPolicy::CreatedAtOrAfter(now + Duration::days(1)),
+            10,
+            true,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.deleted_deployments, 1);
+    assert!(conn.get_deployment(unused).await.unwrap().is_none());
+    assert!(conn.get_deployment(last_good).await.unwrap().is_some());
+    conn.commit_app_checkpoint(
+        concepts::storage::AppCheckpoint {
+            deployment_id: candidate,
+            app_toml: "app_name='test'".into(),
+            app_env_prefix: "V2_".into(),
+        },
+        now,
+        "policy".into(),
+    )
+    .await
+    .unwrap();
+    let result = admin
+        .retain_deployments(RetentionPolicy::Count(0), 10, true, true, false)
+        .await
+        .unwrap();
+    assert_eq!(result.deleted_deployments, 1);
+    assert!(conn.get_deployment(last_good).await.unwrap().is_none());
+    assert!(conn.get_deployment(candidate).await.unwrap().is_some());
+    drop((admin, conn));
+    close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
 async fn deployment_retention_skips_referenced_deployments(database: Database) {
     set_up();
     let clock = SimClock::default();

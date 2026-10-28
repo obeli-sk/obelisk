@@ -681,6 +681,13 @@
           ],
           "default": null
         },
+        "cache_max_size": {
+          "description": "Soft artifact cache size limit; files used by the active deployment are never evicted.",
+          "$ref": "#/$defs/ByteSizeConfig",
+          "default": {
+            "mib": 256
+          }
+        },
         "allocator_config": {
           "$ref": "#/$defs/WasmtimeAllocatorConfig"
         },
@@ -717,6 +724,13 @@
             "null"
           ],
           "default": null
+        },
+        "max_size": {
+          "description": "Soft size limit excluding metadata; Wasmtime evicts LRU entries on cache writes at most hourly.",
+          "$ref": "#/$defs/ByteSizeConfig",
+          "default": {
+            "mib": 256
+          }
         }
       },
       "additionalProperties": false

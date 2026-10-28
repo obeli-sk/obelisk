@@ -107,6 +107,7 @@ struct SweepStats {
     execution_gc: CategoryStats,
     cas_gc: CategoryStats,
     cas_bytes: u64,
+    cache: super::cache_gc::Stats,
 }
 
 impl SweepStats {
@@ -125,6 +126,9 @@ impl SweepStats {
             cas_blobs_deleted = self.cas_gc.affected,
             cas_bytes_deleted = self.cas_bytes,
             cas_gc_active = ?self.cas_gc.active,
+            cache_entries_deleted = self.cache.deleted_entries,
+            cache_bytes_deleted = self.cache.deleted_bytes,
+            cache_bytes_remaining = self.cache.remaining_bytes,
             "Periodic garbage collection finished"
         );
     }
@@ -137,6 +141,7 @@ impl SweepStats {
             .saturating_add(self.system_event_retention.affected)
             .saturating_add(self.execution_gc.affected)
             .saturating_add(self.cas_gc.affected)
+            .saturating_add(self.cache.deleted_entries)
     }
 
     fn details(self, total: Duration) -> serde_json::Value {
@@ -151,6 +156,11 @@ impl SweepStats {
                 "affected": self.cas_gc.affected,
                 "active_ms": duration_millis(self.cas_gc.active),
                 "bytes_deleted": self.cas_bytes,
+            },
+            "cache_gc": {
+                "deleted_entries": self.cache.deleted_entries,
+                "deleted_bytes": self.cache.deleted_bytes,
+                "remaining_bytes": self.cache.remaining_bytes,
             },
         })
     }
@@ -214,21 +224,30 @@ pub(super) fn spawn(
                 () = tokio::time::sleep(config.interval) => {}
             }
             let started = std::time::Instant::now();
-            let sweep = run_sweep(
-                &db_pool,
-                config,
-                &mut deployment_retention_warned,
-                || async {
-                    deployment_switch_manager
-                        .gc_cas(
-                            false,
-                            config.batch_size,
-                            chrono::Utc::now() - config.upload_grace_period,
-                        )
-                        .await
-                        .map_err(|err| anyhow::anyhow!(err))
-                },
-            );
+            let sweep = async {
+                let mut stats = run_sweep(
+                    &db_pool,
+                    config,
+                    &mut deployment_retention_warned,
+                    || async {
+                        deployment_switch_manager
+                            .gc_cas(
+                                false,
+                                config.batch_size,
+                                chrono::Utc::now() - config.upload_grace_period,
+                            )
+                            .await
+                            .map_err(|err| anyhow::anyhow!(err))
+                    },
+                )
+                .await?;
+                stats.cache = deployment_switch_manager
+                    .gc_cache()
+                    .await
+                    .map_err(|err| Box::new(SweepFailure::new("cache_gc", stats, err)))?
+                    .unwrap_or_default();
+                Ok::<_, Box<SweepFailure>>(stats)
+            };
             let result = tokio::select! {
                 biased;
                 _ = termination_watcher.changed() => break,

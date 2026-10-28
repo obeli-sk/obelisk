@@ -1,5 +1,6 @@
 pub(crate) mod activity_vm_nix;
 mod activity_vm_runtime;
+pub(super) mod cache_gc;
 mod config_prepass;
 mod maintenance_gc;
 
@@ -216,6 +217,7 @@ const HTTP_SERVER_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) struct DeploymentContext {
     pub(crate) deployment_id: DeploymentId,
+    _cache_lease: Option<Arc<cache_gc::Lease>>,
     pub(crate) component_registry_ro: wasm_workers::registry::ComponentConfigRegistryRO,
     pub(crate) exec_task_handles: Vec<ExecutorTaskHandle>,
     pub(crate) replay_workers: Arc<ReplayWorkerRegistry>,
@@ -329,6 +331,28 @@ impl DeploymentSwitchManagerHandle {
             .gc_cas(dry_run, batch_size, uploaded_before)
             .await
             .map_err(|err| SubmitDeploymentError::Other(err.into()))
+    }
+
+    async fn gc_cache(&self) -> anyhow::Result<Option<cache_gc::Stats>> {
+        let Ok(switch_permit) = self.inner.switch_gate.clone().try_acquire_owned() else {
+            return Ok(None);
+        };
+        let Ok(submit_permits) = self
+            .inner
+            .submit_lane
+            .clone()
+            .try_acquire_many_owned(self.inner.submit_concurrency)
+        else {
+            return Ok(None);
+        };
+        let dirs = self.inner.prepared_dirs.clone();
+        tokio::task::spawn_blocking(move || {
+            // Keep both lanes closed to mutations even if the awaiting GC task is cancelled.
+            let _permits = (switch_permit, submit_permits);
+            cache_gc::sweep(&dirs.wasm_cache_dir, dirs.wasm_cache_max_size)
+        })
+        .await?
+        .map(Some)
     }
 
     async fn take_latest_prepared(
@@ -1267,6 +1291,7 @@ pub(crate) async fn prepare_dirs(
         .await
         .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
     Ok(PreparedDirs {
+        wasm_cache_max_size: config.wasm_global_config.cache_max_size.into(),
         codegen_cache_dir: codegen_cache_dir.map(Arc::from),
         wasm_cache_dir: Arc::from(wasm_cache_dir),
         metadata_dir: Arc::from(metadata_dir),
@@ -1274,8 +1299,8 @@ pub(crate) async fn prepare_dirs(
 }
 
 #[derive(Debug, Clone)]
-#[expect(clippy::struct_field_names)]
 pub(crate) struct PreparedDirs {
+    wasm_cache_max_size: u64,
     codegen_cache_dir: Option<Arc<Path>>,
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
@@ -1380,6 +1405,7 @@ pub(crate) async fn deployment_verify_config(
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<DeploymentVerified, anyhow::Error> {
+    let _cache_lock = cache_gc::lock_for_use(prepared_dirs.wasm_cache_dir.to_path_buf()).await?;
     let secret_registry =
         if params.runtime_config_availability == RuntimeConfigAvailability::AllowUnavailable {
             let mut undeclared_public_env = BTreeSet::new();
@@ -1402,7 +1428,7 @@ pub(crate) async fn deployment_verify_config(
     let deployment =
         DeploymentRunnable::resolve(deployment, cas.as_ref(), &prepared_dirs.wasm_cache_dir)
             .await?;
-    let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
+    let mut deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
         deployment,
         server_verified.http_servers.clone(),
         prepared_dirs.wasm_cache_dir.clone(),
@@ -1421,6 +1447,10 @@ pub(crate) async fn deployment_verify_config(
         server_verified.global_http_config.clone(),
     ))
     .await?;
+    deployment_verified.cache_lease = Some(Arc::new(cache_gc::pin(
+        &prepared_dirs.wasm_cache_dir,
+        &deployment_verified.cache_paths,
+    )?));
     if params.runtime_config_availability != RuntimeConfigAvailability::AllowUnavailable {
         verify_exec_authorization(server_verified, &deployment_verified)?;
         verify_secret_exposure_authorization(server_verified, &deployment_verified)?;
@@ -1992,6 +2022,7 @@ pub(crate) fn create_engines(
     let consume_fuel = fuel.is_some();
     let engine_config = EngineConfig {
         codegen_cache_dir: prepared_dirs.codegen_cache_dir.clone(),
+        codegen_cache_max_size: Some(config.wasm_global_config.codegen_cache.max_size.into()),
         consume_fuel,
         parallel_compilation: config.wasm_global_config.parallel_compilation,
         debug: config.wasm_global_config.debug,
@@ -2814,6 +2845,7 @@ pub(crate) type HttpServersToWebhooksAndState = Vec<(
 )>;
 
 pub(crate) struct ServerCompiledLinked {
+    cache_lease: Option<Arc<cache_gc::Lease>>,
     runtime_config_availability: RuntimeConfigAvailability,
     engines: Engines,
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
@@ -2839,6 +2871,8 @@ impl ServerCompiledLinked {
         let http_policy_audits = deployment_verified.http_policy_audits();
         let secret_exposure_audits = deployment_verified.secret_config_digests();
         let DeploymentVerified {
+            cache_paths: _,
+            cache_lease,
             runtime_config_availability,
             activities_wasm,
             activities_js,
@@ -2918,6 +2952,7 @@ impl ServerCompiledLinked {
         );
 
         Ok(ServerCompiledLinked {
+            cache_lease,
             runtime_config_availability,
             workers_linked: linked.workers,
             component_registry_ro: linked.component_registry_ro,
@@ -3934,8 +3969,10 @@ async fn prepare_switch_deployment(
 /// Shared by initial startup ([`spawn_tasks_and_threads`]) and hot redeploy
 /// ([`switch_hot_redeploy`]) so the two paths cannot drift. Webhook-registry wiring
 /// (create vs swap) and where the context is stored differ and stay at the call sites.
+#[cfg_attr(test, expect(clippy::too_many_arguments))]
 fn spawn_deployment_context(
     deployment_id: DeploymentId,
+    cache_lease: Option<Arc<cache_gc::Lease>>,
     workers_linked: Vec<WorkerLinked>,
     component_registry_ro: ComponentConfigRegistryRO,
     db_pool: &Arc<dyn DbPool>,
@@ -3961,6 +3998,7 @@ fn spawn_deployment_context(
     }
     DeploymentContext {
         deployment_id,
+        _cache_lease: cache_lease,
         component_registry_ro,
         exec_task_handles,
         replay_workers: Arc::new(replay_workers),
@@ -4031,6 +4069,7 @@ async fn switch_hot_redeploy(
 
     *write_guard_ctx = spawn_deployment_context(
         deployment_id,
+        server_compiled_linked.cache_lease,
         server_compiled_linked.workers_linked,
         server_compiled_linked.component_registry_ro,
         &db_pool,
@@ -4459,6 +4498,7 @@ async fn spawn_tasks_and_threads(
     let deployment_ctx: DeploymentContextHandle =
         Arc::new(tokio::sync::RwLock::new(spawn_deployment_context(
             deployment_id,
+            server_compiled_linked.cache_lease,
             server_compiled_linked.workers_linked,
             server_compiled_linked.component_registry_ro,
             &db_pool,
@@ -4721,6 +4761,8 @@ async fn start_http_servers(
 
 #[derive(Debug)]
 pub(crate) struct DeploymentVerified {
+    cache_paths: BTreeSet<PathBuf>,
+    cache_lease: Option<Arc<cache_gc::Lease>>,
     runtime_config_availability: RuntimeConfigAvailability, // Allows asserting strictness on startup and hot redeploy.
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
@@ -4747,6 +4789,71 @@ pub(crate) struct SecretConfigDigestOutput {
 }
 
 impl DeploymentVerified {
+    fn used_cache_paths(&self, root: &Path) -> BTreeSet<PathBuf> {
+        let mut paths: BTreeSet<PathBuf> = self
+            .activities_wasm
+            .iter()
+            .map(|c| c.wasm_path.clone())
+            .chain(self.activities_stub_ext.iter().map(|c| c.wasm_path.clone()))
+            .chain(self.workflows.iter().map(|c| c.wasm_path.clone()))
+            .chain(
+                self.webhooks_wasm_by_names
+                    .values()
+                    .map(|c| c.wasm_path.clone()),
+            )
+            .chain(self.activities_exec.iter().map(|c| c.program.clone()))
+            .collect();
+        for (runtime, files) in self
+            .activities_js
+            .iter()
+            .map(|c| (&c.wasm_path, &c.js_files))
+            .chain(
+                self.workflows_js
+                    .iter()
+                    .map(|c| (&c.wasm_path, &c.js_files)),
+            )
+            .chain(
+                self.webhooks_js_by_names
+                    .values()
+                    .map(|c| (&c.wasm_path, &c.js_files)),
+            )
+        {
+            paths.extend(runtime.iter().map(|p| p.to_path_buf()));
+            for content in files.values() {
+                let digest = ContentDigest(concepts::component_id::Digest(
+                    Sha256::digest(content.as_bytes()).into(),
+                ));
+                paths.insert(crate::config::content_digest_to_js_file(
+                    &root.join("js"),
+                    &digest,
+                ));
+            }
+        }
+        for vm in &self.activities_vm {
+            paths.insert(vm.runtime.path().to_path_buf());
+            paths.insert(vm.activity.program.clone());
+            paths.extend(vm.store_paths.iter().cloned());
+            if vm
+                .store_paths
+                .iter()
+                .any(|p| p.starts_with(root.join("activity-vm/store")))
+            {
+                paths.insert(root.join("activity-vm/store"));
+            }
+        }
+        for path in paths.clone() {
+            if let Some(name) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix("_transformed.wasm"))
+            {
+                paths.insert(path.with_file_name(format!("{name}.wasm")));
+            }
+        }
+        paths.retain(|p| p.starts_with(root));
+        paths
+    }
+
     fn secret_config_digests(&self) -> Vec<SecretConfigDigestOutput> {
         self.activities_wasm
             .iter()
@@ -5506,7 +5613,9 @@ impl DeploymentVerified {
                     })?);
                 }
 
-                let deployment_verified = DeploymentVerified {
+                let mut deployment_verified = DeploymentVerified {
+                    cache_paths: BTreeSet::new(),
+                    cache_lease: None,
                     runtime_config_availability,
                     activities_wasm,
                     activities_js: activities_js_verified,
@@ -5524,6 +5633,8 @@ impl DeploymentVerified {
                     global_http_config,
                 };
                 deployment_verified.validate_component_digests()?;
+                deployment_verified.cache_paths = deployment_verified.used_cache_paths(&wasm_cache_dir);
+                cache_gc::record_use(&deployment_verified.cache_paths);
                 Ok(deployment_verified)
             },
             _ = termination_watcher.changed() => {
@@ -7296,6 +7407,71 @@ mod tests {
 
     fn get_workspace_dir() -> PathBuf {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
+    }
+
+    #[tokio::test]
+    async fn cache_gc_preserves_verified_exec_program_until_deployment_is_dropped()
+    -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("cache");
+        let metadata = root.join("metadata");
+        std::fs::create_dir_all(&metadata)?;
+        let deployment_path = temp.path().join("deployment.toml");
+        std::fs::write(
+            &deployment_path,
+            r##"
+            [[activity_exec]]
+            name = "script"
+            content = "#!/bin/sh\necho null\n"
+            ffqn = "test:cache/script.run"
+        "##,
+        )?;
+        let (deployment, cas) = resolve_deployment_offline(&deployment_path).await?;
+        let config = toml::from_str("webui.enabled = false")?;
+        let server = ServerVerified::new(
+            wasm_workers::engines::Engines::new(
+                wasm_workers::engines::EngineConfig::on_demand_testing(),
+            )?,
+            config,
+            Arc::new(SecretRegistry::empty()),
+            JsRuntimeMode::V8,
+            ActivityVmRuntimeMode::Disabled,
+        )
+        .await?;
+        let dirs = super::PreparedDirs {
+            wasm_cache_max_size: 0,
+            codegen_cache_dir: None,
+            wasm_cache_dir: Arc::from(root.clone()),
+            metadata_dir: Arc::from(metadata),
+        };
+        let (_sender, mut termination) = watch::channel(());
+        let verified = deployment_verify_config(
+            &server,
+            &dirs,
+            deployment,
+            cas,
+            VerifyParams {
+                dir_params: PrepareDirsParams {
+                    clean_cache: false,
+                    clean_codegen_cache: false,
+                },
+                runtime_config_availability: RuntimeConfigAvailability::AllowUnavailable,
+                suppress_type_checking_errors: false,
+                suppress_linking_errors: false,
+                js_runtime: JsRuntimeMode::V8,
+                activity_vm_runtime: ActivityVmRuntimeMode::Disabled,
+            },
+            &mut termination,
+        )
+        .await?;
+        let program = verified.activities_exec[0].program.clone();
+        super::cache_gc::sweep(&root, 0)?;
+        assert_eq!(std::fs::read_to_string(&program)?, "#!/bin/sh\necho null\n");
+        drop(verified);
+        super::cache_gc::sweep(&root, 0)?;
+        assert!(!program.exists());
+        server.launch.v8_executor.close();
+        Ok(())
     }
 
     /// Registry matching the environment exposed by the integration test server.

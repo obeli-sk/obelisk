@@ -382,6 +382,7 @@ async fn add_component_from_oci(
             .get_wasm_cache_directory(&config_holder.path_prefixes, secret_registry)
             .await?;
         let metadata_dir = wasm_cache_metadata_dir(&wasm_cache_dir);
+        let _cache_lock = super::server::cache_gc::lock_for_use(wasm_cache_dir.clone()).await?;
         tokio::fs::create_dir_all(&metadata_dir)
             .await
             .with_context(|| format!("cannot create metadata directory {metadata_dir:?}"))?;

@@ -100,6 +100,7 @@ impl PoolingConfig {
 pub struct EngineConfig {
     pub pooling_config: PoolingConfig,
     pub codegen_cache_dir: Option<Arc<Path>>,
+    pub codegen_cache_max_size: Option<u64>,
     pub consume_fuel: bool,
     pub parallel_compilation: bool,
     pub debug: bool,
@@ -116,6 +117,7 @@ impl EngineConfig {
         Self {
             pooling_config: PoolingConfig::OnDemand,
             codegen_cache_dir: Some(Arc::from(codegen_cache)),
+            codegen_cache_max_size: None,
             consume_fuel: false,
             parallel_compilation: true,
             debug: false,
@@ -127,6 +129,7 @@ impl EngineConfig {
         Self {
             pooling_config: PoolingConfig::Pooling(opts),
             codegen_cache_dir: None,
+            codegen_cache_max_size: None,
             consume_fuel: false,
             parallel_compilation: true,
             debug: false,
@@ -184,6 +187,9 @@ impl Engines {
         if let Some(codegen_cache_dir) = config.codegen_cache_dir {
             let mut cache_config = CacheConfig::new();
             cache_config.with_directory(codegen_cache_dir.as_ref());
+            if let Some(max_size) = config.codegen_cache_max_size {
+                cache_config.with_files_total_size_soft_limit(max_size);
+            }
             let cache =
                 Cache::new(cache_config).map_err(|err| EngineError::CodegenCache(err.into()))?;
             dst_wasmtime_config.cache(Some(cache));
@@ -251,6 +257,7 @@ impl Engines {
             let engine_config = EngineConfig {
                 pooling_config: PoolingConfig::OnDemand,
                 codegen_cache_dir: engine_config.codegen_cache_dir,
+                codegen_cache_max_size: engine_config.codegen_cache_max_size,
                 consume_fuel: engine_config.consume_fuel,
                 parallel_compilation: engine_config.parallel_compilation,
                 debug: engine_config.debug,
