@@ -819,6 +819,11 @@ pub(crate) mod admin {
             DeleteExecutionTreeResult::NonTerminal => {
                 return Err(precondition("execution tree is not terminal"));
             }
+            DeleteExecutionTreeResult::CronTracker => {
+                return Err(precondition(
+                    "execution is a current or unadopted cron tracker",
+                ));
+            }
             DeleteExecutionTreeResult::ActiveDeployment => {
                 return Err(precondition(
                     "non-terminal execution tree root belongs to the active deployment",

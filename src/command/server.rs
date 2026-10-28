@@ -409,7 +409,7 @@ impl DeploymentSwitchManagerHandle {
                 if let Some(prepared) = prepared {
                     prepared
                         .compiled_linked
-                        .create_missing_cron_seeds(&db_pool, deployment_id)
+                        .register_crons(&db_pool, deployment_id)
                         .await?;
                     db_conn
                         .commit_app_checkpoint(checkpoint, chrono::Utc::now(), app_config_digest)
@@ -2986,12 +2986,12 @@ impl ServerCompiledLinked {
             .collect()
     }
 
-    async fn create_missing_cron_seeds(
+    async fn register_crons(
         &self,
         db_pool: &Arc<dyn DbPool>,
         deployment_id: DeploymentId,
     ) -> Result<(), anyhow::Error> {
-        create_missing_cron_seeds(
+        register_crons(
             db_pool,
             deployment_id,
             self.max_persisted_value_size_bytes,
@@ -4312,36 +4312,21 @@ async fn record_server_configuration_audit(
     .await
 }
 
-// Create seed cron executions if they don't already exist (same config = same ContentDigest)
-async fn create_missing_cron_seeds(
+// Register crons before starting their executors on every deployment switch.
+async fn register_crons(
     db_pool: &Arc<dyn DbPool>,
     deployment_id: DeploymentId,
     max_persisted_value_size_bytes: u64,
     cron_configs: impl Iterator<Item = &ScheduleWorkerConfig>,
 ) -> Result<(), anyhow::Error> {
-    let conn = db_pool.external_api_conn().await?;
+    let conn = db_pool.connection().await?;
     for cron_config in cron_configs {
-        let digest = &cron_config.component_id.component_digest;
-        let execution_id = ExecutionId::deterministic_at_unix_epoch(&digest.0.0);
-
-        if conn.get(&execution_id).await.is_ok() {
-            info!(
-                %execution_id,
-                "Cron execution `{}` already found",
-                cron_config.component_id.name
-            );
-        } else {
-            info!(
-                %execution_id,
-                "Creating cron execution `{}`",
-                cron_config.component_id.name
-            );
-            let source_ffqn = cron_worker::cron_ffqn(&cron_config.target_ffqn);
-            let now = chrono::Utc::now();
-            conn.create(CreateRequest {
+        let now = chrono::Utc::now();
+        conn.register_cron(
+            CreateRequest {
                 created_at: now,
-                execution_id,
-                ffqn: source_ffqn,
+                execution_id: ExecutionId::generate(),
+                ffqn: cron_worker::cron_ffqn(&cron_config.target_ffqn),
                 params: Params::empty(),
                 parent: None,
                 scheduled_at: now,
@@ -4351,15 +4336,16 @@ async fn create_missing_cron_seeds(
                 scheduled_by: None,
                 paused: false,
                 max_persisted_value_size_bytes,
-            })
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "failed to create seed execution for cron `{}`: {e}",
-                    cron_config.component_id.name
-                )
-            })?;
-        }
+            },
+            matches!(cron_config.cron_schedule, CronOrOnce::Once),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "failed to register cron `{}`",
+                cron_config.component_id.name
+            )
+        })?;
     }
     Ok(())
 }
@@ -4447,7 +4433,7 @@ async fn spawn_tasks_and_threads(
     let cancel_watcher = cancel_registry.spawn_cancel_watcher(cancel_watcher.tick_sleep.into());
 
     server_compiled_linked
-        .create_missing_cron_seeds(&db_pool, deployment_id)
+        .register_crons(&db_pool, deployment_id)
         .await?;
 
     // Spawn Log -> Db Forwarder

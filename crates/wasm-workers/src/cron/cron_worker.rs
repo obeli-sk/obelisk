@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{
-    AppendRequest, CreateRequest, DbConnection, DbErrorRead, ExecutionRequest, HistoryEvent,
-    HistoryEventScheduleAt, Unlocked, Version,
+    AppendRequest, CreateRequest, CronAdvanceRequest, DbConnection, DbErrorRead, ExecutionRequest,
+    HistoryEvent, HistoryEventScheduleAt, Unlocked,
 };
 use concepts::time::ClockFn;
 use concepts::{
@@ -12,6 +12,8 @@ use concepts::{
 use executor::worker::{Worker, WorkerContext, WorkerResult, WorkerResultOk};
 use std::sync::Arc;
 use tracing::debug;
+
+const TRACKER_EVENT_WATERMARK: u32 = 1_000;
 
 #[derive(derive_more::Debug)]
 pub struct CronWorker {
@@ -96,17 +98,10 @@ pub fn cron_ffqn(target: &FunctionFqn) -> FunctionFqn {
 }
 
 async fn previous_unfinished(
-    event_history: &[(HistoryEvent, Version)],
+    previous: Option<&ExecutionId>,
     db_connection: &dyn DbConnection,
 ) -> Result<Option<ExecutionId>, executor::worker::WorkerError> {
-    let Some(previous) = event_history
-        .iter()
-        .rev()
-        .find_map(|(event, _)| match event {
-            HistoryEvent::Schedule { execution_id, .. } => Some(execution_id),
-            _ => None,
-        })
-    else {
+    let Some(previous) = previous else {
         return Ok(None);
     };
     match db_connection.get_pending_state(previous).await {
@@ -139,90 +134,109 @@ impl Worker for CronWorker {
             .next_fire_time(now)
             .map_err(|err| executor::worker::WorkerError::FatalError(err, version.clone()))?;
 
-        if self.overlap == CronOverlap::Skip
-            && let Some(next_fire) = next_fire
-            && let Some(running) =
-                previous_unfinished(&ctx.event_history, db_connection.as_ref()).await?
-        {
-            debug!(%running, %next_fire, "Skipping tick, previous execution is not finished");
-            db_connection
-                .append(
-                    current_execution_id,
-                    version,
-                    AppendRequest {
-                        created_at: now,
-                        event: ExecutionRequest::Unlocked(Unlocked {
-                            unlocked_at: next_fire,
-                            reason: format!("cron tick skipped, `{running}` is not finished")
-                                .into(),
-                        }),
-                    },
-                )
-                .await
-                .map_err(executor::worker::WorkerError::DbError)?;
-            return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
-        }
-
-        let scheduled_execution_id = ExecutionId::generate();
-        let schedule_req = CreateRequest {
-            created_at: now,
-            execution_id: scheduled_execution_id.clone(),
-            ffqn: self.target_ffqn.clone(),
-            params: self.params.clone(),
-            parent: None,
-            scheduled_at: now,
-            component_id: self.target_component_id.clone(),
-            deployment_id: self.deployment_id,
-            metadata: ExecutionMetadata::empty(),
-            scheduled_by: Some(current_execution_id.clone()),
-            paused: false,
-            max_persisted_value_size_bytes,
-        };
-
-        // Build the history event for the schedule
-        let schedule_event = AppendRequest {
-            created_at: now,
-            event: ExecutionRequest::HistoryEvent {
-                event: HistoryEvent::Schedule {
-                    execution_id: scheduled_execution_id,
-                    schedule_at: HistoryEventScheduleAt::Now,
-                    params_hash: Some(concepts::persisted_value::compact_json_sha256(&self.params)),
-                    result: Ok(()),
-                },
-            },
-        };
-
-        let second_event = match next_fire {
-            None => AppendRequest {
-                created_at: now,
-                event: ExecutionRequest::Finished {
-                    retval: concepts::SupportedFunctionReturnValue::Ok(None),
-                    http_client_traces: None,
-                    http_response: None,
-                },
-            },
-            Some(next_fire) => {
-                debug!(next_fire = %next_fire, "Scheduling next tick");
-                // Unlocked transition must be valid - execution was just locked
-                AppendRequest {
-                    created_at: now,
-                    event: ExecutionRequest::Unlocked(Unlocked {
-                        unlocked_at: next_fire,
-                        reason: "cron".into(),
-                    }),
-                }
-            }
-        };
-        let batch = vec![schedule_event, second_event];
-        db_connection
-            .append_batch_create_new_execution(
-                now,
-                batch,
-                current_execution_id,
-                version,
-                vec![schedule_req],
-                vec![], // no backtraces
+        let record = db_connection
+            .get_cron(&self.component_id.component_digest)
+            .await
+            .map_err(|err| executor::worker::WorkerError::DbError(err.into()))?;
+        let running = if self.overlap == CronOverlap::Skip && next_fire.is_some() {
+            previous_unfinished(
+                record.last_target_execution_id.as_ref(),
+                db_connection.as_ref(),
             )
+            .await?
+        } else {
+            None
+        };
+        let rollover =
+            next_fire.is_some() && version.0.saturating_add(2) >= TRACKER_EVENT_WATERMARK;
+        let mut batch = Vec::new();
+        let target = if running.is_none() {
+            let execution_id = ExecutionId::generate();
+            batch.push(AppendRequest {
+                created_at: now,
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::Schedule {
+                        execution_id: execution_id.clone(),
+                        schedule_at: HistoryEventScheduleAt::Now,
+                        params_hash: Some(concepts::persisted_value::compact_json_sha256(
+                            &self.params,
+                        )),
+                        result: Ok(()),
+                    },
+                },
+            });
+            Some(CreateRequest {
+                created_at: now,
+                execution_id,
+                ffqn: self.target_ffqn.clone(),
+                params: self.params.clone(),
+                parent: None,
+                scheduled_at: now,
+                component_id: self.target_component_id.clone(),
+                deployment_id: self.deployment_id,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_by: Some(current_execution_id.clone()),
+                paused: false,
+                max_persisted_value_size_bytes,
+            })
+        } else {
+            debug!(
+                ?running,
+                ?next_fire,
+                "Skipping tick, previous execution is not finished"
+            );
+            None
+        };
+        let successor = next_fire
+            .filter(|_| rollover)
+            .map(|scheduled_at| CreateRequest {
+                created_at: now,
+                execution_id: ExecutionId::generate(),
+                ffqn: cron_ffqn(&self.target_ffqn),
+                params: Params::empty(),
+                parent: None,
+                scheduled_at,
+                component_id: self.component_id.clone(),
+                deployment_id: self.deployment_id,
+                metadata: ctx.metadata,
+                scheduled_by: None,
+                paused: false,
+                max_persisted_value_size_bytes,
+            });
+        let tracking_execution_id = match next_fire {
+            Some(_) if rollover => successor.as_ref().map(|r| r.execution_id.clone()),
+            Some(_) => Some(current_execution_id.clone()),
+            None => None,
+        };
+        let event = match next_fire {
+            Some(unlocked_at) if !rollover => ExecutionRequest::Unlocked(Unlocked {
+                unlocked_at,
+                reason: running.map_or_else(
+                    || "cron".into(),
+                    |running| format!("cron tick skipped, `{running}` is not finished").into(),
+                ),
+            }),
+            _ => ExecutionRequest::Finished {
+                retval: concepts::SupportedFunctionReturnValue::Ok(None),
+                http_client_traces: None,
+                http_response: None,
+            },
+        };
+        batch.push(AppendRequest {
+            created_at: now,
+            event,
+        });
+        db_connection
+            .advance_cron(CronAdvanceRequest {
+                cron_digest: self.component_id.component_digest.clone(),
+                execution_id: current_execution_id,
+                version,
+                current_time: now,
+                batch,
+                target,
+                successor,
+                tracking_execution_id,
+            })
             .await
             .map_err(executor::worker::WorkerError::DbError)?;
 
@@ -249,6 +263,440 @@ mod tests {
 
     const TARGET_FFQN: FunctionFqn = FunctionFqn::new_static("test:pkg/ifc", "do-work");
     const MAX_PERSISTED_VALUE_SIZE_BYTES: u64 = 12_345;
+
+    fn tracker_request(execution_id: ExecutionId, now: DateTime<Utc>) -> CreateRequest {
+        CreateRequest {
+            created_at: now,
+            execution_id,
+            ffqn: cron_ffqn(&TARGET_FFQN),
+            params: Params::empty(),
+            parent: None,
+            scheduled_at: now,
+            component_id: make_cron_component_id(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            metadata: ExecutionMetadata::empty(),
+            scheduled_by: None,
+            paused: false,
+            max_persisted_value_size_bytes: MAX_PERSISTED_VALUE_SIZE_BYTES,
+        }
+    }
+
+    async fn collect_executions(db_pool: &Arc<dyn DbPool>) {
+        let admin = db_pool.admin_conn().await.unwrap();
+        while admin.gc_executions(10).await.unwrap().has_more {}
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn cron_advance_rolls_back_and_rejects_stale_tracker(
+        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        database: db_tests::Database,
+    ) {
+        use concepts::storage::DbPoolCloseable as _;
+        let (_guard, db_pool, close) = database.set_up().await;
+        let now = test_time();
+        let seed = create_seed(&db_pool, now).await;
+        let locked = lock(&db_pool, &make_cron_component_id(), now).await;
+        let conn = db_pool.connection().await.unwrap();
+        let digest = make_cron_component_id().component_digest;
+        let original = conn.get_cron(&digest).await.unwrap();
+        let mut target = tracker_request(seed.clone(), now);
+        target.component_id = make_target_component_id();
+        target.ffqn = TARGET_FFQN;
+        let mut request = CronAdvanceRequest {
+            cron_digest: digest.clone(),
+            execution_id: seed.clone(),
+            version: locked.next_version,
+            current_time: now,
+            batch: vec![AppendRequest {
+                created_at: now,
+                event: ExecutionRequest::Finished {
+                    retval: concepts::SupportedFunctionReturnValue::Ok(None),
+                    http_client_traces: None,
+                    http_response: None,
+                },
+            }],
+            target: Some(target),
+            successor: None,
+            tracking_execution_id: None,
+        };
+        assert!(conn.advance_cron(request.clone()).await.is_err());
+        assert_eq!(conn.get_cron(&digest).await.unwrap(), original);
+        let log = conn.get(&seed).await.unwrap();
+        assert!(!log.pending_state.is_finished());
+        assert_eq!(log.events.len(), 2);
+        request.target.as_mut().unwrap().execution_id = ExecutionId::generate();
+        conn.advance_cron(request.clone()).await.unwrap();
+        let submitted = conn.get_cron(&digest).await.unwrap();
+        assert_eq!(
+            submitted.last_target_execution_id,
+            request.target.as_ref().map(|r| r.execution_id.clone())
+        );
+        let stale_target = ExecutionId::generate();
+        request.target.as_mut().unwrap().execution_id = stale_target.clone();
+        assert!(conn.advance_cron(request).await.is_err());
+        assert_eq!(conn.get_cron(&digest).await.unwrap(), submitted);
+        assert!(conn.get(&stale_target).await.is_err());
+        drop(conn);
+        close.close().await;
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn cron_registration_is_atomic(
+        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        database: db_tests::Database,
+    ) {
+        use concepts::storage::DbPoolCloseable as _;
+        let (_guard, db_pool, close) = database.set_up().await;
+        let mut tasks = tokio::task::JoinSet::new();
+        let requests: Vec<_> = (0..8)
+            .map(|_| tracker_request(ExecutionId::generate(), test_time()))
+            .collect();
+        for request in requests.clone() {
+            let db_pool = db_pool.clone();
+            tasks.spawn(async move {
+                db_pool
+                    .connection()
+                    .await
+                    .unwrap()
+                    .register_cron(request, false)
+                    .await
+                    .unwrap()
+            });
+        }
+        let conn = db_pool.connection().await.unwrap();
+        let mut records = Vec::new();
+        while let Some(result) = tasks.join_next().await {
+            records.push(result.unwrap());
+        }
+        assert!(records.iter().all(|record| record == &records[0]));
+        let id = records[0].tracking_execution_id.as_ref().unwrap();
+        assert!(id.get_top_level().timestamp_part() > 0);
+        for request in requests {
+            assert_eq!(
+                conn.get(&request.execution_id).await.is_ok(),
+                &request.execution_id == id
+            );
+        }
+        drop(conn);
+        close.close().await;
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn once_stays_submitted_after_gc_and_registration(
+        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        database: db_tests::Database,
+    ) {
+        use concepts::storage::{DbPoolCloseable as _, DeleteExecutionTreeResult};
+        let (_guard, db_pool, close) = database.set_up().await;
+        let now = test_time();
+        let worker = make_worker(db_pool.clone(), CronOrOnce::Once, SimClock::new(now));
+        let seed = create_seed(&db_pool, now).await;
+        tick(&worker, &db_pool, now).await;
+        let conn = db_pool.connection().await.unwrap();
+        let digest = make_cron_component_id().component_digest;
+        let record = conn.get_cron(&digest).await.unwrap();
+        assert_eq!(record.tracking_execution_id, None);
+        assert_eq!(record.last_submitted_at, Some(now));
+        let admin = db_pool.admin_conn().await.unwrap();
+        assert_eq!(
+            admin.delete_execution_tree(&seed, false).await.unwrap(),
+            DeleteExecutionTreeResult::Deleted
+        );
+        let target = lock(&db_pool, &make_target_component_id(), now).await;
+        conn.append(
+            target.execution_id.clone(),
+            target.next_version,
+            AppendRequest {
+                created_at: now,
+                event: ExecutionRequest::Finished {
+                    retval: concepts::SupportedFunctionReturnValue::Ok(None),
+                    http_client_traces: None,
+                    http_response: None,
+                },
+            },
+        )
+        .await
+        .unwrap();
+        admin
+            .delete_execution_tree(&target.execution_id, false)
+            .await
+            .unwrap();
+        collect_executions(&db_pool).await;
+        assert!(conn.get(&seed).await.is_err());
+        assert!(conn.get(&target.execution_id).await.is_err());
+        let request = tracker_request(ExecutionId::generate(), now + chrono::Duration::days(1));
+        assert_eq!(
+            conn.register_cron(request.clone(), true).await.unwrap(),
+            record
+        );
+        assert!(conn.get(&request.execution_id).await.is_err());
+        drop(admin);
+        drop(conn);
+        close.close().await;
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn cron_adopts_legacy_tracker_on_later_registration(
+        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        database: db_tests::Database,
+        #[values(false, true)] once: bool,
+        #[values(false, true)] submitted: bool,
+    ) {
+        use concepts::storage::{
+            DbPoolCloseable as _, DeleteDeploymentResult, DeleteExecutionTreeResult,
+            DeploymentRecord, DeploymentStatus, RetentionPolicy,
+        };
+        let (_guard, db_pool, close) = database.set_up().await;
+        let now = test_time();
+        let digest = make_cron_component_id().component_digest;
+        let legacy_id = ExecutionId::deterministic_at_unix_epoch(&digest.0.0);
+        db_pool
+            .external_api_conn()
+            .await
+            .unwrap()
+            .insert_deployment_with_components(
+                DeploymentRecord {
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    description: None,
+                    digest: DeploymentRecord::compute_digest("{}"),
+                    created_at: now,
+                    last_active_at: None,
+                    last_active_app_config_digest: None,
+                    status: DeploymentStatus::Inactive,
+                    deployment_toml: "{}".into(),
+                    obelisk_version: "0.43.0-rc.11".into(),
+                    created_by: None,
+                    files: vec![],
+                },
+                vec![],
+                vec![],
+                vec![],
+            )
+            .await
+            .unwrap();
+        let conn = db_pool.connection().await.unwrap();
+        let version = conn
+            .create(tracker_request(legacy_id.clone(), now))
+            .await
+            .unwrap();
+        let target = ExecutionId::generate();
+        let submitted_at = now + chrono::Duration::seconds(1);
+        if submitted {
+            let version = conn
+                .append(
+                    legacy_id.clone(),
+                    version,
+                    AppendRequest {
+                        created_at: submitted_at,
+                        event: ExecutionRequest::Locked(make_locked_event(now)),
+                    },
+                )
+                .await
+                .unwrap();
+            conn.append_batch(
+                now,
+                vec![
+                    AppendRequest {
+                        created_at: submitted_at,
+                        event: ExecutionRequest::HistoryEvent {
+                            event: HistoryEvent::Schedule {
+                                execution_id: target.clone(),
+                                schedule_at: HistoryEventScheduleAt::Now,
+                                params_hash: None,
+                                result: Ok(()),
+                            },
+                        },
+                    },
+                    AppendRequest {
+                        created_at: submitted_at,
+                        event: if once {
+                            ExecutionRequest::Finished {
+                                retval: concepts::SupportedFunctionReturnValue::Ok(None),
+                                http_client_traces: None,
+                                http_response: None,
+                            }
+                        } else {
+                            ExecutionRequest::Unlocked(Unlocked {
+                                unlocked_at: now + chrono::Duration::hours(1),
+                                reason: "cron".into(),
+                            })
+                        },
+                    },
+                ],
+                legacy_id.clone(),
+                version,
+            )
+            .await
+            .unwrap();
+        }
+        let original = conn.get(&legacy_id).await.unwrap();
+        let admin = db_pool.admin_conn().await.unwrap();
+        assert_eq!(
+            admin.delete_execution_tree(&legacy_id, true).await.unwrap(),
+            DeleteExecutionTreeResult::CronTracker
+        );
+        let retained = admin
+            .retain_executions(RetentionPolicy::Count(0), 10, true, false, None)
+            .await
+            .unwrap();
+        assert_eq!(retained.deleted_execution_trees, 0);
+        assert!(matches!(
+            admin
+                .delete_deployment(DEPLOYMENT_ID_DUMMY, true, true)
+                .await
+                .unwrap(),
+            DeleteDeploymentResult::Referenced { .. }
+        ));
+        for dry_run in [true, false] {
+            let retained = admin
+                .retain_deployments(RetentionPolicy::Count(0), 10, true, true, dry_run, None)
+                .await
+                .unwrap();
+            assert_eq!(retained.deleted_deployments, 0);
+            assert_eq!(retained.deleted_execution_trees, 0);
+        }
+        collect_executions(&db_pool).await;
+        let mut unrelated = tracker_request(ExecutionId::generate(), now);
+        unrelated.component_id = ComponentId::new(
+            concepts::ComponentType::Cron,
+            StrVariant::Static("other"),
+            ComponentDigest(Digest([2; 32])),
+        )
+        .unwrap();
+        conn.register_cron(unrelated, false).await.unwrap();
+        let request = tracker_request(ExecutionId::generate(), now + chrono::Duration::days(1));
+        let record = conn.register_cron(request.clone(), once).await.unwrap();
+        assert_eq!(record.created_at, now);
+        assert_eq!(record.last_submitted_at, submitted.then_some(submitted_at));
+        assert_eq!(record.last_target_execution_id, submitted.then_some(target));
+        assert_eq!(
+            record.tracking_execution_id,
+            (!(once && submitted)).then_some(legacy_id.clone())
+        );
+        let adopted = conn.get(&legacy_id).await.unwrap();
+        assert_eq!(adopted.events, original.events);
+        assert_eq!(adopted.pending_state, original.pending_state);
+        assert!(conn.get(&request.execution_id).await.is_err());
+        if once && submitted {
+            assert_eq!(
+                admin
+                    .delete_execution_tree(&legacy_id, false)
+                    .await
+                    .unwrap(),
+                DeleteExecutionTreeResult::Deleted
+            );
+            collect_executions(&db_pool).await;
+        }
+        assert_eq!(conn.register_cron(request, once).await.unwrap(), record);
+        drop(admin);
+        drop(conn);
+        close.close().await;
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn cron_rollover_preserves_overlap_after_gc(
+        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        database: db_tests::Database,
+        #[values(CronOverlap::Skip, CronOverlap::Allow)] overlap: CronOverlap,
+    ) {
+        use concepts::storage::{DbPoolCloseable as _, DeleteExecutionTreeResult};
+        let (_guard, db_pool, close) = database.set_up().await;
+        let mut now = test_time();
+        let clock = SimClock::new(now);
+        let worker = make_worker_with_overlap(
+            db_pool.clone(),
+            parse_cron("* * * * * *"),
+            overlap,
+            clock.clone(),
+        );
+        let seed = create_seed(&db_pool, now).await;
+        let conn = db_pool.connection().await.unwrap();
+        let digest = make_cron_component_id().component_digest;
+        let mut record = conn.get_cron(&digest).await.unwrap();
+        for _ in 0..TRACKER_EVENT_WATERMARK {
+            tick(&worker, &db_pool, now).await;
+            record = conn.get_cron(&digest).await.unwrap();
+            now += chrono::Duration::seconds(1);
+            clock.move_time_to(now);
+            if record.tracking_execution_id.as_ref() != Some(&seed) {
+                break;
+            }
+        }
+        let successor = record.tracking_execution_id.clone().unwrap();
+        assert_ne!(successor, seed);
+        let old = conn.get(&seed).await.unwrap();
+        assert!(old.pending_state.is_finished());
+        assert!(old.events.len() <= TRACKER_EVENT_WATERMARK as usize + 2);
+        let next = conn.get(&successor).await.unwrap();
+        assert_eq!(next.events.len(), 1);
+        assert!(
+            matches!(next.pending_state, PendingState::PendingAt(PendingStatePendingAt { scheduled_at, .. }) if scheduled_at == now)
+        );
+        let admin = db_pool.admin_conn().await.unwrap();
+        assert_eq!(
+            admin.delete_execution_tree(&seed, false).await.unwrap(),
+            DeleteExecutionTreeResult::Deleted
+        );
+        assert_eq!(
+            admin.delete_execution_tree(&successor, true).await.unwrap(),
+            DeleteExecutionTreeResult::CronTracker
+        );
+        collect_executions(&db_pool).await;
+        assert!(conn.get(&seed).await.is_err());
+        tick(&worker, &db_pool, now).await;
+        let after_tick = conn.get_cron(&digest).await.unwrap();
+        if overlap == CronOverlap::Skip {
+            assert_eq!(
+                after_tick.last_target_execution_id,
+                record.last_target_execution_id
+            );
+            assert_eq!(after_tick.last_submitted_at, record.last_submitted_at);
+            let target = lock(&db_pool, &make_target_component_id(), now).await;
+            conn.append(
+                target.execution_id.clone(),
+                target.next_version,
+                AppendRequest {
+                    created_at: now,
+                    event: ExecutionRequest::Finished {
+                        retval: concepts::SupportedFunctionReturnValue::Ok(None),
+                        http_client_traces: None,
+                        http_response: None,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+            admin
+                .delete_execution_tree(&target.execution_id, false)
+                .await
+                .unwrap();
+            collect_executions(&db_pool).await;
+            now += chrono::Duration::seconds(1);
+            clock.move_time_to(now);
+            tick(&worker, &db_pool, now).await;
+            assert_ne!(
+                conn.get_cron(&digest)
+                    .await
+                    .unwrap()
+                    .last_target_execution_id,
+                record.last_target_execution_id
+            );
+        } else {
+            assert_ne!(
+                after_tick.last_target_execution_id,
+                record.last_target_execution_id
+            );
+            assert_eq!(after_tick.last_submitted_at, Some(now));
+        }
+        drop(admin);
+        drop(conn);
+        close.close().await;
+    }
 
     fn make_cron_component_id() -> ComponentId {
         ComponentId::new(
@@ -338,22 +786,9 @@ mod tests {
     ) -> (ExecutionId, Version) {
         let conn = db_pool.connection().await.unwrap();
         let execution_id = ExecutionId::generate();
-        conn.create(CreateRequest {
-            created_at: now,
-            execution_id: execution_id.clone(),
-            ffqn: cron_ffqn(&TARGET_FFQN),
-            params: Params::empty(),
-            parent: None,
-            scheduled_at: now,
-            component_id: make_cron_component_id(),
-            deployment_id: DEPLOYMENT_ID_DUMMY,
-            metadata: ExecutionMetadata::empty(),
-            scheduled_by: None,
-            paused: false,
-            max_persisted_value_size_bytes: u64::MAX,
-        })
-        .await
-        .unwrap();
+        conn.register_cron(tracker_request(execution_id.clone(), now), false)
+            .await
+            .unwrap();
         // Append a Locked event at version 1
         conn.append(
             execution_id.clone(),
@@ -577,28 +1012,15 @@ mod tests {
     }
 
     async fn create_seed(db_pool: &Arc<dyn DbPool>, now: DateTime<Utc>) -> ExecutionId {
-        let execution_id = ExecutionId::generate();
         db_pool
             .connection()
             .await
             .unwrap()
-            .create(CreateRequest {
-                created_at: now,
-                execution_id: execution_id.clone(),
-                ffqn: cron_ffqn(&TARGET_FFQN),
-                params: Params::empty(),
-                parent: None,
-                scheduled_at: now,
-                component_id: make_cron_component_id(),
-                deployment_id: DEPLOYMENT_ID_DUMMY,
-                metadata: ExecutionMetadata::empty(),
-                scheduled_by: None,
-                paused: false,
-                max_persisted_value_size_bytes: u64::MAX,
-            })
+            .register_cron(tracker_request(ExecutionId::generate(), now), false)
             .await
-            .unwrap();
-        execution_id
+            .unwrap()
+            .tracking_execution_id
+            .unwrap()
     }
 
     async fn lock(
