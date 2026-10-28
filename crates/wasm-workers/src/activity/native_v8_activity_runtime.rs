@@ -323,30 +323,6 @@ const timers = new Map();
 globalThis.setTimeout = (callback, delay = 0, ...args) => { const id = nextTimer++; const token = {}; timers.set(id, token); Deno.core.ops.op_activity_sleep(Math.max(0, Number(delay))).then(() => { if (timers.get(id) === token) { timers.delete(id); callback(...args); } }); return id; };
 globalThis.clearTimeout = id => timers.delete(id);
 globalThis.__obeliskClearTimers = () => timers.clear();
-const decode = value => decodeURIComponent(value.replace(/\+/g, ' '));
-const encode = value => encodeURIComponent(String(value)).replace(/%20/g, '+');
-class URLSearchParams {
-  constructor(input = '', update = null) { this._pairs = []; this._update = update; for (const part of String(input).replace(/^\?/, '').split('&')) { if (part) { const at = part.indexOf('='); this._pairs.push(at < 0 ? [decode(part), ''] : [decode(part.slice(0, at)), decode(part.slice(at + 1))]); } } }
-  _changed() { if (this._update) this._update(this.toString()); }
-  append(name, value) { this._pairs.push([String(name), String(value)]); this._changed(); }
-  set(name, value) { name = String(name); const first = this._pairs.findIndex(pair => pair[0] === name); this._pairs = this._pairs.filter(pair => pair[0] !== name); this._pairs.splice(first < 0 ? this._pairs.length : first, 0, [name, String(value)]); this._changed(); }
-  get(name) { const pair = this._pairs.find(pair => pair[0] === String(name)); return pair ? pair[1] : null; }
-  getAll(name) { return this._pairs.filter(pair => pair[0] === String(name)).map(pair => pair[1]); }
-  has(name) { return this._pairs.some(pair => pair[0] === String(name)); }
-  delete(name) { this._pairs = this._pairs.filter(pair => pair[0] !== String(name)); this._changed(); }
-  sort() { this._pairs = this._pairs.map((pair, index) => [pair, index]).sort((a, b) => a[0][0].localeCompare(b[0][0]) || a[1] - b[1]).map(item => item[0]); this._changed(); }
-  get size() { return this._pairs.length; }
-  toString() { return this._pairs.map(pair => `${encode(pair[0])}=${encode(pair[1])}`).join('&'); }
-  [Symbol.iterator]() { return this._pairs[Symbol.iterator](); }
-}
-class URL {
-  constructor(input, base) { const value = String(input); const match = /^(https?):\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/.exec(value); if (!match) throw new TypeError(`Invalid URL: ${value}`); this.protocol = `${match[1]}:`; this.host = match[2]; this.hostname = this.host.split(':')[0]; this.pathname = match[3] || '/'; this.hash = match[5] ? `#${match[5]}` : ''; this.searchParams = new URLSearchParams(match[4] || '', query => { this.search = query ? `?${query}` : ''; }); this.search = match[4] ? `?${match[4]}` : ''; }
-  get origin() { return `${this.protocol}//${this.host}`; }
-  get href() { return `${this.origin}${this.pathname}${this.search}${this.hash}`; }
-  toString() { return this.href; }
-}
-globalThis.URLSearchParams = URLSearchParams;
-globalThis.URL = URL;
 ";
 
 #[cfg(test)]

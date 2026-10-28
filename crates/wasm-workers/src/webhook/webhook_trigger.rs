@@ -4392,7 +4392,18 @@ pub(crate) mod tests {
                     const url = new URL("https://example.com/p?foo=bar&foo=baz");
                     url.searchParams.set("foo", "updated");
                     url.searchParams.append("extra", "hello world");
-                    return new Response(url.href + "|" + url.searchParams.getAll("foo").join(","));
+                    const login = new URL("https://example.com/authorize");
+                    login.search = new URLSearchParams({ redirect_uri: "https://a.example/cb", scope: "x y" }).toString();
+                    login.hash = "frag ment";
+                    const pairs = new URLSearchParams([["a", "1"], ["a", 2]]);
+                    return new Response([
+                        url.href,
+                        url.searchParams.getAll("foo").join(","),
+                        login.href,
+                        login.searchParams.get("redirect_uri"),
+                        pairs.toString(),
+                        JSON.stringify(Object.fromEntries(new URLSearchParams(pairs))),
+                    ].join("|"));
                 }
             "#;
             let (_server, server_addr, _termination_sender) =
@@ -4401,7 +4412,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             assert_eq!(
-                "https://example.com/p?foo=updated&extra=hello+world|updated",
+                "https://example.com/p?foo=updated&extra=hello+world|updated|https://example.com/authorize?redirect_uri=https%3A%2F%2Fa.example%2Fcb&scope=x+y#frag%20ment|https://a.example/cb|a=1&a=2|{\"a\":\"2\"}",
                 resp.text().await.unwrap()
             );
         }
