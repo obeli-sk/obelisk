@@ -199,6 +199,7 @@ async fn until_terminated<T>(
         rest_types::admin::DeleteDeploymentResponse,
         rest_types::admin::CleanupRequest,
         rest_types::admin::RetainDeploymentsRequest,
+        rest_types::admin::DeploymentRetentionCursor,
         rest_types::admin::CleanupResponse,
         rest_types::admin::SystemEventsResponse,
         rest_types::admin::StorageStatusResponse,
@@ -1002,6 +1003,7 @@ pub(crate) mod admin {
                     request.delete_executions,
                     request.force_non_terminal,
                     request.dry_run,
+                    request.cursor.map(Into::into),
                 )
                 .await
                 .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))

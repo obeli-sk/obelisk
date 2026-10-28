@@ -886,7 +886,7 @@ async fn deployment_retention_preserves_inactive_checkpoint(database: Database) 
         RetentionPolicy::CreatedAtOrAfter(now + Duration::days(1)),
     ] {
         let preview = admin
-            .retain_deployments(policy, 10, true, true, true)
+            .retain_deployments(policy, 10, true, true, true, None)
             .await
             .unwrap();
         assert_eq!(preview.deleted_deployments, 1);
@@ -898,6 +898,7 @@ async fn deployment_retention_preserves_inactive_checkpoint(database: Database) 
             true,
             true,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -916,7 +917,7 @@ async fn deployment_retention_preserves_inactive_checkpoint(database: Database) 
     .await
     .unwrap();
     let result = admin
-        .retain_deployments(RetentionPolicy::Count(0), 10, true, true, false)
+        .retain_deployments(RetentionPolicy::Count(0), 10, true, true, false, None)
         .await
         .unwrap();
     assert_eq!(result.deleted_deployments, 1);
@@ -946,7 +947,7 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
 
     let admin = db_pool.admin_conn().await.unwrap();
     let first = admin
-        .retain_deployments(RetentionPolicy::Count(0), 1, false, false, false)
+        .retain_deployments(RetentionPolicy::Count(0), 1, false, false, false, None)
         .await
         .unwrap();
     assert_eq!(first.deleted_deployments, 1);
@@ -974,14 +975,14 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
     );
 
     let second = admin
-        .retain_deployments(RetentionPolicy::Count(0), 1, false, false, false)
+        .retain_deployments(RetentionPolicy::Count(0), 1, false, false, false, None)
         .await
         .unwrap();
     assert_eq!(second.deleted_deployments, 1);
     assert_eq!(second.blocked_by_execution_reference, 0);
     assert!(second.has_more);
     let third = admin
-        .retain_deployments(RetentionPolicy::Count(0), 1, false, false, false)
+        .retain_deployments(RetentionPolicy::Count(0), 1, false, false, false, None)
         .await
         .unwrap();
     assert_eq!(third.deleted_deployments, 0);
@@ -1044,7 +1045,14 @@ async fn deployment_retention_batches_multiple_execution_trees(
     }
     let admin = db_pool.admin_conn().await.unwrap();
     let preview = admin
-        .retain_deployments(RetentionPolicy::Count(1), batch_size, true, false, true)
+        .retain_deployments(
+            RetentionPolicy::Count(1),
+            batch_size,
+            true,
+            false,
+            true,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -1067,7 +1075,14 @@ async fn deployment_retention_batches_multiple_execution_trees(
         execution_conn.get(execution).await.unwrap();
     }
     let deleted = admin
-        .retain_deployments(RetentionPolicy::Count(1), batch_size, true, false, false)
+        .retain_deployments(
+            RetentionPolicy::Count(1),
+            batch_size,
+            true,
+            false,
+            false,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -1084,13 +1099,95 @@ async fn deployment_retention_batches_multiple_execution_trees(
     assert!(conn.get_deployment(deployments[2]).await.unwrap().is_some());
     if batch_size < 4 {
         let remainder = admin
-            .retain_deployments(RetentionPolicy::Count(1), batch_size, true, false, false)
+            .retain_deployments(
+                RetentionPolicy::Count(1),
+                batch_size,
+                true,
+                false,
+                false,
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(remainder.deleted_execution_trees, u64::from(4 - batch_size));
         assert_eq!(remainder.deleted_deployments, 1);
         assert!(!remainder.has_more);
         assert!(conn.get_deployment(deployments[1]).await.unwrap().is_none());
+    }
+    drop((admin, conn, execution_conn));
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_retention_skips_blocked_candidates_across_batches(
+    database: Database,
+    #[values(false, true)] delete_executions: bool,
+    #[values(1, 2)] batch_size: u32,
+    #[values(false, true)] retain_by_age: bool,
+) {
+    set_up();
+    let clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let mut candidates = [DeploymentId::generate(), DeploymentId::generate()];
+    candidates.sort();
+    let [blocked, eligible] = candidates;
+    insert_deployment(db_pool.as_ref(), blocked, clock.now()).await;
+    insert_deployment(db_pool.as_ref(), eligible, clock.now()).await;
+    let mut blocked_executions = Vec::new();
+    for _ in 0..3 {
+        blocked_executions
+            .push(create_execution(db_pool.as_ref(), &clock, blocked, !delete_executions).await);
+        if delete_executions {
+            create_execution(db_pool.as_ref(), &clock, eligible, true).await;
+        }
+    }
+    clock.move_time_forward(std::time::Duration::from_secs(1));
+    let cutoff = clock.now();
+    let newest = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), newest, cutoff).await;
+    let policy = if retain_by_age {
+        RetentionPolicy::CreatedAtOrAfter(cutoff)
+    } else {
+        RetentionPolicy::Count(1)
+    };
+    let admin = db_pool.admin_conn().await.unwrap();
+    let mut cursor = None;
+    let mut deleted_deployments = 0;
+    let mut deleted_trees = 0;
+    let mut blocked_deployments = 0;
+    for batch in 0..5 {
+        let preview = admin
+            .retain_deployments(policy, batch_size, delete_executions, false, true, cursor)
+            .await
+            .unwrap();
+        let result = admin
+            .retain_deployments(policy, batch_size, delete_executions, false, false, cursor)
+            .await
+            .unwrap();
+        assert_eq!(preview, result);
+        assert!(result.deleted_execution_trees <= u64::from(batch_size));
+        deleted_deployments += result.deleted_deployments;
+        deleted_trees += result.deleted_execution_trees;
+        blocked_deployments += result.blocked_non_terminal + result.blocked_by_execution_reference;
+        if !result.has_more {
+            break;
+        }
+        assert!(batch < 4, "retention must advance past blocked candidates");
+        assert!(result.next_deployment_cursor.is_some());
+        cursor = result.next_deployment_cursor;
+    }
+    assert_eq!(deleted_deployments, 1);
+    assert_eq!(deleted_trees, if delete_executions { 3 } else { 0 });
+    assert_eq!(blocked_deployments, 1);
+    let conn = db_pool.external_api_conn().await.unwrap();
+    assert!(conn.get_deployment(blocked).await.unwrap().is_some());
+    assert!(conn.get_deployment(eligible).await.unwrap().is_none());
+    assert!(conn.get_deployment(newest).await.unwrap().is_some());
+    let execution_conn = db_pool.connection().await.unwrap();
+    for execution in blocked_executions {
+        execution_conn.get(&execution).await.unwrap();
     }
     drop((admin, conn, execution_conn));
     db_close.close().await;
@@ -1109,14 +1206,14 @@ async fn deployment_retention_can_force_non_terminal_trees(database: Database) {
 
     let admin = db_pool.admin_conn().await.unwrap();
     let blocked = admin
-        .retain_deployments(RetentionPolicy::Count(0), 1, true, false, false)
+        .retain_deployments(RetentionPolicy::Count(0), 1, true, false, false, None)
         .await
         .unwrap();
     assert_eq!(blocked.deleted_deployments, 0);
     assert_eq!(blocked.blocked_non_terminal, 1);
 
     let forced = admin
-        .retain_deployments(RetentionPolicy::Count(0), 1, true, true, false)
+        .retain_deployments(RetentionPolicy::Count(0), 1, true, true, false, None)
         .await
         .unwrap();
     assert_eq!(forced.deleted_deployments, 1);
@@ -1141,7 +1238,7 @@ async fn deployment_retention_resumes_after_an_execution_batch(database: Databas
     let admin = db_pool.admin_conn().await.unwrap();
 
     let first = admin
-        .retain_deployments(RetentionPolicy::Count(0), 1, true, false, false)
+        .retain_deployments(RetentionPolicy::Count(0), 1, true, false, false, None)
         .await
         .unwrap();
     assert_eq!(first.deleted_execution_trees, 1);
@@ -1159,7 +1256,7 @@ async fn deployment_retention_resumes_after_an_execution_batch(database: Databas
     );
 
     let second = admin
-        .retain_deployments(RetentionPolicy::Count(0), 1, true, false, false)
+        .retain_deployments(RetentionPolicy::Count(0), 1, true, false, false, None)
         .await
         .unwrap();
     assert_eq!(second.deleted_execution_trees, 1);
@@ -1248,6 +1345,7 @@ async fn age_retention_uses_completion_and_inactive_times(database: Database) {
             true,
             false,
             false,
+            None,
         )
         .await
         .unwrap();

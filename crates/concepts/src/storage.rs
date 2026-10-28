@@ -1493,6 +1493,14 @@ pub struct CleanupResult {
     pub blocked_non_terminal: u64,
     pub blocked_by_execution_reference: u64,
     pub has_more: bool,
+    pub next_deployment_cursor: Option<DeploymentRetentionCursor>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeploymentRetentionCursor {
+    /// Ordering timestamp: created_at for count retention, inactive_at for age retention.
+    pub timestamp: DateTime<Utc>,
+    pub deployment_id: DeploymentId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1944,6 +1952,7 @@ pub trait DbAdmin: Send + Sync {
         delete_executions: bool,
         force_non_terminal: bool,
         dry_run: bool,
+        cursor: Option<DeploymentRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite>;
 
     async fn gc_executions(&self, batch_size: u32) -> Result<ExecutionGcResult, DbErrorWrite>;

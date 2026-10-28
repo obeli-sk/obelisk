@@ -330,6 +330,9 @@ where
     }
     if let Some(max_age) = config.deployments {
         let cutoff = cutoff(max_age);
+        let mut cursor = None;
+        let mut blocked_non_terminal = 0;
+        let mut blocked_by_execution_reference = 0;
         loop {
             let started = std::time::Instant::now();
             let result = async {
@@ -342,6 +345,7 @@ where
                         true,
                         false,
                         false,
+                        cursor,
                     )
                     .await
             }
@@ -353,15 +357,23 @@ where
             let work = result
                 .deleted_deployments
                 .saturating_add(result.deleted_execution_trees);
-            delay_after_work(work, config.batch_delay).await;
-            if !result.has_more || work == 0 {
-                let blocked = result.blocked_non_terminal > 0
-                    || result.blocked_by_execution_reference > 0
+            blocked_non_terminal += result.blocked_non_terminal;
+            blocked_by_execution_reference += result.blocked_by_execution_reference;
+            delay_after_work(
+                work + result.blocked_non_terminal + result.blocked_by_execution_reference,
+                config.batch_delay,
+            )
+            .await;
+            let advanced = result.next_deployment_cursor != cursor;
+            cursor = result.next_deployment_cursor;
+            if !result.has_more || (work == 0 && !advanced) {
+                let blocked = blocked_non_terminal > 0
+                    || blocked_by_execution_reference > 0
                     || result.has_more;
                 if blocked && !*deployment_retention_warned {
                     warn!(
-                        blocked_non_terminal = result.blocked_non_terminal,
-                        blocked_by_execution_reference = result.blocked_by_execution_reference,
+                        blocked_non_terminal,
+                        blocked_by_execution_reference,
                         "Periodic deployment retention blocked; continuing other garbage collection"
                     );
                     crate::server::system_event_writer::record(
@@ -371,8 +383,8 @@ where
                         None,
                         serde_json::json!({
                             "category": "deployment_retention",
-                            "blocked_non_terminal": result.blocked_non_terminal,
-                            "blocked_by_execution_reference": result.blocked_by_execution_reference,
+                            "blocked_non_terminal": blocked_non_terminal,
+                            "blocked_by_execution_reference": blocked_by_execution_reference,
                             "has_more": result.has_more,
                             "other_gc_continues": true,
                         }),
@@ -562,7 +574,10 @@ mod tests {
         let (_guard, db_pool, db_close) = database.set_up().await;
         let oldest = insert_deployment(db_pool.as_ref(), 3).await;
         let blocked_execution = create_execution(db_pool.as_ref(), oldest, false).await;
+        let mut blocked_executions = vec![blocked_execution.clone()];
         if has_newer_deployment {
+            let blocked = insert_deployment(db_pool.as_ref(), 3).await;
+            blocked_executions.push(create_execution(db_pool.as_ref(), blocked, false).await);
             insert_deployment(db_pool.as_ref(), 2).await;
         }
         let admin = db_pool.admin_conn().await.unwrap();
@@ -595,7 +610,10 @@ mod tests {
             .await
             .expect("blocked retention must not hang the sweep")
             .unwrap_or_else(|failure| panic!("{}: {}", failure.category, failure.source));
-            assert_eq!(stats.deployment_retention.affected, 0);
+            assert_eq!(
+                stats.deployment_retention.affected,
+                u64::from(has_newer_deployment && sweep == 0)
+            );
             if sweep == 0 {
                 assert_eq!(stats.system_event_retention.affected, 1);
                 assert!(stats.execution_gc.affected > 0);
@@ -627,18 +645,20 @@ mod tests {
         let warnings = admin.list_system_events(filter.clone()).await.unwrap();
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].level, SystemEventLevel::Warning);
-        assert_eq!(warnings[0].details["blocked_non_terminal"], 1);
-        assert_eq!(warnings[0].details["has_more"], has_newer_deployment);
+        assert_eq!(
+            warnings[0].details["blocked_non_terminal"],
+            blocked_executions.len()
+        );
+        assert_eq!(warnings[0].details["has_more"], false);
         assert_eq!(warnings[0].details["other_gc_continues"], true);
         assert_eq!(
             warnings[0].message(),
             SystemEventCode::MaintenanceGcBlocked.message()
         );
 
-        admin
-            .delete_execution_tree(&blocked_execution, true)
-            .await
-            .unwrap();
+        for execution in blocked_executions {
+            admin.delete_execution_tree(&execution, true).await.unwrap();
+        }
         run_sweep(&db_pool, sweep_config(), &mut warned, || async {
             Ok(db_pool
                 .cas_gc_conn()

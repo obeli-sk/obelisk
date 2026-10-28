@@ -194,6 +194,7 @@ impl args::Admin {
                         .post(format!("{api_url}/v1/admin/deployments/retain"))
                         .header(ACCEPT, "application/json")
                         .json(&RetainDeploymentsRequest {
+                            cursor: None,
                             retain_count: count,
                             max_age_seconds: max_age.map(|age| age.as_secs()),
                             batch_size,

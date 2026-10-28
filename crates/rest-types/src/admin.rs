@@ -80,6 +80,32 @@ pub struct CleanupRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DeploymentRetentionCursor {
+    /// Ordering timestamp: created_at for count retention, inactive_at for age retention.
+    pub timestamp: DateTime<Utc>,
+    #[schema(value_type = String)]
+    pub deployment_id: DeploymentId,
+}
+
+impl From<storage::DeploymentRetentionCursor> for DeploymentRetentionCursor {
+    fn from(value: storage::DeploymentRetentionCursor) -> Self {
+        Self {
+            timestamp: value.timestamp,
+            deployment_id: value.deployment_id,
+        }
+    }
+}
+
+impl From<DeploymentRetentionCursor> for storage::DeploymentRetentionCursor {
+    fn from(value: DeploymentRetentionCursor) -> Self {
+        Self {
+            timestamp: value.timestamp,
+            deployment_id: value.deployment_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct RetainDeploymentsRequest {
     pub retain_count: Option<u32>,
     pub max_age_seconds: Option<u64>,
@@ -90,6 +116,10 @@ pub struct RetainDeploymentsRequest {
     pub force_non_terminal: bool,
     #[serde(default)]
     pub dry_run: bool,
+    // backcompat: 0.43.0-rc.11 retention requests had no cursor.
+    /// Resume a deployment scan with the same retention policy and options.
+    #[serde(default)]
+    pub cursor: Option<DeploymentRetentionCursor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -100,6 +130,9 @@ pub struct CleanupResponse {
     pub blocked_non_terminal: u64,
     pub blocked_by_execution_reference: u64,
     pub has_more: bool,
+    // backcompat: 0.43.0-rc.11 cleanup responses had no deployment cursor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_deployment_cursor: Option<DeploymentRetentionCursor>,
 }
 
 impl From<storage::CleanupResult> for CleanupResponse {
@@ -111,6 +144,10 @@ impl From<storage::CleanupResult> for CleanupResponse {
             blocked_non_terminal: value.blocked_non_terminal,
             blocked_by_execution_reference: value.blocked_by_execution_reference,
             has_more: value.has_more,
+            next_deployment_cursor: value
+                .next_deployment_cursor
+                .filter(|_| value.has_more)
+                .map(Into::into),
         }
     }
 }

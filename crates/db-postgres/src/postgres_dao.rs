@@ -18,21 +18,21 @@ use concepts::{
         DbPool, DbPoolCloseable, DeleteDeploymentResult, DeleteExecutionTreeResult,
         DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
-        DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
-        ExecutionGcResult, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
-        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
-        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE,
-        LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse,
-        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
-        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
-        LogLevel, LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
-        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
-        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError, SystemEvent,
-        SystemEventFilter, SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked,
-        Version, VersionType, WasmBacktrace,
+        DeploymentRecord, DeploymentRetentionCursor, DeploymentState, DeploymentStatus,
+        EnqueueOutcome, ExecutionEvent, ExecutionGcResult, ExecutionListPagination,
+        ExecutionRequest, ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay,
+        ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds,
+        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
+        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
+        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
+        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
+        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
+        TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -6383,21 +6383,22 @@ impl DbAdmin for PostgresConnection {
         delete_executions: bool,
         force_non_terminal: bool,
         dry_run: bool,
+        cursor: Option<DeploymentRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
         let mut rows = match retention {
             RetentionPolicy::Count(count) => tx.query(
-                "SELECT deployment_id FROM (\
+                "SELECT deployment_id, created_at FROM (\
                      SELECT deployment_id, created_at FROM t_deployment \
                      WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) \
                      ORDER BY created_at DESC, deployment_id DESC OFFSET $1\
-                 ) retained ORDER BY created_at ASC, deployment_id ASC LIMIT $2",
-                &[&i64::from(count), &(i64::from(batch_size) + 1)],
+                 ) retained WHERE ($3::timestamptz IS NULL OR (created_at, deployment_id) > ($3, $4)) ORDER BY created_at ASC, deployment_id ASC LIMIT $2",
+                &[&i64::from(count), &(i64::from(batch_size) + 1), &cursor.map(|c| c.timestamp), &cursor.map(|c| c.deployment_id.to_string())],
             ).await?,
             RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
-                "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) AND inactive_at < $1 ORDER BY inactive_at ASC, deployment_id ASC LIMIT $2",
-                &[&cutoff, &(i64::from(batch_size) + 1)],
+                "SELECT deployment_id, inactive_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) AND inactive_at < $1 AND ($3::timestamptz IS NULL OR (inactive_at, deployment_id) > ($3, $4)) ORDER BY inactive_at ASC, deployment_id ASC LIMIT $2",
+                &[&cutoff, &(i64::from(batch_size) + 1), &cursor.map(|c| c.timestamp), &cursor.map(|c| c.deployment_id.to_string())],
             ).await?,
         };
         let more_deployments = rows.len() > batch_size as usize;
@@ -6408,6 +6409,7 @@ impl DbAdmin for PostgresConnection {
                 RetentionPolicy::CreatedAtOrAfter(_) => 0,
             },
             has_more: more_deployments,
+            next_deployment_cursor: cursor,
             ..Default::default()
         };
         for row in rows {
@@ -6422,6 +6424,10 @@ impl DbAdmin for PostgresConnection {
                 .get::<_, String>(0)
                 .parse::<DeploymentId>()
                 .expect("database deployment id must be valid");
+            let candidate = DeploymentRetentionCursor {
+                deployment_id: id,
+                timestamp: row.get(1),
+            };
             let mut roots =
                 deployment_execution_roots_tx(&tx, id, root_limit.saturating_add(1)).await?;
             let more_roots = roots.len() > root_limit as usize;
@@ -6441,32 +6447,30 @@ impl DbAdmin for PostgresConnection {
                 }
                 if blocked {
                     result.blocked_non_terminal += 1;
-                    break;
-                } else if result.deleted_deployments == u64::from(batch_size) {
-                    result.has_more = true;
-                    break;
-                }
-                result.deleted_execution_trees += roots.len() as u64;
-                if more_roots {
-                    result.has_more = true;
                 } else {
-                    result.deleted_deployments += 1;
-                }
-                if !dry_run {
-                    let outcome = delete_deployment_tx(
-                        &tx,
-                        id,
-                        delete_executions,
-                        force_non_terminal,
-                        root_limit,
-                    )
-                    .await?;
-                    debug_assert!(matches!(outcome, DeleteDeploymentResult::Deleted { .. }));
+                    result.deleted_execution_trees += roots.len() as u64;
+                    if more_roots {
+                        result.has_more = true;
+                    } else {
+                        result.deleted_deployments += 1;
+                    }
+                    if !dry_run {
+                        let outcome = delete_deployment_tx(
+                            &tx,
+                            id,
+                            delete_executions,
+                            force_non_terminal,
+                            root_limit,
+                        )
+                        .await?;
+                        debug_assert!(matches!(outcome, DeleteDeploymentResult::Deleted { .. }));
+                    }
+                    if more_roots {
+                        break;
+                    }
                 }
             }
-            if more_roots {
-                break;
-            }
+            result.next_deployment_cursor = Some(candidate);
         }
         tx.commit().await?;
         Ok(result)
