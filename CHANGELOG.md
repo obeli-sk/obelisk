@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- *(http)* Pooled connections run on the server runtime instead of a native V8 isolate's
+  runtime. A Rust activity reusing a connection created by a V8 webhook can now make
+  progress while the webhook waits for it, avoiding activity timeouts and retries.
+
 ## [0.43.0-rc.13](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.12...v0.43.0-rc.13)
 
 This release candidate adds a deployment digest command, lets deployment submits finish
