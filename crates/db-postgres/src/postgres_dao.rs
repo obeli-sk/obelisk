@@ -31,9 +31,9 @@ use concepts::{
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
         RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
         ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError, SystemEvent,
-        SystemEventFilter, SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked,
-        Version, VersionType, WasmBacktrace,
+        STATE_LOCKED, STATE_PENDING_AT, SourceMapping, StorageStatus, SubscribeToResponsesError,
+        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
+        TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -5179,30 +5179,30 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip_all)]
-    async fn upsert_source_mapping(
-        &self,
-        component_digest: &ComponentDigest,
-        frame_key: &str,
-        is_suffix: bool,
-        digest: &ContentDigest,
-    ) -> Result<(), DbErrorWrite> {
-        let digest = digest.to_string();
+    async fn upsert_source_mappings(&self, mappings: &[SourceMapping]) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        tx.execute(
-            "INSERT INTO t_component_source \
-             (component_digest, frame_key, is_suffix, digest) \
-             VALUES ($1, $2, $3, $4) \
-             ON CONFLICT (component_digest, frame_key, is_suffix) \
-             DO UPDATE SET digest = EXCLUDED.digest",
-            &[
-                &component_digest.as_slice(),
-                &frame_key,
-                &is_suffix,
-                &digest,
-            ],
-        )
-        .await?;
+        let stmt = tx
+            .prepare(
+                "INSERT INTO t_component_source \
+                 (component_digest, frame_key, is_suffix, digest) \
+                 VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT (component_digest, frame_key, is_suffix) \
+                 DO UPDATE SET digest = EXCLUDED.digest",
+            )
+            .await?;
+        for mapping in mappings {
+            tx.execute(
+                &stmt,
+                &[
+                    &mapping.component_digest.as_slice(),
+                    &mapping.frame_key,
+                    &mapping.is_suffix,
+                    &mapping.digest.to_string(),
+                ],
+            )
+            .await?;
+        }
         tx.commit().await?;
         Ok(())
     }

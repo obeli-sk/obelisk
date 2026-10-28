@@ -2322,18 +2322,9 @@ pub trait DbExternalApi: DbConnection {
         filter: BacktraceFilter,
     ) -> Result<BacktraceInfo, DbErrorRead>;
 
-    /// Map a backtrace source file (a blob already stored in the CAS) to a component digest.
-    /// `frame_key` is either an exact frame symbol path or a suffix (with leading `/`)
-    /// when `is_suffix` is true. Repeated calls replace the digest mapped to the same key.
-    /// The blob bytes themselves live in the CAS (see [`crate::cas::Cas`]); only this mapping
-    /// lives in the database.
-    async fn upsert_source_mapping(
-        &self,
-        component_digest: &ComponentDigest,
-        frame_key: &str,
-        is_suffix: bool,
-        digest: &ContentDigest,
-    ) -> Result<(), DbErrorWrite>;
+    /// Map backtrace source files (blobs already stored in the CAS) to component digests in a single transaction.
+    /// Repeated keys replace the previously mapped digest.
+    async fn upsert_source_mappings(&self, mappings: &[SourceMapping]) -> Result<(), DbErrorWrite>;
 
     /// Resolve a backtrace source file's CAS digest by component digest and a frame symbol path.
     /// Matches either exact keys or suffix keys (where the frame path ends with the stored key).
@@ -2706,6 +2697,16 @@ pub enum ComponentFileRole {
     JsModule,
     BacktraceSource,
     WitSource,
+}
+
+/// Maps a backtrace frame file of a component to a CAS blob.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceMapping {
+    pub component_digest: ComponentDigest,
+    /// Either an exact frame symbol path, or a suffix with leading `/` when `is_suffix` is true.
+    pub frame_key: String,
+    pub is_suffix: bool,
+    pub digest: ContentDigest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
