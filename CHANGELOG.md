@@ -6,11 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.14](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.13...v0.43.0-rc.14)
+
+This release candidate fixes stalls in activities that wait on outbound HTTP.
+
 ### Fixed
 
+- *(v8)* A cancelled or timed-out V8 activity awaiting `fetch` stops immediately instead of
+  running until the request finishes. [#1243](https://github.com/obeli-sk/obelisk/pull/1243)
 - *(http)* Pooled connections run on the server runtime instead of a native V8 isolate's
   runtime. A Rust activity reusing a connection created by a V8 webhook can now make
   progress while the webhook waits for it, avoiding activity timeouts and retries.
+  [#1242](https://github.com/obeli-sk/obelisk/pull/1242)
 
 ## [0.43.0-rc.13](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.12...v0.43.0-rc.13)
 
