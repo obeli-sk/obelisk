@@ -6,45 +6,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.12](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.11...v0.43.0-rc.12)
+
+This release candidate makes native V8 the default JS runtime, bounds the WASM cache and
+reclaims SQLite space during GC, and keeps cron registration independent of execution history.
+
 ### Added
 
 - *(cli)* `obelisk execution submit --follow-logs --show-derived` also streams logs of child
   (derived) executions, prefixed with their execution ID.
+  [#1226](https://github.com/obeli-sk/obelisk/pull/1226)
 - *(js)* Boa and V8 support `crypto.subtle.digest` with SHA-256, SHA-384, and SHA-512.
+  [#1227](https://github.com/obeli-sk/obelisk/pull/1227)
 - *(server)* Periodic GC evicts least recently used artifacts from the WASM cache, including
   JS, exec scripts and VM bundles, while protecting active and prepared deployments across
   processes sharing the cache. Configure its soft limit with `wasm.cache_max_size.mib` in
   `server.toml` (default 256); eviction targets 70% of the limit.
+  [#1230](https://github.com/obeli-sk/obelisk/pull/1230)
 
 ### Changed
 
+- *(js)* Native V8 is now the default JS runtime. Set `OBELISK_JS_RUNTIME=boa-wasm` to keep
+  running JS components on Boa compiled to WASM.
+  [#1229](https://github.com/obeli-sk/obelisk/pull/1229)
 - *(cron)* Cron registration persists independently of execution history, so GC of an
   `@once` tracker cannot cause resubmission. Recurring trackers roll over at a 1,000-event
   watermark, allowing GC of their old history while preserving overlap checks. Existing
   deterministic trackers are adopted on startup and subsequent deployment switches.
+  [#1234](https://github.com/obeli-sk/obelisk/pull/1234)
 - *(sqlite)* Databases use incremental auto-vacuum, and periodic GC reclaims up to 100 free
   pages per sweep. Existing databases are converted once at startup with a full `VACUUM`,
   which can increase startup time and requires additional temporary disk space.
-- *(js)* Native V8 is now the default JS runtime. Set `OBELISK_JS_RUNTIME=boa-wasm` to keep
-  running JS components on Boa compiled to WASM.
+  [#1233](https://github.com/obeli-sk/obelisk/pull/1233)
+- *(sqlite)* Prepared statements with a bound `LIMIT` are no longer recompiled on every
+  execution, cutting an idle server's CPU usage.
+  [#1235](https://github.com/obeli-sk/obelisk/pull/1235)
 - *(http)* The outbound HTTP pool honors the server's `Keep-Alive: timeout` hint, expiring idle
   connections one second early so requests do not race the server closing them. Without a
   hint, `outbound_http_pool.idle_timeout` now defaults to 4 seconds instead of 90.
+  [#1228](https://github.com/obeli-sk/obelisk/pull/1228)
 - *(server)* The Wasmtime codegen cache soft limit defaults to 256 MiB instead of 512 MiB
   and is configurable with `wasm.codegen_cache.max_size.mib` in `server.toml`.
+  [#1230](https://github.com/obeli-sk/obelisk/pull/1230)
 
 ### Fixed
 
 - *(sqlite)* Pool shutdown waits for connection cleanup and the final WAL checkpoint
-  before reporting completion.
+  before reporting completion. [#1234](https://github.com/obeli-sk/obelisk/pull/1234)
 - *(gc)* Deployment retention processes multiple deployments with execution trees per batch
   and reports remaining work correctly. Blocked deployments and protected execution trees
   are skipped, with continuation cursors allowing periodic GC to reach newer eligible
-  records even when blockers fill a batch.
+  records even when blockers fill a batch. [#1231](https://github.com/obeli-sk/obelisk/pull/1231)
 - *(gc)* Execution retention dry runs report unfinished trees belonging to the active
   deployment as blocked instead of counting them as deletable.
+  [#1231](https://github.com/obeli-sk/obelisk/pull/1231)
 - *(deployment)* Deployment retention preserves the last-good checkpoint even when its
   deployment is inactive, keeping it available for rollback.
+  [#1230](https://github.com/obeli-sk/obelisk/pull/1230)
 
 ## [0.43.0-rc.11](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.10...v0.43.0-rc.11)
 
