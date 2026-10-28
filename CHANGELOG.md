@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(sqlite)* Databases use incremental auto-vacuum, and periodic GC reclaims up to 100 free
+  pages per sweep. Existing databases are converted once at startup with a full `VACUUM`,
+  which can increase startup time and requires additional temporary disk space.
 - *(js)* Native V8 is now the default JS runtime. Set `OBELISK_JS_RUNTIME=boa-wasm` to keep
   running JS components on Boa compiled to WASM.
 - *(http)* The outbound HTTP pool honors the server's `Keep-Alive: timeout` hint, expiring idle

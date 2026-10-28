@@ -640,6 +640,11 @@ impl SqlitePool {
             InitializationError
         })?;
 
+        // New databases must enable auto-vacuum before WAL initializes their header.
+        Self::migrate_incremental_vacuum(&conn).map_err(|err| {
+            error!("Cannot enable SQLite incremental vacuum - {err:?}");
+            InitializationError
+        })?;
         for [pragma_name, default_value] in PRAGMA {
             let pragma_value = pragma_override
                 .remove(pragma_name)
@@ -658,6 +663,30 @@ impl SqlitePool {
                 InitializationError
             })?;
         Ok(conn)
+    }
+
+    fn migrate_incremental_vacuum(conn: &Connection) -> rusqlite::Result<()> {
+        let mode: u32 = conn.pragma_query_value(None, "auto_vacuum", |row| row.get(0))?;
+        if mode != 2 {
+            conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
+            // backcompat: Convert NONE databases created by Obelisk 0.43.0-rc.11 and earlier.
+            if mode == 0
+                && conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table')",
+                    [],
+                    |row| row.get::<_, bool>(0),
+                )?
+            {
+                info!("Migrating existing SQLite database to incremental vacuum");
+                conn.execute_batch("VACUUM")?;
+            }
+        }
+        let mode: u32 = conn.pragma_query_value(None, "auto_vacuum", |row| row.get(0))?;
+        if mode != 2 {
+            error!(mode, "SQLite incremental vacuum was not enabled");
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        Ok(())
     }
 
     fn connection_rpc(
@@ -5783,6 +5812,24 @@ impl SqlitePool {
 
 #[async_trait]
 impl DbAdmin for SqlitePool {
+    async fn reclaim_space(&self) -> Result<u64, DbErrorWrite> {
+        self.transaction(
+            |tx| {
+                let mut statement = tx.prepare("PRAGMA incremental_vacuum(100)")?;
+                let mut rows = statement.query([])?;
+                let mut reclaimed = 0;
+                // The pragma yields one row per reclaimed page; drain it to finish the batch.
+                while rows.next()?.is_some() {
+                    reclaimed += 1;
+                }
+                Ok(reclaimed)
+            },
+            TxType::MultipleWrites,
+            "reclaim_space",
+        )
+        .await
+    }
+
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
         self.transaction(
             move |tx| {
@@ -7183,11 +7230,82 @@ mod tests {
     use concepts::{
         ComponentId, FunctionFqn, Params,
         prefixed_ulid::{DEPLOYMENT_ID_DUMMY, EXECUTION_ID_DUMMY},
-        storage::{CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, DbPoolCloseable},
+        storage::{
+            CasGc, CreateRequest, DbAdmin, DbErrorWrite, DbErrorWriteNonRetriable, DbPoolCloseable,
+        },
     };
     use rusqlite::named_params;
 
     const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn");
+
+    #[test]
+    fn incremental_vacuum_startup_converts_existing_databases_and_preserves_data() {
+        for mode in [0, 1, 2] {
+            let file = tempfile::NamedTempFile::new().unwrap();
+            let conn = rusqlite::Connection::open(file.path()).unwrap();
+            conn.pragma_update(None, "auto_vacuum", mode).unwrap();
+            conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE legacy_data(value TEXT); INSERT INTO legacy_data VALUES ('keep');",
+            )
+            .unwrap();
+            drop(conn);
+            let conn = SqlitePool::init_thread(file.path(), hashbrown::HashMap::new()).unwrap();
+            assert_eq!(
+                conn.pragma_query_value(None, "auto_vacuum", |row| row.get::<_, u32>(0))
+                    .unwrap(),
+                2
+            );
+            assert_eq!(
+                conn.query_row("SELECT value FROM legacy_data", [], |row| row
+                    .get::<_, String>(0))
+                    .unwrap(),
+                "keep"
+            );
+            let schema_version: u32 = conn
+                .pragma_query_value(None, "schema_version", |row| row.get(0))
+                .unwrap();
+            drop(conn);
+            let conn = SqlitePool::init_thread(file.path(), hashbrown::HashMap::new()).unwrap();
+            assert_eq!(
+                conn.pragma_query_value(None, "schema_version", |row| row.get::<_, u32>(0))
+                    .unwrap(),
+                schema_version
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn incremental_vacuum_reclaims_a_bounded_batch_after_cas_gc()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use concepts::cas::Cas as _;
+
+        let file = tempfile::NamedTempFile::new()?;
+        let pool = SqlitePool::new(file.path(), super::SqliteConfig::default()).await?;
+        let conn = rusqlite::Connection::open(file.path())?;
+        assert_eq!(
+            conn.pragma_query_value(None, "auto_vacuum", |row| row.get::<_, u32>(0))?,
+            2
+        );
+        pool.write_blob(&vec![5; 4 * 1024 * 1024]).await?;
+        pool.gc_cas(false, 100, chrono::Utc::now()).await?;
+        let pages_before: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
+        let free_before: i64 = conn.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
+        assert!(free_before > 100);
+        assert_eq!(pool.reclaim_space().await?, 100);
+        let free_after: i64 = conn.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
+        assert_eq!(free_before - free_after, 100);
+        let pages_after: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
+        assert!(pages_after < pages_before);
+        let page_size: i64 = conn.pragma_query_value(None, "page_size", |row| row.get(0))?;
+        drop(conn);
+        pool.close().await;
+        assert_eq!(
+            std::fs::metadata(file.path())?.len(),
+            u64::try_from(pages_after * page_size)?
+        );
+        Ok(())
+    }
 
     #[tokio::test]
     async fn failing_ltx_should_be_rolled_back() -> Result<(), DbErrorWrite> {

@@ -66,6 +66,7 @@
 
 ## Automatic garbage collection. Tombstoned execution trees and unreferenced shared data are
 ## removed in bounded batches. Disable this only when maintenance is managed externally.
+## SQLite also reclaims up to 100 free database pages per sweep using incremental vacuum.
 # [maintenance.gc]
 # enabled = true
 # interval.seconds = 30
