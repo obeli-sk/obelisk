@@ -124,13 +124,13 @@ pub(super) fn record_use(paths: &BTreeSet<PathBuf>) {
 }
 
 pub(super) fn sweep(root: &Path, max_size: u64) -> anyhow::Result<Stats> {
-    let lock = lock_file(root)?;
+    let lock = lock_file(root).with_context(|| format!("cannot open cache GC lock in {root:?}"))?;
     match lock.try_lock() {
         Ok(()) => {}
         Err(fs::TryLockError::WouldBlock) => return Ok(Stats::default()),
         Err(fs::TryLockError::Error(err)) => return Err(err.into()),
     }
-    let protected = live_pins(root)?;
+    let protected = live_pins(root).context("cannot determine live cache pins")?;
     let mut entries = Vec::new();
     collect(root, root, &protected, &mut entries)?;
     let mut stats = Stats {
@@ -156,19 +156,41 @@ pub(super) fn sweep(root: &Path, max_size: u64) -> anyhow::Result<Stats> {
                 break;
             }
             if !entry.protected {
-                let metadata = fs::symlink_metadata(&entry.path)?;
-                if metadata.is_dir() {
-                    fs::remove_dir_all(&entry.path)?;
-                } else {
-                    fs::remove_file(&entry.path)?;
+                let deletion = (|| -> io::Result<()> {
+                    let metadata = fs::symlink_metadata(&entry.path)?;
+                    if metadata.is_dir() {
+                        fs::remove_dir_all(&entry.path)
+                    } else {
+                        fs::remove_file(&entry.path)
+                    }
+                })();
+                if skip_unavailable(&entry.path, deletion.map_err(Into::into))?.is_some() {
+                    stats.deleted_entries += 1;
+                    stats.deleted_bytes += entry.bytes;
+                    stats.remaining_bytes -= entry.bytes;
                 }
-                stats.deleted_entries += 1;
-                stats.deleted_bytes += entry.bytes;
-                stats.remaining_bytes -= entry.bytes;
             }
         }
     }
     Ok(stats)
+}
+
+fn skip_unavailable<T>(path: &Path, result: anyhow::Result<T>) -> anyhow::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(err)
+            if err.downcast_ref::<io::Error>().is_some_and(|err| {
+                matches!(
+                    err.kind(),
+                    io::ErrorKind::PermissionDenied | io::ErrorKind::NotFound
+                )
+            }) =>
+        {
+            tracing::debug!(?path, %err, "Skipping unavailable cache entry");
+            Ok(None)
+        }
+        Err(err) => Err(err).with_context(|| format!("cannot process cache entry {path:?}")),
+    }
 }
 
 fn collect(
@@ -177,51 +199,68 @@ fn collect(
     protected: &BTreeSet<PathBuf>,
     entries: &mut Vec<Entry>,
 ) -> anyhow::Result<()> {
-    for child in
-        fs::read_dir(directory).with_context(|| format!("cannot scan cache {directory:?}"))?
+    if let Some(children) =
+        skip_unavailable(directory, fs::read_dir(directory).map_err(Into::into))?
     {
-        let child = child?;
-        let path = child.path();
-        let metadata = fs::symlink_metadata(&path)?;
-        let relative = path.strip_prefix(root)?;
-        if matches!(relative.to_str(), Some(LOCK | PINS)) {
-        } else if metadata.is_dir()
-            && matches!(
-                relative.to_str(),
-                Some(
-                    "metadata"
-                        | "js"
-                        | "exec"
-                        | "activity-vm"
-                        | "activity-vm/entrypoints"
-                        | "activity-vm/runtimes"
-                        | "activity-vm/native-qemu"
-                        | "activity-vm/firecracker"
-                )
-            )
-        {
-            collect(root, &path, protected, entries)?;
-        } else {
-            // The Nix store has a shared manifest and completion markers, so evict it atomically.
-            let mut pinned = protected.iter().any(|p| p.starts_with(&path));
-            if metadata.is_file()
-                && path.extension().is_some_and(|ext| ext == "txt")
-                && let Ok(digest) = fs::read_to_string(&path)
-                && let Ok(digest) = digest.trim().parse::<concepts::ContentDigest>()
-            {
-                let prefix = digest.0.with_infix("_");
-                pinned |= protected.iter().any(|p| {
-                    p.file_name()
-                        .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
-                });
+        for child in children {
+            if let Some(child) = skip_unavailable(directory, child.map_err(Into::into))? {
+                let path = child.path();
+                skip_unavailable(&path, collect_entry(root, &path, protected, entries))?;
             }
-            entries.push(Entry {
-                bytes: tree_size(&path)?,
-                last_used: metadata.modified()?,
-                protected: pinned,
-                path,
-            });
         }
+    }
+    Ok(())
+}
+
+fn collect_entry(
+    root: &Path,
+    path: &Path,
+    protected: &BTreeSet<PathBuf>,
+    entries: &mut Vec<Entry>,
+) -> anyhow::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    let relative = path.strip_prefix(root)?;
+    if matches!(relative.to_str(), Some(LOCK | PINS)) {
+    } else if metadata.is_dir()
+        && matches!(
+            relative.to_str(),
+            Some(
+                "metadata"
+                    | "js"
+                    | "exec"
+                    | "activity-vm"
+                    | "activity-vm/entrypoints"
+                    | "activity-vm/runtimes"
+                    | "activity-vm/native-qemu"
+                    | "activity-vm/firecracker"
+            )
+        )
+    {
+        collect(root, path, protected, entries)?;
+    } else {
+        // The Nix store has a shared manifest and completion markers, so evict it atomically.
+        let mut pinned = protected.iter().any(|p| p.starts_with(path));
+        if metadata.is_file() && path.extension().is_some_and(|ext| ext == "txt") {
+            match fs::read_to_string(path) {
+                Ok(content) => {
+                    if let Ok(digest) = content.trim().parse::<concepts::ContentDigest>() {
+                        let prefix = digest.0.with_infix("_");
+                        pinned |= protected.iter().any(|p| {
+                            p.file_name()
+                                .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+                        });
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::InvalidData => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+        entries.push(Entry {
+            bytes: tree_size(path)?,
+            last_used: metadata.modified()?,
+            protected: pinned,
+            path: path.to_path_buf(),
+        });
     }
     Ok(())
 }
@@ -283,6 +322,54 @@ mod tests {
         assert!(fs::symlink_metadata(&invalid).is_err());
         record_use(&BTreeSet::from([invalid, reused.clone()]));
         assert!(fs::metadata(reused).unwrap().modified().unwrap() > UNIX_EPOCH);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn permission_denied_entries_do_not_block_other_evictions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let unreadable = root.join("exec");
+        let bundle = root.join("bundle/private");
+        let undeletable = root.join("js");
+        let mapping = root.join("metadata/unreadable.txt");
+        let free = root.join("free.wasm");
+        write(&unreadable.join("script"), 0);
+        write(&bundle.join("image"), 0);
+        write(&undeletable.join("script.js"), 0);
+        write(&mapping, 0);
+        write(&free, 0);
+        for path in [&unreadable, &bundle, &mapping] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        fs::set_permissions(&undeletable, fs::Permissions::from_mode(0o555)).unwrap();
+        let permissions_enforced = fs::read_dir(&unreadable).is_err();
+        let result = if permissions_enforced {
+            Some(sweep(root, 0))
+        } else {
+            None
+        };
+        for path in [&unreadable, &bundle, &undeletable] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        fs::set_permissions(&mapping, fs::Permissions::from_mode(0o644)).unwrap();
+        if let Some(result) = result {
+            let stats = result.unwrap();
+            assert_eq!(stats.deleted_entries, 1);
+            assert_eq!(stats.deleted_bytes, 10);
+            assert_eq!(stats.remaining_bytes, 10);
+            assert!(!free.exists());
+            assert!(unreadable.join("script").exists());
+            assert!(bundle.join("image").exists());
+            assert!(undeletable.join("script.js").exists());
+            assert!(mapping.exists());
+        } else {
+            eprintln!(
+                "Permission checks bypassed by the current user; skipping permission assertions"
+            );
+        }
     }
 
     #[test]
