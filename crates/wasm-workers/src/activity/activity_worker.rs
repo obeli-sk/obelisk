@@ -326,6 +326,7 @@ impl ActivityWorker {
         };
         let params = ctx.params;
         let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
         let max_heap_size = self
             .v8_executor
             .max_heap_size(crate::v8_executor::V8Workload::Activity);
@@ -339,6 +340,7 @@ impl ActivityWorker {
                         &return_type,
                         state,
                         isolate_tx,
+                        stop_rx,
                         max_heap_size,
                     )
                     .await
@@ -380,6 +382,7 @@ impl ActivityWorker {
                 .expect("native V8 activity supervisor task panicked")
                 .expect("native V8 activity task failed"),
             interrupted => {
+                let _ = stop_tx.send(());
                 if let Some(isolate) = isolate {
                     isolate.terminate_execution();
                 }

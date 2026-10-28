@@ -995,6 +995,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pending_fetch_is_interrupted_at_deadline() {
+        test_utils::set_up();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        // Accept and hold the connection without ever responding.
+        let _server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "hang");
+        let worker = JsWorkerBuilder::new(
+            &format!("export default async function hang() {{ await fetch('{url}'); }}"),
+            ffqn.clone(),
+        )
+        .with_allowed_host(&url)
+        .with_runtime(ActivityJsRuntime::V8)
+        .build()
+        .await;
+        let (mut ctx, _close_tx) = make_worker_context(ffqn, &[]);
+        ctx.locked_event.lock_expires_at =
+            chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(200);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), worker.run(ctx))
+            .await
+            .expect("pending fetch must not outlive the deadline");
+        assert_matches!(result, Err(WorkerError::TemporaryTimeout { .. }));
+    }
+
+    #[tokio::test]
     async fn returning_object_should_fail_to_typecheck() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "object");

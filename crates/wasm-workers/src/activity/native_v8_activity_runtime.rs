@@ -90,6 +90,7 @@ deno_core::extension!(
     ops = [op_activity_log, op_activity_env, op_activity_sleep]
 );
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn execute(
     entry_path: &str,
     files: &BTreeMap<String, String>,
@@ -97,6 +98,7 @@ pub(crate) async fn execute(
     return_type: &ReturnTypeExtendable,
     state: NativeActivityState,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
+    stop: tokio::sync::oneshot::Receiver<()>,
     max_heap_size: Option<usize>,
 ) -> (
     Result<SupportedFunctionReturnValue, NativeActivityFailure>,
@@ -143,7 +145,11 @@ pub(crate) async fn execute(
         panic: panic.clone(),
     });
     runtime.op_state().borrow_mut().put(panic.clone());
-    let mut result = execute_inner(&mut runtime, &loader, entry_path, params, return_type).await;
+    // `terminate_execution` cannot wake an event loop parked on a pending op such as `fetch`.
+    let mut result = tokio::select! {
+        result = execute_inner(&mut runtime, &loader, entry_path, params, return_type) => result,
+        _ = stop => Err(NativeActivityFailure::Trap("interrupted".into())),
+    };
     if let Some(reason) = panic.take_trap() {
         result = Err(NativeActivityFailure::Trap(reason));
     }
