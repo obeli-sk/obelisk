@@ -44,7 +44,9 @@ use db_common::{
 use hashbrown::HashMap;
 use rusqlite::{
     CachedStatement, Connection, OpenFlags, OptionalExtension, Row, ToSql, Transaction,
-    TransactionBehavior, named_params,
+    TransactionBehavior,
+    config::DbConfig,
+    named_params,
     types::{ToSqlOutput, Value},
 };
 use sha2::{Digest as _, Sha256};
@@ -639,6 +641,12 @@ impl SqlitePool {
             error!("cannot open the connection - {err:?}");
             InitializationError
         })?;
+        // Without QPSG, binding a `LIMIT ?` parameter expires the statement, forcing a reprepare on every execution.
+        conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG, true)
+            .map_err(|err| {
+                error!("cannot enable query planner stability guarantee - {err:?}");
+                InitializationError
+            })?;
 
         // New databases must enable auto-vacuum before WAL initializes their header.
         Self::migrate_incremental_vacuum(&conn).map_err(|err| {
