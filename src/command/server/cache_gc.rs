@@ -105,19 +105,22 @@ struct Entry {
     protected: bool,
 }
 
-pub(super) fn record_use(paths: &BTreeSet<PathBuf>) -> io::Result<()> {
+pub(super) fn record_use(paths: &BTreeSet<PathBuf>) {
     let now = SystemTime::now();
     for path in paths {
-        match fs::symlink_metadata(path) {
-            Ok(metadata) if !metadata.is_symlink() => {
-                File::open(path)?.set_times(FileTimes::new().set_modified(now))?;
+        let result = fs::symlink_metadata(path).and_then(|metadata| {
+            if metadata.is_symlink() {
+                Ok(())
+            } else {
+                File::open(path)?.set_times(FileTimes::new().set_modified(now))
             }
-            Ok(_) => {}
+        });
+        match result {
+            Ok(()) => {}
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err),
+            Err(err) => tracing::debug!(?path, %err, "Cannot update cache last-use timestamp"),
         }
     }
-    Ok(())
 }
 
 pub(super) fn sweep(root: &Path, max_size: u64) -> anyhow::Result<Stats> {
@@ -140,7 +143,7 @@ pub(super) fn sweep(root: &Path, max_size: u64) -> anyhow::Result<Stats> {
             .filter(|e| e.protected)
             .map(|e| e.path.clone())
             .collect(),
-    )?;
+    );
     if stats.remaining_bytes > max_size {
         entries.sort_unstable_by(|a, b| {
             a.last_used
@@ -256,7 +259,7 @@ mod tests {
         write(&active, 0);
         write(&reused, 1);
         write(&stale, 2);
-        record_use(&BTreeSet::from([reused.clone()])).unwrap();
+        record_use(&BTreeSet::from([reused.clone()]));
         let _lease = pin(root, &BTreeSet::from([active.clone()])).unwrap();
         let stats = sweep(root, 29).unwrap();
         assert_eq!(stats.deleted_bytes, 10);
@@ -267,6 +270,19 @@ mod tests {
         assert_eq!(stats.remaining_bytes, 10);
         assert!(active.exists());
         assert!(!reused.exists());
+    }
+
+    #[test]
+    fn timestamp_failure_does_not_prevent_recording_other_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let blocker = temp.path().join("a-file");
+        let invalid = blocker.join("entry");
+        let reused = temp.path().join("z-reused.wasm");
+        write(&blocker, 0);
+        write(&reused, 0);
+        assert!(fs::symlink_metadata(&invalid).is_err());
+        record_use(&BTreeSet::from([invalid, reused.clone()]));
+        assert!(fs::metadata(reused).unwrap().modified().unwrap() > UNIX_EPOCH);
     }
 
     #[test]

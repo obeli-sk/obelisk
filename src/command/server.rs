@@ -5634,7 +5634,7 @@ impl DeploymentVerified {
                 };
                 deployment_verified.validate_component_digests()?;
                 deployment_verified.cache_paths = deployment_verified.used_cache_paths(&wasm_cache_dir);
-                cache_gc::record_use(&deployment_verified.cache_paths)?;
+                cache_gc::record_use(&deployment_verified.cache_paths);
                 Ok(deployment_verified)
             },
             _ = termination_watcher.changed() => {
