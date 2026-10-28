@@ -3162,6 +3162,16 @@
             "format": "int32",
             "minimum": 0
           },
+          "cursor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionRetentionCursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "dry_run": {
             "type": "boolean"
           },
@@ -3219,6 +3229,26 @@
           },
           "has_more": {
             "type": "boolean"
+          },
+          "next_deployment_cursor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DeploymentRetentionCursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_execution_cursor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionRetentionCursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "retained": {
             "type": "integer",
@@ -3514,6 +3544,23 @@
           },
           "status": {
             "$ref": "#/components/schemas/DeploymentStatusSer"
+          }
+        }
+      },
+      "DeploymentRetentionCursor": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "deployment_id"
+        ],
+        "properties": {
+          "deployment_id": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Ordering timestamp: `created_at` for count retention, `inactive_at` for age retention."
           }
         }
       },
@@ -3877,6 +3924,23 @@
             "format": "int32",
             "description": "Cursor reached in the requested direction",
             "minimum": 0
+          }
+        }
+      },
+      "ExecutionRetentionCursor": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "execution_id"
+        ],
+        "properties": {
+          "execution_id": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Ordering timestamp: `created_at` for count retention, `updated_at` for age retention."
           }
         }
       },
@@ -4556,6 +4620,17 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "cursor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DeploymentRetentionCursor",
+                "description": "Resume a deployment scan with the same retention policy and options."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "delete_executions": {
             "type": "boolean"

@@ -18,8 +18,9 @@ use concepts::{
         DbPool, DbPoolCloseable, DeleteDeploymentResult, DeleteExecutionTreeResult,
         DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
-        DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
-        ExecutionGcResult, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        DeploymentRecord, DeploymentRetentionCursor, DeploymentState, DeploymentStatus,
+        EnqueueOutcome, ExecutionEvent, ExecutionGcResult, ExecutionListPagination,
+        ExecutionRequest, ExecutionRetentionCursor, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds, JoinSetRequest,
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE,
@@ -5971,32 +5972,25 @@ impl DbAdmin for SqlitePool {
         batch_size: u32,
         force_non_terminal: bool,
         dry_run: bool,
+        cursor: Option<ExecutionRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
-                let mut ids = match (retention, force_non_terminal) {
-                    (RetentionPolicy::Count(count), false) => tx
-                        .prepare("SELECT execution_id FROM (\
+                let mut ids = match retention {
+                    RetentionPolicy::Count(count) => tx.prepare(
+                        "SELECT execution_id, created_at FROM (\
                              SELECT execution_id, created_at FROM t_state \
-                             WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE \
+                             WHERE is_top_level = TRUE AND (?3 OR state = 'finished') AND tombstoned = FALSE \
                              ORDER BY created_at DESC, execution_id DESC LIMIT -1 OFFSET ?2\
-                         ) ORDER BY created_at ASC, execution_id ASC LIMIT ?1")?
-                        .query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count)],
-                        |row| row.get::<_, ExecutionId>(0),
-                    )?
-                        .collect::<Result<Vec<_>, _>>()?,
-                    (RetentionPolicy::CreatedAtOrAfter(cutoff), false) => tx
-                        .prepare("SELECT execution_id FROM t_state WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE AND updated_at < ?2 ORDER BY updated_at ASC, execution_id ASC LIMIT ?1")?
-                        .query_map(rusqlite::params![i64::from(batch_size) + 1, cutoff], |row| row.get::<_, ExecutionId>(0))?
-                        .collect::<Result<Vec<_>, _>>()?,
-                    (RetentionPolicy::Count(count), true) => tx
-                        .prepare("SELECT execution_id FROM (SELECT execution_id, created_at FROM t_state WHERE is_top_level = true AND tombstoned = FALSE ORDER BY created_at DESC, execution_id DESC LIMIT -1 OFFSET ?2) ORDER BY created_at ASC, execution_id ASC LIMIT ?1")?
-                        .query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count)], |row| row.get::<_, ExecutionId>(0))?
-                        .collect::<Result<Vec<_>, _>>()?,
-                    (RetentionPolicy::CreatedAtOrAfter(cutoff), true) => tx
-                        .prepare("SELECT execution_id FROM t_state WHERE is_top_level = true AND tombstoned = FALSE AND updated_at < ?2 ORDER BY updated_at ASC, execution_id ASC LIMIT ?1")?
-                        .query_map(rusqlite::params![i64::from(batch_size) + 1, cutoff], |row| row.get::<_, ExecutionId>(0))?
-                        .collect::<Result<Vec<_>, _>>()?,
+                         ) WHERE (?4 IS NULL OR (created_at, execution_id) > (?4, ?5)) ORDER BY created_at ASC, execution_id ASC LIMIT ?1"
+                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count), force_non_terminal, cursor.map(|c| c.timestamp), cursor.map(|c| c.execution_id.to_string())], |row| {
+                        Ok(ExecutionRetentionCursor { execution_id: row.get::<_, ExecutionId>(0)?.get_top_level(), timestamp: row.get(1)? })
+                    })?.collect::<Result<Vec<_>, _>>()?,
+                    RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
+                        "SELECT execution_id, updated_at FROM t_state WHERE is_top_level = TRUE AND (?3 OR state = 'finished') AND tombstoned = FALSE AND updated_at < ?2 AND (?4 IS NULL OR (updated_at, execution_id) > (datetime(?4), ?5)) ORDER BY updated_at ASC, execution_id ASC LIMIT ?1"
+                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, cutoff, force_non_terminal, cursor.map(|c| c.timestamp), cursor.map(|c| c.execution_id.to_string())], |row| {
+                        Ok(ExecutionRetentionCursor { execution_id: row.get::<_, ExecutionId>(0)?.get_top_level(), timestamp: row.get(1)? })
+                    })?.collect::<Result<Vec<_>, _>>()?,
                 };
                 let has_more = ids.len() > batch_size as usize;
                 ids.truncate(batch_size as usize);
@@ -6006,10 +6000,15 @@ impl DbAdmin for SqlitePool {
                         RetentionPolicy::CreatedAtOrAfter(_) => 0,
                     },
                     has_more,
+                    next_execution_cursor: cursor,
                     ..Default::default()
                 };
-                for id in ids {
-                    if dry_run {
+                for candidate in ids {
+                    let id = ExecutionId::TopLevel(candidate.execution_id);
+                    if dry_run && Self::execution_is_non_terminal_tx(tx, &id)?
+                        && (!force_non_terminal || Self::execution_tree_references_active_deployment_tx(tx, &id)?) {
+                        result.blocked_non_terminal += 1;
+                    } else if dry_run {
                         result.deleted_execution_trees += 1;
                     } else {
                         match Self::delete_execution_tree_tx(tx, &id, force_non_terminal)? {
@@ -6023,6 +6022,7 @@ impl DbAdmin for SqlitePool {
                             DeleteExecutionTreeResult::AlreadyDeleted => {}
                         }
                     }
+                    result.next_execution_cursor = Some(candidate);
                 }
                 Ok(result)
             },
@@ -6094,24 +6094,25 @@ impl DbAdmin for SqlitePool {
         delete_executions: bool,
         force_non_terminal: bool,
         dry_run: bool,
+        cursor: Option<DeploymentRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
                 let mut ids = match retention {
                     RetentionPolicy::Count(count) => tx.prepare(
-                        "SELECT deployment_id FROM (\
+                        "SELECT deployment_id, created_at FROM (\
                              SELECT deployment_id, created_at FROM t_deployment \
                              WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) \
                              ORDER BY created_at DESC, deployment_id DESC LIMIT -1 OFFSET ?1\
-                         ) ORDER BY created_at ASC, deployment_id ASC LIMIT ?2",
+                         ) WHERE (?3 IS NULL OR (created_at, deployment_id) > (?3, ?4)) ORDER BY created_at ASC, deployment_id ASC LIMIT ?2",
                     )?
-                    .query_map(rusqlite::params![i64::from(count), i64::from(batch_size) + 1], |row| {
-                        row.get::<_, DeploymentId>(0)
+                    .query_map(rusqlite::params![i64::from(count), i64::from(batch_size) + 1, cursor.map(|c| c.timestamp), cursor.map(|c| c.deployment_id.to_string())], |row| {
+                        Ok(DeploymentRetentionCursor { deployment_id: row.get(0)?, timestamp: row.get(1)? })
                     })?
                     .collect::<Result<Vec<_>, _>>()?,
                     RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
-                        "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) AND inactive_at < ?1 ORDER BY inactive_at ASC, deployment_id ASC LIMIT ?2",
-                    )?.query_map(rusqlite::params![cutoff, i64::from(batch_size) + 1], |row| row.get::<_, DeploymentId>(0))?
+                        "SELECT deployment_id, inactive_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) AND inactive_at < ?1 AND (?3 IS NULL OR (inactive_at, deployment_id) > (?3, ?4)) ORDER BY inactive_at ASC, deployment_id ASC LIMIT ?2",
+                    )?.query_map(rusqlite::params![cutoff, i64::from(batch_size) + 1, cursor.map(|c| c.timestamp), cursor.map(|c| c.deployment_id.to_string())], |row| Ok(DeploymentRetentionCursor { deployment_id: row.get(0)?, timestamp: row.get(1)? }))?
                     .collect::<Result<Vec<_>, _>>()?,
                 };
                 let more_deployments = ids.len() > batch_size as usize;
@@ -6122,16 +6123,24 @@ impl DbAdmin for SqlitePool {
                         RetentionPolicy::CreatedAtOrAfter(_) => 0,
                     },
                     has_more: more_deployments,
+                    next_deployment_cursor: cursor,
                     ..Default::default()
                 };
-                for id in ids {
+                for candidate in ids {
+                    let id = candidate.deployment_id;
+                    let root_limit = batch_size - u32::try_from(result.deleted_execution_trees)
+                        .expect("deleted execution trees are bounded by batch_size");
+                    if root_limit == 0 {
+                        result.has_more = true;
+                        break;
+                    }
                     let mut roots = Self::deployment_execution_roots_tx(
                         tx,
                         id,
-                        batch_size.saturating_add(1),
+                        root_limit.saturating_add(1),
                     )?;
-                    let more_roots = roots.len() > batch_size as usize;
-                    roots.truncate(batch_size as usize);
+                    let more_roots = roots.len() > root_limit as usize;
+                    roots.truncate(root_limit as usize);
                     if !roots.is_empty() && !delete_executions {
                         result.blocked_by_execution_reference += 1;
                     } else {
@@ -6148,35 +6157,32 @@ impl DbAdmin for SqlitePool {
                         }
                         if blocked {
                             result.blocked_non_terminal += 1;
-                            break;
-                        }
-                        if result.deleted_deployments == u64::from(batch_size) {
-                            result.has_more = true;
-                            break;
-                        }
-                        result.deleted_execution_trees += roots.len() as u64;
-                        if more_roots {
-                            result.has_more = true;
                         } else {
-                            result.deleted_deployments += 1;
-                        }
-                        if !dry_run {
-                            let outcome = Self::delete_deployment_tx(
-                                tx,
-                                id,
-                                delete_executions,
-                                force_non_terminal,
-                                batch_size,
-                            )?;
-                            debug_assert!(matches!(
-                                outcome,
-                                DeleteDeploymentResult::Deleted { .. }
-                            ));
+                            result.deleted_execution_trees += roots.len() as u64;
+                            if more_roots {
+                                result.has_more = true;
+                            } else {
+                                result.deleted_deployments += 1;
+                            }
+                            if !dry_run {
+                                let outcome = Self::delete_deployment_tx(
+                                    tx,
+                                    id,
+                                    delete_executions,
+                                    force_non_terminal,
+                                    root_limit,
+                                )?;
+                                debug_assert!(matches!(
+                                    outcome,
+                                    DeleteDeploymentResult::Deleted { .. }
+                                ));
+                            }
+                            if more_roots {
+                                break;
+                            }
                         }
                     }
-                    if !roots.is_empty() {
-                        break;
-                    }
+                    result.next_deployment_cursor = Some(candidate);
                 }
                 Ok(result)
             },

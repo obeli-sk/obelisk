@@ -18,8 +18,9 @@ use concepts::{
         DbPool, DbPoolCloseable, DeleteDeploymentResult, DeleteExecutionTreeResult,
         DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
-        DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
-        ExecutionGcResult, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        DeploymentRecord, DeploymentRetentionCursor, DeploymentState, DeploymentStatus,
+        EnqueueOutcome, ExecutionEvent, ExecutionGcResult, ExecutionListPagination,
+        ExecutionRequest, ExecutionRetentionCursor, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds, JoinSetRequest,
         JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE,
@@ -6277,29 +6278,22 @@ impl DbAdmin for PostgresConnection {
         batch_size: u32,
         force_non_terminal: bool,
         dry_run: bool,
+        cursor: Option<ExecutionRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let rows = match (retention, force_non_terminal) {
-            (RetentionPolicy::Count(count), false) => tx.query(
-                "SELECT execution_id FROM (\
+        let rows = match retention {
+            RetentionPolicy::Count(count) => tx.query(
+                "SELECT execution_id, created_at FROM (\
                      SELECT execution_id, created_at FROM t_state \
-                     WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE \
+                     WHERE is_top_level = TRUE AND ($3 OR state = 'finished') AND tombstoned = FALSE \
                      ORDER BY created_at DESC, execution_id DESC OFFSET $2\
-                 ) retained ORDER BY created_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &i64::from(count)],
+                 ) retained WHERE ($4::timestamptz IS NULL OR (created_at, execution_id) > ($4, $5)) ORDER BY created_at ASC, execution_id ASC LIMIT $1",
+                &[&(i64::from(batch_size) + 1), &i64::from(count), &force_non_terminal, &cursor.map(|c| c.timestamp), &cursor.map(|c| c.execution_id.to_string())],
             ).await?,
-            (RetentionPolicy::CreatedAtOrAfter(cutoff), false) => tx.query(
-                "SELECT execution_id FROM t_state WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE AND updated_at < $2 ORDER BY updated_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &cutoff],
-            ).await?,
-            (RetentionPolicy::Count(count), true) => tx.query(
-                "SELECT execution_id FROM (SELECT execution_id, created_at FROM t_state WHERE is_top_level = true AND tombstoned = FALSE ORDER BY created_at DESC, execution_id DESC OFFSET $2) retained ORDER BY created_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &i64::from(count)],
-            ).await?,
-            (RetentionPolicy::CreatedAtOrAfter(cutoff), true) => tx.query(
-                "SELECT execution_id FROM t_state WHERE is_top_level = true AND tombstoned = FALSE AND updated_at < $2 ORDER BY updated_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &cutoff],
+            RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
+                "SELECT execution_id, updated_at FROM t_state WHERE is_top_level = TRUE AND ($3 OR state = 'finished') AND tombstoned = FALSE AND updated_at < $2 AND ($4::timestamptz IS NULL OR (updated_at, execution_id) > ($4, $5)) ORDER BY updated_at ASC, execution_id ASC LIMIT $1",
+                &[&(i64::from(batch_size) + 1), &cutoff, &force_non_terminal, &cursor.map(|c| c.timestamp), &cursor.map(|c| c.execution_id.to_string())],
             ).await?,
         };
         let has_more = rows.len() > batch_size as usize;
@@ -6309,16 +6303,27 @@ impl DbAdmin for PostgresConnection {
                 RetentionPolicy::CreatedAtOrAfter(_) => 0,
             },
             has_more,
+            next_execution_cursor: cursor,
             ..Default::default()
         };
         for row in rows.into_iter().take(batch_size as usize) {
-            if dry_run {
+            let candidate = ExecutionRetentionCursor {
+                execution_id: row
+                    .get::<_, String>(0)
+                    .parse()
+                    .expect("database execution id must be top-level"),
+                timestamp: row.get(1),
+            };
+            let id = ExecutionId::TopLevel(candidate.execution_id);
+            if dry_run
+                && execution_is_non_terminal_tx(&tx, &id).await?
+                && (!force_non_terminal
+                    || execution_tree_references_active_deployment_tx(&tx, &id).await?)
+            {
+                result.blocked_non_terminal += 1;
+            } else if dry_run {
                 result.deleted_execution_trees += 1;
             } else {
-                let id = row
-                    .get::<_, String>(0)
-                    .parse::<ExecutionId>()
-                    .expect("database execution id must be valid");
                 match delete_execution_tree_tx(&tx, &id, force_non_terminal).await? {
                     DeleteExecutionTreeResult::Deleted => result.deleted_execution_trees += 1,
                     DeleteExecutionTreeResult::NonTerminal
@@ -6328,6 +6333,7 @@ impl DbAdmin for PostgresConnection {
                     DeleteExecutionTreeResult::AlreadyDeleted => {}
                 }
             }
+            result.next_execution_cursor = Some(candidate);
         }
         tx.commit().await?;
         Ok(result)
@@ -6383,21 +6389,22 @@ impl DbAdmin for PostgresConnection {
         delete_executions: bool,
         force_non_terminal: bool,
         dry_run: bool,
+        cursor: Option<DeploymentRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
         let mut rows = match retention {
             RetentionPolicy::Count(count) => tx.query(
-                "SELECT deployment_id FROM (\
+                "SELECT deployment_id, created_at FROM (\
                      SELECT deployment_id, created_at FROM t_deployment \
                      WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) \
                      ORDER BY created_at DESC, deployment_id DESC OFFSET $1\
-                 ) retained ORDER BY created_at ASC, deployment_id ASC LIMIT $2",
-                &[&i64::from(count), &(i64::from(batch_size) + 1)],
+                 ) retained WHERE ($3::timestamptz IS NULL OR (created_at, deployment_id) > ($3, $4)) ORDER BY created_at ASC, deployment_id ASC LIMIT $2",
+                &[&i64::from(count), &(i64::from(batch_size) + 1), &cursor.map(|c| c.timestamp), &cursor.map(|c| c.deployment_id.to_string())],
             ).await?,
             RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
-                "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) AND inactive_at < $1 ORDER BY inactive_at ASC, deployment_id ASC LIMIT $2",
-                &[&cutoff, &(i64::from(batch_size) + 1)],
+                "SELECT deployment_id, inactive_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) AND inactive_at < $1 AND ($3::timestamptz IS NULL OR (inactive_at, deployment_id) > ($3, $4)) ORDER BY inactive_at ASC, deployment_id ASC LIMIT $2",
+                &[&cutoff, &(i64::from(batch_size) + 1), &cursor.map(|c| c.timestamp), &cursor.map(|c| c.deployment_id.to_string())],
             ).await?,
         };
         let more_deployments = rows.len() > batch_size as usize;
@@ -6408,17 +6415,29 @@ impl DbAdmin for PostgresConnection {
                 RetentionPolicy::CreatedAtOrAfter(_) => 0,
             },
             has_more: more_deployments,
+            next_deployment_cursor: cursor,
             ..Default::default()
         };
         for row in rows {
+            let root_limit = batch_size
+                - u32::try_from(result.deleted_execution_trees)
+                    .expect("deleted execution trees are bounded by batch_size");
+            if root_limit == 0 {
+                result.has_more = true;
+                break;
+            }
             let id = row
                 .get::<_, String>(0)
                 .parse::<DeploymentId>()
                 .expect("database deployment id must be valid");
+            let candidate = DeploymentRetentionCursor {
+                deployment_id: id,
+                timestamp: row.get(1),
+            };
             let mut roots =
-                deployment_execution_roots_tx(&tx, id, batch_size.saturating_add(1)).await?;
-            let more_roots = roots.len() > batch_size as usize;
-            roots.truncate(batch_size as usize);
+                deployment_execution_roots_tx(&tx, id, root_limit.saturating_add(1)).await?;
+            let more_roots = roots.len() > root_limit as usize;
+            roots.truncate(root_limit as usize);
             if !roots.is_empty() && !delete_executions {
                 result.blocked_by_execution_reference += 1;
             } else {
@@ -6434,32 +6453,30 @@ impl DbAdmin for PostgresConnection {
                 }
                 if blocked {
                     result.blocked_non_terminal += 1;
-                    break;
-                } else if result.deleted_deployments == u64::from(batch_size) {
-                    result.has_more = true;
-                    break;
-                }
-                result.deleted_execution_trees += roots.len() as u64;
-                if more_roots {
-                    result.has_more = true;
                 } else {
-                    result.deleted_deployments += 1;
-                }
-                if !dry_run {
-                    let outcome = delete_deployment_tx(
-                        &tx,
-                        id,
-                        delete_executions,
-                        force_non_terminal,
-                        batch_size,
-                    )
-                    .await?;
-                    debug_assert!(matches!(outcome, DeleteDeploymentResult::Deleted { .. }));
+                    result.deleted_execution_trees += roots.len() as u64;
+                    if more_roots {
+                        result.has_more = true;
+                    } else {
+                        result.deleted_deployments += 1;
+                    }
+                    if !dry_run {
+                        let outcome = delete_deployment_tx(
+                            &tx,
+                            id,
+                            delete_executions,
+                            force_non_terminal,
+                            root_limit,
+                        )
+                        .await?;
+                        debug_assert!(matches!(outcome, DeleteDeploymentResult::Deleted { .. }));
+                    }
+                    if more_roots {
+                        break;
+                    }
                 }
             }
-            if !roots.is_empty() {
-                break;
-            }
+            result.next_deployment_cursor = Some(candidate);
         }
         tx.commit().await?;
         Ok(result)
