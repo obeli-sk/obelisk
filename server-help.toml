@@ -114,7 +114,7 @@
 ## Idle HTTP/1 connections are reused per scheme, host and port.
 # [outbound_http_pool]
 # max_idle_per_host = 16           # Idle connections kept per scheme, host and port. Set to 0 to open a new connection for every request.
-# idle_timeout.seconds = 90        # How long an idle connection is kept before it is closed.
+# idle_timeout.seconds = 4         # How long an idle connection is kept unless the server sends a `Keep-Alive: timeout` hint (honored minus 1s).
 
 ## Global Workflow Configuration
 # [workflows]

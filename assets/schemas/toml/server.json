@@ -878,10 +878,10 @@
           "default": 16
         },
         "idle_timeout": {
-          "description": "How long an idle connection is kept before it is closed.",
+          "description": "How long an idle connection is kept when the server sends no `Keep-Alive: timeout` hint.\nA hint is honored minus one second, up to 10 minutes.",
           "$ref": "#/$defs/DurationConfig",
           "default": {
-            "seconds": 90
+            "seconds": 4
           }
         }
       },

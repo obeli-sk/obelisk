@@ -18,6 +18,9 @@ use wasmtime_wasi_http::{Error, RequestOptions, default_send_request};
 
 /// Matches the timeouts of [`default_send_request`] when the guest sets none.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
+/// Expire ahead of the server's `Keep-Alive: timeout` so a request does not race its close.
+const KEEP_ALIVE_HINT_MARGIN: Duration = Duration::from_secs(1);
+const KEEP_ALIVE_HINT_MAX: Duration = Duration::from_secs(600);
 
 pub(crate) type IoFuture = Box<dyn Future<Output = Result<(), Error>> + Send>;
 
@@ -25,6 +28,7 @@ pub(crate) type IoFuture = Box<dyn Future<Output = Result<(), Error>> + Send>;
 pub struct HttpPoolConfig {
     /// Idle connections kept per scheme and authority; `0` opens a new connection per request.
     pub max_idle_per_host: usize,
+    /// Used when the server sends no `Keep-Alive: timeout` hint.
     pub idle_timeout: Duration,
 }
 
@@ -32,7 +36,7 @@ impl Default for HttpPoolConfig {
     fn default() -> Self {
         Self {
             max_idle_per_host: 16,
-            idle_timeout: Duration::from_secs(90),
+            idle_timeout: Duration::from_secs(4),
         }
     }
 }
@@ -104,7 +108,7 @@ impl PoolKey {
 
 struct IdleConnection {
     sender: SendRequest<HyperOutgoingBody>,
-    idle_since: Instant,
+    expires_at: Instant,
 }
 
 struct Pool {
@@ -163,13 +167,14 @@ impl Pool {
                     .map_err(|_| Error::ConnectionReadTimeout)?;
             match response {
                 Ok(response) => {
+                    let idle_timeout = self.idle_timeout(response.headers());
                     let mut between_bytes = tokio::time::interval(timeouts.between_bytes);
                     between_bytes.reset();
                     let (parts, incoming) = response.into_parts();
                     let mut body = PooledBody {
                         incoming,
                         between_bytes,
-                        release: Some((self.clone(), key, sender)),
+                        release: Some((self.clone(), key, sender, idle_timeout)),
                     };
                     // A body that is never polled (e.g. 204 or HEAD) must still release.
                     if body.incoming.is_end_stream() {
@@ -190,10 +195,8 @@ impl Pool {
         let mut idle = self.idle.lock().expect("pool mutex not poisoned");
         let connections = idle.get_mut(key)?;
         let now = Instant::now();
-        connections.retain(|connection| {
-            connection.sender.is_ready()
-                && now.duration_since(connection.idle_since) < self.config.idle_timeout
-        });
+        connections
+            .retain(|connection| connection.sender.is_ready() && now < connection.expires_at);
         let sender = connections.pop().map(|connection| connection.sender);
         if connections.is_empty() {
             idle.remove(key);
@@ -201,34 +204,51 @@ impl Pool {
         sender
     }
 
-    fn checkin(self: Arc<Self>, key: PoolKey, mut sender: SendRequest<HyperOutgoingBody>) {
+    fn idle_timeout(&self, headers: &hyper::HeaderMap) -> Duration {
+        keep_alive_timeout(headers).map_or(self.config.idle_timeout, |hint| {
+            hint.saturating_sub(KEEP_ALIVE_HINT_MARGIN)
+                .min(KEEP_ALIVE_HINT_MAX)
+        })
+    }
+
+    fn checkin(
+        self: Arc<Self>,
+        key: PoolKey,
+        mut sender: SendRequest<HyperOutgoingBody>,
+        idle_timeout: Duration,
+    ) {
+        if idle_timeout.is_zero() {
+            return;
+        }
         if sender.is_ready() {
-            self.insert_idle(key, sender);
+            self.insert_idle(key, sender, idle_timeout);
             return;
         }
         tokio::spawn(async move {
             // The connection accepts a new request once the previous exchange is fully finished.
-            if let Ok(Ok(())) = tokio::time::timeout(self.config.idle_timeout, sender.ready()).await
-            {
-                self.insert_idle(key, sender);
+            if let Ok(Ok(())) = tokio::time::timeout(idle_timeout, sender.ready()).await {
+                self.insert_idle(key, sender, idle_timeout);
             }
         });
     }
 
-    fn insert_idle(self: Arc<Self>, key: PoolKey, sender: SendRequest<HyperOutgoingBody>) {
+    fn insert_idle(
+        self: Arc<Self>,
+        key: PoolKey,
+        sender: SendRequest<HyperOutgoingBody>,
+        idle_timeout: Duration,
+    ) {
+        let expires_at = Instant::now() + idle_timeout;
         {
             let mut idle = self.idle.lock().expect("pool mutex not poisoned");
             let connections = idle.entry(key.clone()).or_default();
             if connections.len() >= self.config.max_idle_per_host {
                 connections.remove(0);
             }
-            connections.push(IdleConnection {
-                sender,
-                idle_since: Instant::now(),
-            });
+            connections.push(IdleConnection { sender, expires_at });
         }
         tokio::spawn(async move {
-            tokio::time::sleep(self.config.idle_timeout).await;
+            tokio::time::sleep_until(expires_at.into()).await;
             self.evict_expired(&key);
         });
     }
@@ -237,10 +257,8 @@ impl Pool {
         let mut idle = self.idle.lock().expect("pool mutex not poisoned");
         if let Some(connections) = idle.get_mut(key) {
             let now = Instant::now();
-            connections.retain(|connection| {
-                !connection.sender.is_closed()
-                    && now.duration_since(connection.idle_since) < self.config.idle_timeout
-            });
+            connections
+                .retain(|connection| !connection.sender.is_closed() && now < connection.expires_at);
             if connections.is_empty() {
                 idle.remove(key);
             }
@@ -297,6 +315,24 @@ async fn handshake(
     Ok(sender)
 }
 
+/// Seconds from the `timeout` parameter of a `Keep-Alive` response header, e.g. `timeout=5, max=100`.
+fn keep_alive_timeout(headers: &hyper::HeaderMap) -> Option<Duration> {
+    headers
+        .get_all("keep-alive")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .find_map(|param| {
+            let (name, value) = param.split_once('=')?;
+            if name.trim().eq_ignore_ascii_case("timeout") {
+                value.trim().trim_matches('"').parse().ok()
+            } else {
+                None
+            }
+        })
+        .map(Duration::from_secs)
+}
+
 /// Same as wasmtime's: IP literals (including bracketed IPv6) or a host name without the port.
 fn tls_server_name(
     authority: &str,
@@ -315,13 +351,13 @@ fn tls_server_name(
 struct PooledBody {
     incoming: Incoming,
     between_bytes: tokio::time::Interval,
-    release: Option<(Arc<Pool>, PoolKey, SendRequest<HyperOutgoingBody>)>,
+    release: Option<(Arc<Pool>, PoolKey, SendRequest<HyperOutgoingBody>, Duration)>,
 }
 
 impl PooledBody {
     fn release(&mut self) {
-        if let Some((pool, key, sender)) = self.release.take() {
-            pool.checkin(key, sender);
+        if let Some((pool, key, sender, idle_timeout)) = self.release.take() {
+            pool.checkin(key, sender, idle_timeout);
         }
     }
 }
@@ -379,6 +415,12 @@ pub(crate) mod tests {
 
     /// Serves `200 ok` over plain HTTP/1, counting accepted connections.
     pub(crate) async fn server() -> (std::net::SocketAddr, Arc<AtomicUsize>) {
+        server_with_keep_alive(None).await
+    }
+
+    async fn server_with_keep_alive(
+        keep_alive: Option<&'static str>,
+    ) -> (std::net::SocketAddr, Arc<AtomicUsize>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let accepted = Arc::new(AtomicUsize::new(0));
@@ -389,10 +431,17 @@ pub(crate) mod tests {
                 counter.fetch_add(1, Ordering::SeqCst);
                 tokio::spawn(hyper::server::conn::http1::Builder::new().serve_connection(
                     TokioIo::new(stream),
-                    hyper::service::service_fn(|_| async {
-                        Ok::<_, std::convert::Infallible>(hyper::Response::new(
-                            http_body_util::Full::new(Bytes::from_static(b"ok")),
-                        ))
+                    hyper::service::service_fn(move |_| async move {
+                        let mut response = hyper::Response::new(http_body_util::Full::new(
+                            Bytes::from_static(b"ok"),
+                        ));
+                        if let Some(keep_alive) = keep_alive {
+                            response.headers_mut().insert(
+                                "keep-alive",
+                                hyper::header::HeaderValue::from_static(keep_alive),
+                            );
+                        }
+                        Ok::<_, std::convert::Infallible>(response)
                     }),
                 ));
             }
@@ -433,5 +482,20 @@ pub(crate) mod tests {
         });
         get_sequentially(&client, addr).await;
         assert_eq!(3, accepted.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn keep_alive_hint_shortens_idle_timeout() {
+        let (addr, accepted) = server_with_keep_alive(Some("max=100, timeout=1")).await;
+        get_sequentially(&OutboundHttpClient::default(), addr).await;
+        assert_eq!(3, accepted.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn keep_alive_timeout_parses_timeout_parameter() {
+        let mut headers = hyper::HeaderMap::new();
+        assert_eq!(None, keep_alive_timeout(&headers));
+        headers.insert("keep-alive", "max=100, Timeout=5".parse().unwrap());
+        assert_eq!(Some(Duration::from_secs(5)), keep_alive_timeout(&headers));
     }
 }
