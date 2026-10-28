@@ -454,6 +454,16 @@ pub(crate) enum Deployment {
         #[arg(long)]
         include_generated_metadata: bool,
     },
+    /// Print the content digest of a deployment TOML, or of an existing deployment.
+    /// Equal digests mean equal content, so tooling can skip resubmitting the active deployment.
+    Digest {
+        /// Path to a deployment TOML file, or an existing deployment ID.
+        #[arg(value_name = "PATH|ID", default_value = "deployment.toml")]
+        source: DeploymentSource,
+        /// Print the digest as a JSON string.
+        #[arg(long)]
+        json: bool,
+    },
     /// Alias for `server verify --skip-db --deployment <PATH>`.
     Verify(DeploymentVerifyArgs),
 }

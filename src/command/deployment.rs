@@ -239,6 +239,25 @@ impl args::Deployment {
             }
 
             // `deployment verify` is dispatched through the local verification path in `main`.
+            args::Deployment::Digest { source, json } => {
+                let digest = match source {
+                    DeploymentSource::File(path) => prepare_deployment_manifest_from_disk(&path)
+                        .await?
+                        .digest
+                        .to_string(),
+                    DeploymentSource::Id(id) => {
+                        let client = client_startup.web_api_client()?;
+                        let dep: DeploymentRecordSer = send_json(
+                            client
+                                .get(format!("{api_url}/v1/deployments/{id}"))
+                                .header(ACCEPT, "application/json"),
+                        )
+                        .await?;
+                        dep.digest
+                    }
+                };
+                print_value(&digest, json)
+            }
             args::Deployment::Verify(_) => unreachable!("handled in main before ClientStartup"),
         }
     }

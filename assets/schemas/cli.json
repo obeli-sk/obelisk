@@ -278,6 +278,22 @@
                   ]
                 },
                 {
+                  "name": "digest",
+                  "about": "Print the content digest of a deployment TOML, or of an existing deployment. Equal digests mean equal content, so tooling can skip resubmitting the active deployment",
+                  "options": [
+                    {
+                      "name": "--json",
+                      "help": "Print the digest as a JSON string"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "source",
+                      "help": "Path to a deployment TOML file, or an existing deployment ID"
+                    }
+                  ]
+                },
+                {
                   "name": "verify",
                   "about": "Alias for `server verify --skip-db --deployment <PATH>`",
                   "options": [
@@ -2125,6 +2141,22 @@
               "name": "id",
               "help": "Deployment ID",
               "required": true
+            }
+          ]
+        },
+        {
+          "name": "digest",
+          "about": "Print the content digest of a deployment TOML, or of an existing deployment. Equal digests mean equal content, so tooling can skip resubmitting the active deployment",
+          "options": [
+            {
+              "name": "--json",
+              "help": "Print the digest as a JSON string"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "source",
+              "help": "Path to a deployment TOML file, or an existing deployment ID"
             }
           ]
         },
