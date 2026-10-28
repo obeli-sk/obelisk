@@ -1966,6 +1966,11 @@ pub trait DbAdmin: Send + Sync {
     ) -> Result<CleanupResult, DbErrorWrite>;
 
     async fn gc_executions(&self, batch_size: u32) -> Result<ExecutionGcResult, DbErrorWrite>;
+
+    /// Reclaim a bounded amount of unused database space, returning reclaimed pages; default is a no-op.
+    async fn reclaim_space(&self) -> Result<u64, DbErrorWrite> {
+        Ok(0)
+    }
 }
 
 #[cfg(feature = "runtime")]

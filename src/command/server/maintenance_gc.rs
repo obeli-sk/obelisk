@@ -107,6 +107,7 @@ struct SweepStats {
     execution_gc: CategoryStats,
     cas_gc: CategoryStats,
     cas_bytes: u64,
+    space_reclamation: CategoryStats,
     cache: super::cache_gc::Stats,
 }
 
@@ -126,6 +127,8 @@ impl SweepStats {
             cas_blobs_deleted = self.cas_gc.affected,
             cas_bytes_deleted = self.cas_bytes,
             cas_gc_active = ?self.cas_gc.active,
+            database_pages_reclaimed = self.space_reclamation.affected,
+            space_reclamation_active = ?self.space_reclamation.active,
             cache_entries_deleted = self.cache.deleted_entries,
             cache_bytes_deleted = self.cache.deleted_bytes,
             cache_bytes_remaining = self.cache.remaining_bytes,
@@ -142,6 +145,7 @@ impl SweepStats {
             .saturating_add(self.execution_gc.affected)
             .saturating_add(self.cas_gc.affected)
             .saturating_add(self.cache.deleted_entries)
+            .saturating_add(self.space_reclamation.affected)
     }
 
     fn details(self, total: Duration) -> serde_json::Value {
@@ -151,6 +155,7 @@ impl SweepStats {
             "deployment_retention": category_details(self.deployment_retention),
             "deployment_execution_trees_deleted": self.deployment_execution_trees,
             "system_event_retention": category_details(self.system_event_retention),
+            "space_reclamation": category_details(self.space_reclamation),
             "execution_gc": category_details(self.execution_gc),
             "cas_gc": {
                 "affected": self.cas_gc.affected,
@@ -458,6 +463,11 @@ where
             break;
         }
     }
+    let started = std::time::Instant::now();
+    stats.space_reclamation.affected = async { db_pool.admin_conn().await?.reclaim_space().await }
+        .await
+        .map_err(|source| Box::new(SweepFailure::new("space_reclamation", stats, source)))?;
+    stats.space_reclamation.active = started.elapsed();
     Ok(stats)
 }
 
