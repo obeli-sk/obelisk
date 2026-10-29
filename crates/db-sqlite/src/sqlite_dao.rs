@@ -1802,7 +1802,7 @@ impl SqlitePool {
             filter: &ListExecutionsFilter,
         ) -> Result<StatementModifier<'a>, RusqliteError> {
             let mut where_vec: Vec<String> = vec![
-                "NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (t_state.execution_id = root.execution_id OR t_state.execution_id LIKE root.execution_id || '.%'))".to_string(),
+                "NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND root.execution_id = substr(t_state.execution_id, 1, instr(t_state.execution_id || '.', '.') - 1))".to_string(),
             ];
             let mut params: Vec<(&'static str, ToSqlOutput<'a>)> = vec![];
             let limit = pagination.length();
@@ -1854,25 +1854,27 @@ impl SqlitePool {
             statement_mod.where_vec.push("ffqn LIKE :ffqn".to_string());
             statement_mod.params.push((":ffqn", ffqn));
         }
-        let like = |value: &str| format!("{value}%");
 
         if filter.hide_finished {
             statement_mod
                 .where_vec
                 .push(format!("state != '{STATE_FINISHED}'"));
         }
-        let prefix_temporary;
         if let Some(prefix) = &filter.execution_id_prefix {
             statement_mod
                 .where_vec
-                .push("execution_id LIKE :prefix".to_string());
-            prefix_temporary = like(prefix);
-            statement_mod.params.push((
-                ":prefix",
-                prefix_temporary
-                    .to_sql()
-                    .expect("string conversion never fails"),
-            ));
+                .push("execution_id >= :prefix".to_owned());
+            statement_mod
+                .params
+                .push((":prefix", ToSqlOutput::Owned(Value::from(prefix.clone()))));
+            if let Some(upper_bound) = db_common::text_prefix_upper_bound(prefix) {
+                statement_mod
+                    .where_vec
+                    .push("execution_id < :prefix_end".to_owned());
+                statement_mod
+                    .params
+                    .push((":prefix_end", ToSqlOutput::Owned(Value::from(upper_bound))));
+            }
         }
 
         let component_digest_temporary;
@@ -3468,15 +3470,16 @@ impl SqlitePool {
     ) -> Result<ListLogsResponse, DbErrorRead> {
         let length = pagination.length();
         let exec_id_str = execution_id.to_string();
+        let tree_end = db_common::execution_tree_upper_bound(&exec_id_str);
         let exec_id_filter = if show_derived {
-            "LIKE :execution_id || '%'"
+            "execution_id >= :execution_id AND execution_id < :tree_end"
         } else {
-            "= :execution_id"
+            "execution_id = :execution_id"
         };
         let mut query = format!(
             "SELECT id, run_id, created_at, level, message, stream_type, payload, execution_id
              FROM t_log
-             WHERE execution_id {exec_id_filter}",
+             WHERE {exec_id_filter}",
         );
 
         let cursor = pagination.cursor();
@@ -3487,6 +3490,9 @@ impl SqlitePool {
             (":cursor", &cursor.0 as &dyn rusqlite::ToSql),
             (":length", &length as &dyn rusqlite::ToSql),
         ];
+        if show_derived {
+            params.push((":tree_end", &tree_end as &dyn rusqlite::ToSql));
+        }
         if let Some(created_after) = &created_after {
             params.push((":created_after", created_after as &dyn rusqlite::ToSql));
         }
@@ -5891,38 +5897,101 @@ impl DbAdmin for SqlitePool {
     ) -> Result<Vec<SystemEvent>, DbErrorRead> {
         self.transaction(
             move |tx| {
-                let mut statement = tx.prepare(
-                    "SELECT event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, cas_digest, app_config_digest FROM t_system_event
-                     WHERE (?1 IS NULL OR event_id = ?1) AND (?2 IS NULL OR node_run_id = ?2)
-                       AND (?3 IS NULL OR level = ?3) AND (?4 IS NULL OR code = ?4)
-                       AND (?5 IS NULL OR deployment_id = ?5)
-                       AND (?6 IS NULL OR (created_at, event_id) < (SELECT created_at, event_id FROM t_system_event WHERE event_id = ?6))
-                       AND (?8 IS NULL OR created_at >= ?8) AND (?9 IS NULL OR created_at < ?9)
-                     ORDER BY created_at DESC, event_id DESC LIMIT ?7"
-                )?;
-                let rows = statement.query_map(rusqlite::params![
-                    filter.event_id.map(|id| id.to_string()), filter.node_run_id.map(|id| id.to_string()), filter.level.map(SystemEventLevel::as_str), filter.code,
-                    filter.deployment_id.map(|id| id.to_string()), filter.before_event_id.map(|id| id.to_string()),
-                    i64::from(filter.limit.clamp(1, 1000)),
-                    filter.created_from, filter.created_to
-                ], |row| {
-                    let level: String = row.get(3)?;
-                    let details: String = row.get(7)?;
-                    Ok(SystemEvent {
-                        event_id: row.get::<_, String>(0)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err)))?, node_run_id: row.get::<_, String>(1)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(err)))?, created_at: row.get(2)?,
-                        level: match level.as_str() { "debug" => SystemEventLevel::Debug, "warning" => SystemEventLevel::Warning, "error" => SystemEventLevel::Error, _ => SystemEventLevel::Info },
-                        code: row.get(4)?,
-                        dedupe_key: None,
-                        cas_digest: row.get::<_, Option<String>>(8)?.map(|digest| digest.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(err)))?,
-                        app_config_digest: row.get(9)?,
-                        execution_id: row.get::<_, Option<String>>(5)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(err)))?,
-                        deployment_id: row.get::<_, Option<String>>(6)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(err)))?,
-                        details: serde_json::from_str(&details).map_err(|err| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err)))?,
-                    })
-                })?.collect::<Result<Vec<_>, _>>()?;
+                let mut statement = tx
+                    .prepare(&db_common::system_event_list_sql(&filter, |i| {
+                        format!("?{i}")
+                    }))?;
+                let rows = statement
+                    .query_map(
+                        rusqlite::params![
+                            filter.event_id.map(|id| id.to_string()),
+                            filter.node_run_id.map(|id| id.to_string()),
+                            filter.level.map(SystemEventLevel::as_str),
+                            filter.code,
+                            filter.deployment_id.map(|id| id.to_string()),
+                            filter.before_event_id.map(|id| id.to_string()),
+                            i64::from(filter.limit.clamp(1, 1000)),
+                            filter.created_from,
+                            filter.created_to
+                        ],
+                        |row| {
+                            let level: String = row.get(3)?;
+                            let details: String = row.get(7)?;
+                            Ok(SystemEvent {
+                                event_id: row.get::<_, String>(0)?.parse().map_err(|err| {
+                                    rusqlite::Error::FromSqlConversionFailure(
+                                        0,
+                                        rusqlite::types::Type::Text,
+                                        Box::new(err),
+                                    )
+                                })?,
+                                node_run_id: row.get::<_, String>(1)?.parse().map_err(|err| {
+                                    rusqlite::Error::FromSqlConversionFailure(
+                                        1,
+                                        rusqlite::types::Type::Text,
+                                        Box::new(err),
+                                    )
+                                })?,
+                                created_at: row.get(2)?,
+                                level: match level.as_str() {
+                                    "debug" => SystemEventLevel::Debug,
+                                    "warning" => SystemEventLevel::Warning,
+                                    "error" => SystemEventLevel::Error,
+                                    _ => SystemEventLevel::Info,
+                                },
+                                code: row.get(4)?,
+                                dedupe_key: None,
+                                cas_digest: row
+                                    .get::<_, Option<String>>(8)?
+                                    .map(|digest| digest.parse())
+                                    .transpose()
+                                    .map_err(|err| {
+                                        rusqlite::Error::FromSqlConversionFailure(
+                                            8,
+                                            rusqlite::types::Type::Text,
+                                            Box::new(err),
+                                        )
+                                    })?,
+                                app_config_digest: row.get(9)?,
+                                execution_id: row
+                                    .get::<_, Option<String>>(5)?
+                                    .map(|id| id.parse())
+                                    .transpose()
+                                    .map_err(|err| {
+                                        rusqlite::Error::FromSqlConversionFailure(
+                                            5,
+                                            rusqlite::types::Type::Text,
+                                            Box::new(err),
+                                        )
+                                    })?,
+                                deployment_id: row
+                                    .get::<_, Option<String>>(6)?
+                                    .map(|id| id.parse())
+                                    .transpose()
+                                    .map_err(|err| {
+                                        rusqlite::Error::FromSqlConversionFailure(
+                                            6,
+                                            rusqlite::types::Type::Text,
+                                            Box::new(err),
+                                        )
+                                    })?,
+                                details: serde_json::from_str(&details).map_err(|err| {
+                                    rusqlite::Error::FromSqlConversionFailure(
+                                        7,
+                                        rusqlite::types::Type::Text,
+                                        Box::new(err),
+                                    )
+                                })?,
+                            })
+                        },
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
                 Ok(rows)
-            }, TxType::Other, "list_system_events"
-        ).await
+            },
+            TxType::Other,
+            "list_system_events",
+        )
+        .await
     }
 
     async fn find_http_policy_event_ids(
@@ -5993,14 +6062,14 @@ impl DbAdmin for SqlitePool {
             move |tx| {
                 let limit = limit.clamp(1, 10_000);
                 let event_ids = tx
-                    .prepare("SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY event_id LIMIT ?2")?
+                    .prepare("SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY created_at, event_id LIMIT ?2")?
                     .query_map(rusqlite::params![created_before, i64::from(limit) + 1], |row| row.get::<_, String>(0))?
                     .collect::<Result<Vec<_>, _>>()?;
                 let has_more = event_ids.len() > limit as usize;
                 let deleted = if dry_run {
                     event_ids.len().min(limit as usize) as u64
                 } else {
-                    tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit)])? as u64
+                    tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY created_at, event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit)])? as u64
                 };
                 Ok(SystemEventRetentionResult {
                     deleted,
@@ -6038,19 +6107,32 @@ impl DbAdmin for SqlitePool {
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
+                let eligible = if force_non_terminal { "TRUE" } else { "state = 'finished'" };
+                let after_created = if cursor.is_some() { "(created_at, execution_id) > (?3, ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
+                let after_updated = if cursor.is_some() { "(updated_at, execution_id) > (datetime(?3), ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
                 let mut ids = match retention {
-                    RetentionPolicy::Count(count) => tx.prepare(
-                        "SELECT execution_id, created_at FROM (\
-                             SELECT execution_id, created_at FROM t_state \
-                             WHERE is_top_level = TRUE AND (?3 OR state = 'finished') AND tombstoned = FALSE \
-                             ORDER BY created_at DESC, execution_id DESC LIMIT -1 OFFSET ?2\
-                         ) WHERE (?4 IS NULL OR (created_at, execution_id) > (?4, ?5)) ORDER BY created_at ASC, execution_id ASC LIMIT ?1"
-                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count), force_non_terminal, cursor.map(|c| c.timestamp), cursor.map(|c| c.execution_id.to_string())], |row| {
+                    RetentionPolicy::Count(count) => {
+                        let before_retained = if count == 0 {
+                            "?2 >= 0".to_owned()
+                        } else {
+                            format!("(created_at, execution_id) < (
+                               SELECT created_at, execution_id FROM t_state
+                               WHERE is_top_level = TRUE AND tombstoned = FALSE AND {eligible}
+                               ORDER BY created_at DESC, execution_id DESC LIMIT 1 OFFSET MAX(?2 - 1, 0))")
+                        };
+                        tx.prepare(
+                        &format!("SELECT execution_id, created_at FROM t_state
+                         WHERE is_top_level = TRUE AND tombstoned = FALSE AND {eligible}
+                           AND ({before_retained})
+                           AND ({after_created})
+                         ORDER BY created_at, execution_id LIMIT ?1")
+                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count), cursor.map(|c| c.timestamp), cursor.map(|c| c.execution_id.to_string())], |row| {
                         Ok(ExecutionRetentionCursor { execution_id: row.get::<_, ExecutionId>(0)?.get_top_level(), timestamp: row.get(1)? })
-                    })?.collect::<Result<Vec<_>, _>>()?,
+                    })?.collect::<Result<Vec<_>, _>>()?
+                    },
                     RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
-                        "SELECT execution_id, updated_at FROM t_state WHERE is_top_level = TRUE AND (?3 OR state = 'finished') AND tombstoned = FALSE AND updated_at < ?2 AND (?4 IS NULL OR (updated_at, execution_id) > (datetime(?4), ?5)) ORDER BY updated_at ASC, execution_id ASC LIMIT ?1"
-                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, cutoff, force_non_terminal, cursor.map(|c| c.timestamp), cursor.map(|c| c.execution_id.to_string())], |row| {
+                        &format!("SELECT execution_id, updated_at FROM t_state WHERE is_top_level = TRUE AND {eligible} AND tombstoned = FALSE AND updated_at < ?2 AND ({after_updated}) ORDER BY updated_at, execution_id LIMIT ?1")
+                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, cutoff, cursor.map(|c| c.timestamp), cursor.map(|c| c.execution_id.to_string())], |row| {
                         Ok(ExecutionRetentionCursor { execution_id: row.get::<_, ExecutionId>(0)?.get_top_level(), timestamp: row.get(1)? })
                     })?.collect::<Result<Vec<_>, _>>()?,
                 };
@@ -6162,20 +6244,32 @@ impl DbAdmin for SqlitePool {
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
+                let after_created = if cursor.is_some() { "(created_at, deployment_id) > (?3, ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
+                let after_inactive = if cursor.is_some() { "(inactive_at, deployment_id) > (?3, ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
                 let mut ids = match retention {
-                    RetentionPolicy::Count(count) => tx.prepare(
-                        "SELECT deployment_id, created_at FROM (\
-                             SELECT deployment_id, created_at FROM t_deployment \
-                             WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) \
-                             ORDER BY created_at DESC, deployment_id DESC LIMIT -1 OFFSET ?1\
-                         ) WHERE (?3 IS NULL OR (created_at, deployment_id) > (?3, ?4)) ORDER BY created_at ASC, deployment_id ASC LIMIT ?2",
+                    RetentionPolicy::Count(count) => {
+                        let before_retained = if count == 0 {
+                            "?1 >= 0".to_owned()
+                        } else {
+                            "(created_at, deployment_id) < (
+                               SELECT created_at, deployment_id FROM t_deployment
+                               WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id)
+                               ORDER BY created_at DESC, deployment_id DESC LIMIT 1 OFFSET MAX(?1 - 1, 0))".to_string()
+                        };
+                        tx.prepare(
+                        &format!("SELECT deployment_id, created_at FROM t_deployment
+                         WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id)
+                           AND ({before_retained})
+                           AND ({after_created})
+                         ORDER BY created_at, deployment_id LIMIT ?2"),
                     )?
                     .query_map(rusqlite::params![i64::from(count), i64::from(batch_size) + 1, cursor.map(|c| c.timestamp), cursor.map(|c| c.deployment_id.to_string())], |row| {
                         Ok(DeploymentRetentionCursor { deployment_id: row.get(0)?, timestamp: row.get(1)? })
                     })?
-                    .collect::<Result<Vec<_>, _>>()?,
+                    .collect::<Result<Vec<_>, _>>()?
+                    },
                     RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
-                        "SELECT deployment_id, inactive_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) AND inactive_at < ?1 AND (?3 IS NULL OR (inactive_at, deployment_id) > (?3, ?4)) ORDER BY inactive_at ASC, deployment_id ASC LIMIT ?2",
+                        &format!("SELECT deployment_id, inactive_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) AND inactive_at < ?1 AND ({after_inactive}) ORDER BY inactive_at ASC, deployment_id ASC LIMIT ?2"),
                     )?.query_map(rusqlite::params![cutoff, i64::from(batch_size) + 1, cursor.map(|c| c.timestamp), cursor.map(|c| c.deployment_id.to_string())], |row| Ok(DeploymentRetentionCursor { deployment_id: row.get(0)?, timestamp: row.get(1)? }))?
                     .collect::<Result<Vec<_>, _>>()?,
                 };
@@ -6283,48 +6377,49 @@ impl DbAdmin for SqlitePool {
                     }
                     return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows: 0, has_more: false });
                 };
-                let pattern = format!("{root}.%");
+                let descendants_start = format!("{root}.");
+        let tree_end = db_common::execution_tree_upper_bound(&root);
                 let limit = i64::from(batch_size.max(1));
                 let propagated = tx.execute(
-                    "UPDATE t_state SET tombstoned = TRUE WHERE rowid IN (SELECT rowid FROM t_state WHERE execution_id LIKE ?1 AND tombstoned = FALSE ORDER BY execution_id LIMIT ?2)",
-                    rusqlite::params![pattern, limit],
+                    "UPDATE t_state SET tombstoned = TRUE WHERE rowid IN (SELECT rowid FROM t_state WHERE execution_id >= ?1 AND execution_id < ?2 AND tombstoned = FALSE ORDER BY execution_id LIMIT ?3)",
+                    rusqlite::params![descendants_start, tree_end, limit],
                 )?;
                 if propagated > 0 {
                     return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows: propagated as u64, has_more: true });
                 }
                 let locked = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM t_state WHERE (execution_id = ?1 OR execution_id LIKE ?2) AND state = 'locked')",
-                    rusqlite::params![root, pattern],
+                    "SELECT EXISTS(SELECT 1 FROM t_state WHERE (execution_id >= ?1 AND execution_id < ?2) AND state = 'locked')",
+                    rusqlite::params![root, tree_end],
                     |row| row.get::<_, bool>(0),
                 )?;
                 if locked {
                     return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows: 0, has_more: true });
                 }
                 let deleted_rows = tx.execute(
-                    "DELETE FROM t_state WHERE rowid IN (SELECT rowid FROM t_state WHERE execution_id LIKE ?1 ORDER BY execution_id LIMIT ?2)",
-                    rusqlite::params![pattern, limit],
+                    "DELETE FROM t_state WHERE rowid IN (SELECT rowid FROM t_state WHERE execution_id >= ?1 AND execution_id < ?2 ORDER BY execution_id LIMIT ?3)",
+                    rusqlite::params![descendants_start, tree_end, limit],
                 )? as u64;
                 if deleted_rows > 0 {
                     return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows, has_more: true });
                 }
                 for (table, predicate) in [
-                    ("t_join_set_response", "execution_id = ?1 OR execution_id LIKE ?2 OR child_execution_id = ?1 OR child_execution_id LIKE ?2"),
-                    ("t_delay", "execution_id = ?1 OR execution_id LIKE ?2"),
-                    ("t_execution_backtrace", "execution_id = ?1 OR execution_id LIKE ?2"),
-                    ("t_log", "execution_id = ?1 OR execution_id LIKE ?2"),
-                    ("t_execution_log", "execution_id = ?1 OR execution_id LIKE ?2"),
+                    ("t_join_set_response", "(execution_id >= ?1 AND execution_id < ?2) OR (child_execution_id >= ?1 AND child_execution_id < ?2)"),
+                    ("t_delay", "execution_id >= ?1 AND execution_id < ?2"),
+                    ("t_execution_backtrace", "execution_id >= ?1 AND execution_id < ?2"),
+                    ("t_log", "execution_id >= ?1 AND execution_id < ?2"),
+                    ("t_execution_log", "execution_id >= ?1 AND execution_id < ?2"),
                 ] {
                     let deleted_rows = tx.execute(
                         &format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {predicate} LIMIT ?3)"),
-                        rusqlite::params![root, pattern, limit],
+                        rusqlite::params![root, tree_end, limit],
                     )? as u64;
                     if deleted_rows > 0 {
                         return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows, has_more: true });
                     }
                 }
                 let remaining = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_join_set_response WHERE execution_id = ?2 OR execution_id LIKE ?1 OR child_execution_id = ?2 OR child_execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_delay WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_execution_backtrace WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_log WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_execution_log WHERE execution_id = ?2 OR execution_id LIKE ?1)",
-                    rusqlite::params![pattern, root],
+                    "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id >= ?1 AND execution_id < ?3 UNION ALL SELECT 1 FROM t_join_set_response WHERE (execution_id >= ?2 AND execution_id < ?3) OR (child_execution_id >= ?2 AND child_execution_id < ?3) UNION ALL SELECT 1 FROM t_delay WHERE execution_id >= ?2 AND execution_id < ?3 UNION ALL SELECT 1 FROM t_execution_backtrace WHERE execution_id >= ?2 AND execution_id < ?3 UNION ALL SELECT 1 FROM t_log WHERE execution_id >= ?2 AND execution_id < ?3 UNION ALL SELECT 1 FROM t_execution_log WHERE execution_id >= ?2 AND execution_id < ?3)",
+                    rusqlite::params![descendants_start, root, tree_end],
                     |row| row.get::<_, bool>(0),
                 )?;
                 if !remaining {
@@ -6392,9 +6487,11 @@ impl CasGc for SqlitePool {
                 let orphans = tx
                     .prepare(
                         "WITH candidates AS (\
-                             SELECT digest, size FROM t_file WHERE digest NOT IN \
-                             (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL \
-                              UNION SELECT digest FROM t_file_upload WHERE uploaded_at >= ?4) \
+                             SELECT digest, size FROM t_file WHERE \
+                             NOT EXISTS (SELECT 1 FROM t_deployment_file r WHERE r.digest = t_file.digest) \
+                             AND NOT EXISTS (SELECT 1 FROM t_component_source r WHERE r.digest = t_file.digest) \
+                             AND NOT EXISTS (SELECT 1 FROM t_system_event r WHERE r.cas_digest = t_file.digest) \
+                             AND NOT EXISTS (SELECT 1 FROM t_file_upload r WHERE r.digest = t_file.digest AND r.uploaded_at >= ?4) \
                              ORDER BY digest LIMIT ?1\
                          ), measured AS (\
                              SELECT digest, size, ROW_NUMBER() OVER (ORDER BY digest) AS ordinal, \
@@ -7343,23 +7440,31 @@ mod tests {
     #[case::cancelling(crate::polling::CANCELLING)]
     #[case::expired_delays(crate::polling::EXPIRED_DELAYS)]
     #[case::expired_locks(crate::polling::EXPIRED_LOCKS)]
+    #[case::subtree_state(
+        "SELECT execution_id FROM t_state WHERE execution_id >= 'Execution_missing.' AND execution_id < 'Execution_missing/' ORDER BY execution_id LIMIT 1"
+    )]
+    #[case::subtree_delays(
+        "SELECT execution_id FROM t_delay WHERE execution_id >= 'Execution_missing.' AND execution_id < 'Execution_missing/' LIMIT 1"
+    )]
     fn idle_polling_work_is_bounded(#[case] sql: &str) {
         let file = tempfile::NamedTempFile::new().unwrap();
         let conn = SqlitePool::init_thread(file.path(), hashbrown::HashMap::new()).unwrap();
         conn.execute_batch(
             "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i + 1 FROM n WHERE i < 10000),
-             kinds(state, ffqn, digest) AS (VALUES
-                 ('finished', 'ns:pkg/ifc.fn', X'00'),
-                 ('pending_at', 'other:pkg/ifc.fn', X'02'),
-                 ('locked', 'other:pkg/ifc.fn', X'02'))
+             kinds(state, ffqn, digest, lifecycle, tombstoned) AS (VALUES
+                 ('finished', 'ns:pkg/ifc.fn', X'00', 'active', FALSE),
+                 ('pending_at', 'other:pkg/ifc.fn', X'02', 'active', FALSE),
+                 ('locked', 'other:pkg/ifc.fn', X'02', 'active', FALSE),
+                 ('pending_at', 'ns:pkg/ifc.fn', X'00', 'paused', FALSE),
+                 ('pending_at', 'ns:pkg/ifc.fn', X'00', 'active', TRUE))
              INSERT INTO t_state (
                  execution_id, is_top_level, corresponding_version, ffqn, created_at,
                  component_id_input_digest, component_type, first_scheduled_at, deployment_id,
-                 pending_expires_finished, state, updated_at, intermittent_event_count
-             ) SELECT printf('Execution_%s_%026d', state, i), TRUE, 2, ffqn, '2026-10-29',
+                 pending_expires_finished, state, updated_at, intermittent_event_count, lifecycle, tombstoned
+             ) SELECT printf('Execution_%s_%s_%d_%026d', state, lifecycle, tombstoned, i), TRUE, 2, ffqn, '2026-10-29',
                  digest, 'workflow', '2026-10-29', 'Dep_00000000000000000000000000',
                  CASE WHEN state = 'locked' THEN '2099-01-01' ELSE '2026-10-29' END,
-                 state, '2026-10-29', 0 FROM n CROSS JOIN kinds;
+                 state, '2026-10-29', 0, lifecycle, tombstoned FROM n CROSS JOIN kinds;
              WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i + 1 FROM n WHERE i < 10000),
              kinds(paused, expires_at) AS (VALUES (FALSE, '2099-01-01'), (TRUE, '2026-10-29'))
              INSERT INTO t_delay (execution_id, join_set_id, delay_id, expires_at, is_paused)
@@ -7399,6 +7504,24 @@ mod tests {
                 stmt.get_status(rusqlite::StatementStatus::RePrepare),
                 0,
                 "{sql}"
+            );
+        }
+        if sql == crate::polling::CANCELLING {
+            conn.execute_batch("UPDATE t_state SET lifecycle = 'cancelling' WHERE execution_id = (SELECT MIN(execution_id) FROM t_state WHERE state = 'finished')").unwrap();
+            stmt.reset_status(rusqlite::StatementStatus::VmStep);
+            let rows = stmt
+                .query_map(
+                    named_params! { ":lifecycle": "cancelling", ":batch_size": 5 },
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(rows.len(), 1);
+            let steps = stmt.get_status(rusqlite::StatementStatus::VmStep);
+            assert!(
+                steps < 250,
+                "cancellation with unrelated tombstones took {steps} VM steps"
             );
         }
     }

@@ -1,4 +1,4 @@
-use crate::postgres_dao::ddl::ADMIN_DB_NAME;
+use crate::{polling, postgres_dao::ddl::ADMIN_DB_NAME};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -1521,7 +1521,7 @@ async fn list_executions(
 
     let mut qb = QueryBuilder::new();
     qb.add_where(
-        "NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (t_state.execution_id = root.execution_id OR t_state.execution_id LIKE root.execution_id || '.%'))".to_string(),
+        "NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND root.execution_id = split_part(t_state.execution_id, '.', 1))".to_string(),
     );
 
     // Pagination Logic
@@ -1553,13 +1553,17 @@ async fn list_executions(
         let placeholder = qb.add_param(function_name_filter.like_pattern());
         qb.add_where(format!("ffqn LIKE {placeholder}"));
     }
-    let like = |value: String| format!("{value}%");
     if filter.hide_finished {
         qb.add_where(format!("state != '{STATE_FINISHED}'"));
     }
     if let Some(prefix) = filter.execution_id_prefix {
-        let placeholder = qb.add_param(like(prefix));
-        qb.add_where(format!("execution_id LIKE {placeholder}"));
+        let upper_bound = db_common::text_prefix_upper_bound(&prefix);
+        let placeholder = qb.add_param(prefix);
+        qb.add_where(format!("execution_id >= {placeholder}"));
+        if let Some(upper_bound) = upper_bound {
+            let placeholder = qb.add_param(upper_bound);
+            qb.add_where(format!("execution_id < {placeholder}"));
+        }
     }
     if let Some(component_digest) = filter.component_digest {
         let placeholder = qb.add_param(component_digest);
@@ -1801,8 +1805,12 @@ async fn list_logs_tx(
 ) -> Result<ListLogsResponse, DbErrorRead> {
     let mut param_index = 1;
     let exec_id_str = execution_id.to_string();
+    let tree_end = db_common::execution_tree_upper_bound(&exec_id_str);
     let exec_id_filter = if show_derived {
-        format!("execution_id LIKE ${param_index} || '%'")
+        format!(
+            "execution_id >= ${param_index} AND execution_id < ${}",
+            param_index + 1
+        )
     } else {
         format!("execution_id = ${param_index}")
     };
@@ -1813,6 +1821,11 @@ async fn list_logs_tx(
     );
     let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![&exec_id_str];
     param_index += 1;
+
+    if show_derived {
+        params.push(&tree_end);
+        param_index += 1;
+    }
 
     // Logs and streams filter
     let level_filter = if filter.should_show_logs() {
@@ -3505,16 +3518,8 @@ async fn get_pending_of_single_ffqn(
     let rows = tx
         .query(
             &format!(
-                r"
-                SELECT execution_id, corresponding_version FROM t_state
-                WHERE
-                state = '{STATE_PENDING_AT}' AND
-                pending_expires_finished <= $1 AND ffqn = $2
-                AND lifecycle = 'active' AND tombstoned = FALSE
-                ORDER BY pending_expires_finished
-                {}
-                LIMIT $3
-                ",
+                "{} {} LIMIT $3",
+                polling::PENDING_BY_FFQN,
                 if select_strategy == SelectStrategy::LockForUpdate {
                     "FOR UPDATE SKIP LOCKED"
                 } else {
@@ -3602,17 +3607,8 @@ async fn get_pending_by_ffqns_auto(
         let rows = tx
             .query(
                 &format!(
-                    r"
-                    SELECT execution_id, corresponding_version FROM t_state
-                    WHERE
-                    state = '{STATE_PENDING_AT}' AND
-                    pending_expires_finished <= $1 AND ffqn = $2
-                    AND lifecycle = 'active' AND tombstoned = FALSE
-                    AND (incompatible_digest IS NULL OR incompatible_digest <> $3)
-                    ORDER BY pending_expires_finished
-                    {}
-                    LIMIT $4
-                    ",
+                    "{} {} LIMIT $4",
+                    polling::PENDING_BY_FFQN_AUTO,
                     if select_strategy == SelectStrategy::LockForUpdate {
                         "FOR UPDATE SKIP LOCKED"
                     } else {
@@ -3661,16 +3657,8 @@ async fn get_pending_by_component_input_digest(
     let rows = tx
         .query(
             &format!(
-                r"
-                SELECT execution_id, corresponding_version FROM t_state WHERE
-                state = '{STATE_PENDING_AT}' AND
-                pending_expires_finished <= $1 AND
-                component_id_input_digest = $2
-                AND lifecycle = 'active' AND tombstoned = FALSE
-                ORDER BY pending_expires_finished
-                {}
-                LIMIT $3
-                ",
+                "{} {} LIMIT $3",
+                polling::PENDING_BY_COMPONENT,
                 if select_strategy == SelectStrategy::LockForUpdate {
                     "FOR UPDATE SKIP LOCKED"
                 } else {
@@ -4459,13 +4447,7 @@ impl DbConnection for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         let rows = tx
-            .query(
-                &format!(
-                    "SELECT execution_id FROM t_state WHERE lifecycle = '{LIFECYCLE_CANCELLING}' AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (t_state.execution_id = root.execution_id OR t_state.execution_id LIKE root.execution_id || '.%')) \
-                     ORDER BY created_at LIMIT $1"
-                ),
-                &[&(i64::from(batch_size))],
-            )
+            .query(polling::CANCELLING, &[&(i64::from(batch_size))])
             .await?;
         tx.commit().await?;
         let mut result = Vec::with_capacity(rows.len());
@@ -4898,12 +4880,7 @@ impl DbConnection for PostgresConnection {
         let tx = client_guard.transaction().await?;
 
         // Expired Delays
-        let rows = tx
-            .query(
-                "SELECT d.execution_id, d.join_set_id, d.delay_id FROM t_delay d WHERE d.expires_at <= $1 AND NOT d.is_paused AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (d.execution_id = root.execution_id OR d.execution_id LIKE root.execution_id || '.%'))",
-                &[&at],
-            )
-            .await?;
+        let rows = tx.query(polling::EXPIRED_DELAYS, &[&at]).await?;
 
         let mut expired_timers = Vec::with_capacity(rows.len());
         for row in rows {
@@ -4929,14 +4906,7 @@ impl DbConnection for PostgresConnection {
         }
 
         // Expired Locks
-        let rows = tx.query(
-            &format!(
-                "SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, executor_id, run_id, lifecycle \
-                 FROM t_state \
-                 WHERE pending_expires_finished <= $1 AND state = '{STATE_LOCKED}'"
-            ),
-            &[&at]
-        ).await?;
+        let rows = tx.query(polling::EXPIRED_LOCKS, &[&at]).await?;
 
         for row in rows {
             let unpack = || -> Result<Option<ExpiredTimer>, DbErrorGeneric> {
@@ -6288,19 +6258,34 @@ impl DbAdmin for PostgresConnection {
         &self,
         filter: SystemEventFilter,
     ) -> Result<Vec<SystemEvent>, DbErrorRead> {
-        let rows = self.client.lock().await.query(
-            "SELECT event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, cas_digest, app_config_digest FROM t_system_event
-             WHERE ($1::text IS NULL OR event_id = $1) AND ($2::text IS NULL OR node_run_id = $2)
-               AND ($3::text IS NULL OR level = $3) AND ($4::text IS NULL OR code = $4)
-               AND ($5::text IS NULL OR deployment_id = $5)
-               AND ($6::text IS NULL OR (created_at, event_id) < (SELECT created_at, event_id FROM t_system_event WHERE event_id = $6))
-               AND ($8::timestamptz IS NULL OR created_at >= $8) AND ($9::timestamptz IS NULL OR created_at < $9)
-             ORDER BY created_at DESC, event_id DESC LIMIT $7",
-            &[&filter.event_id.map(|id| id.to_string()), &filter.node_run_id.map(|id| id.to_string()), &filter.level.map(SystemEventLevel::as_str),
-              &filter.code, &filter.deployment_id.map(|id| id.to_string()), &filter.before_event_id.map(|id| id.to_string()),
-              &i64::from(filter.limit.clamp(1, 1000)),
-              &filter.created_from, &filter.created_to],
-        ).await?;
+        let rows = self
+            .client
+            .lock()
+            .await
+            .query(
+                &db_common::system_event_list_sql(&filter, |i| {
+                    format!(
+                        "${i}{}",
+                        match i {
+                            7 => "::bigint",
+                            8 | 9 => "::timestamptz",
+                            _ => "::text",
+                        }
+                    )
+                }),
+                &[
+                    &filter.event_id.map(|id| id.to_string()),
+                    &filter.node_run_id.map(|id| id.to_string()),
+                    &filter.level.map(SystemEventLevel::as_str),
+                    &filter.code,
+                    &filter.deployment_id.map(|id| id.to_string()),
+                    &filter.before_event_id.map(|id| id.to_string()),
+                    &i64::from(filter.limit.clamp(1, 1000)),
+                    &filter.created_from,
+                    &filter.created_to,
+                ],
+            )
+            .await?;
         rows.into_iter()
             .map(|row| {
                 let level: String = get(&row, 3)?;
@@ -6395,7 +6380,7 @@ impl DbAdmin for PostgresConnection {
         let tx = client.transaction().await?;
         let rows = tx
             .query(
-                "SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY event_id LIMIT $2",
+                "SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY created_at, event_id LIMIT $2",
                 &[&created_before, &(i64::from(limit) + 1)],
             )
             .await?;
@@ -6405,7 +6390,7 @@ impl DbAdmin for PostgresConnection {
         } else {
             tx
             .execute(
-                "DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY event_id LIMIT $2)",
+                "DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY created_at, event_id LIMIT $2)",
                 &[&created_before, &i64::from(limit)],
             )
             .await?
@@ -6436,18 +6421,43 @@ impl DbAdmin for PostgresConnection {
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
+        let eligible = if force_non_terminal {
+            "TRUE"
+        } else {
+            "state = 'finished'"
+        };
+        let after_created = if cursor.is_some() {
+            "(created_at, execution_id) > ($3, $4)"
+        } else {
+            "$3::timestamptz IS NULL AND $4::text IS NULL"
+        };
+        let after_updated = if cursor.is_some() {
+            "(updated_at, execution_id) > ($3, $4)"
+        } else {
+            "$3::timestamptz IS NULL AND $4::text IS NULL"
+        };
         let rows = match retention {
-            RetentionPolicy::Count(count) => tx.query(
-                "SELECT execution_id, created_at FROM (\
-                     SELECT execution_id, created_at FROM t_state \
-                     WHERE is_top_level = TRUE AND ($3 OR state = 'finished') AND tombstoned = FALSE \
-                     ORDER BY created_at DESC, execution_id DESC OFFSET $2\
-                 ) retained WHERE ($4::timestamptz IS NULL OR (created_at, execution_id) > ($4, $5)) ORDER BY created_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &i64::from(count), &force_non_terminal, &cursor.map(|c| c.timestamp), &cursor.map(|c| c.execution_id.to_string())],
-            ).await?,
+            RetentionPolicy::Count(count) => {
+                let before_retained = if count == 0 {
+                    "$2::bigint >= 0".to_owned()
+                } else {
+                    format!("(created_at, execution_id) < (
+                               SELECT created_at, execution_id FROM t_state
+                               WHERE is_top_level = TRUE AND tombstoned = FALSE AND {eligible}
+                               ORDER BY created_at DESC, execution_id DESC LIMIT 1 OFFSET GREATEST($2::bigint - 1, 0))")
+                };
+                tx.query(
+                &format!("SELECT execution_id, created_at FROM t_state
+                         WHERE is_top_level = TRUE AND tombstoned = FALSE AND {eligible}
+                           AND ({before_retained})
+                           AND ({after_created})
+                         ORDER BY created_at, execution_id LIMIT $1"),
+                &[&(i64::from(batch_size) + 1), &i64::from(count), &cursor.map(|c| c.timestamp), &cursor.map(|c| c.execution_id.to_string())],
+            ).await?
+            },
             RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
-                "SELECT execution_id, updated_at FROM t_state WHERE is_top_level = TRUE AND ($3 OR state = 'finished') AND tombstoned = FALSE AND updated_at < $2 AND ($4::timestamptz IS NULL OR (updated_at, execution_id) > ($4, $5)) ORDER BY updated_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &cutoff, &force_non_terminal, &cursor.map(|c| c.timestamp), &cursor.map(|c| c.execution_id.to_string())],
+                &format!("SELECT execution_id, updated_at FROM t_state WHERE is_top_level = TRUE AND {eligible} AND tombstoned = FALSE AND updated_at < $2 AND ({after_updated}) ORDER BY updated_at, execution_id LIMIT $1"),
+                &[&(i64::from(batch_size) + 1), &cutoff, &cursor.map(|c| c.timestamp), &cursor.map(|c| c.execution_id.to_string())],
             ).await?,
         };
         let has_more = rows.len() > batch_size as usize;
@@ -6549,17 +6559,37 @@ impl DbAdmin for PostgresConnection {
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
+        let after_created = if cursor.is_some() {
+            "(created_at, deployment_id) > ($3, $4)"
+        } else {
+            "$3::timestamptz IS NULL AND $4::text IS NULL"
+        };
+        let after_inactive = if cursor.is_some() {
+            "(inactive_at, deployment_id) > ($3, $4)"
+        } else {
+            "$3::timestamptz IS NULL AND $4::text IS NULL"
+        };
         let mut rows = match retention {
-            RetentionPolicy::Count(count) => tx.query(
-                "SELECT deployment_id, created_at FROM (\
-                     SELECT deployment_id, created_at FROM t_deployment \
-                     WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) \
-                     ORDER BY created_at DESC, deployment_id DESC OFFSET $1\
-                 ) retained WHERE ($3::timestamptz IS NULL OR (created_at, deployment_id) > ($3, $4)) ORDER BY created_at ASC, deployment_id ASC LIMIT $2",
+            RetentionPolicy::Count(count) => {
+                let before_retained = if count == 0 {
+                    "$1::bigint >= 0".to_owned()
+                } else {
+                    "(created_at, deployment_id) < (
+                               SELECT created_at, deployment_id FROM t_deployment
+                               WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id)
+                               ORDER BY created_at DESC, deployment_id DESC LIMIT 1 OFFSET GREATEST($1::bigint - 1, 0))".to_string()
+                };
+                tx.query(
+                &format!("SELECT deployment_id, created_at FROM t_deployment
+                         WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id)
+                           AND ({before_retained})
+                           AND ({after_created})
+                         ORDER BY created_at, deployment_id LIMIT $2"),
                 &[&i64::from(count), &(i64::from(batch_size) + 1), &cursor.map(|c| c.timestamp), &cursor.map(|c| c.deployment_id.to_string())],
-            ).await?,
+            ).await?
+            },
             RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
-                "SELECT deployment_id, inactive_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) AND inactive_at < $1 AND ($3::timestamptz IS NULL OR (inactive_at, deployment_id) > ($3, $4)) ORDER BY inactive_at ASC, deployment_id ASC LIMIT $2",
+                &format!("SELECT deployment_id, inactive_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) AND inactive_at < $1 AND ({after_inactive}) ORDER BY inactive_at ASC, deployment_id ASC LIMIT $2"),
                 &[&cutoff, &(i64::from(batch_size) + 1), &cursor.map(|c| c.timestamp), &cursor.map(|c| c.deployment_id.to_string())],
             ).await?,
         };
@@ -6685,12 +6715,13 @@ impl DbAdmin for PostgresConnection {
             });
         };
         let root = row.get::<_, String>(0);
-        let pattern = format!("{root}.%");
+        let descendants_start = format!("{root}.");
+        let tree_end = db_common::execution_tree_upper_bound(&root);
         let limit = i64::from(batch_size.max(1));
         let propagated = tx
             .execute(
-                "UPDATE t_state SET tombstoned = TRUE WHERE ctid IN (SELECT ctid FROM t_state WHERE execution_id LIKE $1 AND tombstoned = FALSE ORDER BY execution_id LIMIT $2)",
-                &[&pattern, &limit],
+                "UPDATE t_state SET tombstoned = TRUE WHERE ctid IN (SELECT ctid FROM t_state WHERE execution_id >= $1 AND execution_id < $2 AND tombstoned = FALSE ORDER BY execution_id LIMIT $3)",
+                &[&descendants_start, &tree_end, &limit],
             )
             .await?;
         if propagated > 0 {
@@ -6703,8 +6734,8 @@ impl DbAdmin for PostgresConnection {
         }
         let locked = tx
             .query_one(
-                "SELECT EXISTS(SELECT 1 FROM t_state WHERE (execution_id = $1 OR execution_id LIKE $2) AND state = 'locked')",
-                &[&root, &pattern],
+                "SELECT EXISTS(SELECT 1 FROM t_state WHERE (execution_id >= $1 AND execution_id < $2) AND state = 'locked')",
+                &[&root, &tree_end],
             )
             .await?
             .get::<_, bool>(0);
@@ -6719,8 +6750,8 @@ impl DbAdmin for PostgresConnection {
 
         let deleted_rows = tx
             .execute(
-                "DELETE FROM t_state WHERE ctid IN (SELECT ctid FROM t_state WHERE execution_id LIKE $1 ORDER BY execution_id LIMIT $2)",
-                &[&pattern, &limit],
+                "DELETE FROM t_state WHERE ctid IN (SELECT ctid FROM t_state WHERE execution_id >= $1 AND execution_id < $2 ORDER BY execution_id LIMIT $3)",
+                &[&descendants_start, &tree_end, &limit],
             )
             .await?;
         if deleted_rows > 0 {
@@ -6734,23 +6765,23 @@ impl DbAdmin for PostgresConnection {
         for (table, predicate) in [
             (
                 "t_join_set_response",
-                "execution_id = $1 OR execution_id LIKE $2 OR child_execution_id = $1 OR child_execution_id LIKE $2",
+                "(execution_id >= $1 AND execution_id < $2) OR (child_execution_id >= $1 AND child_execution_id < $2)",
             ),
-            ("t_delay", "execution_id = $1 OR execution_id LIKE $2"),
+            ("t_delay", "execution_id >= $1 AND execution_id < $2"),
             (
                 "t_execution_backtrace",
-                "execution_id = $1 OR execution_id LIKE $2",
+                "execution_id >= $1 AND execution_id < $2",
             ),
-            ("t_log", "execution_id = $1 OR execution_id LIKE $2"),
+            ("t_log", "execution_id >= $1 AND execution_id < $2"),
             (
                 "t_execution_log",
-                "execution_id = $1 OR execution_id LIKE $2",
+                "execution_id >= $1 AND execution_id < $2",
             ),
         ] {
             let deleted_rows = tx
                 .execute(
                     &format!("DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE {predicate} LIMIT $3)"),
-                    &[&root, &pattern, &limit],
+                    &[&root, &tree_end, &limit],
                 )
                 .await?;
             if deleted_rows > 0 {
@@ -6769,8 +6800,8 @@ impl DbAdmin for PostgresConnection {
         .await?;
         let remaining = tx
             .query_one(
-                "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id LIKE $1 UNION ALL SELECT 1 FROM t_join_set_response WHERE execution_id = $2 OR execution_id LIKE $1 OR child_execution_id = $2 OR child_execution_id LIKE $1 UNION ALL SELECT 1 FROM t_delay WHERE execution_id = $2 OR execution_id LIKE $1 UNION ALL SELECT 1 FROM t_execution_backtrace WHERE execution_id = $2 OR execution_id LIKE $1 UNION ALL SELECT 1 FROM t_log WHERE execution_id = $2 OR execution_id LIKE $1 UNION ALL SELECT 1 FROM t_execution_log WHERE execution_id = $2 OR execution_id LIKE $1)",
-                &[&pattern, &root],
+                "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id >= $1 AND execution_id < $3 UNION ALL SELECT 1 FROM t_join_set_response WHERE (execution_id >= $2 AND execution_id < $3) OR (child_execution_id >= $2 AND child_execution_id < $3) UNION ALL SELECT 1 FROM t_delay WHERE execution_id >= $2 AND execution_id < $3 UNION ALL SELECT 1 FROM t_execution_backtrace WHERE execution_id >= $2 AND execution_id < $3 UNION ALL SELECT 1 FROM t_log WHERE execution_id >= $2 AND execution_id < $3 UNION ALL SELECT 1 FROM t_execution_log WHERE execution_id >= $2 AND execution_id < $3)",
+                &[&descendants_start, &root, &tree_end],
             )
             .await?
             .get::<_, bool>(0);
@@ -6849,10 +6880,12 @@ impl CasGc for PostgresConnection {
         let orphans = tx
             .query(
                 "WITH candidates AS (\
-                     SELECT digest, size FROM t_file WHERE digest NOT IN \
-                     (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL \
-                      UNION SELECT digest FROM t_file_upload WHERE uploaded_at >= $4) \
-                     ORDER BY digest LIMIT $1\
+                     SELECT digest, size FROM t_file WHERE \
+                             NOT EXISTS (SELECT 1 FROM t_deployment_file r WHERE r.digest = t_file.digest) \
+                             AND NOT EXISTS (SELECT 1 FROM t_component_source r WHERE r.digest = t_file.digest) \
+                             AND NOT EXISTS (SELECT 1 FROM t_system_event r WHERE r.cas_digest = t_file.digest) \
+                             AND NOT EXISTS (SELECT 1 FROM t_file_upload r WHERE r.digest = t_file.digest AND r.uploaded_at >= $4) \
+                             ORDER BY digest LIMIT $1\
                  ), measured AS (\
                      SELECT digest, size, ROW_NUMBER() OVER (ORDER BY digest) AS ordinal, \
                      COUNT(*) OVER () AS candidate_count, \

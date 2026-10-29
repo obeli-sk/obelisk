@@ -15,7 +15,6 @@ CREATE TABLE t_execution_log (
     history_event_type TEXT GENERATED ALWAYS AS (json_value->>'$.history_event.event.type') STORED,
     PRIMARY KEY (execution_id, version)
 ) STRICT;
-CREATE INDEX idx_t_execution_log_execution_id_version  ON t_execution_log (execution_id, version);
 CREATE INDEX idx_t_execution_log_execution_id_variant  ON t_execution_log (execution_id, variant);
 CREATE INDEX idx_t_execution_log_execution_id_join_set  ON t_execution_log (execution_id, join_set_id, history_event_type) WHERE history_event_type='join_next';
 CREATE TABLE t_join_set_response (
@@ -33,7 +32,6 @@ CREATE TABLE t_join_set_response (
     UNIQUE (execution_id, join_set_id, delay_id, child_execution_id)
 ) STRICT;
 CREATE TABLE sqlite_sequence(name,seq);
-CREATE INDEX idx_t_join_set_response_execution_id_id ON t_join_set_response (execution_id, id);
 CREATE UNIQUE INDEX idx_join_set_response_unique_child_id
 ON t_join_set_response (child_execution_id) WHERE child_execution_id IS NOT NULL;
 CREATE UNIQUE INDEX idx_join_set_response_unique_delay_id
@@ -68,8 +66,6 @@ CREATE TABLE t_state (
     PRIMARY KEY (execution_id)
 ) STRICT;
 CREATE INDEX idx_t_state_expired_locks ON t_state (pending_expires_finished) WHERE state = 'locked';
-CREATE INDEX idx_t_state_execution_id_is_root ON t_state (execution_id, is_top_level);
-CREATE INDEX idx_t_state_ffqn ON t_state (ffqn);
 CREATE INDEX idx_t_state_created_at ON t_state (created_at);
 CREATE TABLE t_delay (
     execution_id TEXT NOT NULL,
@@ -94,12 +90,6 @@ CREATE TABLE t_execution_backtrace (
     FOREIGN KEY (backtrace_hash)
         REFERENCES t_wasm_backtrace(backtrace_hash)
 ) STRICT;
-CREATE INDEX idx_t_execution_backtrace_execution_id_version
-ON t_execution_backtrace (
-    execution_id,
-    version_min_including,
-    version_max_excluding
-);
 CREATE TABLE t_wasm_backtrace (
     backtrace_hash BLOB NOT NULL,
     wasm_backtrace TEXT NOT NULL,
@@ -116,7 +106,6 @@ CREATE TABLE t_log (
     stream_type INTEGER,
     payload BLOB
 ) STRICT;
-CREATE INDEX idx_t_log_execution_id_run_id_created_at ON t_log (execution_id, run_id, created_at);
 CREATE TABLE t_deployment (
     deployment_id TEXT NOT NULL PRIMARY KEY,
     created_at    TEXT NOT NULL,
@@ -370,7 +359,6 @@ CREATE INDEX t_system_event_deployment_idx ON t_system_event(deployment_id, crea
 CREATE UNIQUE INDEX t_system_event_dedupe_idx
     ON t_system_event(code, deployment_id, dedupe_key)
     WHERE dedupe_key IS NOT NULL;
-CREATE INDEX t_system_event_node_run_idx ON t_system_event(node_run_id, event_id DESC);
 CREATE TABLE t_app_checkpoint (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     checkpoint TEXT NOT NULL CHECK (json_valid(checkpoint))
@@ -388,10 +376,29 @@ CREATE TABLE t_cron (
     CHECK ((last_target_execution_id IS NULL) = (last_submitted_at IS NULL))
 ) STRICT;
 CREATE UNIQUE INDEX idx_t_cron_tracking_execution ON t_cron (tracking_execution_id);
-CREATE INDEX idx_t_state_lock_pending_by_ffqn
-    ON t_state (ffqn, pending_expires_finished) WHERE state = 'pending_at';
-CREATE INDEX idx_t_state_lock_pending_auto
-    ON t_state (ffqn, pending_expires_finished, incompatible_digest) WHERE state = 'pending_at';
-CREATE INDEX idx_t_state_lock_pending_by_component
-    ON t_state (component_id_input_digest, pending_expires_finished) WHERE state = 'pending_at';
 CREATE INDEX idx_t_state_cancelling ON t_state (lifecycle, created_at);
+CREATE INDEX idx_t_state_lock_pending_auto
+    ON t_state (ffqn, pending_expires_finished, incompatible_digest)
+    WHERE state = 'pending_at' AND lifecycle = 'active' AND tombstoned = FALSE;
+CREATE INDEX idx_t_state_lock_pending_by_component
+    ON t_state (component_id_input_digest, pending_expires_finished)
+    WHERE state = 'pending_at' AND lifecycle = 'active' AND tombstoned = FALSE;
+CREATE INDEX idx_t_state_ffqn ON t_state (ffqn COLLATE NOCASE);
+CREATE INDEX idx_t_state_retention_created_at ON t_state (created_at, execution_id)
+    WHERE is_top_level = TRUE AND tombstoned = FALSE;
+CREATE INDEX idx_t_state_finished_created_at ON t_state (created_at, execution_id)
+    WHERE is_top_level = TRUE AND tombstoned = FALSE AND state = 'finished';
+CREATE INDEX idx_t_state_finished_updated_at ON t_state (updated_at, execution_id)
+    WHERE is_top_level = TRUE AND tombstoned = FALSE AND state = 'finished';
+CREATE INDEX idx_t_deployment_retention_created_at ON t_deployment (created_at, deployment_id)
+    WHERE status = 'inactive';
+CREATE INDEX idx_t_state_deployment_roots ON t_state (deployment_id, execution_id)
+    WHERE is_top_level = TRUE AND tombstoned = FALSE;
+CREATE INDEX idx_t_component_source_digest ON t_component_source (digest);
+CREATE INDEX t_system_event_cas_digest_idx ON t_system_event (cas_digest) WHERE cas_digest IS NOT NULL;
+CREATE INDEX t_system_event_node_run_idx ON t_system_event (node_run_id, created_at DESC, event_id DESC);
+CREATE INDEX idx_t_file_upload_uploaded_at ON t_file_upload (uploaded_at);
+CREATE INDEX t_system_event_http_policy_idx ON t_system_event (
+    deployment_id, json_extract(details, '$.component'), json_extract(details, '$.component_policy_hash'),
+    json_extract(details, '$.server_policy_hash'), event_id DESC
+) WHERE code = 'component.http_policy.applied';

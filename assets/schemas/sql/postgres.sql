@@ -89,7 +89,7 @@ CREATE TABLE public.t_cron (
 --
 
 CREATE TABLE public.t_delay (
-    execution_id text NOT NULL,
+    execution_id text NOT NULL COLLATE pg_catalog."C",
     join_set_id text NOT NULL,
     delay_id text NOT NULL,
     expires_at timestamp with time zone NOT NULL,
@@ -157,7 +157,7 @@ CREATE TABLE public.t_deployment_file (
 --
 
 CREATE TABLE public.t_execution_backtrace (
-    execution_id text NOT NULL,
+    execution_id text NOT NULL COLLATE pg_catalog."C",
     component_id jsonb NOT NULL,
     version_min_including bigint NOT NULL,
     version_max_excluding bigint NOT NULL,
@@ -172,7 +172,7 @@ CREATE TABLE public.t_execution_backtrace (
 --
 
 CREATE TABLE public.t_execution_log (
-    execution_id text NOT NULL,
+    execution_id text NOT NULL COLLATE pg_catalog."C",
     created_at timestamp with time zone NOT NULL,
     "json_value" json NOT NULL,
     version bigint NOT NULL,
@@ -211,11 +211,11 @@ CREATE TABLE public.t_file_upload (
 CREATE TABLE public.t_join_set_response (
     id bigint NOT NULL,
     created_at timestamp with time zone NOT NULL,
-    execution_id text NOT NULL,
+    execution_id text NOT NULL COLLATE pg_catalog."C",
     join_set_id text NOT NULL,
     delay_id text,
     delay_success boolean,
-    child_execution_id text,
+    child_execution_id text COLLATE pg_catalog."C",
     finished_version bigint,
     seq bigint,
     CONSTRAINT t_join_set_response_finished_version_check CHECK ((finished_version >= 0))
@@ -242,7 +242,7 @@ ALTER TABLE public.t_join_set_response ALTER COLUMN id ADD GENERATED ALWAYS AS I
 
 CREATE TABLE public.t_log (
     id bigint NOT NULL,
-    execution_id text NOT NULL,
+    execution_id text NOT NULL COLLATE pg_catalog."C",
     run_id character varying(30) NOT NULL,
     created_at timestamp with time zone NOT NULL,
     level integer,
@@ -271,10 +271,10 @@ ALTER TABLE public.t_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
 --
 
 CREATE TABLE public.t_state (
-    execution_id text NOT NULL,
+    execution_id text NOT NULL COLLATE pg_catalog."C",
     is_top_level boolean NOT NULL,
     corresponding_version bigint NOT NULL,
-    ffqn text NOT NULL,
+    ffqn text NOT NULL COLLATE pg_catalog."C",
     created_at timestamp with time zone NOT NULL,
     component_id_input_digest bytea NOT NULL,
     component_type character varying(16) NOT NULL,
@@ -510,6 +510,13 @@ CREATE UNIQUE INDEX idx_join_set_response_unique_delay_id ON public.t_join_set_r
 
 
 --
+-- Name: idx_t_component_source_digest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_t_component_source_digest ON public.t_component_source USING btree (digest);
+
+
+--
 -- Name: idx_t_cron_tracking_execution; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -566,6 +573,13 @@ CREATE INDEX idx_t_deployment_inactive_at ON public.t_deployment USING btree (in
 
 
 --
+-- Name: idx_t_deployment_retention_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_t_deployment_retention_created_at ON public.t_deployment USING btree (created_at, deployment_id) WHERE ((status)::text = 'inactive'::text);
+
+
+--
 -- Name: idx_t_deployment_single_active; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -594,13 +608,6 @@ CREATE INDEX idx_t_execution_backtrace_backtrace_hash ON public.t_execution_back
 
 
 --
--- Name: idx_t_execution_backtrace_execution_id_version; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_t_execution_backtrace_execution_id_version ON public.t_execution_backtrace USING btree (execution_id, version_min_including, version_max_excluding);
-
-
---
 -- Name: idx_t_execution_log_execution_id_join_set; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -615,17 +622,10 @@ CREATE INDEX idx_t_execution_log_execution_id_variant ON public.t_execution_log 
 
 
 --
--- Name: idx_t_execution_log_execution_id_version; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_t_file_upload_uploaded_at; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_t_execution_log_execution_id_version ON public.t_execution_log USING btree (execution_id, version);
-
-
---
--- Name: idx_t_join_set_response_execution_id_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_t_join_set_response_execution_id_id ON public.t_join_set_response USING btree (execution_id, id);
+CREATE INDEX idx_t_file_upload_uploaded_at ON public.t_file_upload USING btree (uploaded_at);
 
 
 --
@@ -643,10 +643,10 @@ CREATE INDEX idx_t_log_execution_id_id ON public.t_log USING btree (execution_id
 
 
 --
--- Name: idx_t_log_execution_id_run_id_created_at; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_t_state_cancelling; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_t_log_execution_id_run_id_created_at ON public.t_log USING btree (execution_id, run_id, created_at);
+CREATE INDEX idx_t_state_cancelling ON public.t_state USING btree (lifecycle, created_at);
 
 
 --
@@ -657,17 +657,17 @@ CREATE INDEX idx_t_state_created_at ON public.t_state USING btree (created_at);
 
 
 --
+-- Name: idx_t_state_deployment_roots; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_t_state_deployment_roots ON public.t_state USING btree (deployment_id, execution_id) WHERE ((is_top_level = true) AND (tombstoned = false));
+
+
+--
 -- Name: idx_t_state_deployment_state; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_t_state_deployment_state ON public.t_state USING btree (deployment_id, is_top_level, state, lifecycle, pending_expires_finished, result_kind);
-
-
---
--- Name: idx_t_state_execution_id_is_root; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_t_state_execution_id_is_root ON public.t_state USING btree (execution_id, is_top_level);
 
 
 --
@@ -685,24 +685,38 @@ CREATE INDEX idx_t_state_ffqn ON public.t_state USING btree (ffqn);
 
 
 --
+-- Name: idx_t_state_finished_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_t_state_finished_created_at ON public.t_state USING btree (created_at, execution_id) WHERE ((is_top_level = true) AND (tombstoned = false) AND ((state)::text = 'finished'::text));
+
+
+--
+-- Name: idx_t_state_finished_updated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_t_state_finished_updated_at ON public.t_state USING btree (updated_at, execution_id) WHERE ((is_top_level = true) AND (tombstoned = false) AND ((state)::text = 'finished'::text));
+
+
+--
 -- Name: idx_t_state_lock_pending_auto; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_t_state_lock_pending_auto ON public.t_state USING btree (state, pending_expires_finished, ffqn, incompatible_digest) WHERE ((state)::text = 'pending_at'::text);
+CREATE INDEX idx_t_state_lock_pending_auto ON public.t_state USING btree (ffqn, pending_expires_finished, incompatible_digest) WHERE (((state)::text = 'pending_at'::text) AND (lifecycle = 'active'::text) AND (tombstoned = false));
 
 
 --
 -- Name: idx_t_state_lock_pending_by_component; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_t_state_lock_pending_by_component ON public.t_state USING btree (state, pending_expires_finished, component_id_input_digest) WHERE ((state)::text = 'pending_at'::text);
+CREATE INDEX idx_t_state_lock_pending_by_component ON public.t_state USING btree (component_id_input_digest, pending_expires_finished) WHERE (((state)::text = 'pending_at'::text) AND (lifecycle = 'active'::text) AND (tombstoned = false));
 
 
 --
--- Name: idx_t_state_lock_pending_by_ffqn; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_t_state_retention_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_t_state_lock_pending_by_ffqn ON public.t_state USING btree (state, pending_expires_finished, ffqn) WHERE ((state)::text = 'pending_at'::text);
+CREATE INDEX idx_t_state_retention_created_at ON public.t_state USING btree (created_at, execution_id) WHERE ((is_top_level = true) AND (tombstoned = false));
 
 
 --
@@ -717,6 +731,13 @@ CREATE INDEX idx_t_state_retention_updated_at ON public.t_state USING btree (upd
 --
 
 CREATE INDEX idx_t_state_tombstoned_roots ON public.t_state USING btree (execution_id) WHERE ((is_top_level = true) AND (tombstoned = true));
+
+
+--
+-- Name: t_system_event_cas_digest_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX t_system_event_cas_digest_idx ON public.t_system_event USING btree (cas_digest) WHERE (cas_digest IS NOT NULL);
 
 
 --
@@ -748,10 +769,17 @@ CREATE INDEX t_system_event_deployment_idx ON public.t_system_event USING btree 
 
 
 --
+-- Name: t_system_event_http_policy_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX t_system_event_http_policy_idx ON public.t_system_event USING btree (deployment_id, ((details ->> 'component'::text)), ((details ->> 'component_policy_hash'::text)), ((details ->> 'server_policy_hash'::text)), event_id DESC) WHERE ((code)::text = 'component.http_policy.applied'::text);
+
+
+--
 -- Name: t_system_event_node_run_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX t_system_event_node_run_idx ON public.t_system_event USING btree (node_run_id, event_id DESC);
+CREATE INDEX t_system_event_node_run_idx ON public.t_system_event USING btree (node_run_id, created_at DESC, event_id DESC);
 
 
 --
