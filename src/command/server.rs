@@ -759,7 +759,7 @@ pub(crate) async fn run(
     let node_run_id = concepts::storage::initialize_node_run_id();
     concepts::storage::initialize_app_config_digest(config.app_policy.digest().to_string());
     let _guard: Guard = init::init(&config)?;
-    info!(%node_run_id, "Starting Obelisk {PKG_VERSION}");
+    info!(%node_run_id, "Starting Obelisk {}", shadow::LONG_VERSION);
     let deployment = if let Some(deployment_path) = deployment {
         Some(LocalDeployment::from_path(&deployment_path).await?)
     } else if deployment_empty {
@@ -2630,7 +2630,7 @@ pub(crate) async fn run_internal(
 }
 
 fn obelisk_is_ready() {
-    info!("Obelisk {} is ready", shadow::PKG_VERSION);
+    info!("Obelisk {} is ready", shadow::LONG_VERSION);
 }
 
 #[derive(Clone)]

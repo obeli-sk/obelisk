@@ -278,8 +278,10 @@
                 };
               };
               rustyV8MirrorEnv = { RUSTY_V8_MIRROR = "${rustyV8Mirror}"; };
+              # Reported by `obelisk --version`.
+              gitShaEnv = { OBELISK_GIT_SHA = self.shortRev or self.dirtyShortRev or ""; };
             in
-            pkgs.rustPlatform.buildRustPackage (commonArgs // zigbuildArgs // embedAssetsEnv // rustyV8MirrorEnv);
+            pkgs.rustPlatform.buildRustPackage (commonArgs // zigbuildArgs // embedAssetsEnv // rustyV8MirrorEnv // gitShaEnv);
 
         in
         {

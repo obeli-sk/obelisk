@@ -65,13 +65,22 @@ impl FromStr for DeploymentSource {
 
 pub(crate) mod shadow {
     pub(crate) const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+    // Short git commit, set by Nix builds.
+    const GIT_SHA: &str = match option_env!("OBELISK_GIT_SHA") {
+        Some(sha) => sha,
+        None => "",
+    };
+    const GIT_SHA_OPEN: &str = if GIT_SHA.is_empty() { "" } else { " (" };
+    const GIT_SHA_CLOSE: &str = if GIT_SHA.is_empty() { "" } else { ")" };
+    pub(crate) const LONG_VERSION: &str =
+        const_format::concatcp!(PKG_VERSION, GIT_SHA_OPEN, GIT_SHA, GIT_SHA_CLOSE);
 }
 
 #[derive(Parser, Debug)]
 #[clap(name = "obelisk")]
 #[command
 (
-    version = const_format::formatcp!("{}", shadow::PKG_VERSION),
+    version = shadow::LONG_VERSION,
 about = "Obelisk: deterministic workflow engine", disable_version_flag = true, disable_help_subcommand = true)]
 pub(crate) struct Args {
     #[command(subcommand)]
