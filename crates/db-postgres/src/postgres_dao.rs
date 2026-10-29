@@ -1,4 +1,4 @@
-use crate::postgres_dao::ddl::ADMIN_DB_NAME;
+use crate::{polling, postgres_dao::ddl::ADMIN_DB_NAME};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -3505,16 +3505,8 @@ async fn get_pending_of_single_ffqn(
     let rows = tx
         .query(
             &format!(
-                r"
-                SELECT execution_id, corresponding_version FROM t_state
-                WHERE
-                state = '{STATE_PENDING_AT}' AND
-                pending_expires_finished <= $1 AND ffqn = $2
-                AND lifecycle = 'active' AND tombstoned = FALSE
-                ORDER BY pending_expires_finished
-                {}
-                LIMIT $3
-                ",
+                "{} {} LIMIT $3",
+                polling::PENDING_BY_FFQN,
                 if select_strategy == SelectStrategy::LockForUpdate {
                     "FOR UPDATE SKIP LOCKED"
                 } else {
@@ -3602,17 +3594,8 @@ async fn get_pending_by_ffqns_auto(
         let rows = tx
             .query(
                 &format!(
-                    r"
-                    SELECT execution_id, corresponding_version FROM t_state
-                    WHERE
-                    state = '{STATE_PENDING_AT}' AND
-                    pending_expires_finished <= $1 AND ffqn = $2
-                    AND lifecycle = 'active' AND tombstoned = FALSE
-                    AND (incompatible_digest IS NULL OR incompatible_digest <> $3)
-                    ORDER BY pending_expires_finished
-                    {}
-                    LIMIT $4
-                    ",
+                    "{} {} LIMIT $4",
+                    polling::PENDING_BY_FFQN_AUTO,
                     if select_strategy == SelectStrategy::LockForUpdate {
                         "FOR UPDATE SKIP LOCKED"
                     } else {
@@ -3661,16 +3644,8 @@ async fn get_pending_by_component_input_digest(
     let rows = tx
         .query(
             &format!(
-                r"
-                SELECT execution_id, corresponding_version FROM t_state WHERE
-                state = '{STATE_PENDING_AT}' AND
-                pending_expires_finished <= $1 AND
-                component_id_input_digest = $2
-                AND lifecycle = 'active' AND tombstoned = FALSE
-                ORDER BY pending_expires_finished
-                {}
-                LIMIT $3
-                ",
+                "{} {} LIMIT $3",
+                polling::PENDING_BY_COMPONENT,
                 if select_strategy == SelectStrategy::LockForUpdate {
                     "FOR UPDATE SKIP LOCKED"
                 } else {
@@ -4459,13 +4434,7 @@ impl DbConnection for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         let rows = tx
-            .query(
-                &format!(
-                    "SELECT execution_id FROM t_state WHERE lifecycle = '{LIFECYCLE_CANCELLING}' AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (t_state.execution_id = root.execution_id OR t_state.execution_id LIKE root.execution_id || '.%')) \
-                     ORDER BY created_at LIMIT $1"
-                ),
-                &[&(i64::from(batch_size))],
-            )
+            .query(polling::CANCELLING, &[&(i64::from(batch_size))])
             .await?;
         tx.commit().await?;
         let mut result = Vec::with_capacity(rows.len());
@@ -4898,12 +4867,7 @@ impl DbConnection for PostgresConnection {
         let tx = client_guard.transaction().await?;
 
         // Expired Delays
-        let rows = tx
-            .query(
-                "SELECT d.execution_id, d.join_set_id, d.delay_id FROM t_delay d WHERE d.expires_at <= $1 AND NOT d.is_paused AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (d.execution_id = root.execution_id OR d.execution_id LIKE root.execution_id || '.%'))",
-                &[&at],
-            )
-            .await?;
+        let rows = tx.query(polling::EXPIRED_DELAYS, &[&at]).await?;
 
         let mut expired_timers = Vec::with_capacity(rows.len());
         for row in rows {
@@ -4929,14 +4893,7 @@ impl DbConnection for PostgresConnection {
         }
 
         // Expired Locks
-        let rows = tx.query(
-            &format!(
-                "SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, executor_id, run_id, lifecycle \
-                 FROM t_state \
-                 WHERE pending_expires_finished <= $1 AND state = '{STATE_LOCKED}'"
-            ),
-            &[&at]
-        ).await?;
+        let rows = tx.query(polling::EXPIRED_LOCKS, &[&at]).await?;
 
         for row in rows {
             let unpack = || -> Result<Option<ExpiredTimer>, DbErrorGeneric> {

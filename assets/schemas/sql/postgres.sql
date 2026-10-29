@@ -650,6 +650,13 @@ CREATE INDEX idx_t_log_execution_id_run_id_created_at ON public.t_log USING btre
 
 
 --
+-- Name: idx_t_state_cancelling; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_t_state_cancelling ON public.t_state USING btree (lifecycle, created_at);
+
+
+--
 -- Name: idx_t_state_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -688,21 +695,21 @@ CREATE INDEX idx_t_state_ffqn ON public.t_state USING btree (ffqn);
 -- Name: idx_t_state_lock_pending_auto; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_t_state_lock_pending_auto ON public.t_state USING btree (state, pending_expires_finished, ffqn, incompatible_digest) WHERE ((state)::text = 'pending_at'::text);
+CREATE INDEX idx_t_state_lock_pending_auto ON public.t_state USING btree (ffqn, pending_expires_finished, incompatible_digest) WHERE ((state)::text = 'pending_at'::text);
 
 
 --
 -- Name: idx_t_state_lock_pending_by_component; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_t_state_lock_pending_by_component ON public.t_state USING btree (state, pending_expires_finished, component_id_input_digest) WHERE ((state)::text = 'pending_at'::text);
+CREATE INDEX idx_t_state_lock_pending_by_component ON public.t_state USING btree (component_id_input_digest, pending_expires_finished) WHERE ((state)::text = 'pending_at'::text);
 
 
 --
 -- Name: idx_t_state_lock_pending_by_ffqn; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_t_state_lock_pending_by_ffqn ON public.t_state USING btree (state, pending_expires_finished, ffqn) WHERE ((state)::text = 'pending_at'::text);
+CREATE INDEX idx_t_state_lock_pending_by_ffqn ON public.t_state USING btree (ffqn, pending_expires_finished) WHERE ((state)::text = 'pending_at'::text);
 
 
 --
