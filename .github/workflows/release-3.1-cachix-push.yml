@@ -33,8 +33,7 @@ jobs:
           - ubuntu-24.04-arm
         package:
           - default
-          - obeliskLibcNix-embedded
-          - musl
+          - gnu-embedded
           - musl-embedded
         include:
           - os: ubuntu-24.04
@@ -62,6 +61,6 @@ jobs:
         run: |
           package='${{ matrix.package }}'
           case "$package" in
-            musl*) package="obeliskCross-${{ matrix.arch }}-unknown-linux-${package}" ;;
+            gnu*|musl*) package="obeliskCross-${{ matrix.arch }}-unknown-linux-${package}" ;;
           esac
           nix build ".#$package"
