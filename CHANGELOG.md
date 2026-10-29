@@ -6,6 +6,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.15](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.14...v0.43.0-rc.15)
+
+This release candidate bounds SQLite polling cost as execution history grows and improves
+outbound HTTP connection reuse.
+
+### Changed
+
+- *(http)* Requests sent immediately after reading a response body can reuse the pooled
+  connection while it finishes its previous exchange, avoiding an unnecessary new connection.
+  [#1247](https://github.com/obeli-sk/obelisk/pull/1247)
+
+### Fixed
+
+- *(sqlite)* Idle polling uses indexes for pending executions and cancellation checks,
+  keeping its cost bounded as execution history grows.
+  [#1248](https://github.com/obeli-sk/obelisk/pull/1248)
+
+### Removed
+
+- *(docker)* The `ubuntu-litestream` and `ubuntu-litestream-embedded` image variants are no
+  longer published. [#1249](https://github.com/obeli-sk/obelisk/pull/1249)
+
 ## [0.43.0-rc.14](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.13...v0.43.0-rc.14)
 
 This release candidate fixes stalls in activities that wait on outbound HTTP.
