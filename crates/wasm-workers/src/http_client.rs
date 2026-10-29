@@ -162,7 +162,7 @@ impl Pool {
             .build()
             .expect("comes from a valid request");
         loop {
-            let (mut sender, reused) = match self.checkout(&key) {
+            let (mut sender, reused) = match self.checkout(&key).await {
                 Some(sender) => (sender, true),
                 None => (self.connect(&key, timeouts.connect).await?, false),
             };
@@ -196,12 +196,22 @@ impl Pool {
         }
     }
 
-    fn checkout(&self, key: &PoolKey) -> Option<SendRequest<HyperOutgoingBody>> {
+    async fn checkout(&self, key: &PoolKey) -> Option<SendRequest<HyperOutgoingBody>> {
+        loop {
+            let mut sender = self.pop_idle(key)?;
+            // A just-released connection may still be finishing its previous exchange.
+            if sender.ready().await.is_ok() {
+                return Some(sender);
+            }
+        }
+    }
+
+    fn pop_idle(&self, key: &PoolKey) -> Option<SendRequest<HyperOutgoingBody>> {
         let mut idle = self.idle.lock().expect("pool mutex not poisoned");
         let connections = idle.get_mut(key)?;
         let now = Instant::now();
         connections
-            .retain(|connection| connection.sender.is_ready() && now < connection.expires_at);
+            .retain(|connection| !connection.sender.is_closed() && now < connection.expires_at);
         let sender = connections.pop().map(|connection| connection.sender);
         if connections.is_empty() {
             idle.remove(key);
@@ -219,30 +229,12 @@ impl Pool {
     fn checkin(
         self: Arc<Self>,
         key: PoolKey,
-        mut sender: SendRequest<HyperOutgoingBody>,
+        sender: SendRequest<HyperOutgoingBody>,
         idle_timeout: Duration,
     ) {
         if idle_timeout.is_zero() {
             return;
         }
-        if sender.is_ready() {
-            self.insert_idle(key, sender, idle_timeout);
-            return;
-        }
-        self.runtime.clone().spawn(async move {
-            // The connection accepts a new request once the previous exchange is fully finished.
-            if let Ok(Ok(())) = tokio::time::timeout(idle_timeout, sender.ready()).await {
-                self.insert_idle(key, sender, idle_timeout);
-            }
-        });
-    }
-
-    fn insert_idle(
-        self: Arc<Self>,
-        key: PoolKey,
-        sender: SendRequest<HyperOutgoingBody>,
-        idle_timeout: Duration,
-    ) {
         let expires_at = Instant::now() + idle_timeout;
         {
             let mut idle = self.idle.lock().expect("pool mutex not poisoned");
