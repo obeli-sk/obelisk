@@ -36,7 +36,7 @@ jobs:
         id: branch-name
         run: echo "branch_name=bump-cargo-lock-${{ matrix.name }}-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
 
-      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
