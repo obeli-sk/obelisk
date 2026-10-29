@@ -5959,6 +5959,63 @@ async fn list_logs_with_show_derived(database: Database) {
         LogEntry::Log { message, .. } if message == "child log"
     );
 
+    let sibling_id = child_id.get_incremented_by(9);
+    assert!(sibling_id.to_string().starts_with(&child_id.to_string()));
+    db_connection
+        .append_log(LogInfoAppendRow {
+            execution_id: ExecutionId::Derived(sibling_id),
+            run_id: RunId::generate(),
+            log_entry: LogEntry::Log {
+                created_at: sim_clock.now(),
+                level: concepts::storage::LogLevel::Info,
+                message: "sibling log".to_owned(),
+            },
+        })
+        .await
+        .unwrap();
+    let subtree = api_conn
+        .list_logs(
+            &ExecutionId::Derived(child_id.clone()),
+            true,
+            LogFilter::show_logs(Vec::new()),
+            Pagination::OlderThan {
+                length: nz(10),
+                cursor: LogCursor(i64::MAX),
+                including_cursor: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(subtree.items.len(), 2);
+    assert_eq!(
+        subtree.items[0].execution_id,
+        ExecutionId::Derived(grandchild_id)
+    );
+    assert_eq!(
+        subtree.items[1].execution_id,
+        ExecutionId::Derived(child_id)
+    );
+
+    for (prefix, expected) in [
+        (parent_id.to_string(), 3),
+        (format!("{parent_id}%"), 0),
+        (String::new(), 3),
+        ("\u{10ffff}".to_owned(), 0),
+    ] {
+        let executions = api_conn
+            .list_executions(
+                ListExecutionsFilter {
+                    execution_id_prefix: Some(prefix),
+                    show_derived: true,
+                    ..Default::default()
+                },
+                ExecutionListPagination::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(executions.len(), expected);
+    }
+
     drop(db_connection);
     drop(api_conn);
     db_close.close().await;

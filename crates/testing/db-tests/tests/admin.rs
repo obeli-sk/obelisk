@@ -1525,3 +1525,78 @@ async fn deployment_cleanup_owns_mixed_tree_by_root(database: Database) {
     drop(admin);
     db_close.close().await;
 }
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn count_retention_handles_ties_and_population_boundaries(
+    database: Database,
+    #[values(0, 1, 3, 4)] keep: u32,
+) {
+    set_up();
+    let clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let mut executions = Vec::new();
+    let mut deployments = Vec::new();
+    for _ in 0..3 {
+        executions.push(
+            create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true)
+                .await
+                .to_string(),
+        );
+        let deployment = DeploymentId::generate();
+        insert_deployment(db_pool.as_ref(), deployment, clock.now()).await;
+        deployments.push(deployment.to_string());
+    }
+    executions.sort();
+    deployments.sort();
+    let candidates = 3_usize.saturating_sub(keep as usize);
+    let admin = db_pool.admin_conn().await.unwrap();
+    let mut execution_cursor = None;
+    let mut deployment_cursor = None;
+    let mut found_executions = Vec::new();
+    let mut found_deployments = Vec::new();
+    for _ in 0..4 {
+        let page = admin
+            .retain_executions(
+                RetentionPolicy::Count(keep),
+                1,
+                false,
+                true,
+                execution_cursor,
+            )
+            .await
+            .unwrap();
+        execution_cursor = page.next_execution_cursor;
+        if page.deleted_execution_trees > 0 {
+            found_executions.push(execution_cursor.unwrap().execution_id.to_string());
+        }
+        if !page.has_more {
+            break;
+        }
+    }
+    for _ in 0..4 {
+        let page = admin
+            .retain_deployments(
+                RetentionPolicy::Count(keep),
+                1,
+                false,
+                false,
+                true,
+                deployment_cursor,
+            )
+            .await
+            .unwrap();
+        deployment_cursor = page.next_deployment_cursor;
+        if page.deleted_deployments > 0 {
+            found_deployments.push(deployment_cursor.unwrap().deployment_id.to_string());
+        }
+        if !page.has_more {
+            break;
+        }
+    }
+    assert_eq!(found_executions, executions[..candidates]);
+    assert_eq!(found_deployments, deployments[..candidates]);
+    drop(admin);
+    db_close.close().await;
+}

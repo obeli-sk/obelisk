@@ -20,16 +20,14 @@ pub(crate) const PENDING_BY_COMPONENT: &str = "
 pub(crate) const CANCELLING: &str = "
     SELECT execution_id FROM t_state WHERE lifecycle = 'cancelling'
     AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE
-        AND root.tombstoned = TRUE AND (t_state.execution_id = root.execution_id
-        OR t_state.execution_id LIKE root.execution_id || '.%'))
+        AND root.tombstoned = TRUE AND root.execution_id = split_part(t_state.execution_id, '.', 1))
     ORDER BY created_at LIMIT $1";
 
 pub(crate) const EXPIRED_DELAYS: &str = "
     SELECT d.execution_id, d.join_set_id, d.delay_id FROM t_delay d
     WHERE d.expires_at <= $1 AND NOT d.is_paused
     AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE
-        AND root.tombstoned = TRUE AND (d.execution_id = root.execution_id
-        OR d.execution_id LIKE root.execution_id || '.%'))";
+        AND root.tombstoned = TRUE AND root.execution_id = split_part(d.execution_id, '.', 1))";
 
 pub(crate) const EXPIRED_LOCKS: &str = "
     SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count,
@@ -73,15 +71,17 @@ mod tests {
             INSERT INTO t_state (
                 execution_id, is_top_level, corresponding_version, ffqn, created_at,
                 component_id_input_digest, component_type, first_scheduled_at, deployment_id,
-                pending_expires_finished, state, updated_at, intermittent_event_count
-            ) SELECT 'Execution_' || state || '_' || i, TRUE, 2, ffqn, '2026-10-29',
+                pending_expires_finished, state, updated_at, intermittent_event_count, lifecycle, tombstoned
+            ) SELECT 'Execution_' || state || '_' || lifecycle || '_' || tombstoned || '_' || i, TRUE, 2, ffqn, '2026-10-29',
                 digest, 'workflow', '2026-10-29', 'Dep_' || lpad(i::text, 26, '0'),
                 (CASE WHEN state = 'locked' THEN '2099-01-01'::timestamptz ELSE '2026-10-29'::timestamptz END) + i * interval '1 second',
-                state, '2026-10-29', 0 FROM generate_series(1, 10000) n(i) CROSS JOIN (VALUES
-                    ('finished', 'ns:pkg/ifc.fn', decode('00', 'hex')),
-                    ('pending_at', 'other:pkg/ifc.fn', decode('02', 'hex')),
-                    ('locked', 'other:pkg/ifc.fn', decode('02', 'hex'))
-                ) kinds(state, ffqn, digest);
+                state, '2026-10-29', 0, lifecycle, tombstoned FROM generate_series(1, 10000) n(i) CROSS JOIN (VALUES
+                    ('finished', 'ns:pkg/ifc.fn', decode('00', 'hex'), 'active', FALSE),
+                    ('pending_at', 'other:pkg/ifc.fn', decode('02', 'hex'), 'active', FALSE),
+                    ('locked', 'other:pkg/ifc.fn', decode('02', 'hex'), 'active', FALSE),
+                    ('pending_at', 'ns:pkg/ifc.fn', decode('00', 'hex'), 'paused', FALSE),
+                    ('pending_at', 'ns:pkg/ifc.fn', decode('00', 'hex'), 'active', TRUE)
+                ) kinds(state, ffqn, digest, lifecycle, tombstoned);
             INSERT INTO t_delay (execution_id, join_set_id, delay_id, expires_at, is_paused)
             SELECT 'Execution_delay_' || paused || '_' || i, 'join-set', 'Delay_' || paused || '_' || i,
                 expires_at::timestamptz, paused FROM generate_series(1, 10000) n(i) CROSS JOIN
@@ -108,6 +108,16 @@ mod tests {
                 (CANCELLING, "5", false),
                 (EXPIRED_DELAYS, "'2027-01-01'", false),
                 (EXPIRED_LOCKS, "'2027-01-01'", false),
+                (
+                    "SELECT execution_id FROM t_state WHERE execution_id >= $1 AND execution_id < $2 ORDER BY execution_id LIMIT 1",
+                    "'Execution_missing.', 'Execution_missing/'",
+                    false,
+                ),
+                (
+                    "SELECT execution_id FROM t_delay WHERE execution_id >= $1 AND execution_id < $2 LIMIT 1",
+                    "'Execution_missing.', 'Execution_missing/'",
+                    false,
+                ),
             ] {
                 for locking in [false, true] {
                     if pending || !locking {
@@ -154,6 +164,30 @@ mod tests {
                 }
             }
         }
+        client.batch_execute("UPDATE t_state SET lifecycle = 'cancelling' WHERE execution_id = (SELECT MIN(execution_id) FROM t_state WHERE state = 'finished')").await.unwrap();
+        client
+            .batch_execute(&format!("PREPARE poll AS {CANCELLING}"))
+            .await
+            .unwrap();
+        let row = client
+            .query_one(
+                "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) EXECUTE poll(5)",
+                &[],
+            )
+            .await
+            .unwrap();
+        let Json(plan): Json<Value> = row.get(0);
+        let root = &plan[0]["Plan"];
+        assert!(
+            (root["Actual Rows"].as_f64().unwrap() - 1.0).abs() < f64::EPSILON,
+            "{plan}"
+        );
+        let blocks = root["Shared Hit Blocks"].as_u64().unwrap()
+            + root["Shared Read Blocks"].as_u64().unwrap();
+        assert!(
+            blocks < 32,
+            "cancellation with unrelated tombstones accessed {blocks} blocks: {plan}"
+        );
         drop(client);
         task.await.unwrap().unwrap();
         pool.close().await;

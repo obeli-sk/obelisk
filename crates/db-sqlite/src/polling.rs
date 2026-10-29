@@ -21,16 +21,14 @@ pub(crate) const PENDING_BY_COMPONENT: &str = "
 pub(crate) const CANCELLING: &str = "
     SELECT execution_id FROM t_state WHERE lifecycle = :lifecycle
     AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE
-        AND root.tombstoned = TRUE AND (t_state.execution_id = root.execution_id
-        OR t_state.execution_id LIKE root.execution_id || '.%'))
+        AND root.tombstoned = TRUE AND root.execution_id = substr(t_state.execution_id, 1, instr(t_state.execution_id || '.', '.') - 1))
     ORDER BY created_at LIMIT :batch_size";
 
 pub(crate) const EXPIRED_DELAYS: &str = "
     SELECT d.execution_id, d.join_set_id, d.delay_id FROM t_delay d
     WHERE d.expires_at <= :at AND NOT d.is_paused
     AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE
-        AND root.tombstoned = TRUE AND (d.execution_id = root.execution_id
-        OR d.execution_id LIKE root.execution_id || '.%'))";
+        AND root.tombstoned = TRUE AND root.execution_id = substr(d.execution_id, 1, instr(d.execution_id || '.', '.') - 1))";
 
 pub(crate) const EXPIRED_LOCKS: &str = "
     SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count,
