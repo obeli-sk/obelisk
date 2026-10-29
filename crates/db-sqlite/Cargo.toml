@@ -36,6 +36,7 @@ tracing.workspace = true
 tracing-error.workspace = true
 
 [dev-dependencies]
+rstest.workspace = true
 tempfile.workspace = true
 assert_matches.workspace = true
 

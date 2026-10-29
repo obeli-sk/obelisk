@@ -3908,6 +3908,7 @@ dependencies = [
  "obeli-sk-val-json",
  "rand 0.9.5",
  "refinery",
+ "rstest",
  "rusqlite",
  "serde",
  "serde_json",

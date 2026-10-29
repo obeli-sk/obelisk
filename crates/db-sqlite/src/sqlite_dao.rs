@@ -1,4 +1,4 @@
-use crate::{histograms::Histograms, sqlite_dao::conversions::to_generic_error};
+use crate::{histograms::Histograms, polling, sqlite_dao::conversions::to_generic_error};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -3280,15 +3280,7 @@ impl SqlitePool {
             let needed =
                 u32::try_from(needed).expect("`batch_size`:u32 - usize cannot overflow an u32");
             // Select executions in PendingAt.
-            let stmt = conn.prepare_cached(&format!(
-                r#"
-                    SELECT execution_id, corresponding_version FROM t_state WHERE
-                    state = "{STATE_PENDING_AT}" AND
-                    pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
-                    AND lifecycle = 'active' AND tombstoned = FALSE
-                    ORDER BY pending_expires_finished LIMIT :batch_size
-                    "#
-            ))?;
+            let stmt = conn.prepare_cached(polling::PENDING_BY_FFQN)?;
 
             if let Ok(execs_and_versions) =
                 Self::get_pending_of_single_ffqn(stmt, needed, pending_at_or_sooner, ffqn)
@@ -3314,16 +3306,7 @@ impl SqlitePool {
             if needed == 0 {
                 break;
             }
-            let mut stmt = conn.prepare_cached(&format!(
-                r#"
-                    SELECT execution_id, corresponding_version FROM t_state WHERE
-                    state = "{STATE_PENDING_AT}" AND
-                    pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
-                    AND lifecycle = 'active' AND tombstoned = FALSE
-                    AND (incompatible_digest IS NULL OR incompatible_digest <> :current_digest)
-                    ORDER BY pending_expires_finished LIMIT :batch_size
-                    "#
-            ))?;
+            let mut stmt = conn.prepare_cached(polling::PENDING_BY_FFQN_AUTO)?;
 
             if let Ok(execs_and_versions) = stmt
                 .query_map(
@@ -3359,16 +3342,7 @@ impl SqlitePool {
         pending_at_or_sooner: DateTime<Utc>,
         input_digest: &ComponentDigest,
     ) -> Result<Vec<(ExecutionId, Version)>, RusqliteError> {
-        let mut stmt = conn.prepare_cached(&format!(
-            r#"
-                SELECT execution_id, corresponding_version FROM t_state WHERE
-                state = "{STATE_PENDING_AT}" AND
-                pending_expires_finished <= :pending_expires_finished AND
-                component_id_input_digest = :component_id_input_digest
-                AND lifecycle = 'active' AND tombstoned = FALSE
-                ORDER BY pending_expires_finished LIMIT :batch_size
-                "#
-        ))?;
+        let mut stmt = conn.prepare_cached(polling::PENDING_BY_COMPONENT)?;
 
         stmt.query_map(
             named_params! {
@@ -6641,10 +6615,7 @@ impl DbConnection for SqlitePool {
     async fn get_cancelling(&self, batch_size: u32) -> Result<Vec<ExecutionId>, DbErrorRead> {
         self.transaction(
             move |tx| {
-                let mut stmt = tx.prepare(
-                    "SELECT execution_id FROM t_state WHERE lifecycle = :lifecycle AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (t_state.execution_id = root.execution_id OR t_state.execution_id LIKE root.execution_id || '.%')) \
-                     ORDER BY created_at LIMIT :batch_size",
-                )?;
+                let mut stmt = tx.prepare(polling::CANCELLING)?;
                 let rows = stmt
                     .query_map(
                         named_params! {
@@ -7119,9 +7090,7 @@ impl DbConnection for SqlitePool {
     ) -> Result<Vec<ExpiredTimer>, DbErrorGeneric> {
         self.transaction(
             move |conn| {
-                let mut expired_timers = conn.prepare(
-                    "SELECT d.execution_id, d.join_set_id, d.delay_id FROM t_delay d WHERE d.expires_at <= :at AND NOT d.is_paused AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (d.execution_id = root.execution_id OR d.execution_id LIKE root.execution_id || '.%'))",
-                )?
+                let mut expired_timers = conn.prepare(polling::EXPIRED_DELAYS)?
                 .query_map(
                         named_params! {
                             ":at": at,
@@ -7136,14 +7105,7 @@ impl DbConnection for SqlitePool {
                     )?
                     .collect::<Result<Vec<_>, _>>()?;
                 // Extend with expired locks
-                let expired = conn.prepare(&format!(r#"
-                    SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis,
-                    executor_id, run_id, lifecycle
-                    FROM t_state
-                    WHERE pending_expires_finished <= :at AND state = "{STATE_LOCKED}"
-                    "#
-                )
-                )?
+                let expired = conn.prepare(polling::EXPIRED_LOCKS)?
                 .query_map(
                         named_params! {
                             ":at": at,
@@ -7373,6 +7335,73 @@ mod tests {
     use rusqlite::named_params;
 
     const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn");
+
+    #[rstest::rstest]
+    #[case::pending_by_ffqn(crate::polling::PENDING_BY_FFQN)]
+    #[case::pending_by_ffqn_auto(crate::polling::PENDING_BY_FFQN_AUTO)]
+    #[case::pending_by_component(crate::polling::PENDING_BY_COMPONENT)]
+    #[case::cancelling(crate::polling::CANCELLING)]
+    #[case::expired_delays(crate::polling::EXPIRED_DELAYS)]
+    #[case::expired_locks(crate::polling::EXPIRED_LOCKS)]
+    fn idle_polling_work_is_bounded(#[case] sql: &str) {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let conn = SqlitePool::init_thread(file.path(), hashbrown::HashMap::new()).unwrap();
+        conn.execute_batch(
+            "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i + 1 FROM n WHERE i < 10000),
+             kinds(state, ffqn, digest) AS (VALUES
+                 ('finished', 'ns:pkg/ifc.fn', X'00'),
+                 ('pending_at', 'other:pkg/ifc.fn', X'02'),
+                 ('locked', 'other:pkg/ifc.fn', X'02'))
+             INSERT INTO t_state (
+                 execution_id, is_top_level, corresponding_version, ffqn, created_at,
+                 component_id_input_digest, component_type, first_scheduled_at, deployment_id,
+                 pending_expires_finished, state, updated_at, intermittent_event_count
+             ) SELECT printf('Execution_%s_%026d', state, i), TRUE, 2, ffqn, '2026-10-29',
+                 digest, 'workflow', '2026-10-29', 'Dep_00000000000000000000000000',
+                 CASE WHEN state = 'locked' THEN '2099-01-01' ELSE '2026-10-29' END,
+                 state, '2026-10-29', 0 FROM n CROSS JOIN kinds;
+             WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i + 1 FROM n WHERE i < 10000),
+             kinds(paused, expires_at) AS (VALUES (FALSE, '2099-01-01'), (TRUE, '2026-10-29'))
+             INSERT INTO t_delay (execution_id, join_set_id, delay_id, expires_at, is_paused)
+             SELECT printf('Execution_delay_%d_%026d', paused, i), 'join-set',
+                 printf('Delay_%026d', i), expires_at, paused FROM n CROSS JOIN kinds;",
+        )
+        .unwrap();
+
+        let mut stmt = conn.prepare_cached(sql).unwrap();
+        let digest = [0_u8];
+        for batch_size in [5, 100] {
+            let all_params = named_params! {
+                ":pending_expires_finished": "2027-01-01",
+                ":at": "2027-01-01",
+                ":ffqn": "ns:pkg/ifc.fn",
+                ":component_id_input_digest": digest.as_slice(),
+                ":current_digest": digest.as_slice(),
+                ":lifecycle": "cancelling",
+                ":batch_size": batch_size,
+            };
+            let params: Vec<_> = all_params
+                .iter()
+                .copied()
+                .filter(|(name, _)| stmt.parameter_index(name).unwrap().is_some())
+                .collect();
+            stmt.reset_status(rusqlite::StatementStatus::VmStep);
+            assert!(
+                stmt.query(params.as_slice())
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .is_none()
+            );
+            let steps = stmt.get_status(rusqlite::StatementStatus::VmStep);
+            assert!(steps < 250, "idle poll took {steps} VM steps: {sql}");
+            assert_eq!(
+                stmt.get_status(rusqlite::StatementStatus::RePrepare),
+                0,
+                "{sql}"
+            );
+        }
+    }
 
     #[test]
     fn incremental_vacuum_startup_converts_existing_databases_and_preserves_data() {
