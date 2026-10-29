@@ -67,8 +67,6 @@ CREATE TABLE t_state (
 
     PRIMARY KEY (execution_id)
 ) STRICT;
-CREATE INDEX idx_t_state_lock_pending_by_ffqn ON t_state (pending_expires_finished, ffqn) WHERE state = 'pending_at';
-CREATE INDEX idx_t_state_lock_pending_by_component ON t_state (pending_expires_finished, component_id_input_digest) WHERE state = 'pending_at';
 CREATE INDEX idx_t_state_expired_locks ON t_state (pending_expires_finished) WHERE state = 'locked';
 CREATE INDEX idx_t_state_execution_id_is_root ON t_state (execution_id, is_top_level);
 CREATE INDEX idx_t_state_ffqn ON t_state (ffqn);
@@ -152,9 +150,6 @@ CREATE INDEX idx_t_deployment_component_deployment_list
 ON t_deployment_component (deployment_id, component_type, component_name);
 CREATE INDEX idx_t_deployment_component_deployment_digest
 ON t_deployment_component (deployment_id, component_digest);
-CREATE INDEX idx_t_state_lock_pending_auto
-ON t_state (pending_expires_finished, ffqn, incompatible_digest)
-WHERE state = 'pending_at';
 CREATE INDEX idx_t_log_execution_id_id
     ON t_log (execution_id, id);
 CREATE TABLE t_file (
@@ -393,3 +388,10 @@ CREATE TABLE t_cron (
     CHECK ((last_target_execution_id IS NULL) = (last_submitted_at IS NULL))
 ) STRICT;
 CREATE UNIQUE INDEX idx_t_cron_tracking_execution ON t_cron (tracking_execution_id);
+CREATE INDEX idx_t_state_lock_pending_by_ffqn
+    ON t_state (ffqn, pending_expires_finished) WHERE state = 'pending_at';
+CREATE INDEX idx_t_state_lock_pending_auto
+    ON t_state (ffqn, pending_expires_finished, incompatible_digest) WHERE state = 'pending_at';
+CREATE INDEX idx_t_state_lock_pending_by_component
+    ON t_state (component_id_input_digest, pending_expires_finished) WHERE state = 'pending_at';
+CREATE INDEX idx_t_state_cancelling ON t_state (lifecycle, created_at);
