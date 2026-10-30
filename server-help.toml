@@ -75,14 +75,14 @@
 # upload_grace_period.hours = 1 # Keep uploaded deployment files this long before a deployment references them.
 # [maintenance.gc.retention.executions]
 # enabled = true
-# max_age.hours = 720
+# max_age.hours = 744
 # [maintenance.gc.retention.deployments]
 ## Active, enqueued and last-good checkpoint deployments are excluded.
 # enabled = true
-# max_age.hours = 720
+# max_age.hours = 744
 # [maintenance.gc.retention.system_events]
 # enabled = true
-# max_age.hours = 720
+# max_age.hours = 744
 
 ## Global WASM Configuration
 # [wasm]

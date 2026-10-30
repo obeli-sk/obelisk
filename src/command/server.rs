@@ -383,7 +383,8 @@ impl DeploymentSwitchManagerHandle {
             .map_err(|err| SubmitDeploymentError::Other(err.into()))
     }
 
-    async fn gc_cache(&self) -> anyhow::Result<Option<cache_gc::Stats>> {
+    /// Returns the active deployment, which cannot change while both lanes are held.
+    async fn gc_cache(&self) -> anyhow::Result<Option<(DeploymentId, cache_gc::Stats)>> {
         let Ok(switch_permit) = self.inner.switch_gate.clone().try_acquire_owned() else {
             return Ok(None);
         };
@@ -395,6 +396,7 @@ impl DeploymentSwitchManagerHandle {
         else {
             return Ok(None);
         };
+        let deployment_id = self.inner.deployment_ctx.read().await.deployment_id;
         let dirs = self.inner.prepared_dirs.clone();
         tokio::task::spawn_blocking(move || {
             // Keep both lanes closed to mutations even if the awaiting GC task is cancelled.
@@ -402,7 +404,7 @@ impl DeploymentSwitchManagerHandle {
             cache_gc::sweep(&dirs.wasm_cache_dir, dirs.wasm_cache_max_size)
         })
         .await?
-        .map(Some)
+        .map(|stats| Some((deployment_id, stats)))
     }
 
     async fn take_latest_prepared(
@@ -3228,6 +3230,14 @@ impl SubmitPackageError {
             && self.digest_mismatches.is_empty()
             && self.oversized_files.is_empty()
     }
+
+    fn is_only_missing_files(&self) -> bool {
+        !self.missing_files.is_empty()
+            && self.missing_digest_fields.is_empty()
+            && self.unexpected_files.is_empty()
+            && self.digest_mismatches.is_empty()
+            && self.oversized_files.is_empty()
+    }
 }
 
 /// Submit failure: either a structured file-set error (no deployment stored) or any
@@ -3441,6 +3451,22 @@ pub(crate) async fn submit_deployment(
                 None,
                 Some(deployment_id),
                 serde_json::json!({}),
+            )
+            .await;
+        }
+        // The CLI probes without attachments to learn which files the server lacks.
+        Err(SubmitDeploymentError::Package(pkg)) if pkg.is_only_missing_files() => {
+            info!(
+                outcome = "files_missing",
+                missing_file_count = pkg.missing_files.len(),
+                "Deployment submission finished"
+            );
+            crate::server::system_event_writer::record(
+                event_db_pool.as_ref(),
+                concepts::storage::SystemEventCode::DeploymentSubmitFilesMissing,
+                None,
+                Some(deployment_id),
+                serde_json::json!({ "missing_file_count": pkg.missing_files.len() }),
             )
             .await;
         }

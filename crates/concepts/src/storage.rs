@@ -1606,6 +1606,7 @@ pub enum SystemEventCode {
     ServerShutdownCompleted,
     DeploymentSubmitStarted,
     DeploymentSubmitCompleted,
+    DeploymentSubmitFilesMissing,
     DeploymentSubmitFailed,
     DeploymentSwitchStarted,
     DeploymentSwitchCompleted,
@@ -1623,7 +1624,8 @@ pub enum SystemEventCode {
     AdminDeploymentRetainStarted,
     AdminDeploymentRetainCompleted,
     MaintenanceGcCompleted,
-    MaintenanceGcBlocked,
+    MaintenanceGcDeferredByDeployment,
+    MaintenanceGcDeploymentsInUse,
     MaintenanceGcFailed,
 }
 
@@ -1638,6 +1640,7 @@ impl SystemEventCode {
             Self::ServerShutdownCompleted => "server.shutdown.completed",
             Self::DeploymentSubmitStarted => "deployment.submit.started",
             Self::DeploymentSubmitCompleted => "deployment.submit.completed",
+            Self::DeploymentSubmitFilesMissing => "deployment.submit.files_missing",
             Self::DeploymentSubmitFailed => "deployment.submit.failed",
             Self::DeploymentSwitchStarted => "deployment.switch.started",
             Self::DeploymentSwitchCompleted => "deployment.switch.completed",
@@ -1655,7 +1658,8 @@ impl SystemEventCode {
             Self::AdminDeploymentRetainStarted => "admin.deployment.retain.started",
             Self::AdminDeploymentRetainCompleted => "admin.deployment.retain.completed",
             Self::MaintenanceGcCompleted => "maintenance.gc.completed",
-            Self::MaintenanceGcBlocked => "maintenance.gc.blocked",
+            Self::MaintenanceGcDeferredByDeployment => "maintenance.gc.deferred_by_deployment",
+            Self::MaintenanceGcDeploymentsInUse => "maintenance.gc.deployments_in_use",
             Self::MaintenanceGcFailed => "maintenance.gc.failed",
         }
     }
@@ -1668,7 +1672,7 @@ impl SystemEventCode {
             | Self::DeploymentSwitchFailed
             | Self::OutboundHttpDenied
             | Self::WorkflowReplayLockExpired
-            | Self::MaintenanceGcBlocked
+            | Self::MaintenanceGcDeploymentsInUse
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
             Self::ComponentHttpPolicyApplied
             | SystemEventCode::ComponentSecretExposureAuthorized => SystemEventLevel::Debug,
@@ -1686,6 +1690,7 @@ impl SystemEventCode {
             Self::ServerShutdownCompleted => "Server shutdown completed",
             Self::DeploymentSubmitStarted => "Deployment submission started",
             Self::DeploymentSubmitCompleted => "Deployment submission completed",
+            Self::DeploymentSubmitFilesMissing => "Deployment submission requested missing files",
             Self::DeploymentSubmitFailed => "Deployment submission failed",
             Self::DeploymentSwitchStarted => "Deployment switch started",
             Self::DeploymentSwitchCompleted => "Deployment switch completed",
@@ -1703,8 +1708,11 @@ impl SystemEventCode {
             Self::AdminDeploymentRetainStarted => "Deployment retention started",
             Self::AdminDeploymentRetainCompleted => "Deployment retention completed",
             Self::MaintenanceGcCompleted => "Periodic garbage collection completed",
-            Self::MaintenanceGcBlocked => {
-                "Periodic deployment retention blocked; other garbage collection continues"
+            Self::MaintenanceGcDeferredByDeployment => {
+                "Periodic garbage collection deferred steps while a deployment submit or switch was running"
+            }
+            Self::MaintenanceGcDeploymentsInUse => {
+                "Periodic deployment retention kept expired deployments that are still in use"
             }
             Self::MaintenanceGcFailed => "Periodic garbage collection failed",
         }
@@ -1792,6 +1800,9 @@ impl SystemEvent {
             "server.shutdown.completed" => SystemEventCode::ServerShutdownCompleted.message(),
             "deployment.submit.started" => SystemEventCode::DeploymentSubmitStarted.message(),
             "deployment.submit.completed" => SystemEventCode::DeploymentSubmitCompleted.message(),
+            "deployment.submit.files_missing" => {
+                SystemEventCode::DeploymentSubmitFilesMissing.message()
+            }
             "deployment.submit.failed" => SystemEventCode::DeploymentSubmitFailed.message(),
             "deployment.switch.started" => SystemEventCode::DeploymentSwitchStarted.message(),
             "deployment.switch.completed" => SystemEventCode::DeploymentSwitchCompleted.message(),
@@ -1829,7 +1840,12 @@ impl SystemEvent {
                 SystemEventCode::AdminDeploymentRetainCompleted.message()
             }
             "maintenance.gc.completed" => SystemEventCode::MaintenanceGcCompleted.message(),
-            "maintenance.gc.blocked" => SystemEventCode::MaintenanceGcBlocked.message(),
+            "maintenance.gc.deferred_by_deployment" => {
+                SystemEventCode::MaintenanceGcDeferredByDeployment.message()
+            }
+            "maintenance.gc.deployments_in_use" => {
+                SystemEventCode::MaintenanceGcDeploymentsInUse.message()
+            }
             "maintenance.gc.failed" => SystemEventCode::MaintenanceGcFailed.message(),
             _ => &self.code,
         }
@@ -4049,6 +4065,7 @@ mod tests {
             SystemEventCode::ServerShutdownCompleted,
             SystemEventCode::DeploymentSubmitStarted,
             SystemEventCode::DeploymentSubmitCompleted,
+            SystemEventCode::DeploymentSubmitFilesMissing,
             SystemEventCode::DeploymentSubmitFailed,
             SystemEventCode::DeploymentSwitchStarted,
             SystemEventCode::DeploymentSwitchCompleted,
@@ -4066,7 +4083,8 @@ mod tests {
             SystemEventCode::AdminDeploymentRetainStarted,
             SystemEventCode::AdminDeploymentRetainCompleted,
             SystemEventCode::MaintenanceGcCompleted,
-            SystemEventCode::MaintenanceGcBlocked,
+            SystemEventCode::MaintenanceGcDeferredByDeployment,
+            SystemEventCode::MaintenanceGcDeploymentsInUse,
             SystemEventCode::MaintenanceGcFailed,
         ] {
             assert!(code.as_str().chars().count() <= 64);

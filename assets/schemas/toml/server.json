@@ -983,19 +983,19 @@
               "executions": {
                 "enabled": true,
                 "max_age": {
-                  "hours": 720
+                  "hours": 744
                 }
               },
               "deployments": {
                 "enabled": true,
                 "max_age": {
-                  "hours": 720
+                  "hours": 744
                 }
               },
               "system_events": {
                 "enabled": true,
                 "max_age": {
-                  "hours": 720
+                  "hours": 744
                 }
               }
             }
@@ -1042,19 +1042,19 @@
             "executions": {
               "enabled": true,
               "max_age": {
-                "hours": 720
+                "hours": 744
               }
             },
             "deployments": {
               "enabled": true,
               "max_age": {
-                "hours": 720
+                "hours": 744
               }
             },
             "system_events": {
               "enabled": true,
               "max_age": {
-                "hours": 720
+                "hours": 744
               }
             }
           }
@@ -1070,7 +1070,7 @@
           "default": {
             "enabled": true,
             "max_age": {
-              "hours": 720
+              "hours": 744
             }
           }
         },
@@ -1079,7 +1079,7 @@
           "default": {
             "enabled": true,
             "max_age": {
-              "hours": 720
+              "hours": 744
             }
           }
         },
@@ -1088,7 +1088,7 @@
           "default": {
             "enabled": true,
             "max_age": {
-              "hours": 720
+              "hours": 744
             }
           }
         }
@@ -1105,7 +1105,7 @@
         "max_age": {
           "$ref": "#/$defs/DurationConfig",
           "default": {
-            "hours": 720
+            "hours": 744
           }
         }
       },

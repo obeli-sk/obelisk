@@ -4,6 +4,7 @@ use crate::config::deployment::DurationConfig;
 use crate::config::server::RetentionTomlConfig;
 use crate::config::server::{GarbageCollectionTomlConfig, RetentionPolicyTomlConfig};
 use anyhow::{Context as _, bail};
+use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{CasGcResult, DbPool, RetentionPolicy, SystemEventCode};
 use executor::AbortOnDropHandle;
 use std::{sync::Arc, time::Duration};
@@ -109,6 +110,10 @@ struct SweepStats {
     cas_bytes: u64,
     space_reclamation: CategoryStats,
     cache: super::cache_gc::Stats,
+    /// Active deployment observed while the sweep held the deployment switch lane.
+    deployment_id: Option<DeploymentId>,
+    cas_gc_deferred: bool,
+    cache_gc_deferred: bool,
 }
 
 impl SweepStats {
@@ -148,8 +153,19 @@ impl SweepStats {
             .saturating_add(self.space_reclamation.affected)
     }
 
+    fn deferred(self) -> Vec<&'static str> {
+        [
+            ("cas_gc", self.cas_gc_deferred),
+            ("cache_gc", self.cache_gc_deferred),
+        ]
+        .into_iter()
+        .filter_map(|(category, deferred)| deferred.then_some(category))
+        .collect()
+    }
+
     fn details(self, total: Duration) -> serde_json::Value {
         serde_json::json!({
+            "deferred": self.deferred(),
             "total_ms": duration_millis(total),
             "execution_retention": category_details(self.execution_retention),
             "deployment_retention": category_details(self.deployment_retention),
@@ -242,15 +258,26 @@ pub(super) fn spawn(
                                 chrono::Utc::now() - config.upload_grace_period,
                             )
                             .await
-                            .map_err(|err| anyhow::anyhow!(err))
+                            .map_or_else(
+                                |err| match err {
+                                    super::SubmitDeploymentError::Busy => Ok(None),
+                                    err => Err(anyhow::anyhow!(err)),
+                                },
+                                |result| Ok(Some(result)),
+                            )
                     },
                 )
                 .await?;
-                stats.cache = deployment_switch_manager
+                if let Some((deployment_id, cache)) = deployment_switch_manager
                     .gc_cache()
                     .await
                     .map_err(|err| Box::new(SweepFailure::new("cache_gc", stats, err)))?
-                    .unwrap_or_default();
+                {
+                    stats.deployment_id = Some(deployment_id);
+                    stats.cache = cache;
+                } else {
+                    stats.cache_gc_deferred = true;
+                }
                 Ok::<_, Box<SweepFailure>>(stats)
             };
             let result = tokio::select! {
@@ -262,12 +289,19 @@ pub(super) fn spawn(
             match result {
                 Ok(stats) => {
                     stats.log(total);
-                    if stats.affected() > 0 {
+                    let code = if !stats.deferred().is_empty() {
+                        Some(SystemEventCode::MaintenanceGcDeferredByDeployment)
+                    } else if stats.affected() > 0 {
+                        Some(SystemEventCode::MaintenanceGcCompleted)
+                    } else {
+                        None
+                    };
+                    if let Some(code) = code {
                         crate::server::system_event_writer::record(
                             db_pool.as_ref(),
-                            SystemEventCode::MaintenanceGcCompleted,
+                            code,
                             None,
-                            None,
+                            stats.deployment_id,
                             stats.details(total),
                         )
                         .await;
@@ -304,7 +338,7 @@ async fn run_sweep<Fut>(
     gc_cas: impl Fn() -> Fut + Send,
 ) -> Result<SweepStats, Box<SweepFailure>>
 where
-    Fut: std::future::Future<Output = anyhow::Result<CasGcResult>> + Send,
+    Fut: std::future::Future<Output = anyhow::Result<Option<CasGcResult>>> + Send,
 {
     let mut stats = SweepStats::default();
     if let Some(max_age) = config.executions {
@@ -387,11 +421,11 @@ where
                     warn!(
                         blocked_non_terminal,
                         blocked_by_execution_reference,
-                        "Periodic deployment retention blocked; continuing other garbage collection"
+                        "Periodic deployment retention kept expired deployments that are still in use"
                     );
                     crate::server::system_event_writer::record(
                         db_pool.as_ref(),
-                        SystemEventCode::MaintenanceGcBlocked,
+                        SystemEventCode::MaintenanceGcDeploymentsInUse,
                         None,
                         None,
                         serde_json::json!({
@@ -399,7 +433,6 @@ where
                             "blocked_non_terminal": blocked_non_terminal,
                             "blocked_by_execution_reference": blocked_by_execution_reference,
                             "has_more": result.has_more,
-                            "other_gc_continues": true,
                         }),
                     )
                     .await;
@@ -452,9 +485,13 @@ where
     }
     loop {
         let started = std::time::Instant::now();
-        let result = gc_cas().await.map_err(|source| {
+        let Some(result) = gc_cas().await.map_err(|source| {
             Box::new(SweepFailure::new("cas_gc", stats, anyhow::anyhow!(source)))
-        })?;
+        })?
+        else {
+            stats.cas_gc_deferred = true;
+            break;
+        };
         stats.cas_gc.active += started.elapsed();
         stats.cas_gc.affected += result.deleted_blobs;
         stats.cas_bytes += result.deleted_bytes;
@@ -618,11 +655,13 @@ mod tests {
             let stats = tokio::time::timeout(
                 Duration::from_secs(10),
                 run_sweep(&db_pool, sweep_config(), &mut warned, || async {
-                    Ok(db_pool
-                        .cas_gc_conn()
-                        .await?
-                        .gc_cas(false, 1, chrono::Utc::now())
-                        .await?)
+                    Ok(Some(
+                        db_pool
+                            .cas_gc_conn()
+                            .await?
+                            .gc_cas(false, 1, chrono::Utc::now())
+                            .await?,
+                    ))
                 }),
             )
             .await
@@ -656,7 +695,11 @@ mod tests {
             .unwrap();
         assert!(log.pending_state.is_paused());
         let filter = SystemEventFilter {
-            code: Some(SystemEventCode::MaintenanceGcBlocked.as_str().to_owned()),
+            code: Some(
+                SystemEventCode::MaintenanceGcDeploymentsInUse
+                    .as_str()
+                    .to_owned(),
+            ),
             limit: 100,
             ..Default::default()
         };
@@ -668,21 +711,22 @@ mod tests {
             blocked_executions.len()
         );
         assert_eq!(warnings[0].details["has_more"], false);
-        assert_eq!(warnings[0].details["other_gc_continues"], true);
         assert_eq!(
             warnings[0].message(),
-            SystemEventCode::MaintenanceGcBlocked.message()
+            SystemEventCode::MaintenanceGcDeploymentsInUse.message()
         );
 
         for execution in blocked_executions {
             admin.delete_execution_tree(&execution, true).await.unwrap();
         }
         run_sweep(&db_pool, sweep_config(), &mut warned, || async {
-            Ok(db_pool
-                .cas_gc_conn()
-                .await?
-                .gc_cas(false, 1, chrono::Utc::now())
-                .await?)
+            Ok(Some(
+                db_pool
+                    .cas_gc_conn()
+                    .await?
+                    .gc_cas(false, 1, chrono::Utc::now())
+                    .await?,
+            ))
         })
         .await
         .unwrap_or_else(|failure| panic!("{}", failure.source));
@@ -690,11 +734,13 @@ mod tests {
         let blocked = insert_deployment(db_pool.as_ref(), 1).await;
         create_execution(db_pool.as_ref(), blocked, false).await;
         run_sweep(&db_pool, sweep_config(), &mut warned, || async {
-            Ok(db_pool
-                .cas_gc_conn()
-                .await?
-                .gc_cas(false, 1, chrono::Utc::now())
-                .await?)
+            Ok(Some(
+                db_pool
+                    .cas_gc_conn()
+                    .await?
+                    .gc_cas(false, 1, chrono::Utc::now())
+                    .await?,
+            ))
         })
         .await
         .unwrap_or_else(|failure| panic!("{}", failure.source));
@@ -723,7 +769,7 @@ mod tests {
         let stats = tokio::time::timeout(
             Duration::from_secs(10),
             run_sweep(&db_pool, config, &mut false, || async {
-                Ok(CasGcResult::default())
+                Ok(Some(CasGcResult::default()))
             }),
         )
         .await
@@ -751,11 +797,13 @@ mod tests {
         create_execution(db_pool.as_ref(), deployment, true).await;
         let mut warned = false;
         let stats = run_sweep(&db_pool, sweep_config(), &mut warned, || async {
-            Ok(db_pool
-                .cas_gc_conn()
-                .await?
-                .gc_cas(false, 1, chrono::Utc::now())
-                .await?)
+            Ok(Some(
+                db_pool
+                    .cas_gc_conn()
+                    .await?
+                    .gc_cas(false, 1, chrono::Utc::now())
+                    .await?,
+            ))
         })
         .await
         .unwrap_or_else(|failure| panic!("{}", failure.source));
