@@ -710,7 +710,8 @@ pub(crate) mod admin {
         }
         let age = chrono::Duration::from_std(Duration::from_secs(request.max_age_seconds))
             .map_err(|_| precondition("max_age_seconds is too large"))?;
-        let cutoff = Utc::now()
+        let cutoff = Now
+            .now()
             .checked_sub_signed(age)
             .ok_or_else(|| precondition("max_age_seconds is too large"))?;
         let result = until_terminated(&state, AcceptHeader::Json, async {
@@ -762,7 +763,8 @@ pub(crate) mod admin {
             (None, Some(seconds)) if seconds > 0 => {
                 let age = chrono::Duration::from_std(std::time::Duration::from_secs(seconds))
                     .map_err(|_| precondition("max_age_seconds is too large"))?;
-                let cutoff = chrono::Utc::now()
+                let cutoff = Now
+                    .now()
                     .checked_sub_signed(age)
                     .ok_or_else(|| precondition("max_age_seconds is too large"))?;
                 Ok(storage::RetentionPolicy::CreatedAtOrAfter(cutoff))
@@ -1468,7 +1470,7 @@ async fn executions_list(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
 
-    let now = Utc::now();
+    let now = Now.now();
     let filter = ListExecutionsFilter {
         function_name_filter: params
             .package
@@ -4002,12 +4004,12 @@ pub(crate) mod deployment {
         extract::{Path, Query, State},
         response::{IntoResponse, Response},
     };
-    use chrono::Utc;
     use concepts::prefixed_ulid::DeploymentId;
     use concepts::storage::Pagination;
     use concepts::storage::{
         DeploymentExecutionCounts, DeploymentState, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
     };
+    use concepts::time::{ClockFn as _, Now};
     use http::StatusCode;
     use serde::Deserialize;
     use std::sync::Arc;
@@ -4125,7 +4127,7 @@ pub(crate) mod deployment {
         };
         let states = conn
             .list_deployment_states(
-                Utc::now(),
+                Now.now(),
                 pagination,
                 params.include_component_summary || params.include_deployment_toml,
                 if params.include_execution_counts {
@@ -4604,7 +4606,7 @@ pub(crate) mod deployment {
             .cas_gc_conn()
             .await
             .map_err(|e| ErrorWrapper(e, accept))?
-            .upload_blob(body.into(), chrono::Utc::now())
+            .upload_blob(body.into(), Now.now())
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
         Ok(StatusCode::NO_CONTENT.into_response())
