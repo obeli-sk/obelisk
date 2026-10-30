@@ -3522,6 +3522,15 @@ pub enum Pagination<T> {
         including_cursor: bool,
     },
 }
+/// Fallback `created_at` for a deployment cursor whose row no longer exists (e.g. garbage collected).
+#[must_use]
+pub fn deployment_cursor_fallback_created_at(cursor: DeploymentId) -> DateTime<Utc> {
+    DateTime::from_timestamp_millis(
+        i64::try_from(cursor.timestamp_part()).expect("ULID timestamp is 48 bits"),
+    )
+    .expect("ULID timestamp is within chrono range")
+}
+
 impl<T: Clone> Pagination<T> {
     pub fn length(&self) -> u16 {
         match self {

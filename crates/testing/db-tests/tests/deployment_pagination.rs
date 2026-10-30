@@ -1002,8 +1002,7 @@ async fn list_deployment_states_cursor_not_found(database: Database) {
     // Use a non-existent deployment ID as cursor
     let fake_cursor = DeploymentId::generate();
 
-    // Should still work - returns deployments older/newer than the fake cursor
-    // (since cursor is compared by string/ULID ordering, not by existence)
+    // Should still work: a missing cursor falls back to its ULID timestamp as `created_at`.
     let result = api_conn
         .list_deployment_states(
             sim_clock.now(),
@@ -1020,11 +1019,71 @@ async fn list_deployment_states_cursor_not_found(database: Database) {
         .await
         .unwrap();
 
-    // The result depends on ULID ordering - a newly generated ULID is likely
-    // newer than existing ones, so OlderThan should return some/all existing deployments
     debug!("Deployments older than fake cursor: {}", result.len());
 
     drop(api_conn);
     drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn list_deployment_states_sorted_by_created_at(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    // Each deployment is created later but carries an older ULID than the previous one.
+    let mut created_order = Vec::new();
+    for idx in 0..5u64 {
+        let deployment_id = DeploymentId::from_parts(1_000_000 - idx, 0);
+        create_deployment_with_execution(api_conn.as_ref(), deployment_id, &sim_clock).await;
+        created_order.push(deployment_id);
+        sim_clock.move_time_forward(Duration::from_secs(1));
+    }
+    let newest_first: Vec<_> = created_order.iter().rev().copied().collect();
+
+    let list = async |pagination| {
+        api_conn
+            .list_deployment_states(
+                sim_clock.now(),
+                pagination,
+                false,
+                DeploymentExecutionCounts::Skip,
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|d| d.deployment_id)
+            .collect::<Vec<_>>()
+    };
+
+    let all = list(Pagination::OlderThan {
+        length: nz(10),
+        cursor: None,
+        including_cursor: false,
+    })
+    .await;
+    assert_eq!(newest_first, all);
+
+    let older = list(Pagination::OlderThan {
+        length: nz(2),
+        cursor: Some(newest_first[1]),
+        including_cursor: false,
+    })
+    .await;
+    assert_eq!(newest_first[2..4], older[..]);
+
+    let newer = list(Pagination::NewerThan {
+        length: nz(2),
+        cursor: Some(newest_first[3]),
+        including_cursor: true,
+    })
+    .await;
+    assert_eq!(newest_first[2..4], newer[..]);
+
+    drop(api_conn);
     db_close.close().await;
 }

@@ -390,8 +390,6 @@ CREATE INDEX idx_t_state_finished_created_at ON t_state (created_at, execution_i
     WHERE is_top_level = TRUE AND tombstoned = FALSE AND state = 'finished';
 CREATE INDEX idx_t_state_finished_updated_at ON t_state (updated_at, execution_id)
     WHERE is_top_level = TRUE AND tombstoned = FALSE AND state = 'finished';
-CREATE INDEX idx_t_deployment_retention_created_at ON t_deployment (created_at, deployment_id)
-    WHERE status = 'inactive';
 CREATE INDEX idx_t_state_deployment_roots ON t_state (deployment_id, execution_id)
     WHERE is_top_level = TRUE AND tombstoned = FALSE;
 CREATE INDEX idx_t_component_source_digest ON t_component_source (digest);
@@ -402,3 +400,4 @@ CREATE INDEX t_system_event_http_policy_idx ON t_system_event (
     deployment_id, json_extract(details, '$.component'), json_extract(details, '$.component_policy_hash'),
     json_extract(details, '$.server_policy_hash'), event_id DESC
 ) WHERE code = 'component.http_policy.applied';
+CREATE INDEX idx_t_deployment_created_at ON t_deployment (created_at, deployment_id);

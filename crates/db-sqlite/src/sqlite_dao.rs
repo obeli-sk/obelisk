@@ -33,7 +33,7 @@ use concepts::{
         ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
         STATE_LOCKED, STATE_PENDING_AT, SourceMapping, StorageStatus, SubscribeToResponsesError,
         SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
-        TimeoutOutcome, Unlocked, Version, VersionType,
+        TimeoutOutcome, Unlocked, Version, VersionType, deployment_cursor_fallback_created_at,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -3725,9 +3725,13 @@ impl SqlitePool {
 
         if let Some(cursor) = pagination.cursor() {
             params.push((":cursor", Box::new(*cursor)));
+            params.push((
+                ":cursor_fallback",
+                Box::new(deployment_cursor_fallback_created_at(*cursor)),
+            ));
             write!(
                 sql,
-                " WHERE d.deployment_id {rel} :cursor",
+                " WHERE (d.created_at, d.deployment_id) {rel} (COALESCE((SELECT created_at FROM t_deployment WHERE deployment_id = :cursor), :cursor_fallback), :cursor)",
                 rel = pagination.rel()
             )
             .expect("writing to string");
@@ -3751,7 +3755,7 @@ impl SqlitePool {
         }
         write!(
             sql,
-            " ORDER BY d.deployment_id {inner_order} LIMIT {limit}",
+            " ORDER BY d.created_at {inner_order}, d.deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -3759,7 +3763,9 @@ impl SqlitePool {
         let final_sql = if outer_order.is_empty() {
             sql
         } else {
-            format!("SELECT * FROM ({sql}) AS sub ORDER BY deployment_id {outer_order}")
+            format!(
+                "SELECT * FROM ({sql}) AS sub ORDER BY created_at {outer_order}, deployment_id {outer_order}"
+            )
         };
 
         let result: Vec<DeploymentState> = tx
@@ -4155,9 +4161,13 @@ impl SqlitePool {
 
         if let Some(cursor) = pagination.cursor() {
             params.push((":cursor", Box::new(*cursor)));
+            params.push((
+                ":cursor_fallback",
+                Box::new(deployment_cursor_fallback_created_at(*cursor)),
+            ));
             write!(
                 sql,
-                " WHERE deployment_id {rel} :cursor",
+                " WHERE (created_at, deployment_id) {rel} (COALESCE((SELECT created_at FROM t_deployment WHERE deployment_id = :cursor), :cursor_fallback), :cursor)",
                 rel = pagination.rel()
             )
             .expect("writing to string");
@@ -4171,7 +4181,7 @@ impl SqlitePool {
 
         write!(
             sql,
-            " ORDER BY deployment_id {inner_order} LIMIT {limit}",
+            " ORDER BY created_at {inner_order}, deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -4179,7 +4189,9 @@ impl SqlitePool {
         let final_sql = if outer_order.is_empty() {
             sql
         } else {
-            format!("SELECT * FROM ({sql}) AS sub ORDER BY deployment_id {outer_order}")
+            format!(
+                "SELECT * FROM ({sql}) AS sub ORDER BY created_at {outer_order}, deployment_id {outer_order}"
+            )
         };
 
         let mut result: Vec<DeploymentRecord> = tx
