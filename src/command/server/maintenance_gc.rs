@@ -4,6 +4,7 @@ use crate::config::deployment::DurationConfig;
 use crate::config::server::RetentionTomlConfig;
 use crate::config::server::{GarbageCollectionTomlConfig, RetentionPolicyTomlConfig};
 use anyhow::{Context as _, bail};
+use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{CasGcResult, DbPool, RetentionPolicy, SystemEventCode};
 use executor::AbortOnDropHandle;
 use std::{sync::Arc, time::Duration};
@@ -109,6 +110,8 @@ struct SweepStats {
     cas_bytes: u64,
     space_reclamation: CategoryStats,
     cache: super::cache_gc::Stats,
+    /// Active deployment observed while the sweep held the deployment switch lane.
+    deployment_id: Option<DeploymentId>,
 }
 
 impl SweepStats {
@@ -246,11 +249,14 @@ pub(super) fn spawn(
                     },
                 )
                 .await?;
-                stats.cache = deployment_switch_manager
+                if let Some((deployment_id, cache)) = deployment_switch_manager
                     .gc_cache()
                     .await
                     .map_err(|err| Box::new(SweepFailure::new("cache_gc", stats, err)))?
-                    .unwrap_or_default();
+                {
+                    stats.deployment_id = Some(deployment_id);
+                    stats.cache = cache;
+                }
                 Ok::<_, Box<SweepFailure>>(stats)
             };
             let result = tokio::select! {
@@ -267,7 +273,7 @@ pub(super) fn spawn(
                             db_pool.as_ref(),
                             SystemEventCode::MaintenanceGcCompleted,
                             None,
-                            None,
+                            stats.deployment_id,
                             stats.details(total),
                         )
                         .await;

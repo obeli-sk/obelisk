@@ -383,7 +383,8 @@ impl DeploymentSwitchManagerHandle {
             .map_err(|err| SubmitDeploymentError::Other(err.into()))
     }
 
-    async fn gc_cache(&self) -> anyhow::Result<Option<cache_gc::Stats>> {
+    /// Returns the active deployment, which cannot change while both lanes are held.
+    async fn gc_cache(&self) -> anyhow::Result<Option<(DeploymentId, cache_gc::Stats)>> {
         let Ok(switch_permit) = self.inner.switch_gate.clone().try_acquire_owned() else {
             return Ok(None);
         };
@@ -395,6 +396,7 @@ impl DeploymentSwitchManagerHandle {
         else {
             return Ok(None);
         };
+        let deployment_id = self.inner.deployment_ctx.read().await.deployment_id;
         let dirs = self.inner.prepared_dirs.clone();
         tokio::task::spawn_blocking(move || {
             // Keep both lanes closed to mutations even if the awaiting GC task is cancelled.
@@ -402,7 +404,7 @@ impl DeploymentSwitchManagerHandle {
             cache_gc::sweep(&dirs.wasm_cache_dir, dirs.wasm_cache_max_size)
         })
         .await?
-        .map(Some)
+        .map(|stats| Some((deployment_id, stats)))
     }
 
     async fn take_latest_prepared(
