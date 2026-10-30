@@ -3623,6 +3623,7 @@ async fn execution_upgrade(
                 concepts::storage::ComponentUpgradeReason::Manual {
                     force: payload.skip_determinism_check,
                 },
+                Now.now(),
             )
             .await
             .map_err(|e| HttpResponse::from(ErrorWrapper(e, accept)))
