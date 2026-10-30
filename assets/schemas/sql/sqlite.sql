@@ -113,7 +113,7 @@ CREATE TABLE t_deployment (
     deployment_toml      TEXT NOT NULL,
     obelisk_version  TEXT NOT NULL,
     created_by       TEXT
-, description TEXT, digest TEXT NOT NULL DEFAULT 'sha256:0000000000000000000000000000000000000000000000000000000000000000', inactive_at TEXT, last_active_app_config_digest TEXT) STRICT;
+, description TEXT, digest TEXT NOT NULL DEFAULT 'sha256:0000000000000000000000000000000000000000000000000000000000000000', inactive_at TEXT, last_active_app_config_digest TEXT, updated_at TEXT NOT NULL DEFAULT '') STRICT;
 CREATE INDEX idx_t_deployment_status ON t_deployment (status);
 CREATE UNIQUE INDEX idx_t_deployment_single_active ON t_deployment ((1)) WHERE status = 'active';
 CREATE UNIQUE INDEX idx_t_deployment_single_enqueued ON t_deployment ((1)) WHERE status = 'enqueued';

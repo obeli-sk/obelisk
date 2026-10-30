@@ -112,7 +112,8 @@ CREATE TABLE public.t_deployment (
     description character varying(1024),
     digest character varying(71) DEFAULT 'sha256:0000000000000000000000000000000000000000000000000000000000000000'::text NOT NULL,
     inactive_at timestamp with time zone,
-    last_active_app_config_digest text
+    last_active_app_config_digest text,
+    updated_at timestamp with time zone NOT NULL
 );
 
 

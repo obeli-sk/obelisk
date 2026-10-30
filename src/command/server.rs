@@ -2052,6 +2052,7 @@ async fn write_to_cas_prepare_deployment_record(
             description,
             digest,
             created_at: now,
+            updated_at: now,
             last_active_at: None,
             last_active_app_config_digest: None,
             status: DeploymentStatus::Inactive,
@@ -3664,6 +3665,7 @@ async fn submit_deployment_manifest(
                         description,
                         digest: digest_ref.clone(),
                         created_at: now,
+                        updated_at: now,
                         last_active_at: None,
                         last_active_app_config_digest: None,
                         status: DeploymentStatus::Inactive,
@@ -3788,7 +3790,7 @@ async fn enqueue_deployment_and_release(
         .await
         .map_err(|e| SwitchError::Other(e.into()))?;
     let outcome = db_conn
-        .enqueue_deployment(deployment_id)
+        .enqueue_deployment(deployment_id, chrono::Utc::now())
         .await
         .map_err(|e| SwitchError::Other(e.into()))?;
     drop(switch_permit);

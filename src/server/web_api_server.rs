@@ -4032,6 +4032,7 @@ pub(crate) mod deployment {
             digest: deployment_state.digest.to_string(),
             status: DeploymentStatusSer::from(&deployment_state.status),
             created_at: deployment_state.created_at,
+            updated_at: Some(deployment_state.updated_at),
             last_active_at: deployment_state.last_active_at,
             last_active_app_config_digest: deployment_state.last_active_app_config_digest.clone(),
             locked: deployment_state.locked,

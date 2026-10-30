@@ -2517,6 +2517,7 @@ pub trait DbExternalApi: DbConnection {
     async fn enqueue_deployment(
         &self,
         deployment_id: DeploymentId,
+        now: DateTime<Utc>,
     ) -> Result<EnqueueOutcome, DbErrorWrite>;
 
     /// Returned [`DeploymentRecord`] must contain `deployment_toml`.
@@ -2595,6 +2596,8 @@ pub struct DeploymentState {
     /// Processed deployment manifest, stored byte-for-byte. None if not requested from db.
     pub deployment_toml: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// Last status change: insert, enqueue, activation or demotion.
+    pub updated_at: DateTime<Utc>,
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,
     // backcompat: 0.42.0-rc.3 deployments have no activation policy digest.
@@ -2665,6 +2668,8 @@ pub struct DeploymentRecord {
     /// Content digest = `sha256(deployment_toml)`.
     pub digest: ContentDigest,
     pub created_at: DateTime<Utc>,
+    /// Last status change: insert, enqueue, activation or demotion.
+    pub updated_at: DateTime<Utc>,
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,
     // backcompat: 0.42.0-rc.3 deployments have no activation policy digest.

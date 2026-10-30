@@ -3553,6 +3553,13 @@
           },
           "status": {
             "$ref": "#/components/schemas/DeploymentStatusSer"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -3702,6 +3709,14 @@
           "status": {
             "$ref": "#/components/schemas/DeploymentStatusSer",
             "description": "Deployment lifecycle status"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Last status change: submission, enqueue, activation or demotion"
           }
         }
       },

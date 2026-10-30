@@ -371,6 +371,7 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
         description: get(row, "description")?,
         digest: get(row, "digest")?,
         created_at: get(row, "created_at")?,
+        updated_at: get(row, "updated_at")?,
         last_active_at: get(row, "last_active_at")?,
         last_active_app_config_digest: get(row, "last_active_app_config_digest")?,
         status,
@@ -439,8 +440,8 @@ async fn insert_deployment_tx(
     let digest = record.digest.to_string();
     tx.execute(
         "INSERT INTO t_deployment \
-         (deployment_id, description, digest, created_at, inactive_at, status, deployment_toml, obelisk_version, created_by) \
-         VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8)",
+         (deployment_id, description, digest, created_at, inactive_at, updated_at, status, deployment_toml, obelisk_version, created_by) \
+         VALUES ($1, $2, $3, $4, $4, $9, $5, $6, $7, $8)",
         &[
             &record.deployment_id.to_string(), // $1
             &record.description,               // $2
@@ -450,6 +451,7 @@ async fn insert_deployment_tx(
             &record.deployment_toml,           // $6
             &record.obelisk_version,           // $7
             &record.created_by,                // $8
+            &record.updated_at,                // $9
         ],
     )
     .await?;
@@ -2130,6 +2132,7 @@ async fn list_deployment_states(
 {count_cols}
             {deployment_toml_col},
             d.created_at,
+            d.updated_at,
             d.last_active_at,
             d.last_active_app_config_digest,
             d.status
@@ -2161,7 +2164,7 @@ async fn list_deployment_states(
     if include_execution_counts {
         write!(
             sql,
-            " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.last_active_app_config_digest, d.status"
+            " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.updated_at, d.last_active_at, d.last_active_app_config_digest, d.status"
         )
         .expect("writing to string");
     }
@@ -2222,6 +2225,7 @@ async fn list_deployment_states(
             .expect("count is never negative"),
             deployment_toml: get::<Option<String>, _>(&row, "deployment_toml")?,
             created_at: get::<DateTime<Utc>, _>(&row, "created_at")?,
+            updated_at: get::<DateTime<Utc>, _>(&row, "updated_at")?,
             last_active_at: get::<Option<DateTime<Utc>>, _>(&row, "last_active_at")?,
             last_active_app_config_digest: get(&row, "last_active_app_config_digest")?,
             status,
@@ -5641,14 +5645,14 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         // Preserve an unrelated enqueued deployment.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive', inactive_at = $1 WHERE status = 'active'",
+            "UPDATE t_deployment SET status = 'inactive', inactive_at = $1, updated_at = $1 WHERE status = 'active'",
             &[&now],
         )
         .await?;
         // Set target deployment to active, recording activation time.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', last_active_at = $1, last_active_app_config_digest = $3, inactive_at = NULL WHERE deployment_id = $2",
+                "UPDATE t_deployment SET status = 'active', last_active_at = $1, updated_at = $1, last_active_app_config_digest = $3, inactive_at = NULL WHERE deployment_id = $2",
                 &[&now, &deployment_id.to_string(), &app_config_digest],
             )
             .await?;
@@ -5668,11 +5672,11 @@ impl DbExternalApi for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         tx.execute(
-            "UPDATE t_deployment SET status='inactive', inactive_at=$1 WHERE status='active'",
+            "UPDATE t_deployment SET status='inactive', inactive_at=$1, updated_at=$1 WHERE status='active'",
             &[&now],
         )
         .await?;
-        let rows = tx.execute("UPDATE t_deployment SET status='active', last_active_at=$1, last_active_app_config_digest=$3, inactive_at=NULL WHERE deployment_id=$2", &[&now, &checkpoint.deployment_id.to_string(), &app_config_digest]).await?;
+        let rows = tx.execute("UPDATE t_deployment SET status='active', last_active_at=$1, updated_at=$1, last_active_app_config_digest=$3, inactive_at=NULL WHERE deployment_id=$2", &[&now, &checkpoint.deployment_id.to_string(), &app_config_digest]).await?;
         if rows == 0 {
             return Err(DbErrorWrite::NotFound);
         }
@@ -5702,6 +5706,7 @@ impl DbExternalApi for PostgresConnection {
     async fn enqueue_deployment(
         &self,
         deployment_id: DeploymentId,
+        now: DateTime<Utc>,
     ) -> Result<EnqueueOutcome, DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
@@ -5717,8 +5722,8 @@ impl DbExternalApi for PostgresConnection {
         }
         // Demote any previously enqueued deployment to inactive.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive', inactive_at = CURRENT_TIMESTAMP WHERE status = 'enqueued'",
-            &[],
+            "UPDATE t_deployment SET status = 'inactive', inactive_at = $1, updated_at = $1 WHERE status = 'enqueued'",
+            &[&now],
         )
         .await?;
         // The target is already active: it stays active, only the pending one was cleared.
@@ -5729,8 +5734,8 @@ impl DbExternalApi for PostgresConnection {
         // Set target deployment to enqueued.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'enqueued', inactive_at = NULL WHERE deployment_id = $1",
-                &[&deployment_id.to_string()],
+                "UPDATE t_deployment SET status = 'enqueued', inactive_at = NULL, updated_at = $2 WHERE deployment_id = $1",
+                &[&deployment_id.to_string(), &now],
             )
             .await?;
         tx.commit().await?;
@@ -5749,7 +5754,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, updated_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE deployment_id = $1",
                 &[&deployment_id.to_string()],
             )
@@ -5771,7 +5776,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, updated_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE status = 'active' LIMIT 1",
                 &[],
             )
@@ -5791,7 +5796,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, updated_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE status IN ('enqueued', 'active') \
                  ORDER BY CASE status WHEN 'enqueued' THEN 0 ELSE 1 END LIMIT 1",
                 &[],
@@ -5821,7 +5826,7 @@ impl DbExternalApi for PostgresConnection {
         };
 
         let mut sql = String::from(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, updated_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment",
         );
 
