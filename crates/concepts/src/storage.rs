@@ -2449,6 +2449,7 @@ pub trait DbExternalApi: DbConnection {
         old: &ComponentDigest,
         new: &ComponentDigest,
         reason: ComponentUpgradeReason,
+        created_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite>;
 
     async fn list_logs(

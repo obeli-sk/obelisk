@@ -752,7 +752,7 @@ async fn create_inner(
                 updated_at,
                 intermittent_event_count
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, 0
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $7, 0
             )", // lifecycle defaults to 'active'
             &[
                 &execution_id_str,
@@ -806,6 +806,7 @@ async fn create_inner(
 async fn update_state_pending_after_response_appended(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    updated_at: DateTime<Utc>,
     scheduled_at: DateTime<Utc>, // Changing to state PendingAt
     component_input_digest: ComponentDigest,
 ) -> Result<AppendNotifier, DbErrorWrite> {
@@ -821,7 +822,7 @@ async fn update_state_pending_after_response_appended(
             SET
                 pending_expires_finished = $1,
                 state = $2,
-                updated_at = CURRENT_TIMESTAMP,
+                updated_at = $4,
 
                 max_retries = NULL,
                 retry_exp_backoff_millis = NULL,
@@ -837,6 +838,7 @@ async fn update_state_pending_after_response_appended(
                 &scheduled_at,     // $1
                 &STATE_PENDING_AT, // $2
                 &execution_id_str, // $3
+                &updated_at,       // $4
             ],
         )
         .await?;
@@ -866,6 +868,7 @@ struct PendingAfterEventUpdate {
 async fn update_state_pending_after_event_appended(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    updated_at: DateTime<Utc>,
     appending_version: &Version,
     update: PendingAfterEventUpdate,
 ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
@@ -879,7 +882,7 @@ async fn update_state_pending_after_event_appended(
                 corresponding_version = $1,
                 pending_expires_finished = $2,
                 state = $3,
-                updated_at = CURRENT_TIMESTAMP,
+                updated_at = $6,
                 intermittent_event_count = intermittent_event_count + $4,
 
                 max_retries = NULL,
@@ -901,6 +904,7 @@ async fn update_state_pending_after_event_appended(
                 &STATE_PENDING_AT,
                 &intermittent_delta,
                 &execution_id.to_string(),
+                &updated_at,
             ],
         )
         .await?;
@@ -926,6 +930,7 @@ async fn update_state_pending_after_event_appended(
 async fn update_state_component_upgrade_finished_success(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    updated_at: DateTime<Utc>,
     component_digest: &ComponentDigest,
     deployment_id: DeploymentId,
     appending_version: &Version,
@@ -938,7 +943,7 @@ async fn update_state_component_upgrade_finished_success(
             UPDATE t_state
             SET
                 corresponding_version = $1,
-                updated_at = CURRENT_TIMESTAMP,
+                updated_at = $5,
                 component_id_input_digest = $2,
                 deployment_id = $3,
                 incompatible_digest = NULL
@@ -949,6 +954,7 @@ async fn update_state_component_upgrade_finished_success(
                 &component_digest.as_slice(),
                 &deployment_id.to_string(),
                 &execution_id.to_string(),
+                &updated_at,
             ],
         )
         .await?;
@@ -962,6 +968,7 @@ async fn update_state_component_upgrade_finished_success(
 async fn update_state_unlocked_from_locked(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    updated_at: DateTime<Utc>,
     component_digest: ComponentDigest,
     scheduled_at: DateTime<Utc>,
     appending_version: &Version,
@@ -969,6 +976,7 @@ async fn update_state_unlocked_from_locked(
     update_state_pending_after_event_appended(
         tx,
         execution_id,
+        updated_at,
         appending_version,
         PendingAfterEventUpdate {
             scheduled_at,
@@ -982,6 +990,7 @@ async fn update_state_unlocked_from_locked(
 async fn update_state_component_upgrade_finished_failed(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    updated_at: DateTime<Utc>,
     target_digest: &ComponentDigest,
     appending_version: &Version,
 ) -> Result<AppendResponse, DbErrorWrite> {
@@ -993,7 +1002,7 @@ async fn update_state_component_upgrade_finished_failed(
             UPDATE t_state
             SET
                 corresponding_version = $1,
-                updated_at = CURRENT_TIMESTAMP,
+                updated_at = $4,
                 incompatible_digest = $2
             WHERE execution_id = $3;
             ",
@@ -1001,6 +1010,7 @@ async fn update_state_component_upgrade_finished_failed(
                 &i64::from(appending_version.0),
                 &target_digest.as_slice(),
                 &execution_id.to_string(),
+                &updated_at,
             ],
         )
         .await?;
@@ -1017,6 +1027,7 @@ async fn update_state_component_upgrade_finished_failed(
 async fn update_state_locked_get_intermittent_event_count(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    updated_at: DateTime<Utc>,
     deployment_id: Option<DeploymentId>,
     component_digest: Option<&ComponentDigest>,
     executor_id: ExecutorId,
@@ -1047,7 +1058,7 @@ async fn update_state_locked_get_intermittent_event_count(
                 corresponding_version = $1,
                 pending_expires_finished = $2,
                 state = $3,
-                updated_at = CURRENT_TIMESTAMP,
+                updated_at = $11,
                 deployment_id = COALESCE($4, deployment_id),
                 component_id_input_digest = COALESCE($5, component_id_input_digest),
 
@@ -1075,6 +1086,7 @@ async fn update_state_locked_get_intermittent_event_count(
                 &executor_id.to_string(),
                 &run_id.to_string(),
                 &execution_id_str,
+                &updated_at,
             ],
         )
         .await?;
@@ -1102,6 +1114,7 @@ async fn update_state_locked_get_intermittent_event_count(
 async fn update_state_blocked(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    updated_at: DateTime<Utc>,
     appending_version: &Version,
     join_set_id: &JoinSetId,
     lock_expires_at: DateTime<Utc>,
@@ -1117,7 +1130,7 @@ async fn update_state_blocked(
                 corresponding_version = $1,
                 pending_expires_finished = $2,
                 state = $3,
-                updated_at = CURRENT_TIMESTAMP,
+                updated_at = $7,
 
                 max_retries = NULL,
                 retry_exp_backoff_millis = NULL,
@@ -1136,6 +1149,7 @@ async fn update_state_blocked(
                 &join_set_id.to_string(),        // $4
                 &join_set_closing,               // $5 (BOOLEAN)
                 &execution_id.to_string(),       // $6
+                &updated_at,                     // $7
             ],
         )
         .await?;
@@ -1166,7 +1180,7 @@ async fn update_state_finished(
                 corresponding_version = $1,
                 pending_expires_finished = $2,
                 state = $3,
-                updated_at = CURRENT_TIMESTAMP,
+                updated_at = $2,
 
                 max_retries = NULL,
                 retry_exp_backoff_millis = NULL,
@@ -1201,6 +1215,7 @@ async fn update_state_finished(
 async fn update_state_paused(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    updated_at: DateTime<Utc>,
     appending_version: &Version,
     is_paused: bool,
 ) -> Result<AppendResponse, DbErrorWrite> {
@@ -1221,13 +1236,14 @@ async fn update_state_paused(
             SET
                 corresponding_version = $1,
                 lifecycle = $2,
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = $4
             WHERE execution_id = $3
             ",
             &[
                 &i64::from(appending_version.0), // $1
                 &lifecycle,                      // $2
                 &execution_id.to_string(),       // $3
+                &updated_at,                     // $4
             ],
         )
         .await?;
@@ -1242,6 +1258,7 @@ async fn update_state_paused(
 async fn update_state_cancelling(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    updated_at: DateTime<Utc>,
     appending_version: &Version,
 ) -> Result<AppendResponse, DbErrorWrite> {
     debug!("Setting t_state lifecycle to cancelling");
@@ -1252,13 +1269,14 @@ async fn update_state_cancelling(
             SET
                 corresponding_version = $1,
                 lifecycle = $2,
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = $4
             WHERE execution_id = $3
             ",
             &[
                 &i64::from(appending_version.0), // $1
                 &LIFECYCLE_CANCELLING,           // $2
                 &execution_id.to_string(),       // $3
+                &updated_at,                     // $4
             ],
         )
         .await?;
@@ -1273,6 +1291,7 @@ async fn update_state_cancelling(
 async fn bump_state_next_version(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
+    updated_at: DateTime<Utc>,
     appending_version: &Version,
     delay_req: Option<DelayReq>,
 ) -> Result<AppendResponse, DbErrorWrite> {
@@ -1285,12 +1304,13 @@ async fn bump_state_next_version(
             UPDATE t_state
             SET
                 corresponding_version = $1,
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = $3
             WHERE execution_id = $2
             ",
             &[
                 &i64::from(appending_version.0), // $1
                 &execution_id_str,               // $2
+                &updated_at,                     // $3
             ],
         )
         .await?;
@@ -2395,6 +2415,7 @@ async fn lock_single_execution(
     let intermittent_event_count = update_state_locked_get_intermittent_event_count(
         tx,
         execution_id,
+        created_at,
         update_component_digest_and_deployment_id.then_some(deployment_id),
         update_component_digest_and_deployment_id.then_some(&component_id.component_digest),
         executor_id,
@@ -2651,6 +2672,7 @@ async fn append(
             let (next_version, notifier) = update_state_pending_after_event_appended(
                 tx,
                 execution_id,
+                req.created_at,
                 &appending_version,
                 PendingAfterEventUpdate {
                     scheduled_at: *backoff_expires_at,
@@ -2676,6 +2698,7 @@ async fn append(
                     let (next_version, notifier) = update_state_unlocked_from_locked(
                         tx,
                         execution_id,
+                        req.created_at,
                         combined_state.execution_with_state.component_digest,
                         unlocked.unlocked_at,
                         &appending_version,
@@ -2692,6 +2715,7 @@ async fn append(
                         update_state_blocked(
                             tx,
                             execution_id,
+                            req.created_at,
                             &appending_version,
                             &blocked.join_set_id,
                             unlocked.unlocked_at, // Update `lock_expires_at`
@@ -2726,6 +2750,7 @@ async fn append(
                 let next_version = update_state_component_upgrade_finished_success(
                     tx,
                     execution_id,
+                    req.created_at,
                     component_digest,
                     *deployment_id,
                     &appending_version,
@@ -2737,6 +2762,7 @@ async fn append(
                 let next_version = update_state_component_upgrade_finished_failed(
                     tx,
                     execution_id,
+                    req.created_at,
                     component_digest,
                     &appending_version,
                 )
@@ -2782,7 +2808,8 @@ async fn append(
                 _ => {}
             }
             let next_version =
-                update_state_paused(tx, execution_id, &appending_version, true).await?;
+                update_state_paused(tx, execution_id, req.created_at, &appending_version, true)
+                    .await?;
             return Ok((next_version, AppendNotifier::default()));
         }
 
@@ -2801,7 +2828,8 @@ async fn append(
                 .into());
             }
             let next_version =
-                update_state_paused(tx, execution_id, &appending_version, false).await?;
+                update_state_paused(tx, execution_id, req.created_at, &appending_version, false)
+                    .await?;
             return Ok((next_version, AppendNotifier::default()));
         }
 
@@ -2828,7 +2856,8 @@ async fn append(
                 | PendingState::Locked(..) => {}
             }
             let next_version =
-                update_state_cancelling(tx, execution_id, &appending_version).await?;
+                update_state_cancelling(tx, execution_id, req.created_at, &appending_version)
+                    .await?;
             return Ok((next_version, AppendNotifier::default()));
         }
 
@@ -2868,7 +2897,8 @@ async fn append(
                 | HistoryEvent::JoinNextTry { .. },
         } => {
             return Ok((
-                bump_state_next_version(tx, execution_id, &appending_version, None).await?,
+                bump_state_next_version(tx, execution_id, req.created_at, &appending_version, None)
+                    .await?,
                 AppendNotifier::default(),
             ));
         }
@@ -2890,6 +2920,7 @@ async fn append(
                 bump_state_next_version(
                     tx,
                     execution_id,
+                    req.created_at,
                     &appending_version,
                     Some(DelayReq {
                         join_set_id: join_set_id.clone(),
@@ -2935,6 +2966,7 @@ async fn append(
                 let (next_version, notifier) = update_state_pending_after_event_appended(
                     tx,
                     execution_id,
+                    req.created_at,
                     &appending_version,
                     PendingAfterEventUpdate {
                         scheduled_at,
@@ -2952,6 +2984,7 @@ async fn append(
                 update_state_blocked(
                     tx,
                     execution_id,
+                    req.created_at,
                     &appending_version,
                     join_set_id,
                     *run_expires_at,
@@ -3114,6 +3147,7 @@ async fn append_response(
         update_state_pending_after_response_appended(
             tx,
             execution_id,
+            event.created_at,
             scheduled_at,
             combined_state.execution_with_state.component_digest,
         )
@@ -3741,6 +3775,7 @@ async fn upgrade_execution_component(
     old: &ComponentDigest,
     new: &ComponentDigest,
     reason: ComponentUpgradeReason,
+    created_at: DateTime<Utc>,
 ) -> Result<(), DbErrorWrite> {
     let combined_state = get_combined_state(tx, execution_id).await?;
     if combined_state.execution_with_state.component_digest != *old {
@@ -3751,7 +3786,7 @@ async fn upgrade_execution_component(
         tx,
         execution_id,
         AppendRequest {
-            created_at: Utc::now(),
+            created_at,
             event: ExecutionRequest::ComponentUpgradeFinished {
                 component_digest: new.clone(),
                 deployment_id: combined_state.execution_with_state.deployment_id,
@@ -5516,6 +5551,7 @@ impl DbExternalApi for PostgresConnection {
         old: &ComponentDigest,
         new: &ComponentDigest,
         reason: ComponentUpgradeReason,
+        created_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
@@ -5523,7 +5559,7 @@ impl DbExternalApi for PostgresConnection {
             .await
             .map_err(DbErrorWrite::from)?;
 
-        upgrade_execution_component(&tx, execution_id, old, new, reason).await?;
+        upgrade_execution_component(&tx, execution_id, old, new, reason, created_at).await?;
 
         tx.commit().await?;
         Ok(())

@@ -1209,7 +1209,7 @@ impl SqlitePool {
                     :component_id_input_digest,
                     :component_type,
                     :deployment_id,
-                    CURRENT_TIMESTAMP,
+                    :created_at,
                     :first_scheduled_at,
                     0
                     )
@@ -1263,6 +1263,7 @@ impl SqlitePool {
     fn update_state_pending_after_response_appended(
         tx: &Transaction,
         execution_id: &ExecutionId,
+        updated_at: DateTime<Utc>,
         scheduled_at: DateTime<Utc>, // Changing to state PendingAt
         component_input_digest: ComponentDigest,
     ) -> Result<AppendNotifier, DbErrorWrite> {
@@ -1274,7 +1275,7 @@ impl SqlitePool {
                 SET
                     pending_expires_finished = :pending_expires_finished,
                     state = :state,
-                    updated_at = CURRENT_TIMESTAMP,
+                    updated_at = :updated_at,
                     max_retries = NULL,
                     retry_exp_backoff_millis = NULL,
                     last_lock_version = NULL,
@@ -1295,6 +1296,7 @@ impl SqlitePool {
         let updated = stmt
             .execute(named_params! {
                 ":execution_id": execution_id,
+                ":updated_at": updated_at,
                 ":pending_expires_finished": scheduled_at,
                 ":state": STATE_PENDING_AT,
             })
@@ -1322,6 +1324,7 @@ impl SqlitePool {
     fn update_state_pending_after_event_appended(
         tx: &Transaction,
         execution_id: &ExecutionId,
+        updated_at: DateTime<Utc>,
         appending_version: &Version,
         update: PendingAfterEventUpdate,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
@@ -1333,7 +1336,7 @@ impl SqlitePool {
                     corresponding_version = :appending_version,
                     pending_expires_finished = :pending_expires_finished,
                     state = :state,
-                    updated_at = CURRENT_TIMESTAMP,
+                    updated_at = :updated_at,
                     intermittent_event_count = intermittent_event_count + :intermittent_delta,
 
                     max_retries = NULL,
@@ -1349,6 +1352,7 @@ impl SqlitePool {
         let mut stmt = tx.prepare_cached(sql)?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
+            ":updated_at": updated_at,
             ":appending_version": appending_version.0,
             ":pending_expires_finished": scheduled_at,
             ":state": STATE_PENDING_AT,
@@ -1374,6 +1378,7 @@ impl SqlitePool {
     fn update_state_component_upgrade_finished_success(
         tx: &Transaction,
         execution_id: &ExecutionId,
+        updated_at: DateTime<Utc>,
         component_digest: &ComponentDigest,
         deployment_id: DeploymentId,
         appending_version: &Version,
@@ -1384,7 +1389,7 @@ impl SqlitePool {
                 UPDATE t_state
                 SET
                     corresponding_version = :appending_version,
-                    updated_at = CURRENT_TIMESTAMP,
+                    updated_at = :updated_at,
                     component_id_input_digest = :component_digest,
                     deployment_id = :deployment_id,
                     incompatible_digest = NULL
@@ -1393,6 +1398,7 @@ impl SqlitePool {
         )?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
+            ":updated_at": updated_at,
             ":appending_version": appending_version.0,
             ":component_digest": component_digest,
             ":deployment_id": deployment_id.to_string(),
@@ -1406,6 +1412,7 @@ impl SqlitePool {
     fn update_state_component_upgrade_finished_failed(
         tx: &Transaction,
         execution_id: &ExecutionId,
+        updated_at: DateTime<Utc>,
         target_digest: &ComponentDigest,
         appending_version: &Version,
     ) -> Result<AppendResponse, DbErrorWrite> {
@@ -1415,13 +1422,14 @@ impl SqlitePool {
                 UPDATE t_state
                 SET
                     corresponding_version = :appending_version,
-                    updated_at = CURRENT_TIMESTAMP,
+                    updated_at = :updated_at,
                     incompatible_digest = :target_digest
                 WHERE execution_id = :execution_id;
             ",
         )?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
+            ":updated_at": updated_at,
             ":appending_version": appending_version.0,
             ":target_digest": target_digest,
         })?;
@@ -1436,6 +1444,7 @@ impl SqlitePool {
     fn update_state_locked_get_intermittent_event_count(
         tx: &Transaction,
         execution_id: &ExecutionId,
+        updated_at: DateTime<Utc>,
         deployment_id: Option<DeploymentId>,
         component_digest: Option<&ComponentDigest>,
         executor_id: ExecutorId,
@@ -1462,7 +1471,7 @@ impl SqlitePool {
                     corresponding_version = :appending_version,
                     pending_expires_finished = :pending_expires_finished,
                     state = :state,
-                    updated_at = CURRENT_TIMESTAMP,
+                    updated_at = :updated_at,
                     deployment_id = COALESCE(:deployment_id, deployment_id),
                     component_id_input_digest = COALESCE(:component_id_input_digest, component_id_input_digest),
 
@@ -1482,6 +1491,7 @@ impl SqlitePool {
         )?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
+            ":updated_at": updated_at,
             ":appending_version": appending_version.0,
             ":pending_expires_finished": lock_expires_at,
             ":state": STATE_LOCKED,
@@ -1519,6 +1529,7 @@ impl SqlitePool {
     fn update_state_blocked(
         tx: &Transaction,
         execution_id: &ExecutionId,
+        updated_at: DateTime<Utc>,
         appending_version: &Version,
         // BlockedByJoinSet fields
         join_set_id: &JoinSetId,
@@ -1537,7 +1548,7 @@ impl SqlitePool {
                     corresponding_version = :appending_version,
                     pending_expires_finished = :pending_expires_finished,
                     state = :state,
-                    updated_at = CURRENT_TIMESTAMP,
+                    updated_at = :updated_at,
 
                     max_retries = NULL,
                     retry_exp_backoff_millis = NULL,
@@ -1552,6 +1563,7 @@ impl SqlitePool {
         )?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
+            ":updated_at": updated_at,
             ":appending_version": appending_version.0,
             ":pending_expires_finished": lock_expires_at,
             ":state": STATE_BLOCKED_BY_JOIN_SET,
@@ -1582,7 +1594,7 @@ impl SqlitePool {
                     corresponding_version = :appending_version,
                     pending_expires_finished = :pending_expires_finished,
                     state = :state,
-                    updated_at = CURRENT_TIMESTAMP,
+                    updated_at = :pending_expires_finished,
 
                     max_retries = NULL,
                     retry_exp_backoff_millis = NULL,
@@ -1616,6 +1628,7 @@ impl SqlitePool {
     fn update_state_paused(
         tx: &Transaction,
         execution_id: &ExecutionId,
+        updated_at: DateTime<Utc>,
         appending_version: &Version,
         is_paused: bool,
     ) -> Result<AppendResponse, DbErrorWrite> {
@@ -1635,13 +1648,14 @@ impl SqlitePool {
                 SET
                     corresponding_version = :appending_version,
                     lifecycle = :lifecycle,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = :updated_at
                 WHERE execution_id = :execution_id
             ",
         )?;
 
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
+            ":updated_at": updated_at,
             ":appending_version": appending_version.0,
             ":lifecycle": lifecycle,
         })?;
@@ -1655,6 +1669,7 @@ impl SqlitePool {
     fn update_state_cancelling(
         tx: &Transaction,
         execution_id: &ExecutionId,
+        updated_at: DateTime<Utc>,
         appending_version: &Version,
     ) -> Result<AppendResponse, DbErrorWrite> {
         debug!("Setting t_state lifecycle to cancelling");
@@ -1665,13 +1680,14 @@ impl SqlitePool {
                 SET
                     corresponding_version = :appending_version,
                     lifecycle = :lifecycle,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = :updated_at
                 WHERE execution_id = :execution_id
             ",
         )?;
 
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
+            ":updated_at": updated_at,
             ":appending_version": appending_version.0,
             ":lifecycle": LIFECYCLE_CANCELLING,
         })?;
@@ -1686,6 +1702,7 @@ impl SqlitePool {
     fn bump_state_next_version(
         tx: &Transaction,
         execution_id: &ExecutionId,
+        updated_at: DateTime<Utc>,
         appending_version: &Version,
         delay_req: Option<DelayReq>,
     ) -> Result<AppendResponse /* next version */, DbErrorWrite> {
@@ -1696,12 +1713,13 @@ impl SqlitePool {
                 UPDATE t_state
                 SET
                     corresponding_version = :appending_version,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = :updated_at
                 WHERE execution_id = :execution_id
             ",
         )?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
+            ":updated_at": updated_at,
             ":appending_version": appending_version.0,
         })?;
         if updated != 1 {
@@ -2240,6 +2258,7 @@ impl SqlitePool {
         let intermittent_event_count = Self::update_state_locked_get_intermittent_event_count(
             tx,
             execution_id,
+            created_at,
             update_component_digest_and_deployment_id.then_some(deployment_id),
             update_component_digest_and_deployment_id.then_some(&component_id.component_digest),
             executor_id,
@@ -2486,6 +2505,7 @@ impl SqlitePool {
                 let (next_version, notifier) = Self::update_state_pending_after_event_appended(
                     tx,
                     execution_id,
+                    req.created_at,
                     &appending_version,
                     PendingAfterEventUpdate {
                         scheduled_at: *backoff_expires_at,
@@ -2513,6 +2533,7 @@ impl SqlitePool {
                             Self::update_state_pending_after_event_appended(
                                 tx,
                                 execution_id,
+                                req.created_at,
                                 &appending_version,
                                 PendingAfterEventUpdate {
                                     scheduled_at: unlocked.unlocked_at,
@@ -2533,6 +2554,7 @@ impl SqlitePool {
                             Self::update_state_blocked(
                                 tx,
                                 execution_id,
+                                req.created_at,
                                 &appending_version,
                                 &blocked.join_set_id,
                                 unlocked.unlocked_at, // Update `lock_expires_at`
@@ -2567,6 +2589,7 @@ impl SqlitePool {
                         Self::update_state_component_upgrade_finished_success(
                             tx,
                             execution_id,
+                            req.created_at,
                             component_digest,
                             *deployment_id,
                             &appending_version,
@@ -2576,6 +2599,7 @@ impl SqlitePool {
                         Self::update_state_component_upgrade_finished_failed(
                             tx,
                             execution_id,
+                            req.created_at,
                             component_digest,
                             &appending_version,
                         )?
@@ -2620,8 +2644,13 @@ impl SqlitePool {
                     }
                     _ => {}
                 }
-                let next_version =
-                    Self::update_state_paused(tx, execution_id, &appending_version, true)?;
+                let next_version = Self::update_state_paused(
+                    tx,
+                    execution_id,
+                    req.created_at,
+                    &appending_version,
+                    true,
+                )?;
                 return Ok((next_version, AppendNotifier::default()));
             }
 
@@ -2639,8 +2668,13 @@ impl SqlitePool {
                     }
                     .into());
                 }
-                let next_version =
-                    Self::update_state_paused(tx, execution_id, &appending_version, false)?;
+                let next_version = Self::update_state_paused(
+                    tx,
+                    execution_id,
+                    req.created_at,
+                    &appending_version,
+                    false,
+                )?;
                 return Ok((next_version, AppendNotifier::default()));
             }
 
@@ -2666,8 +2700,12 @@ impl SqlitePool {
                     | PendingState::Paused(..)
                     | PendingState::Locked(..) => {}
                 }
-                let next_version =
-                    Self::update_state_cancelling(tx, execution_id, &appending_version)?;
+                let next_version = Self::update_state_cancelling(
+                    tx,
+                    execution_id,
+                    req.created_at,
+                    &appending_version,
+                )?;
                 return Ok((next_version, AppendNotifier::default()));
             }
 
@@ -2706,7 +2744,13 @@ impl SqlitePool {
                     | HistoryEvent::JoinNextTry { .. },
             } => {
                 return Ok((
-                    Self::bump_state_next_version(tx, execution_id, &appending_version, None)?,
+                    Self::bump_state_next_version(
+                        tx,
+                        execution_id,
+                        req.created_at,
+                        &appending_version,
+                        None,
+                    )?,
                     AppendNotifier::default(),
                 ));
             }
@@ -2728,6 +2772,7 @@ impl SqlitePool {
                     Self::bump_state_next_version(
                         tx,
                         execution_id,
+                        req.created_at,
                         &appending_version,
                         Some(DelayReq {
                             join_set_id: join_set_id.clone(),
@@ -2768,6 +2813,7 @@ impl SqlitePool {
                     let (next_version, notifier) = Self::update_state_pending_after_event_appended(
                         tx,
                         execution_id,
+                        req.created_at,
                         &appending_version,
                         PendingAfterEventUpdate {
                             scheduled_at,
@@ -2783,6 +2829,7 @@ impl SqlitePool {
                     Self::update_state_blocked(
                         tx,
                         execution_id,
+                        req.created_at,
                         &appending_version,
                         join_set_id,
                         *run_expires_at,
@@ -2865,6 +2912,7 @@ impl SqlitePool {
             Self::update_state_pending_after_response_appended(
                 tx,
                 execution_id,
+                event.created_at,
                 scheduled_at,
                 combined_state.execution_with_state.component_digest,
             )?
@@ -3474,6 +3522,7 @@ impl SqlitePool {
         old: &ComponentDigest,
         new: &ComponentDigest,
         reason: ComponentUpgradeReason,
+        created_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         if combined_state.execution_with_state.component_digest != *old {
@@ -3484,7 +3533,7 @@ impl SqlitePool {
             tx,
             execution_id,
             AppendRequest {
-                created_at: Utc::now(),
+                created_at,
                 event: ExecutionRequest::ComponentUpgradeFinished {
                     component_digest: new.clone(),
                     deployment_id: combined_state.execution_with_state.deployment_id,
@@ -5366,6 +5415,7 @@ impl DbExternalApi for SqlitePool {
         old: &ComponentDigest,
         new: &ComponentDigest,
         reason: ComponentUpgradeReason,
+        created_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
         let execution_id = execution_id.clone();
         let old = old.clone();
@@ -5379,6 +5429,7 @@ impl DbExternalApi for SqlitePool {
                     &old,
                     &new,
                     reason.clone(),
+                    created_at,
                 )
             },
             TxType::Other, // single write
@@ -6164,7 +6215,7 @@ impl DbAdmin for SqlitePool {
                     if force_non_terminal { "TRUE" } else { "state = 'finished'" }
                 );
                 let after_created = if cursor.is_some() { "(created_at, execution_id) > (?3, ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
-                let after_updated = if cursor.is_some() { "(updated_at, execution_id) > (datetime(?3), ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
+                let after_updated = if cursor.is_some() { "(updated_at, execution_id) > (?3, ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
                 let mut ids = match retention {
                     RetentionPolicy::Count(count) => {
                         let before_retained = if count == 0 {
