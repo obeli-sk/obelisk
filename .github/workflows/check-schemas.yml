@@ -20,6 +20,9 @@ defaults:
 jobs:
   check-build-verify-schema:
     runs-on: ubuntu-24.04
+    env:
+      # kache 0.12 can report build-script hits without restoring Cargo's expected executable.
+      KACHE_CACHE_EXECUTABLES: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
@@ -29,6 +32,18 @@ jobs:
 
       - name: Populate the nix store
         run: nix develop --command echo
+
+      # Reuse check-test's caches read-only; the Actions cache quota is already full.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/wasm-cache
+          key: wasm-cache-junit-default.xml-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: wasm-cache-junit-default.xml-${{ runner.os }}-
+
+      - uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # main, post-v1: adds pr-comment input
+        with:
+          pr-comment: false
+          save-cache: false
 
       - name: Check generated API types
         run: nix develop --command scripts/update-api-types.sh --check
