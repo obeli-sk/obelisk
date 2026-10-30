@@ -73,13 +73,18 @@
 # batch_size = 1000
 # batch_delay.milliseconds = 25
 # upload_grace_period.hours = 1 # Keep uploaded deployment files this long before a deployment references them.
+## A record is deleted once it is older than `max_age` or outside the newest `max_count`.
+## `max_count = 0` disables the count limit.
 # [maintenance.gc.retention.executions]
+## Unfinished executions and active cron trackers are excluded.
 # enabled = true
 # max_age.hours = 744
+# max_count = 10000
 # [maintenance.gc.retention.deployments]
 ## Active, enqueued and last-good checkpoint deployments are excluded.
 # enabled = true
 # max_age.hours = 744
+# max_count = 100
 # [maintenance.gc.retention.system_events]
 # enabled = true
 # max_age.hours = 744

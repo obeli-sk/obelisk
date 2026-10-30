@@ -984,13 +984,15 @@
                 "enabled": true,
                 "max_age": {
                   "hours": 744
-                }
+                },
+                "max_count": 10000
               },
               "deployments": {
                 "enabled": true,
                 "max_age": {
                   "hours": 744
-                }
+                },
+                "max_count": 100
               },
               "system_events": {
                 "enabled": true,
@@ -1043,13 +1045,15 @@
               "enabled": true,
               "max_age": {
                 "hours": 744
-              }
+              },
+              "max_count": 10000
             },
             "deployments": {
               "enabled": true,
               "max_age": {
                 "hours": 744
-              }
+              },
+              "max_count": 100
             },
             "system_events": {
               "enabled": true,
@@ -1066,21 +1070,23 @@
       "type": "object",
       "properties": {
         "executions": {
-          "$ref": "#/$defs/RetentionPolicyTomlConfig",
+          "$ref": "#/$defs/ExecutionRetentionTomlConfig",
           "default": {
             "enabled": true,
             "max_age": {
               "hours": 744
-            }
+            },
+            "max_count": 10000
           }
         },
         "deployments": {
-          "$ref": "#/$defs/RetentionPolicyTomlConfig",
+          "$ref": "#/$defs/DeploymentRetentionTomlConfig",
           "default": {
             "enabled": true,
             "max_age": {
               "hours": 744
-            }
+            },
+            "max_count": 100
           }
         },
         "system_events": {
@@ -1091,6 +1097,52 @@
               "hours": 744
             }
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExecutionRetentionTomlConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_age": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "hours": 744
+          }
+        },
+        "max_count": {
+          "description": "Keep at most this many newest finished top-level executions; 0 disables the limit.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 10000
+        }
+      },
+      "additionalProperties": false
+    },
+    "DeploymentRetentionTomlConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_age": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "hours": 744
+          }
+        },
+        "max_count": {
+          "description": "Keep at most this many newest inactive deployments; 0 disables the limit.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 100
         }
       },
       "additionalProperties": false

@@ -17,9 +17,27 @@ pub(super) struct ValidatedConfig {
     batch_size: u32,
     batch_delay: Duration,
     upload_grace_period: chrono::Duration,
-    executions: Option<Duration>,
-    deployments: Option<Duration>,
+    executions: Option<Retention>,
+    deployments: Option<Retention>,
     system_events: Option<Duration>,
+}
+
+/// A record is deleted once it exceeds either limit.
+#[derive(Clone, Copy)]
+struct Retention {
+    max_age: Duration,
+    max_count: Option<u32>,
+}
+
+impl Retention {
+    fn policies(self) -> impl Iterator<Item = RetentionPolicy> {
+        [
+            Some(RetentionPolicy::CreatedAtOrAfter(cutoff(self.max_age))),
+            self.max_count.map(RetentionPolicy::Count),
+        ]
+        .into_iter()
+        .flatten()
+    }
 }
 
 impl ValidatedConfig {
@@ -48,11 +66,34 @@ impl ValidatedConfig {
             batch_size: config.batch_size,
             batch_delay: duration("maintenance.gc.batch_delay", config.batch_delay)?,
             upload_grace_period,
-            executions: retention_duration("executions", config.retention.executions)?,
-            deployments: retention_duration("deployments", config.retention.deployments)?,
+            executions: counted_retention(
+                "executions",
+                config.retention.executions.enabled,
+                config.retention.executions.max_age,
+                config.retention.executions.max_count,
+            )?,
+            deployments: counted_retention(
+                "deployments",
+                config.retention.deployments.enabled,
+                config.retention.deployments.max_age,
+                config.retention.deployments.max_count,
+            )?,
             system_events: retention_duration("system_events", config.retention.system_events)?,
         })
     }
+}
+
+fn counted_retention(
+    name: &str,
+    enabled: bool,
+    max_age: DurationConfig,
+    max_count: u32,
+) -> anyhow::Result<Option<Retention>> {
+    let max_age = retention_duration(name, RetentionPolicyTomlConfig { enabled, max_age })?;
+    Ok(max_age.map(|max_age| Retention {
+        max_age,
+        max_count: (max_count > 0).then_some(max_count),
+    }))
 }
 
 fn retention_duration(
@@ -225,12 +266,19 @@ pub(super) fn spawn(
         for (record_type, retention) in [
             ("executions", config.executions),
             ("deployments", config.deployments),
-            ("system_events", config.system_events),
+            (
+                "system_events",
+                config.system_events.map(|max_age| Retention {
+                    max_age,
+                    max_count: None,
+                }),
+            ),
         ] {
-            if let Some(max_age) = retention {
+            if let Some(retention) = retention {
                 debug!(
                     record_type,
-                    max_age_seconds = max_age.as_secs(),
+                    max_age_seconds = retention.max_age.as_secs(),
+                    max_count = retention.max_count,
                     "Periodic retention enabled"
                 );
             } else {
@@ -341,8 +389,7 @@ where
     Fut: std::future::Future<Output = anyhow::Result<Option<CasGcResult>>> + Send,
 {
     let mut stats = SweepStats::default();
-    if let Some(max_age) = config.executions {
-        let cutoff = cutoff(max_age);
+    for policy in config.executions.into_iter().flat_map(Retention::policies) {
         let mut cursor = None;
         loop {
             let started = std::time::Instant::now();
@@ -350,13 +397,7 @@ where
                 db_pool
                     .admin_conn()
                     .await?
-                    .retain_executions(
-                        RetentionPolicy::CreatedAtOrAfter(cutoff),
-                        config.batch_size,
-                        false,
-                        false,
-                        cursor,
-                    )
+                    .retain_executions(policy, config.batch_size, false, false, cursor)
                     .await
             }
             .await
@@ -375,72 +416,68 @@ where
             }
         }
     }
-    if let Some(max_age) = config.deployments {
-        let cutoff = cutoff(max_age);
-        let mut cursor = None;
+    if let Some(retention) = config.deployments {
         let mut blocked_non_terminal = 0;
         let mut blocked_by_execution_reference = 0;
-        loop {
-            let started = std::time::Instant::now();
-            let result = async {
-                db_pool
-                    .admin_conn()
-                    .await?
-                    .retain_deployments(
-                        RetentionPolicy::CreatedAtOrAfter(cutoff),
-                        config.batch_size,
-                        true,
-                        false,
-                        false,
-                        cursor,
-                    )
-                    .await
-            }
-            .await
-            .map_err(|source| Box::new(SweepFailure::new("deployment_retention", stats, source)))?;
-            stats.deployment_retention.active += started.elapsed();
-            stats.deployment_retention.affected += result.deleted_deployments;
-            stats.deployment_execution_trees += result.deleted_execution_trees;
-            let work = result
-                .deleted_deployments
-                .saturating_add(result.deleted_execution_trees);
-            blocked_non_terminal += result.blocked_non_terminal;
-            blocked_by_execution_reference += result.blocked_by_execution_reference;
-            delay_after_work(
-                work + result.blocked_non_terminal + result.blocked_by_execution_reference,
-                config.batch_delay,
-            )
-            .await;
-            let advanced = result.next_deployment_cursor != cursor;
-            cursor = result.next_deployment_cursor;
-            if !result.has_more || (work == 0 && !advanced) {
-                let blocked = blocked_non_terminal > 0
-                    || blocked_by_execution_reference > 0
-                    || result.has_more;
-                if blocked && !*deployment_retention_warned {
-                    warn!(
-                        blocked_non_terminal,
-                        blocked_by_execution_reference,
-                        "Periodic deployment retention kept expired deployments that are still in use"
-                    );
-                    crate::server::system_event_writer::record(
-                        db_pool.as_ref(),
-                        SystemEventCode::MaintenanceGcDeploymentsInUse,
-                        None,
-                        None,
-                        serde_json::json!({
-                            "category": "deployment_retention",
-                            "blocked_non_terminal": blocked_non_terminal,
-                            "blocked_by_execution_reference": blocked_by_execution_reference,
-                            "has_more": result.has_more,
-                        }),
-                    )
-                    .await;
+        let mut stuck = false;
+        for policy in retention.policies() {
+            let mut cursor = None;
+            loop {
+                let started = std::time::Instant::now();
+                let result = async {
+                    db_pool
+                        .admin_conn()
+                        .await?
+                        .retain_deployments(policy, config.batch_size, true, false, false, cursor)
+                        .await
                 }
-                *deployment_retention_warned = blocked;
-                break;
+                .await
+                .map_err(|source| {
+                    Box::new(SweepFailure::new("deployment_retention", stats, source))
+                })?;
+                stats.deployment_retention.active += started.elapsed();
+                stats.deployment_retention.affected += result.deleted_deployments;
+                stats.deployment_execution_trees += result.deleted_execution_trees;
+                let work = result
+                    .deleted_deployments
+                    .saturating_add(result.deleted_execution_trees);
+                blocked_non_terminal += result.blocked_non_terminal;
+                blocked_by_execution_reference += result.blocked_by_execution_reference;
+                delay_after_work(
+                    work + result.blocked_non_terminal + result.blocked_by_execution_reference,
+                    config.batch_delay,
+                )
+                .await;
+                let advanced = result.next_deployment_cursor != cursor;
+                cursor = result.next_deployment_cursor;
+                if !result.has_more || (work == 0 && !advanced) {
+                    stuck |= result.has_more;
+                    break;
+                }
             }
         }
+        let blocked = blocked_non_terminal > 0 || blocked_by_execution_reference > 0 || stuck;
+        if blocked && !*deployment_retention_warned {
+            warn!(
+                blocked_non_terminal,
+                blocked_by_execution_reference,
+                "Periodic deployment retention kept expired deployments that are still in use"
+            );
+            crate::server::system_event_writer::record(
+                db_pool.as_ref(),
+                SystemEventCode::MaintenanceGcDeploymentsInUse,
+                None,
+                None,
+                serde_json::json!({
+                    "category": "deployment_retention",
+                    "blocked_non_terminal": blocked_non_terminal,
+                    "blocked_by_execution_reference": blocked_by_execution_reference,
+                    "has_more": stuck,
+                }),
+            )
+            .await;
+        }
+        *deployment_retention_warned = blocked;
     }
     if let Some(max_age) = config.system_events {
         let cutoff = cutoff(max_age);
@@ -542,7 +579,10 @@ mod tests {
             batch_delay: Duration::ZERO,
             upload_grace_period: chrono::Duration::hours(1),
             executions: None,
-            deployments: Some(Duration::from_secs(60)),
+            deployments: Some(Retention {
+                max_age: Duration::from_secs(60),
+                max_count: None,
+            }),
             system_events: Some(Duration::from_secs(60)),
         }
     }
@@ -761,7 +801,10 @@ mod tests {
         let first = create_execution(db_pool.as_ref(), deployment, true).await;
         let second = create_execution(db_pool.as_ref(), deployment, true).await;
         let config = ValidatedConfig {
-            executions: Some(Duration::from_nanos(1)),
+            executions: Some(Retention {
+                max_age: Duration::from_nanos(1),
+                max_count: None,
+            }),
             deployments: None,
             system_events: None,
             ..sweep_config()
@@ -820,6 +863,42 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        db_close.close().await;
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn execution_count_retention_keeps_newest_finished(
+        #[values(Database::Sqlite, Database::Postgres)] database: Database,
+    ) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let deployment = insert_deployment(db_pool.as_ref(), 0).await;
+        let unfinished = create_execution(db_pool.as_ref(), deployment, false).await;
+        let mut finished = Vec::new();
+        for _ in 0..3 {
+            finished.push(create_execution(db_pool.as_ref(), deployment, true).await);
+        }
+        let config = ValidatedConfig {
+            executions: Some(Retention {
+                max_age: Duration::from_secs(3600),
+                max_count: Some(1),
+            }),
+            deployments: None,
+            ..sweep_config()
+        };
+        let mut warned = false;
+        let stats = run_sweep(&db_pool, config, &mut warned, || async { Ok(None) })
+            .await
+            .unwrap_or_else(|failure| panic!("{}", failure.source));
+        assert_eq!(stats.execution_retention.affected, 2);
+        let conn = db_pool.connection().await.unwrap();
+        assert!(conn.get(&unfinished).await.is_ok());
+        let mut kept = 0;
+        for execution_id in &finished {
+            kept += usize::from(conn.get(execution_id).await.is_ok());
+        }
+        assert_eq!(kept, 1);
         db_close.close().await;
     }
 

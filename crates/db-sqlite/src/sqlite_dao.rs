@@ -328,6 +328,10 @@ enum LtxPriority {
 
 const SLOW_TRANSACTION_THRESHOLD: Duration = Duration::from_millis(500);
 
+/// Matches `t_state` rows of the active cron tracker; retention and deletion must keep them.
+// backcompat: the `NOT EXISTS` branch keeps unadopted 0.42 and older trackers, the only cron history until `register_cron` adopts them.
+const CRON_TRACKER_PREDICATE: &str = "t_state.component_type = 'cron' AND (EXISTS (SELECT 1 FROM t_cron c WHERE c.tracking_execution_id = t_state.execution_id) OR NOT EXISTS (SELECT 1 FROM t_cron c WHERE c.cron_digest = t_state.component_id_input_digest))";
+
 #[derive(derive_more::Debug)]
 enum ThreadCommand {
     LogicalTx(LogicalTx),
@@ -5679,9 +5683,8 @@ impl SqlitePool {
         tx: &Transaction<'_>,
         execution_id: &ExecutionId,
     ) -> Result<bool, RusqliteError> {
-        // backcompat: 0.43.0-rc.11 legacy trackers need protection until a deployment switch adopts them.
         Ok(tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM t_state s WHERE s.execution_id = ?1 AND s.component_type = 'cron' AND (EXISTS (SELECT 1 FROM t_cron c WHERE c.tracking_execution_id = s.execution_id) OR NOT EXISTS (SELECT 1 FROM t_cron c WHERE c.cron_digest = s.component_id_input_digest)))",
+            &format!("SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id = ?1 AND {CRON_TRACKER_PREDICATE})"),
             [execution_id.to_string()], |row| row.get(0),
         )?)
     }
@@ -6107,7 +6110,10 @@ impl DbAdmin for SqlitePool {
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
-                let eligible = if force_non_terminal { "TRUE" } else { "state = 'finished'" };
+                let eligible = format!(
+                    "{} AND NOT ({CRON_TRACKER_PREDICATE})",
+                    if force_non_terminal { "TRUE" } else { "state = 'finished'" }
+                );
                 let after_created = if cursor.is_some() { "(created_at, execution_id) > (?3, ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
                 let after_updated = if cursor.is_some() { "(updated_at, execution_id) > (datetime(?3), ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
                 let mut ids = match retention {
