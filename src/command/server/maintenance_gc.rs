@@ -421,11 +421,11 @@ where
                     warn!(
                         blocked_non_terminal,
                         blocked_by_execution_reference,
-                        "Periodic deployment retention blocked; continuing other garbage collection"
+                        "Periodic deployment retention kept expired deployments that are still in use"
                     );
                     crate::server::system_event_writer::record(
                         db_pool.as_ref(),
-                        SystemEventCode::MaintenanceGcBlocked,
+                        SystemEventCode::MaintenanceGcDeploymentsInUse,
                         None,
                         None,
                         serde_json::json!({
@@ -433,7 +433,6 @@ where
                             "blocked_non_terminal": blocked_non_terminal,
                             "blocked_by_execution_reference": blocked_by_execution_reference,
                             "has_more": result.has_more,
-                            "other_gc_continues": true,
                         }),
                     )
                     .await;
@@ -696,7 +695,11 @@ mod tests {
             .unwrap();
         assert!(log.pending_state.is_paused());
         let filter = SystemEventFilter {
-            code: Some(SystemEventCode::MaintenanceGcBlocked.as_str().to_owned()),
+            code: Some(
+                SystemEventCode::MaintenanceGcDeploymentsInUse
+                    .as_str()
+                    .to_owned(),
+            ),
             limit: 100,
             ..Default::default()
         };
@@ -708,10 +711,9 @@ mod tests {
             blocked_executions.len()
         );
         assert_eq!(warnings[0].details["has_more"], false);
-        assert_eq!(warnings[0].details["other_gc_continues"], true);
         assert_eq!(
             warnings[0].message(),
-            SystemEventCode::MaintenanceGcBlocked.message()
+            SystemEventCode::MaintenanceGcDeploymentsInUse.message()
         );
 
         for execution in blocked_executions {

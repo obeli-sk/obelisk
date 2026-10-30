@@ -1625,7 +1625,7 @@ pub enum SystemEventCode {
     AdminDeploymentRetainCompleted,
     MaintenanceGcCompleted,
     MaintenanceGcDeferredByDeployment,
-    MaintenanceGcBlocked,
+    MaintenanceGcDeploymentsInUse,
     MaintenanceGcFailed,
 }
 
@@ -1659,7 +1659,7 @@ impl SystemEventCode {
             Self::AdminDeploymentRetainCompleted => "admin.deployment.retain.completed",
             Self::MaintenanceGcCompleted => "maintenance.gc.completed",
             Self::MaintenanceGcDeferredByDeployment => "maintenance.gc.deferred_by_deployment",
-            Self::MaintenanceGcBlocked => "maintenance.gc.blocked",
+            Self::MaintenanceGcDeploymentsInUse => "maintenance.gc.deployments_in_use",
             Self::MaintenanceGcFailed => "maintenance.gc.failed",
         }
     }
@@ -1672,7 +1672,7 @@ impl SystemEventCode {
             | Self::DeploymentSwitchFailed
             | Self::OutboundHttpDenied
             | Self::WorkflowReplayLockExpired
-            | Self::MaintenanceGcBlocked
+            | Self::MaintenanceGcDeploymentsInUse
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
             Self::ComponentHttpPolicyApplied
             | SystemEventCode::ComponentSecretExposureAuthorized => SystemEventLevel::Debug,
@@ -1711,8 +1711,8 @@ impl SystemEventCode {
             Self::MaintenanceGcDeferredByDeployment => {
                 "Periodic garbage collection deferred steps while a deployment submit or switch was running"
             }
-            Self::MaintenanceGcBlocked => {
-                "Periodic deployment retention blocked; other garbage collection continues"
+            Self::MaintenanceGcDeploymentsInUse => {
+                "Periodic deployment retention kept expired deployments that are still in use"
             }
             Self::MaintenanceGcFailed => "Periodic garbage collection failed",
         }
@@ -1843,7 +1843,9 @@ impl SystemEvent {
             "maintenance.gc.deferred_by_deployment" => {
                 SystemEventCode::MaintenanceGcDeferredByDeployment.message()
             }
-            "maintenance.gc.blocked" => SystemEventCode::MaintenanceGcBlocked.message(),
+            "maintenance.gc.deployments_in_use" => {
+                SystemEventCode::MaintenanceGcDeploymentsInUse.message()
+            }
             "maintenance.gc.failed" => SystemEventCode::MaintenanceGcFailed.message(),
             _ => &self.code,
         }
@@ -4082,7 +4084,7 @@ mod tests {
             SystemEventCode::AdminDeploymentRetainCompleted,
             SystemEventCode::MaintenanceGcCompleted,
             SystemEventCode::MaintenanceGcDeferredByDeployment,
-            SystemEventCode::MaintenanceGcBlocked,
+            SystemEventCode::MaintenanceGcDeploymentsInUse,
             SystemEventCode::MaintenanceGcFailed,
         ] {
             assert!(code.as_str().chars().count() <= 64);
