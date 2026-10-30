@@ -1624,6 +1624,7 @@ pub enum SystemEventCode {
     AdminDeploymentRetainStarted,
     AdminDeploymentRetainCompleted,
     MaintenanceGcCompleted,
+    MaintenanceGcDeferredByDeployment,
     MaintenanceGcBlocked,
     MaintenanceGcFailed,
 }
@@ -1657,6 +1658,7 @@ impl SystemEventCode {
             Self::AdminDeploymentRetainStarted => "admin.deployment.retain.started",
             Self::AdminDeploymentRetainCompleted => "admin.deployment.retain.completed",
             Self::MaintenanceGcCompleted => "maintenance.gc.completed",
+            Self::MaintenanceGcDeferredByDeployment => "maintenance.gc.deferred_by_deployment",
             Self::MaintenanceGcBlocked => "maintenance.gc.blocked",
             Self::MaintenanceGcFailed => "maintenance.gc.failed",
         }
@@ -1706,6 +1708,9 @@ impl SystemEventCode {
             Self::AdminDeploymentRetainStarted => "Deployment retention started",
             Self::AdminDeploymentRetainCompleted => "Deployment retention completed",
             Self::MaintenanceGcCompleted => "Periodic garbage collection completed",
+            Self::MaintenanceGcDeferredByDeployment => {
+                "Periodic garbage collection deferred steps while a deployment submit or switch was running"
+            }
             Self::MaintenanceGcBlocked => {
                 "Periodic deployment retention blocked; other garbage collection continues"
             }
@@ -1835,6 +1840,9 @@ impl SystemEvent {
                 SystemEventCode::AdminDeploymentRetainCompleted.message()
             }
             "maintenance.gc.completed" => SystemEventCode::MaintenanceGcCompleted.message(),
+            "maintenance.gc.deferred_by_deployment" => {
+                SystemEventCode::MaintenanceGcDeferredByDeployment.message()
+            }
             "maintenance.gc.blocked" => SystemEventCode::MaintenanceGcBlocked.message(),
             "maintenance.gc.failed" => SystemEventCode::MaintenanceGcFailed.message(),
             _ => &self.code,
@@ -4073,6 +4081,7 @@ mod tests {
             SystemEventCode::AdminDeploymentRetainStarted,
             SystemEventCode::AdminDeploymentRetainCompleted,
             SystemEventCode::MaintenanceGcCompleted,
+            SystemEventCode::MaintenanceGcDeferredByDeployment,
             SystemEventCode::MaintenanceGcBlocked,
             SystemEventCode::MaintenanceGcFailed,
         ] {
