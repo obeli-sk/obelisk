@@ -65,6 +65,15 @@ impl From<ExecutionWithState> for ExecutionWithStateSer {
     }
 }
 
+/// Execution list item
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ExecutionListItemSer {
+    /// Opaque cursor of this item, valid for the `order` it was listed with
+    pub cursor: String,
+    #[serde(flatten)]
+    pub execution: ExecutionWithStateSer,
+}
+
 /// Response containing execution events
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ExecutionEventsResponse {

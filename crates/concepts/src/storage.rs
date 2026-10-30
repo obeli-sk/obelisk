@@ -3487,8 +3487,16 @@ pub struct ExecutionWithState {
 
 #[derive(Debug, Clone)]
 pub enum ExecutionListPagination {
-    CreatedBy(Pagination<Option<DateTime<Utc>>>),
+    CreatedBy(Pagination<Option<ExecutionListCreatedAtCursor>>),
     ExecutionId(Pagination<Option<ExecutionId>>),
+}
+
+/// Position in the `(created_at, execution_id)` ordering of the execution list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionListCreatedAtCursor {
+    pub created_at: DateTime<Utc>,
+    // backcompat: 0.43.0-rc.15 bare `created_at` cursors compare on `created_at` alone.
+    pub execution_id: Option<ExecutionId>,
 }
 impl Default for ExecutionListPagination {
     fn default() -> ExecutionListPagination {
@@ -3505,6 +3513,14 @@ impl ExecutionListPagination {
         match self {
             ExecutionListPagination::CreatedBy(pagination) => pagination.length(),
             ExecutionListPagination::ExecutionId(pagination) => pagination.length(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_desc(&self) -> bool {
+        match self {
+            ExecutionListPagination::CreatedBy(pagination) => pagination.is_desc(),
+            ExecutionListPagination::ExecutionId(pagination) => pagination.is_desc(),
         }
     }
 }

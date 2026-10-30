@@ -5,12 +5,12 @@ use concepts::storage::http_client_trace::{HttpClientTrace, RequestTrace};
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest,
-    DelayCancelOutcome, ExecutionListPagination, ExecutionRequest, ExecutionStateFilter,
-    ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol, FunctionNameFilter,
-    JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution,
-    Pagination, PendingState, PendingStateBlockedByJoinSet, PendingStateCancelling,
-    PendingStateLocked, PendingStatePaused, PendingStatePendingAt, ResponseCursor, TimeoutOutcome,
-    Unlocked, Version, VersionType, WasmBacktrace,
+    DelayCancelOutcome, ExecutionListCreatedAtCursor, ExecutionListPagination, ExecutionRequest,
+    ExecutionStateFilter, ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol,
+    FunctionNameFilter, JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedBy,
+    LockedExecution, Pagination, PendingState, PendingStateBlockedByJoinSet,
+    PendingStateCancelling, PendingStateLocked, PendingStatePaused, PendingStatePendingAt,
+    ResponseCursor, TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
 };
 use concepts::storage::{
     DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus, EnqueueOutcome,
@@ -6481,4 +6481,119 @@ async fn app_checkpoint_is_atomic_and_preserves_unrelated_enqueue(database: Data
     );
     drop(conn);
     close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn list_executions_pages_through_ties_and_derived_ids(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let top_level: Vec<_> = (0..3).map(|_| ExecutionId::generate()).collect();
+    for execution_id in &top_level {
+        create_at(
+            db_connection.as_ref(),
+            &sim_clock,
+            execution_id,
+            sim_clock.now(),
+        )
+        .await;
+    }
+    sim_clock.move_time_forward(Duration::from_secs(1));
+    // Created last, but sorts next to its parent by ID.
+    let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+    let child_id = ExecutionId::Derived(top_level[0].next_level(&join_set_id));
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &child_id,
+        sim_clock.now(),
+    )
+    .await;
+
+    let filter = ListExecutionsFilter {
+        show_derived: true,
+        ..Default::default()
+    };
+    let page = async |pagination: ExecutionListPagination| {
+        api_conn
+            .list_executions(filter.clone(), pagination)
+            .await
+            .unwrap()
+    };
+    let created_at_cursor = |execution: &concepts::storage::ExecutionWithState| {
+        Some(ExecutionListCreatedAtCursor {
+            created_at: execution.created_at,
+            execution_id: Some(execution.execution_id.clone()),
+        })
+    };
+
+    let mut expected_by_created_at = vec![child_id.clone()];
+    let mut tied = top_level.clone();
+    tied.sort_by_key(|id| std::cmp::Reverse(id.to_string()));
+    expected_by_created_at.extend(tied);
+    let mut expected_by_id: Vec<_> = top_level.iter().chain([&child_id]).cloned().collect();
+    expected_by_id.sort_by_key(|id| std::cmp::Reverse(id.to_string()));
+
+    fn pagination<T>(newer: bool, cursor: Option<T>) -> Pagination<Option<T>> {
+        if newer {
+            Pagination::NewerThan {
+                length: nz(1),
+                cursor,
+                including_cursor: false,
+            }
+        } else {
+            Pagination::OlderThan {
+                length: nz(1),
+                cursor,
+                including_cursor: false,
+            }
+        }
+    }
+
+    for newer in [false, true] {
+        let mut listed = Vec::new();
+        let mut cursor = None;
+        for _ in 0..5 {
+            let items = page(ExecutionListPagination::CreatedBy(pagination(
+                newer, cursor,
+            )))
+            .await;
+            let Some(item) = items.first() else { break };
+            assert_eq!(items.len(), 1);
+            cursor = created_at_cursor(item);
+            listed.push(item.execution_id.clone());
+        }
+        let mut expected = expected_by_created_at.clone();
+        if newer {
+            expected.reverse();
+        }
+        assert_eq!(listed, expected, "created_at order, newer={newer}");
+
+        let mut listed = Vec::new();
+        let mut cursor = None;
+        for _ in 0..5 {
+            let items = page(ExecutionListPagination::ExecutionId(pagination(
+                newer, cursor,
+            )))
+            .await;
+            let Some(item) = items.first() else { break };
+            assert_eq!(items.len(), 1);
+            cursor = Some(item.execution_id.clone());
+            listed.push(item.execution_id.clone());
+        }
+        let mut expected = expected_by_id.clone();
+        if newer {
+            expected.reverse();
+        }
+        assert_eq!(listed, expected, "execution_id order, newer={newer}");
+    }
+
+    drop(db_connection);
+    drop(api_conn);
+    db_close.close().await;
 }

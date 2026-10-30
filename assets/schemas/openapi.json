@@ -1208,9 +1208,18 @@
             }
           },
           {
+            "name": "order",
+            "in": "query",
+            "description": "Sort order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ExecutionListOrder"
+            }
+          },
+          {
             "name": "cursor",
             "in": "query",
-            "description": "Pagination cursor (`DateTime` or `ExecutionId`)",
+            "description": "Opaque `cursor` of a listed execution, obtained with the same `order`",
             "required": false,
             "schema": {
               "type": "string"
@@ -1254,7 +1263,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/ExecutionWithStateSer"
+                    "$ref": "#/components/schemas/ExecutionListItemSer"
                   }
                 }
               }
@@ -3896,6 +3905,33 @@
             "minimum": 0
           }
         }
+      },
+      "ExecutionListItemSer": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ExecutionWithStateSer"
+          },
+          {
+            "type": "object",
+            "required": [
+              "cursor"
+            ],
+            "properties": {
+              "cursor": {
+                "type": "string",
+                "description": "Opaque cursor of this item, valid for the `order` it was listed with"
+              }
+            }
+          }
+        ],
+        "description": "Execution list item"
+      },
+      "ExecutionListOrder": {
+        "type": "string",
+        "enum": [
+          "created_at",
+          "execution_id"
+        ]
       },
       "ExecutionResponsesResponse": {
         "type": "object",

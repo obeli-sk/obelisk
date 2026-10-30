@@ -653,7 +653,7 @@ CREATE INDEX idx_t_state_cancelling ON public.t_state USING btree (lifecycle, cr
 -- Name: idx_t_state_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_t_state_created_at ON public.t_state USING btree (created_at);
+CREATE INDEX idx_t_state_created_at ON public.t_state USING btree (created_at, execution_id);
 
 
 --

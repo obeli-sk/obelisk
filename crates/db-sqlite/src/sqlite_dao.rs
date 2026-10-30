@@ -20,20 +20,21 @@ use concepts::{
         DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentExecutionCounts,
         DeploymentFileRecord, DeploymentRecord, DeploymentRetentionCursor, DeploymentState,
         DeploymentStatus, EnqueueOutcome, ExecutionEvent, ExecutionGcResult,
-        ExecutionListPagination, ExecutionRequest, ExecutionRetentionCursor, ExecutionWithState,
-        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
-        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE,
-        LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse,
-        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
-        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
-        LogLevel, LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
-        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
-        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, SourceMapping, StorageStatus, SubscribeToResponsesError,
-        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
-        TimeoutOutcome, Unlocked, Version, VersionType, deployment_cursor_fallback_created_at,
+        ExecutionListCreatedAtCursor, ExecutionListPagination, ExecutionRequest,
+        ExecutionRetentionCursor, ExecutionWithState, ExecutionWithStateRequestsResponses,
+        ExpiredDelay, ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent,
+        HttpPolicyEventIds, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+        JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED,
+        Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse,
+        ListResponsesResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor,
+        LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
+        PendingState, PendingStateBlockedByJoinSet, PendingStateFinishedError,
+        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
+        RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd, ResponseWithCursor,
+        RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT,
+        SourceMapping, StorageStatus, SubscribeToResponsesError, SystemEvent, SystemEventFilter,
+        SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version,
+        VersionType, deployment_cursor_fallback_created_at,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -1800,57 +1801,75 @@ impl SqlitePool {
             limit_desc: bool,
         }
 
-        fn paginate<'a, T: Clone + rusqlite::ToSql + 'static>(
-            pagination: &'a Pagination<Option<T>>,
-            column: &str,
-            filter: &ListExecutionsFilter,
-        ) -> Result<StatementModifier<'a>, RusqliteError> {
-            let mut where_vec: Vec<String> = vec![
-                "NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND root.execution_id = substr(t_state.execution_id, 1, instr(t_state.execution_id || '.', '.') - 1))".to_string(),
-            ];
-            let mut params: Vec<(&'static str, ToSqlOutput<'a>)> = vec![];
-            let limit = pagination.length();
-            let limit_desc = pagination.is_desc();
-            match pagination {
-                Pagination::NewerThan {
-                    cursor: Some(cursor),
-                    ..
+        fn cursor_to_sql(cursor: &dyn rusqlite::ToSql) -> Result<ToSqlOutput<'_>, RusqliteError> {
+            cursor.to_sql().map_err(|err| {
+                error!("Possible program error - cannot convert cursor to sql - {err:?}");
+                RusqliteError::Generic {
+                    reason: "cannot convert cursor to sql".into(),
+                    context: SpanTrace::capture(),
+                    source: Some(Arc::new(err)),
+                    loc: Location::caller(),
                 }
-                | Pagination::OlderThan {
-                    cursor: Some(cursor),
-                    ..
-                } => {
-                    where_vec.push(format!("{column} {rel} :cursor", rel = pagination.rel()));
-                    let cursor = cursor.to_sql().map_err(|err| {
-                        error!("Possible program error - cannot convert cursor to sql - {err:?}");
-                        RusqliteError::Generic {
-                            reason: "cannot convert cursor to sql".into(),
-                            context: SpanTrace::capture(),
-                            source: Some(Arc::new(err)),
-                            loc: Location::caller(),
-                        }
-                    })?;
-                    params.push((":cursor", cursor));
-                }
-                _ => {}
-            }
-            if !filter.show_derived {
-                where_vec.push("is_top_level=true".to_string());
-            }
-            Ok(StatementModifier {
-                where_vec,
-                params,
-                limit: u32::from(limit),
-                limit_desc,
             })
         }
 
-        let mut statement_mod = match pagination {
+        let mut statement_mod = StatementModifier {
+            where_vec: vec![
+                "NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND root.execution_id = substr(t_state.execution_id, 1, instr(t_state.execution_id || '.', '.') - 1))".to_string(),
+            ],
+            params: vec![],
+            limit: u32::from(pagination.length()),
+            limit_desc: pagination.is_desc(),
+        };
+        if !filter.show_derived {
+            statement_mod
+                .where_vec
+                .push("is_top_level=true".to_string());
+        }
+        let order_columns: &[&str] = match pagination {
             ExecutionListPagination::CreatedBy(pagination) => {
-                paginate(pagination, "created_at", filter)?
+                let rel = pagination.rel();
+                match pagination.cursor() {
+                    Some(ExecutionListCreatedAtCursor {
+                        created_at,
+                        execution_id: Some(execution_id),
+                    }) => {
+                        statement_mod.where_vec.push(format!(
+                            "(created_at, execution_id) {rel} (:cursor, :cursor_execution_id)"
+                        ));
+                        statement_mod
+                            .params
+                            .push((":cursor", cursor_to_sql(created_at)?));
+                        statement_mod
+                            .params
+                            .push((":cursor_execution_id", cursor_to_sql(execution_id)?));
+                    }
+                    Some(ExecutionListCreatedAtCursor {
+                        created_at,
+                        execution_id: None,
+                    }) => {
+                        statement_mod
+                            .where_vec
+                            .push(format!("created_at {rel} :cursor"));
+                        statement_mod
+                            .params
+                            .push((":cursor", cursor_to_sql(created_at)?));
+                    }
+                    None => {}
+                }
+                &["created_at", "execution_id"]
             }
             ExecutionListPagination::ExecutionId(pagination) => {
-                paginate(pagination, "execution_id", filter)?
+                if let Some(cursor) = pagination.cursor() {
+                    statement_mod.where_vec.push(format!(
+                        "execution_id {rel} :cursor",
+                        rel = pagination.rel()
+                    ));
+                    statement_mod
+                        .params
+                        .push((":cursor", cursor_to_sql(cursor)?));
+                }
+                &["execution_id"]
             }
         };
         if let Some(function_name_filter) = &filter.function_name_filter {
@@ -1937,9 +1956,16 @@ impl SqlitePool {
         // Inner query: fetch rows with cursor-based ordering
         // Outer query: always return results in descending order
         let (inner_order, outer_order) = if statement_mod.limit_desc {
-            ("DESC", "")
+            ("DESC", None)
         } else {
-            ("", "DESC")
+            ("ASC", Some("DESC"))
+        };
+        let order_by = |direction: &str| {
+            order_columns
+                .iter()
+                .map(|column| format!("{column} {direction}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         };
 
         let inner_sql = format!(
@@ -1948,14 +1974,18 @@ impl SqlitePool {
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
             result_kind, lifecycle
-            FROM t_state {where_str} ORDER BY created_at {inner_order} LIMIT {limit}",
+            FROM t_state {where_str} ORDER BY {inner_order} LIMIT {limit}",
+            inner_order = order_by(inner_order),
             limit = statement_mod.limit,
         );
 
-        let sql = if outer_order.is_empty() {
-            inner_sql
+        let sql = if let Some(outer_order) = outer_order {
+            format!(
+                "SELECT * FROM ({inner_sql}) AS sub ORDER BY {}",
+                order_by(outer_order)
+            )
         } else {
-            format!("SELECT * FROM ({inner_sql}) AS sub ORDER BY created_at {outer_order}")
+            inner_sql
         };
         let vec: Vec<_> = read_tx
             .prepare(&sql)?
