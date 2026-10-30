@@ -57,7 +57,7 @@
                 },
                 {
                   "name": "--scope",
-                  "help": "Restrict access to this app slug; repeat for multiple apps"
+                  "help": "Restrict access to this app; repeat for multiple apps"
                 },
                 {
                   "name": "--expires-at",
@@ -103,7 +103,7 @@
           "options": [
             {
               "name": "--app",
-              "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in ./app.toml"
+              "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
             }
           ],
           "subcommands": [
@@ -1022,7 +1022,7 @@
                 {
                   "name": "--app-config",
                   "short": "a",
-                  "help": "App policy path; defaults to ./app.toml if present",
+                  "help": "App config path; defaults to ./app.toml if present",
                   "accepts": {
                     "path": true
                   }
@@ -1039,12 +1039,6 @@
                   "name": "--command-id",
                   "help": "Reuse this root execution ID when retrying the command"
                 }
-              ],
-              "positionals": [
-                {
-                  "name": "name",
-                  "help": "App name; falls back to --app, the policy file's `app_name`, then ./app.toml"
-                }
               ]
             },
             {
@@ -1053,7 +1047,17 @@
             },
             {
               "name": "status",
-              "about": "Inspect management, Machine and target API health"
+              "about": "Inspect management, Machine and target API health",
+              "options": [
+                {
+                  "name": "--app-config",
+                  "short": "a",
+                  "help": "App config path compared with the staged configuration; defaults to ./app.toml if present",
+                  "accepts": {
+                    "path": true
+                  }
+                }
+              ]
             },
             {
               "name": "stage",
@@ -1062,7 +1066,7 @@
                 {
                   "name": "--app-config",
                   "short": "a",
-                  "help": "App policy path; defaults to ./app.toml",
+                  "help": "App config path; defaults to ./app.toml",
                   "accepts": {
                     "path": true
                   }
@@ -1080,7 +1084,7 @@
                 {
                   "name": "--app-config",
                   "short": "a",
-                  "help": "App configuration path",
+                  "help": "App config path; defaults to ./app.toml",
                   "accepts": {
                     "path": true
                   }
@@ -1110,7 +1114,7 @@
                 {
                   "name": "--app-config",
                   "short": "a",
-                  "help": "App policy path compared with the staged configuration; defaults to ./app.toml if present",
+                  "help": "App config path compared with the staged configuration; defaults to ./app.toml if present",
                   "accepts": {
                     "path": true
                   }
@@ -1171,7 +1175,7 @@
                 {
                   "name": "--app-config",
                   "short": "a",
-                  "help": "App policy path compared with the staged configuration; defaults to ./app.toml if present",
+                  "help": "App config path compared with the staged configuration; defaults to ./app.toml if present",
                   "accepts": {
                     "path": true
                   }
@@ -1315,7 +1319,7 @@
             {
               "name": "--app-config",
               "short": "a",
-              "help": "App policy path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`)",
+              "help": "App config path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`)",
               "accepts": {
                 "path": true
               }
@@ -1390,7 +1394,7 @@
             {
               "name": "--app-config",
               "short": "a",
-              "help": "App policy path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`)",
+              "help": "App config path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`)",
               "accepts": {
                 "path": true
               }
@@ -1457,7 +1461,6 @@
         },
         {
           "name": "--api-url",
-          "short": "a",
           "help": "Address of the Obelisk server"
         },
         {
@@ -1870,7 +1873,6 @@
         },
         {
           "name": "--api-url",
-          "short": "a",
           "help": "Address of the Obelisk server"
         },
         {
@@ -1969,7 +1971,6 @@
         },
         {
           "name": "--api-url",
-          "short": "a",
           "help": "Address of the Obelisk server"
         },
         {
@@ -2202,7 +2203,6 @@
         },
         {
           "name": "--api-url",
-          "short": "a",
           "help": "Address of the Obelisk server"
         },
         {

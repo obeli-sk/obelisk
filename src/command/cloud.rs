@@ -12,7 +12,12 @@ use concepts::prefixed_ulid::ExecutionIdTopLevel;
 use reqwest::{Method, Url, header};
 use secrecy::ExposeSecret as _;
 use serde_json::{Value, json};
-use std::{fmt::Write as _, io::Read as _, path::Path, time::Duration};
+use std::{
+    fmt::Write as _,
+    io::Read as _,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 mod deploy;
 mod output;
@@ -288,11 +293,53 @@ fn config_name(name: &str) -> anyhow::Result<()> {
 async fn policy(path: &Path) -> anyhow::Result<AppConfigToml> {
     let text = tokio::fs::read_to_string(path)
         .await
-        .with_context(|| format!("Cannot read policy {}", path.display()))?;
+        .with_context(|| format!("Cannot read app config {}", path.display()))?;
     let config: AppConfigToml =
-        toml::from_str(&text).with_context(|| format!("Invalid app policy {}", path.display()))?;
+        toml::from_str(&text).with_context(|| format!("Invalid app config {}", path.display()))?;
     config.validate_cloud_integrations()?;
     Ok(config)
+}
+/// App config path of commands that read one, with whether `-a` was given.
+fn app_config_path(command: &CloudApp) -> anyhow::Result<Option<(PathBuf, bool)>> {
+    let (CloudApp::New { app_config, .. }
+    | CloudApp::Status { app_config }
+    | CloudApp::Stage { app_config, .. }
+    | CloudApp::Deploy { app_config, .. }
+    | CloudApp::Apply { app_config, .. }
+    | CloudApp::Fill { app_config, .. }) = command
+    else {
+        return Ok(None);
+    };
+    discover_app_config(app_config.clone())
+}
+fn discover_app_config(app_config: Option<PathBuf>) -> anyhow::Result<Option<(PathBuf, bool)>> {
+    let explicit = app_config.is_some();
+    Ok(crate::config::app::resolve_app_config(app_config)?.map(|path| (path, explicit)))
+}
+/// Never use another app's config: an explicit or required one is an error, a discovered optional one is ignored.
+fn config_for_app(
+    name: &str,
+    config: Option<(AppConfigToml, (PathBuf, bool))>,
+    required: bool,
+) -> anyhow::Result<Option<(AppConfigToml, PathBuf)>> {
+    let Some((config, (path, explicit))) = config else {
+        ensure!(
+            !required,
+            "No app config: ./app.toml not found; pass --app-config"
+        );
+        return Ok(None);
+    };
+    if let Some(other) = config.app_name.as_deref()
+        && other != name
+    {
+        ensure!(
+            !explicit && !required,
+            "{} is for app `{other}`, but the selected app is `{name}` (from --app or OBELISK_APP_NAME); pass `--app {other}` or fix `app_name`",
+            path.display()
+        );
+        return Ok(None);
+    }
+    Ok(Some((config, path)))
 }
 async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<Value> {
     let mut path = vec!["v1", "tokens"];
@@ -483,17 +530,13 @@ impl CloudArgs {
         }
         if let Cloud::App(CloudAppTarget { app, command }) = &mut self.command
             && app.is_none()
+            && matches!(
+                command,
+                CloudApp::Stage { .. } | CloudApp::Fill { .. } | CloudApp::Apply { .. }
+            )
+            && let Some((path, _)) = app_config_path(command)?
         {
-            let path = match command {
-                CloudApp::Stage { app_config, .. } => Some(app_config.clone()),
-                CloudApp::Fill { app_config, .. } | CloudApp::Apply { app_config, .. } => {
-                    crate::config::app::resolve_app_config(app_config.clone())?
-                }
-                _ => None,
-            };
-            if let Some(path) = path {
-                *app = policy(&path).await?.app_name;
-            }
+            *app = policy(&path).await?.app_name;
         }
         let json = self.json;
         let verbose = self.verbose;
@@ -526,27 +569,28 @@ impl CloudArgs {
                 app,
                 command:
                     CloudApp::New {
-                        name,
                         app_config,
                         fill,
                         fill_non_interactive,
                         command_id,
                     },
             }) => {
-                let config = match crate::config::app::resolve_app_config(app_config)? {
-                    Some(path) => Some(policy(&path).await?),
+                let config_path = discover_app_config(app_config)?;
+                let config = match &config_path {
+                    Some((path, _)) => Some(policy(path).await?),
                     None => None,
                 };
+                let name = app_name(
+                    app.as_deref()
+                        .or_else(|| config.as_ref().and_then(|c| c.app_name.as_deref())),
+                )
+                .await?;
+                let config = config_for_app(&name, config.zip(config_path), false)?
+                    .map(|(config, _)| config);
                 ensure!(
                     !(fill || fill_non_interactive) || config.is_some(),
                     "`--fill` requires an app config"
                 );
-                let name = app_name(
-                    name.as_deref()
-                        .or(app.as_deref())
-                        .or_else(|| config.as_ref().and_then(|c| c.app_name.as_deref())),
-                )
-                .await?;
                 let mut body = json!({"app_name":name});
                 if let Some(config) = config {
                     body["policy"] = serde_json::to_value(config.policy())?;
@@ -569,19 +613,13 @@ impl CloudArgs {
                     .await
             }
             Cloud::App(CloudAppTarget { app, command }) => {
-                let (config_path, explicit) = match &command {
-                    CloudApp::Stage { app_config, .. } => (Some(app_config.clone()), true),
-                    CloudApp::Fill { app_config, .. } | CloudApp::Apply { app_config, .. } => (
-                        crate::config::app::resolve_app_config(app_config.clone())?,
-                        app_config.is_some(),
-                    ),
-                    CloudApp::Status => (crate::config::app::resolve_app_config(None)?, false),
-                    _ => (None, false),
-                };
+                let config_path = app_config_path(&command)?;
                 let config = match &config_path {
-                    // Status only reports a readable ./app.toml.
-                    Some(path) if matches!(command, CloudApp::Status) => policy(path).await.ok(),
-                    Some(path) => Some(policy(path).await?),
+                    // Status only reports a readable discovered ./app.toml.
+                    Some((path, false)) if matches!(command, CloudApp::Status { .. }) => {
+                        policy(path).await.ok()
+                    }
+                    Some((path, _)) => Some(policy(path).await?),
                     None => None,
                 };
                 let name = &app_name(
@@ -589,17 +627,18 @@ impl CloudArgs {
                         .or_else(|| config.as_ref().and_then(|c| c.app_name.as_deref())),
                 )
                 .await?;
-                // A discovered ./app.toml naming another app is not this app's configuration.
-                let local = config.zip(config_path).filter(|(config, _)| {
-                    explicit || config.app_name.as_deref().is_none_or(|n| n == name)
-                });
+                let local = config_for_app(
+                    name,
+                    config.zip(config_path),
+                    matches!(command, CloudApp::Stage { .. }),
+                )?;
                 match command {
                     CloudApp::Deployment(_)
                     | CloudApp::Execution(_)
                     | CloudApp::Component(_)
                     | CloudApp::Admin(_) => unreachable!("API commands are dispatched in run"),
                     CloudApp::Get => client.app(name, Method::GET, &[], None, Kind::Read).await,
-                    CloudApp::Status => {
+                    CloudApp::Status { .. } => {
                         let mut value = client
                             .app(name, Method::GET, &["status"], None, Kind::Read)
                             .await?;
@@ -615,7 +654,7 @@ impl CloudArgs {
                         Ok(value)
                     }
                     CloudApp::Stage { command_id, .. } => {
-                        let (config, _) = local.unwrap();
+                        let (config, _) = local.expect("stage requires an app config");
                         client
                             .app(
                                 name,
@@ -1698,17 +1737,14 @@ mod tests {
         let path = directory.path().join("app.toml");
         tokio::fs::write(
             &path,
-            "app_name='from-file'\n[cloud]\nmemory_mb=1024\n[public_env]\nREGION={optional=true}\n[secrets]\nKEY={optional=true}\n[[outbound_http.allowed_host]]\npattern='${REGION}'\n",
+            "app_name='demo'\n[cloud]\nmemory_mb=1024\n[public_env]\nREGION={optional=true}\n[secrets]\nKEY={optional=true}\n[[outbound_http.allowed_host]]\npattern='${REGION}'\n",
         )
         .await
         .unwrap();
-        args(
-            &origin,
-            &["app", "new", "explicit", "-a", path.to_str().unwrap()],
-        )
-        .execute()
-        .await
-        .unwrap();
+        args(&origin, &["app", "new", "-a", path.to_str().unwrap()])
+            .execute()
+            .await
+            .unwrap();
         args(&origin, &["app", "stage", "-a", path.to_str().unwrap()])
             .execute()
             .await
@@ -1724,7 +1760,7 @@ mod tests {
             .unwrap();
         let received = &state.lock().unwrap().received;
         assert_eq!(received[0].0, "POST /prefix/v1/apps");
-        assert_eq!(received[0].1["app_name"], "explicit");
+        assert_eq!(received[0].1["app_name"], "demo");
         assert_eq!(received[0].1["policy"]["format"], "obelisk-app-config-v1");
         assert_eq!(received[0].1["cloud"]["memory_mb"], 1024);
         assert_eq!(received[1].0, "PUT /prefix/v1/apps/demo/config");
@@ -1755,6 +1791,28 @@ mod tests {
             received.last().unwrap().0,
             "PUT /prefix/v1/apps/demo/env/OBELISK_API_URL"
         );
+        task.abort();
+    }
+    #[tokio::test]
+    async fn cloud_commands_reject_explicit_config_of_another_app() {
+        let (origin, state, task) = server().await;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("app.toml");
+        tokio::fs::write(&path, "app_name='other'\n").await.unwrap();
+        let path = path.to_str().unwrap();
+        for command in ["new", "status", "stage", "apply", "fill"] {
+            let error = args(&origin, &["app", command, "-a", path])
+                .execute()
+                .await
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("is for app `other`, but the selected app is `demo`"),
+                "{command}: {error}"
+            );
+        }
+        assert!(state.lock().unwrap().received.is_empty());
         task.abort();
     }
     #[tokio::test]

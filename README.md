@@ -248,6 +248,7 @@ obelisk cloud app component list
 share the direct API commands and output formats. They use
 `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_API_TOKEN`, with the app selected by
 `--app`, `OBELISK_APP_NAME`, or `app_name` in `./app.toml`, in that order.
+Commands reading an app config refuse one whose `app_name` names a different app.
 The CLI derives the app's API URL from the app name and `--apps-domain`, then connects directly
 with the cloud bearer token.
 

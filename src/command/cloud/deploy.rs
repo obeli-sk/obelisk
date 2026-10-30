@@ -12,21 +12,34 @@ impl CloudArgs {
         mut prompt: Option<impl FnMut(&Question) -> anyhow::Result<String>>,
     ) -> anyhow::Result<()> {
         let client = Client::new(&self)?;
+        let Cloud::App(target) = &self.command else {
+            unreachable!()
+        };
+        let config_path = app_config_path(&target.command)?;
         let Cloud::App(CloudAppTarget {
             app,
             command:
                 CloudApp::Deploy {
-                    app_config,
                     deployment,
                     fill: interactive,
                     fill_non_interactive,
+                    ..
                 },
         }) = self.command
         else {
             unreachable!()
         };
-        let config = policy(&app_config).await?;
-        let mut name = app_name(app.as_deref().or(config.app_name.as_deref())).await?;
+        let config = match &config_path {
+            Some((path, _)) => Some(policy(path).await?),
+            None => None,
+        };
+        let mut name = app_name(
+            app.as_deref()
+                .or_else(|| config.as_ref().and_then(|c| c.app_name.as_deref())),
+        )
+        .await?;
+        let (config, app_config) = config_for_app(&name, config.zip(config_path), true)?
+            .expect("deploy requires an app config");
         let save_name = app.is_none();
         let desired = desired_config(&config);
         let prepared = prepare_deployment_manifest_from_disk(&deployment).await?;
