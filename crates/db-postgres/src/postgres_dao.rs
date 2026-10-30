@@ -20,21 +20,21 @@ use concepts::{
         DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentExecutionCounts,
         DeploymentFileRecord, DeploymentRecord, DeploymentRetentionCursor, DeploymentState,
         DeploymentStatus, EnqueueOutcome, ExecutionEvent, ExecutionGcResult,
-        ExecutionListPagination, ExecutionRequest, ExecutionRetentionCursor, ExecutionWithState,
-        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
-        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE,
-        LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse,
-        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
-        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
-        LogLevel, LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
-        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
-        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, SourceMapping, StorageStatus, SubscribeToResponsesError,
-        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
-        TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
-        deployment_cursor_fallback_created_at,
+        ExecutionListCreatedAtCursor, ExecutionListPagination, ExecutionRequest,
+        ExecutionRetentionCursor, ExecutionWithState, ExecutionWithStateRequestsResponses,
+        ExpiredDelay, ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent,
+        HttpPolicyEventIds, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+        JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED,
+        Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse,
+        ListResponsesResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor,
+        LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
+        PendingState, PendingStateBlockedByJoinSet, PendingStateFinishedError,
+        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
+        RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd, ResponseWithCursor,
+        RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT,
+        SourceMapping, StorageStatus, SubscribeToResponsesError, SystemEvent, SystemEventFilter,
+        SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version,
+        VersionType, WasmBacktrace, deployment_cursor_fallback_created_at,
     },
 };
 use db_common::{
@@ -1529,25 +1529,39 @@ async fn list_executions(
         "NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND root.execution_id = split_part(t_state.execution_id, '.', 1))".to_string(),
     );
 
-    // Pagination Logic
-    let (limit, limit_desc) = match pagination {
+    let limit = pagination.length();
+    let limit_desc = pagination.is_desc();
+    let order_columns: &[&str] = match pagination {
         ExecutionListPagination::CreatedBy(p) => {
-            let limit = p.length();
-            let is_desc = p.is_desc();
-            if let Some(cursor) = p.cursor() {
-                let placeholder = qb.add_param(*cursor);
-                qb.add_where(format!("created_at {} {placeholder}", p.rel()));
+            match p.cursor() {
+                Some(ExecutionListCreatedAtCursor {
+                    created_at,
+                    execution_id: Some(execution_id),
+                }) => {
+                    let created_at = qb.add_param(*created_at);
+                    let execution_id = qb.add_param(execution_id.to_string());
+                    qb.add_where(format!(
+                        "(created_at, execution_id) {} ({created_at}, {execution_id})",
+                        p.rel()
+                    ));
+                }
+                Some(ExecutionListCreatedAtCursor {
+                    created_at,
+                    execution_id: None,
+                }) => {
+                    let placeholder = qb.add_param(*created_at);
+                    qb.add_where(format!("created_at {} {placeholder}", p.rel()));
+                }
+                None => {}
             }
-            (limit, is_desc)
+            &["created_at", "execution_id"]
         }
         ExecutionListPagination::ExecutionId(p) => {
-            let limit = p.length();
-            let is_desc = p.is_desc();
             if let Some(cursor) = p.cursor() {
                 let placeholder = qb.add_param(cursor.to_string());
                 qb.add_where(format!("execution_id {} {placeholder}", p.rel()));
             }
-            (limit, is_desc)
+            &["execution_id"]
         }
     };
 
@@ -1596,17 +1610,19 @@ async fn list_executions(
         format!("WHERE {}", qb.where_clauses.join(" AND "))
     };
 
-    let order_col = match pagination {
-        ExecutionListPagination::CreatedBy(_) => "created_at",
-        ExecutionListPagination::ExecutionId(_) => "execution_id",
-    };
-
     // Inner query: fetch rows with cursor-based ordering
     // Outer query: always return results in descending order
     let (inner_order, outer_order) = if limit_desc {
-        ("DESC", "")
+        ("DESC", None)
     } else {
-        ("", "DESC")
+        ("ASC", Some("DESC"))
+    };
+    let order_by = |direction: &str| {
+        order_columns
+            .iter()
+            .map(|column| format!("{column} {direction}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     };
 
     let inner_sql = format!(
@@ -1615,13 +1631,17 @@ async fn list_executions(
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
             result_kind, lifecycle
-            FROM t_state {where_str} ORDER BY {order_col} {inner_order} LIMIT {limit}"
+            FROM t_state {where_str} ORDER BY {inner_order} LIMIT {limit}",
+        inner_order = order_by(inner_order),
     );
 
-    let sql = if outer_order.is_empty() {
-        inner_sql
+    let sql = if let Some(outer_order) = outer_order {
+        format!(
+            "SELECT * FROM ({inner_sql}) AS sub ORDER BY {}",
+            order_by(outer_order)
+        )
     } else {
-        format!("SELECT * FROM ({inner_sql}) AS sub ORDER BY {order_col} {outer_order}")
+        inner_sql
     };
 
     let params_refs: Vec<&(dyn ToSql + Sync)> = qb

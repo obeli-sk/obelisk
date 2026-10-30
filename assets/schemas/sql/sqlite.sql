@@ -66,7 +66,6 @@ CREATE TABLE t_state (
     PRIMARY KEY (execution_id)
 ) STRICT;
 CREATE INDEX idx_t_state_expired_locks ON t_state (pending_expires_finished) WHERE state = 'locked';
-CREATE INDEX idx_t_state_created_at ON t_state (created_at);
 CREATE TABLE t_delay (
     execution_id TEXT NOT NULL,
     join_set_id TEXT NOT NULL,
@@ -401,3 +400,4 @@ CREATE INDEX t_system_event_http_policy_idx ON t_system_event (
     json_extract(details, '$.server_policy_hash'), event_id DESC
 ) WHERE code = 'component.http_policy.applied';
 CREATE INDEX idx_t_deployment_created_at ON t_deployment (created_at, deployment_id);
+CREATE INDEX idx_t_state_created_at ON t_state (created_at, execution_id);

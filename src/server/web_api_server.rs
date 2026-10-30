@@ -19,6 +19,7 @@ use axum::{
 };
 use axum_accept::AcceptExtractor;
 use axum_extra::extract::Query;
+use base64::{Engine as _, prelude::BASE64_URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use concepts::{
     ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId,
@@ -28,8 +29,8 @@ use concepts::{
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
         DbErrorWrite, DbErrorWriteNonRetriable, DbExternalApi, DbPool, DelayCancelOutcome,
-        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionStateFilter,
-        FunctionNameFilter, ListExecutionsFilter, Pagination, PendingState,
+        ExecutionEvent, ExecutionListCreatedAtCursor, ExecutionListPagination, ExecutionRequest,
+        ExecutionStateFilter, FunctionNameFilter, ListExecutionsFilter, Pagination, PendingState,
         PendingStateFinishedError, PendingStateFinishedResultKind, TimeoutOutcome, Version,
         VersionType,
     },
@@ -40,8 +41,9 @@ use http::{StatusCode, header};
 use rest_types::{
     backtrace::BacktraceInfoSer,
     executions::{
-        ExecutionEventsAndResponsesResponse, ExecutionEventsResponse, ExecutionResponsesResponse,
-        ExecutionSubmitPayload, ExecutionUpgradePayload, ExecutionWithStateSer, RetVal,
+        ExecutionEventsAndResponsesResponse, ExecutionEventsResponse, ExecutionListItemSer,
+        ExecutionResponsesResponse, ExecutionSubmitPayload, ExecutionUpgradePayload,
+        ExecutionWithStateSer, RetVal,
     },
     replay::{
         AdvanceErrorSer, AdvanceRequestSer, AdvanceResponseSer, CapturedWriteSer,
@@ -167,7 +169,9 @@ async fn until_terminated<T>(
     components(schemas(
         PaginationDirectionSortedFromLatest,
         PaginationDirectionSortedFromOldest,
+        ExecutionListOrder,
         ExecutionWithStateSer,
+        ExecutionListItemSer,
         ExecutionEventsResponse,
         ExecutionEventBoundsBatchRequest,
         ExecutionEventBoundsBatchItem,
@@ -1187,9 +1191,11 @@ struct ExecutionsListParams {
     #[param(value_type = Option<String>)]
     deployment_id: Option<DeploymentId>,
     // pagination
-    /// Pagination cursor (`DateTime` or `ExecutionId`)
-    #[param(value_type = Option<String>)]
-    cursor: Option<ExecutionListCursorDeser>,
+    /// Sort order
+    #[serde(default)]
+    order: ExecutionListOrder,
+    /// Opaque `cursor` of a listed execution, obtained with the same `order`
+    cursor: Option<String>,
     /// Number of items to return
     #[param(minimum = 1)]
     length: Option<u16>,
@@ -1243,6 +1249,28 @@ enum PaginationDirectionSortedFromLatest {
     Newer,
 }
 
+impl PaginationDirectionSortedFromLatest {
+    fn paginate<T>(
+        self,
+        length: NonZeroU16,
+        cursor: Option<T>,
+        including_cursor: bool,
+    ) -> Pagination<Option<T>> {
+        match self {
+            PaginationDirectionSortedFromLatest::Older => Pagination::OlderThan {
+                length,
+                cursor,
+                including_cursor,
+            },
+            PaginationDirectionSortedFromLatest::Newer => Pagination::NewerThan {
+                length,
+                cursor,
+                including_cursor,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Default, ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum PaginationDirectionSortedFromOldest {
@@ -1259,11 +1287,115 @@ fn nonzero_page_length(length: u16, accept: AcceptHeader) -> Result<NonZeroU16, 
     })
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-enum ExecutionListCursorDeser {
-    CreatedBy(DateTime<Utc>),
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum ExecutionListOrder {
+    #[default]
+    CreatedAt,
+    ExecutionId,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "order", rename_all = "snake_case")]
+enum ExecutionListCursor {
+    CreatedAt {
+        created_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+    },
+    ExecutionId {
+        execution_id: ExecutionId,
+    },
+}
+
+impl ExecutionListCursor {
+    fn new(order: ExecutionListOrder, execution: &ExecutionWithStateSer) -> Self {
+        match order {
+            ExecutionListOrder::CreatedAt => ExecutionListCursor::CreatedAt {
+                created_at: execution.created_at,
+                execution_id: execution.execution_id.clone(),
+            },
+            ExecutionListOrder::ExecutionId => ExecutionListCursor::ExecutionId {
+                execution_id: execution.execution_id.clone(),
+            },
+        }
+    }
+
+    fn encode(&self) -> String {
+        BASE64_URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(self).expect("execution list cursor must serialize"))
+    }
+
+    fn decode(cursor: &str) -> Option<Self> {
+        BASE64_URL_SAFE_NO_PAD
+            .decode(cursor)
+            .ok()
+            .and_then(|decoded| serde_json::from_slice(&decoded).ok())
+    }
+
+    // backcompat: 0.43.0-rc.15 cursors were a bare `created_at` or execution ID, whose type set the order.
+    fn decode_legacy(cursor: &str) -> Option<ExecutionListPaginationCursor> {
+        if let Ok(created_at) = cursor.parse::<DateTime<Utc>>() {
+            Some(ExecutionListPaginationCursor::CreatedAt(
+                ExecutionListCreatedAtCursor {
+                    created_at,
+                    execution_id: None,
+                },
+            ))
+        } else {
+            cursor
+                .parse::<ExecutionId>()
+                .ok()
+                .map(ExecutionListPaginationCursor::ExecutionId)
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum ExecutionListPaginationCursor {
+    CreatedAt(ExecutionListCreatedAtCursor),
     ExecutionId(ExecutionId),
+}
+
+impl ExecutionListPaginationCursor {
+    fn order(&self) -> ExecutionListOrder {
+        match self {
+            ExecutionListPaginationCursor::CreatedAt(_) => ExecutionListOrder::CreatedAt,
+            ExecutionListPaginationCursor::ExecutionId(_) => ExecutionListOrder::ExecutionId,
+        }
+    }
+}
+
+fn parse_execution_list_cursor(
+    cursor: &str,
+    order: ExecutionListOrder,
+    accept: AcceptHeader,
+) -> Result<ExecutionListPaginationCursor, HttpResponse> {
+    if let Some(cursor) = ExecutionListCursor::decode(cursor) {
+        let cursor = match cursor {
+            ExecutionListCursor::CreatedAt {
+                created_at,
+                execution_id,
+            } => ExecutionListPaginationCursor::CreatedAt(ExecutionListCreatedAtCursor {
+                created_at,
+                execution_id: Some(execution_id),
+            }),
+            ExecutionListCursor::ExecutionId { execution_id } => {
+                ExecutionListPaginationCursor::ExecutionId(execution_id)
+            }
+        };
+        if cursor.order() == order {
+            Ok(cursor)
+        } else {
+            Err(HttpResponse::bad_request(
+                accept,
+                "`cursor` was obtained with a different `order`".to_string(),
+            ))
+        }
+    } else {
+        ExecutionListCursor::decode_legacy(cursor).ok_or_else(|| {
+            HttpResponse::bad_request(accept, "invalid execution list cursor".to_string())
+        })
+    }
 }
 
 /// List executions with filtering and pagination
@@ -1273,7 +1405,7 @@ enum ExecutionListCursorDeser {
     tag = "executions",
     params(ExecutionsListParams),
     responses(
-        (status = 200, description = "List of executions", body = Vec<ExecutionWithStateSer>)
+        (status = 200, description = "List of executions", body = Vec<ExecutionListItemSer>)
     )
 )]
 #[instrument(skip_all)]
@@ -1295,61 +1427,39 @@ async fn executions_list(
         ));
     }
     let default_pagination = ExecutionListPagination::default();
-    let pagination = {
-        let ExecutionsListParams {
-            cursor,
-            length,
-            including_cursor,
-            direction,
-            ..
-        } = params;
-        let length = nonzero_page_length(length.unwrap_or(default_pagination.length()), accept)?;
-        match cursor {
-            Some(ExecutionListCursorDeser::CreatedBy(cursor)) => {
-                ExecutionListPagination::CreatedBy(match direction {
-                    PaginationDirectionSortedFromLatest::Older => Pagination::OlderThan {
-                        length,
-                        cursor: Some(cursor),
-                        including_cursor,
-                    },
-                    PaginationDirectionSortedFromLatest::Newer => Pagination::NewerThan {
-                        length,
-                        cursor: Some(cursor),
-                        including_cursor,
-                    },
-                })
-            }
-            Some(ExecutionListCursorDeser::ExecutionId(cursor)) => {
-                ExecutionListPagination::ExecutionId(match direction {
-                    PaginationDirectionSortedFromLatest::Older => Pagination::OlderThan {
-                        length,
-                        cursor: Some(cursor),
-                        including_cursor,
-                    },
-                    PaginationDirectionSortedFromLatest::Newer => Pagination::NewerThan {
-                        length,
-                        cursor: Some(cursor),
-                        including_cursor,
-                    },
-                })
-            }
-            None => ExecutionListPagination::CreatedBy(
-                // CreatedBy because it is the current default
-                match direction {
-                    PaginationDirectionSortedFromLatest::Older => Pagination::OlderThan {
-                        length,
-                        cursor: None,
-                        including_cursor, // does not matter
-                    },
-
-                    PaginationDirectionSortedFromLatest::Newer => Pagination::NewerThan {
-                        length,
-                        cursor: None,
-                        including_cursor, // does not matter
-                    },
-                },
-            ),
+    let length = nonzero_page_length(params.length.unwrap_or(default_pagination.length()), accept)?;
+    let cursor = params
+        .cursor
+        .as_deref()
+        .map(|cursor| parse_execution_list_cursor(cursor, params.order, accept))
+        .transpose()?;
+    let order = cursor
+        .as_ref()
+        .map_or(params.order, ExecutionListPaginationCursor::order);
+    let (direction, including_cursor) = (params.direction, params.including_cursor);
+    let pagination = match cursor {
+        Some(ExecutionListPaginationCursor::CreatedAt(cursor)) => {
+            ExecutionListPagination::CreatedBy(direction.paginate(
+                length,
+                Some(cursor),
+                including_cursor,
+            ))
         }
+        Some(ExecutionListPaginationCursor::ExecutionId(cursor)) => {
+            ExecutionListPagination::ExecutionId(direction.paginate(
+                length,
+                Some(cursor),
+                including_cursor,
+            ))
+        }
+        None => match order {
+            ExecutionListOrder::CreatedAt => ExecutionListPagination::CreatedBy(
+                direction.paginate(length, None, including_cursor),
+            ),
+            ExecutionListOrder::ExecutionId => ExecutionListPagination::ExecutionId(
+                direction.paginate(length, None, including_cursor),
+            ),
+        },
     };
 
     let conn = state
@@ -1385,7 +1495,13 @@ async fn executions_list(
     Ok({
         let executions: Vec<_> = executions
             .into_iter()
-            .map(ExecutionWithStateSer::from)
+            .map(|execution| {
+                let execution = ExecutionWithStateSer::from(execution);
+                ExecutionListItemSer {
+                    cursor: ExecutionListCursor::new(order, &execution).encode(),
+                    execution,
+                }
+            })
             .collect();
         pretty_json_response(StatusCode::OK, &executions)
     })
@@ -1963,7 +2079,7 @@ async fn execution_events(
 
 pub(crate) mod logs {
     use super::*;
-    use base64::{Engine as _, prelude::BASE64_STANDARD};
+    use base64::prelude::BASE64_STANDARD;
     use chrono::{DateTime, Utc};
     use concepts::storage::{LogCursor, LogFilter, LogLevel, LogStreamType};
     use rest_types::logs::LogEntryRowSer;
@@ -5008,8 +5124,10 @@ impl From<ErrorWrapper<SubmitError>> for HttpResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        AcceptHeader, RetVal, TextDefaultAcceptHeader, admin, format_execution_status_text,
-        nonzero_page_length, parse_join_set_filter,
+        AcceptHeader, ExecutionListCreatedAtCursor, ExecutionListCursor, ExecutionListOrder,
+        ExecutionListPaginationCursor, RetVal, TextDefaultAcceptHeader, admin,
+        format_execution_status_text, nonzero_page_length, parse_execution_list_cursor,
+        parse_join_set_filter,
     };
     use chrono::{DateTime, Utc};
     use concepts::{
@@ -5058,6 +5176,52 @@ mod tests {
             nonzero_page_length(0, AcceptHeader::Json)
                 .unwrap_err()
                 .status
+        );
+    }
+
+    #[test]
+    fn execution_list_cursor_is_opaque_with_legacy_fallback() {
+        let parse = |cursor: &str, order| {
+            parse_execution_list_cursor(cursor, order, AcceptHeader::Json).map_err(|err| err.status)
+        };
+        let execution_id = concepts::ExecutionId::generate();
+        let created_at = DateTime::from_timestamp(1, 0).unwrap();
+        let opaque = ExecutionListCursor::CreatedAt {
+            created_at,
+            execution_id: execution_id.clone(),
+        }
+        .encode();
+        assert_eq!(
+            Ok(ExecutionListPaginationCursor::CreatedAt(
+                ExecutionListCreatedAtCursor {
+                    created_at,
+                    execution_id: Some(execution_id.clone()),
+                }
+            )),
+            parse(&opaque, ExecutionListOrder::CreatedAt)
+        );
+        assert_eq!(
+            Err(http::StatusCode::BAD_REQUEST),
+            parse(&opaque, ExecutionListOrder::ExecutionId)
+        );
+        assert_eq!(
+            Ok(ExecutionListPaginationCursor::CreatedAt(
+                ExecutionListCreatedAtCursor {
+                    created_at,
+                    execution_id: None,
+                }
+            )),
+            parse(&created_at.to_rfc3339(), ExecutionListOrder::ExecutionId)
+        );
+        assert_eq!(
+            Ok(ExecutionListPaginationCursor::ExecutionId(
+                execution_id.clone()
+            )),
+            parse(&execution_id.to_string(), ExecutionListOrder::CreatedAt)
+        );
+        assert_eq!(
+            Err(http::StatusCode::BAD_REQUEST),
+            parse("garbage", ExecutionListOrder::CreatedAt)
         );
     }
 
