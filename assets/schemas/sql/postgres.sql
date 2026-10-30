@@ -559,6 +559,13 @@ CREATE INDEX idx_t_deployment_component_file_path ON public.t_deployment_compone
 
 
 --
+-- Name: idx_t_deployment_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_t_deployment_created_at ON public.t_deployment USING btree (created_at, deployment_id);
+
+
+--
 -- Name: idx_t_deployment_file_digest; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -570,13 +577,6 @@ CREATE INDEX idx_t_deployment_file_digest ON public.t_deployment_file USING btre
 --
 
 CREATE INDEX idx_t_deployment_inactive_at ON public.t_deployment USING btree (inactive_at, deployment_id) WHERE ((status)::text = 'inactive'::text);
-
-
---
--- Name: idx_t_deployment_retention_created_at; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_t_deployment_retention_created_at ON public.t_deployment USING btree (created_at, deployment_id) WHERE ((status)::text = 'inactive'::text);
 
 
 --

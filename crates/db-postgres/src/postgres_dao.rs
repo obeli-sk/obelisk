@@ -34,6 +34,7 @@ use concepts::{
         STATE_LOCKED, STATE_PENDING_AT, SourceMapping, StorageStatus, SubscribeToResponsesError,
         SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
         TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
+        deployment_cursor_fallback_created_at,
     },
 };
 use db_common::{
@@ -2118,9 +2119,10 @@ async fn list_deployment_states(
     // Pagination
     if let Some(cursor) = pagination.cursor() {
         let p_cursor = add_param(Box::new(cursor.to_string()));
+        let p_fallback = add_param(Box::new(deployment_cursor_fallback_created_at(*cursor)));
         write!(
             sql,
-            " WHERE d.deployment_id {rel} {p_cursor}",
+            " WHERE (d.created_at, d.deployment_id) {rel} (COALESCE((SELECT created_at FROM t_deployment WHERE deployment_id = {p_cursor}), {p_fallback}), {p_cursor})",
             rel = pagination.rel()
         )
         .expect("writing to string");
@@ -2145,7 +2147,7 @@ async fn list_deployment_states(
     }
     write!(
         sql,
-        " ORDER BY d.deployment_id {inner_order} LIMIT {}",
+        " ORDER BY d.created_at {inner_order}, d.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");
@@ -2153,7 +2155,9 @@ async fn list_deployment_states(
     let final_sql = if outer_order.is_empty() {
         sql
     } else {
-        format!("SELECT * FROM ({sql}) AS sub ORDER BY deployment_id {outer_order}")
+        format!(
+            "SELECT * FROM ({sql}) AS sub ORDER BY created_at {outer_order}, deployment_id {outer_order}"
+        )
     };
 
     let params_refs: Vec<&(dyn ToSql + Sync)> = params
@@ -5803,9 +5807,10 @@ impl DbExternalApi for PostgresConnection {
 
         if let Some(cursor) = pagination.cursor() {
             let p_cursor = add_param(Box::new(cursor.to_string()));
+            let p_fallback = add_param(Box::new(deployment_cursor_fallback_created_at(*cursor)));
             write!(
                 sql,
-                " WHERE deployment_id {rel} {p_cursor}",
+                " WHERE (created_at, deployment_id) {rel} (COALESCE((SELECT created_at FROM t_deployment WHERE deployment_id = {p_cursor}), {p_fallback}), {p_cursor})",
                 rel = pagination.rel()
             )
             .expect("writing to string");
@@ -5819,7 +5824,7 @@ impl DbExternalApi for PostgresConnection {
 
         write!(
             sql,
-            " ORDER BY deployment_id {inner_order} LIMIT {limit}",
+            " ORDER BY created_at {inner_order}, deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -5827,7 +5832,9 @@ impl DbExternalApi for PostgresConnection {
         let final_sql = if outer_order.is_empty() {
             sql
         } else {
-            format!("SELECT * FROM ({sql}) AS sub ORDER BY deployment_id {outer_order}")
+            format!(
+                "SELECT * FROM ({sql}) AS sub ORDER BY created_at {outer_order}, deployment_id {outer_order}"
+            )
         };
 
         let params_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
