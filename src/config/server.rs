@@ -1140,9 +1140,9 @@ pub(crate) struct GarbageCollectionTomlConfig {
 #[serde(deny_unknown_fields)]
 pub(crate) struct RetentionTomlConfig {
     #[serde(default)]
-    pub(crate) executions: RetentionPolicyTomlConfig,
+    pub(crate) executions: ExecutionRetentionTomlConfig,
     #[serde(default)]
-    pub(crate) deployments: RetentionPolicyTomlConfig,
+    pub(crate) deployments: DeploymentRetentionTomlConfig,
     #[serde(default)]
     pub(crate) system_events: RetentionPolicyTomlConfig,
 }
@@ -1154,6 +1154,50 @@ pub(crate) struct RetentionPolicyTomlConfig {
     pub(crate) enabled: bool,
     #[serde(default = "default_retention_max_age")]
     pub(crate) max_age: DurationConfig,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExecutionRetentionTomlConfig {
+    #[serde(default = "default_retention_enabled")]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_retention_max_age")]
+    pub(crate) max_age: DurationConfig,
+    /// Keep at most this many newest finished top-level executions; 0 disables the limit.
+    #[serde(default = "default_execution_retention_max_count")]
+    pub(crate) max_count: u32,
+}
+
+impl Default for ExecutionRetentionTomlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_retention_enabled(),
+            max_age: default_retention_max_age(),
+            max_count: default_execution_retention_max_count(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DeploymentRetentionTomlConfig {
+    #[serde(default = "default_retention_enabled")]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_retention_max_age")]
+    pub(crate) max_age: DurationConfig,
+    /// Keep at most this many newest inactive deployments; 0 disables the limit.
+    #[serde(default = "default_deployment_retention_max_count")]
+    pub(crate) max_count: u32,
+}
+
+impl Default for DeploymentRetentionTomlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_retention_enabled(),
+            max_age: default_retention_max_age(),
+            max_count: default_deployment_retention_max_count(),
+        }
+    }
 }
 
 impl Default for RetentionPolicyTomlConfig {
@@ -1517,6 +1561,14 @@ const fn default_retention_max_age() -> DurationConfig {
     DurationConfig::Hours(31 * 24)
 }
 
+const fn default_execution_retention_max_count() -> u32 {
+    10_000
+}
+
+const fn default_deployment_retention_max_count() -> u32 {
+    100
+}
+
 // HTTP server declaration (referenced by ServerConfigToml)
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -1832,17 +1884,22 @@ mod tests {
         use super::*;
 
         #[test]
-        fn omitted_retention_uses_enabled_thirty_one_day_defaults() {
+        fn omitted_retention_uses_defaults() {
             let config: ServerConfigToml = toml::from_str("").unwrap();
             let retention = config.maintenance.gc.retention;
-            for policy in [
-                retention.executions,
-                retention.deployments,
-                retention.system_events,
+            for (enabled, max_age) in [
+                (retention.executions.enabled, retention.executions.max_age),
+                (retention.deployments.enabled, retention.deployments.max_age),
+                (
+                    retention.system_events.enabled,
+                    retention.system_events.max_age,
+                ),
             ] {
-                assert!(policy.enabled);
-                assert!(matches!(policy.max_age, DurationConfig::Hours(744)));
+                assert!(enabled);
+                assert!(matches!(max_age, DurationConfig::Hours(744)));
             }
+            assert_eq!(retention.executions.max_count, 10_000);
+            assert_eq!(retention.deployments.max_count, 100);
         }
 
         #[test]
