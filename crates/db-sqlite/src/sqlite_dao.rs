@@ -6,7 +6,7 @@ use concepts::{
     ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
     cas::{Cas, CasError},
     component_id::{ComponentDigest, Digest},
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, NodeRunId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
@@ -23,18 +23,18 @@ use concepts::{
         ExecutionListCreatedAtCursor, ExecutionListPagination, ExecutionRequest,
         ExecutionRetentionCursor, ExecutionWithState, ExecutionWithStateRequestsResponses,
         ExpiredDelay, ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent,
-        HttpPolicyEventIds, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED,
-        Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse,
-        ListResponsesResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor,
-        LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
-        PendingState, PendingStateBlockedByJoinSet, PendingStateFinishedError,
-        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
-        RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd, ResponseWithCursor,
-        RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT,
-        SourceMapping, StorageStatus, SubscribeToResponsesError, SystemEvent, SystemEventFilter,
-        SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version,
-        VersionType, deployment_cursor_fallback_created_at,
+        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
+        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
+        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
+        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, SourceMapping, StorageStatus,
+        SubscribeToResponsesError, SystemEvent, SystemEventFilter, SystemEventLevel,
+        SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version, VersionType,
+        deployment_cursor_fallback_created_at,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -6097,30 +6097,6 @@ impl DbAdmin for SqlitePool {
         .await
     }
 
-    async fn find_http_policy_event_ids(
-        &self,
-        deployment_id: DeploymentId,
-        component: &str,
-        component_policy_hash: &str,
-        server_policy_hash: &str,
-    ) -> Result<Option<HttpPolicyEventIds>, DbErrorRead> {
-        let deployment_id = deployment_id.to_string();
-        let component = component.to_owned();
-        let component_policy_hash = component_policy_hash.to_owned();
-        let server_policy_hash = server_policy_hash.to_owned();
-        self.transaction(move |tx| {
-            let ids = tx.query_row(
-                "SELECT event_id, json_extract(details, '$.server_configuration_event_id') FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = ?1 AND json_extract(details, '$.component') = ?2 AND json_extract(details, '$.component_policy_hash') = ?3 AND json_extract(details, '$.server_policy_hash') = ?4 ORDER BY event_id DESC LIMIT 1",
-                rusqlite::params![deployment_id, component, component_policy_hash, server_policy_hash],
-                |row| Ok(HttpPolicyEventIds {
-                    component_policy_event_id: row.get::<_, String>(0)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err)))?,
-                    server_configuration_event_id: row.get::<_, String>(1)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(err)))?,
-                }),
-            ).optional()?;
-            Ok(ids)
-        }, TxType::Other, "find_http_policy_event_ids").await
-    }
-
     async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead> {
         self.transaction(
             |tx| {
@@ -6159,20 +6135,22 @@ impl DbAdmin for SqlitePool {
         &self,
         created_before: DateTime<Utc>,
         limit: u32,
+        keep_node_run_id: NodeRunId,
         dry_run: bool,
     ) -> Result<SystemEventRetentionResult, DbErrorWrite> {
+        let keep_node_run_id = keep_node_run_id.to_string();
         self.transaction(
             move |tx| {
                 let limit = limit.clamp(1, 10_000);
                 let event_ids = tx
-                    .prepare("SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY created_at, event_id LIMIT ?2")?
-                    .query_map(rusqlite::params![created_before, i64::from(limit) + 1], |row| row.get::<_, String>(0))?
+                    .prepare("SELECT event_id FROM t_system_event WHERE created_at < ?1 AND node_run_id <> ?3 ORDER BY created_at, event_id LIMIT ?2")?
+                    .query_map(rusqlite::params![created_before, i64::from(limit) + 1, keep_node_run_id], |row| row.get::<_, String>(0))?
                     .collect::<Result<Vec<_>, _>>()?;
                 let has_more = event_ids.len() > limit as usize;
                 let deleted = if dry_run {
                     event_ids.len().min(limit as usize) as u64
                 } else {
-                    tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY created_at, event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit)])? as u64
+                    tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 AND node_run_id <> ?3 ORDER BY created_at, event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit), keep_node_run_id])? as u64
                 };
                 Ok(SystemEventRetentionResult {
                     deleted,

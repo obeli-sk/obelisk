@@ -144,11 +144,22 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         2
     );
     let cutoff = chrono::Utc::now() + Duration::seconds(1);
+    let first_run_id = "NodeRun_01M281KSH954NC9NHNMCN09S6W".parse().unwrap();
+    let preview = admin
+        .retain_system_events(cutoff, 100, first_run_id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        preview.deleted, 1,
+        "events of the kept node run must be skipped"
+    );
+    assert!(!preview.has_more);
+    let other_run = NodeRunId::generate();
     for (limit, expected_deleted, expected_has_more) in
         [(1, 1, true), (2, 2, false), (100, 2, false)]
     {
         let preview = admin
-            .retain_system_events(cutoff, limit, true)
+            .retain_system_events(cutoff, limit, other_run, true)
             .await
             .unwrap();
         assert_eq!(preview.deleted, expected_deleted);
@@ -157,12 +168,15 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         assert!(admin.get_system_event(second_id).await.unwrap().is_some());
     }
     let preview = admin
-        .retain_system_events(chrono::DateTime::UNIX_EPOCH, 1, true)
+        .retain_system_events(chrono::DateTime::UNIX_EPOCH, 1, other_run, true)
         .await
         .unwrap();
     assert_eq!(preview.deleted, 0);
     assert!(!preview.has_more);
-    let retention = admin.retain_system_events(cutoff, 1, false).await.unwrap();
+    let retention = admin
+        .retain_system_events(cutoff, 1, other_run, false)
+        .await
+        .unwrap();
     assert_eq!(retention.deleted, 1);
     assert!(retention.has_more);
     assert_eq!(
@@ -316,52 +330,6 @@ async fn system_events_are_filtered_by_created_at_range(database: Database) {
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn http_policy_event_ids_resolve_server_configuration(database: Database) {
-    set_up();
-    let (_guard, db_pool, db_close) = database.set_up().await;
-    let admin = db_pool.admin_conn().await.unwrap();
-    let server = SystemEvent::new(
-        SystemEventCode::ServerConfigurationResolved,
-        None,
-        None,
-        serde_json::json!({
-            "server_policy_hash": "sha256:server",
-            "webui_server_policy_hash": "sha256:webui",
-        }),
-    )
-    .unwrap();
-    let server_id = server.event_id;
-    admin.append_system_event(server).await.unwrap();
-    let deployment_id = DeploymentId::generate();
-    let component = SystemEvent::new(
-        SystemEventCode::ComponentHttpPolicyApplied,
-        None,
-        Some(deployment_id),
-        serde_json::json!({
-            "component": "caller",
-            "component_policy_hash": "sha256:component",
-            "server_policy_hash": "sha256:webui",
-            "server_configuration_event_id": server_id,
-        }),
-    )
-    .unwrap();
-    let component_id = component.event_id;
-    admin.append_system_event(component).await.unwrap();
-
-    let ids = admin
-        .find_http_policy_event_ids(deployment_id, "caller", "sha256:component", "sha256:webui")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(ids.server_configuration_event_id, server_id);
-    assert_eq!(ids.component_policy_event_id, component_id);
-    drop(admin);
-    db_close.close().await;
-}
-
-#[expand_enum_database]
-#[rstest]
-#[tokio::test]
 async fn system_event_cas_details_are_retained_with_the_event(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -369,7 +337,7 @@ async fn system_event_cas_details_are_retained_with_the_event(database: Database
     let content = br#"{"policy":"large"}"#.to_vec();
     let digest = concepts::cas::content_digest(&content);
     let event = SystemEvent::new(
-        SystemEventCode::ComponentHttpPolicyApplied,
+        SystemEventCode::DeploymentPolicyApplied,
         None,
         Some(DeploymentId::generate()),
         serde_json::json!({"policy_digest": digest.to_string()}),
@@ -392,8 +360,28 @@ async fn system_event_cas_details_are_retained_with_the_event(database: Database
     );
     assert!(cas.contains_blob(&digest).await.unwrap());
 
+    let cutoff = chrono::Utc::now() + Duration::seconds(1);
+    let retention = admin
+        .retain_system_events(
+            cutoff,
+            100,
+            concepts::storage::initialize_node_run_id(),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(retention.deleted, 0);
+    assert_eq!(
+        gc.gc_cas(false, 100, chrono::Utc::now())
+            .await
+            .unwrap()
+            .deleted_blobs,
+        0
+    );
+    assert!(cas.contains_blob(&digest).await.unwrap());
+
     admin
-        .retain_system_events(chrono::Utc::now() + Duration::seconds(1), 100, false)
+        .retain_system_events(cutoff, 100, NodeRunId::generate(), false)
         .await
         .unwrap();
     assert_eq!(

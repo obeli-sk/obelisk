@@ -1611,8 +1611,7 @@ pub enum SystemEventCode {
     DeploymentSwitchStarted,
     DeploymentSwitchCompleted,
     DeploymentSwitchFailed,
-    ComponentHttpPolicyApplied,
-    ComponentSecretExposureAuthorized,
+    DeploymentPolicyApplied,
     OutboundHttpDenied,
     WorkflowReplayLockExpired,
     AdminExecutionDeleteStarted,
@@ -1645,8 +1644,7 @@ impl SystemEventCode {
             Self::DeploymentSwitchStarted => "deployment.switch.started",
             Self::DeploymentSwitchCompleted => "deployment.switch.completed",
             Self::DeploymentSwitchFailed => "deployment.switch.failed",
-            Self::ComponentHttpPolicyApplied => "component.http_policy.applied",
-            Self::ComponentSecretExposureAuthorized => "component.secret_exposure.authorized",
+            Self::DeploymentPolicyApplied => "deployment.policy.applied",
             Self::OutboundHttpDenied => "outbound_http.denied",
             Self::WorkflowReplayLockExpired => "workflow.replay_lock_expired",
             Self::AdminExecutionDeleteStarted => "admin.execution.delete.started",
@@ -1674,8 +1672,7 @@ impl SystemEventCode {
             | Self::WorkflowReplayLockExpired
             | Self::MaintenanceGcDeploymentsInUse
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
-            Self::ComponentHttpPolicyApplied
-            | SystemEventCode::ComponentSecretExposureAuthorized => SystemEventLevel::Debug,
+            Self::DeploymentPolicyApplied => SystemEventLevel::Debug,
             _ => SystemEventLevel::Info,
         }
     }
@@ -1695,8 +1692,7 @@ impl SystemEventCode {
             Self::DeploymentSwitchStarted => "Deployment switch started",
             Self::DeploymentSwitchCompleted => "Deployment switch completed",
             Self::DeploymentSwitchFailed => "Deployment switch failed",
-            Self::ComponentHttpPolicyApplied => "Component HTTP policy applied",
-            Self::ComponentSecretExposureAuthorized => "Component secret exposure authorized",
+            Self::DeploymentPolicyApplied => "Deployment policy applied",
             Self::OutboundHttpDenied => "Outbound HTTP request denied",
             Self::WorkflowReplayLockExpired => "Workflow replay exceeded its execution lock",
             Self::AdminExecutionDeleteStarted => "Execution tree deletion started",
@@ -1783,6 +1779,12 @@ impl SystemEvent {
     }
 
     #[must_use]
+    pub fn with_event_id(mut self, event_id: SystemEventId) -> Self {
+        self.event_id = event_id;
+        self
+    }
+
+    #[must_use]
     pub fn with_cas_digest(mut self, digest: ContentDigest) -> Self {
         self.cas_digest = Some(digest);
         self
@@ -1807,12 +1809,10 @@ impl SystemEvent {
             "deployment.switch.started" => SystemEventCode::DeploymentSwitchStarted.message(),
             "deployment.switch.completed" => SystemEventCode::DeploymentSwitchCompleted.message(),
             "deployment.switch.failed" => SystemEventCode::DeploymentSwitchFailed.message(),
-            "component.http_policy.applied" => {
-                SystemEventCode::ComponentHttpPolicyApplied.message()
-            }
-            "component.secret_exposure.authorized" => {
-                SystemEventCode::ComponentSecretExposureAuthorized.message()
-            }
+            "deployment.policy.applied" => SystemEventCode::DeploymentPolicyApplied.message(),
+            // backcompat: 0.42.0 recorded HTTP policy and secret exposure events per component
+            "component.http_policy.applied" => "Component HTTP policy applied",
+            "component.secret_exposure.authorized" => "Component secret exposure authorized",
             "outbound_http.denied" => SystemEventCode::OutboundHttpDenied.message(),
             "workflow.replay_lock_expired" => SystemEventCode::WorkflowReplayLockExpired.message(),
             "admin.execution.delete.started" => {
@@ -1865,12 +1865,6 @@ pub struct SystemEventFilter {
     /// Exclusive upper bound of `created_at`.
     pub created_to: Option<DateTime<Utc>>,
     pub limit: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HttpPolicyEventIds {
-    pub server_configuration_event_id: SystemEventId,
-    pub component_policy_event_id: SystemEventId,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1933,20 +1927,14 @@ pub trait DbAdmin: Send + Sync {
             .next())
     }
 
-    async fn find_http_policy_event_ids(
-        &self,
-        deployment_id: DeploymentId,
-        component: &str,
-        component_policy_hash: &str,
-        server_policy_hash: &str,
-    ) -> Result<Option<HttpPolicyEventIds>, DbErrorRead>;
-
     async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead>;
 
     async fn retain_system_events(
         &self,
         created_before: DateTime<Utc>,
         limit: u32,
+        // Events of this node run are never deleted.
+        keep_node_run_id: NodeRunId,
         dry_run: bool,
     ) -> Result<SystemEventRetentionResult, DbErrorWrite>;
 
@@ -4101,8 +4089,7 @@ mod tests {
             SystemEventCode::DeploymentSwitchStarted,
             SystemEventCode::DeploymentSwitchCompleted,
             SystemEventCode::DeploymentSwitchFailed,
-            SystemEventCode::ComponentHttpPolicyApplied,
-            SystemEventCode::ComponentSecretExposureAuthorized,
+            SystemEventCode::DeploymentPolicyApplied,
             SystemEventCode::OutboundHttpDenied,
             SystemEventCode::WorkflowReplayLockExpired,
             SystemEventCode::AdminExecutionDeleteStarted,
@@ -4126,7 +4113,7 @@ mod tests {
     #[test]
     fn system_event_code_levels_distinguish_debug_and_failures() {
         assert_eq!(
-            SystemEventCode::ComponentHttpPolicyApplied.level(),
+            SystemEventCode::DeploymentPolicyApplied.level(),
             SystemEventLevel::Debug
         );
         assert_eq!(

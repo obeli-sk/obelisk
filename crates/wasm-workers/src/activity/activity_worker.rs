@@ -3,15 +3,14 @@ use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
 use crate::http_hooks::ConfigSectionHint;
-use crate::http_hooks::HttpHooks;
+use crate::http_hooks::{HttpHooks, SystemEventSink};
 use crate::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
 use crate::v8_executor::V8Executor;
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::http_client_trace::HttpClientTrace;
-use concepts::storage::{DbPool, LogInfoAppendRow, LogStreamType, Version};
+use concepts::storage::{LogInfoAppendRow, LogStreamType, Version};
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{
     ComponentId, FunctionFqn, PackageIfcFns, Params, ReturnTypeExtendable,
@@ -175,7 +174,7 @@ impl ActivityWorkerCompiled {
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         logs_storage_config: Option<LogStrageConfig>,
-        system_events: Option<(DeploymentId, Arc<dyn DbPool>)>,
+        system_events: Option<SystemEventSink>,
     ) -> ActivityWorker {
         let stdout = StdOutputConfigWithSender::new(
             self.config.forward_stdout,
@@ -218,7 +217,7 @@ pub struct ActivityWorker {
     stdout: Option<StdOutputConfigWithSender>,
     stderr: Option<StdOutputConfigWithSender>,
     logs_storage_config: Option<LogStrageConfig>,
-    system_events: Option<(DeploymentId, Arc<dyn DbPool>)>,
+    system_events: Option<SystemEventSink>,
 }
 
 impl ActivityWorker {
@@ -318,8 +317,7 @@ impl ActivityWorker {
                 component_logger,
                 config_section_hint: self.config.config_section_hint,
                 component_name: self.config.component_id.name.to_string(),
-                deployment_id: self.system_events.as_ref().map(|(id, _)| *id),
-                db_pool: self.system_events.as_ref().map(|(_, db)| db.clone()),
+                system_events: self.system_events.clone(),
                 webhook_execution_row: None,
             },
             env,

@@ -487,7 +487,12 @@ where
                 db_pool
                     .admin_conn()
                     .await?
-                    .retain_system_events(cutoff, config.batch_size, false)
+                    .retain_system_events(
+                        cutoff,
+                        config.batch_size,
+                        concepts::storage::initialize_node_run_id(),
+                        false,
+                    )
                     .await
             }
             .await
@@ -687,6 +692,7 @@ mod tests {
         )
         .unwrap();
         old_event.created_at = chrono::Utc::now() - chrono::Duration::days(1);
+        old_event.node_run_id = concepts::prefixed_ulid::NodeRunId::generate();
         let old_event_id = old_event.event_id;
         admin.append_system_event(old_event).await.unwrap();
         let cas = db_pool.cas_conn().await.unwrap();

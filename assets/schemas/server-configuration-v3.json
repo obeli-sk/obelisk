@@ -1,0 +1,574 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ServerConfigurationAuditV3",
+  "type": "object",
+  "properties": {
+    "format": {
+      "$ref": "#/$defs/ServerConfigurationFormatV3"
+    },
+    "obelisk_version": {
+      "type": "string"
+    },
+    "app_config_digest": {
+      "type": "string"
+    },
+    "app_policy": {
+      "$ref": "#/$defs/AppPolicyV1"
+    },
+    "environment": {
+      "$ref": "#/$defs/EnvironmentAuditV2"
+    },
+    "deployment_security": {
+      "$ref": "#/$defs/DeploymentSecurityAuditV2"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "obelisk_version",
+    "app_config_digest",
+    "app_policy",
+    "environment",
+    "deployment_security"
+  ],
+  "$defs": {
+    "ServerConfigurationFormatV3": {
+      "type": "string",
+      "enum": [
+        "obelisk-server-configuration-v3"
+      ]
+    },
+    "AppPolicyV1": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "$ref": "#/$defs/AppPolicyFormatV1"
+        },
+        "secrets": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/AppPolicySecretV1"
+          }
+        },
+        "public_env": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PublicEnvRef"
+          }
+        },
+        "allowed_exec_activities": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "outbound_http": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "secrets",
+        "public_env",
+        "allowed_exec_activities",
+        "outbound_http"
+      ]
+    },
+    "AppPolicyFormatV1": {
+      "type": "string",
+      "enum": [
+        "obelisk-app-config-v1"
+      ]
+    },
+    "AppPolicySecretV1": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "internal"
+            },
+            "exposed_to": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "exposed_to"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "optional": {
+              "type": "boolean"
+            },
+            "exposed_to": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "optional",
+            "exposed_to"
+          ]
+        }
+      ]
+    },
+    "PublicEnvRef": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "optional": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "optional"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "$ref": "#/$defs/InternalSecretType"
+            },
+            "source": {
+              "$ref": "#/$defs/InternalPublicEnvSource"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "type",
+            "source"
+          ]
+        }
+      ]
+    },
+    "InternalSecretType": {
+      "type": "string",
+      "enum": [
+        "internal"
+      ]
+    },
+    "InternalPublicEnvSource": {
+      "type": "string",
+      "enum": [
+        "api-url",
+        "webui-url"
+      ]
+    },
+    "AllowedHostToml": {
+      "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.",
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "description": "Host pattern (e.g. `\"api.example.com\"`, `\"*.example.com\"`, `\"http://localhost:8080\"`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url_prefix": {
+          "description": "HTTP(S) URL prefix, mutually exclusive with pattern and `request_url_regex`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url_regex_suffix": {
+          "description": "Regex fragment appended to the escaped URL prefix; leading ^ is forbidden.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "methods": {
+          "description": "Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = \"*\"` or `methods = [\"*\"]` to allow all methods.\n- `methods = [\"GET\", \"POST\"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MethodsInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_url_regex": {
+          "description": "Optional regex restriction checked against `METHOD URL` with query params removed.\nFor example, `GET https://api.example.com/v1/items`.\nSupports `${VAR}` and `${VAR:-default}` env var interpolation.\nEnv var values are interpreted as regex syntax; use regex-escaped values when precision matters.\nOmit to allow all paths accepted by the host and method restrictions.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secrets": {
+          "description": "Registered secret names (from the app-owned `app.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SecretRef"
+          },
+          "default": []
+        },
+        "replace_in": {
+          "description": "Where in the request to perform placeholder replacement:\n- `headers` searches textual header values, including placeholders within larger values.\n- `params` searches URL query parameter values.\n- `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.\n\nDefault: empty (no replacement, deny by default).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReplaceIn"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "pattern": {
+              "type": "string"
+            },
+            "url_prefix": false,
+            "url_regex_suffix": false
+          },
+          "required": [
+            "pattern"
+          ]
+        },
+        {
+          "properties": {
+            "url_prefix": {
+              "type": "string"
+            },
+            "pattern": false,
+            "request_url_regex": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "url_prefix"
+          ]
+        }
+      ]
+    },
+    "MethodsInput": {
+      "description": "Input for method restrictions in TOML configuration.\nSupports both `methods = \"*\"` and `methods = [\"GET\", \"POST\"]` syntax.",
+      "anyOf": [
+        {
+          "description": "All methods allowed (from `methods = \"*\"`).",
+          "$ref": "#/$defs/MethodsInputStar"
+        },
+        {
+          "description": "Specific methods list (from `methods = [\"GET\", \"POST\"]`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "MethodsInputStar": {
+      "type": "string",
+      "enum": [
+        "*"
+      ]
+    },
+    "SecretRef": {
+      "description": "A reference to a secret registered in app.toml `[secrets]`.\nEither `\"NAME\"` (required) or `{ name = \"NAME\", optional = true }`.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/SecretRefTableToml"
+        }
+      ]
+    },
+    "SecretRefTableToml": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "optional": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "ReplaceIn": {
+      "description": "Where in the outgoing request placeholders are replaced.",
+      "type": "string",
+      "enum": [
+        "headers",
+        "body",
+        "params"
+      ]
+    },
+    "EnvironmentAuditV2": {
+      "type": "object",
+      "properties": {
+        "public_env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "boolean"
+          }
+        },
+        "secrets": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretEnvironmentAuditV2"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "public_env",
+        "secrets"
+      ]
+    },
+    "SecretEnvironmentAuditV2": {
+      "type": "object",
+      "properties": {
+        "present": {
+          "type": "boolean"
+        },
+        "optional": {
+          "type": "boolean"
+        },
+        "exposed_to": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/AuditDigestSetV2"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "present",
+        "optional",
+        "exposed_to"
+      ]
+    },
+    "AuditDigestSetV2": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "DeploymentSecurityAuditV2": {
+      "type": "object",
+      "properties": {
+        "exec": {
+          "$ref": "#/$defs/ExecSecurityAuditV2"
+        },
+        "http": {
+          "$ref": "#/$defs/HttpSecurityAuditV2"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "exec",
+        "http"
+      ]
+    },
+    "ExecSecurityAuditV2": {
+      "type": "object",
+      "properties": {
+        "platform_mode": {
+          "$ref": "#/$defs/ExecPlatformModeAuditV2"
+        },
+        "platform_allowlist": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecAllowlistAuditV2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "app_allowlist": {
+          "$ref": "#/$defs/ExecAllowlistAuditV2"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "platform_mode",
+        "app_allowlist"
+      ]
+    },
+    "ExecPlatformModeAuditV2": {
+      "type": "string",
+      "enum": [
+        "off",
+        "all",
+        "allowlist"
+      ]
+    },
+    "ExecAllowlistAuditV2": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ExecAllowlistModeAuditV2"
+        },
+        "entries": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "entries"
+      ]
+    },
+    "ExecAllowlistModeAuditV2": {
+      "type": "string",
+      "enum": [
+        "deny",
+        "allowlist"
+      ]
+    },
+    "HttpSecurityAuditV2": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "$ref": "#/$defs/HttpPolicyFormatAuditV2"
+        },
+        "server_policy_hash": {
+          "type": "string"
+        },
+        "server_policy": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostAuditV2"
+          }
+        },
+        "webui_server_policy_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "webui_server_policy": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/AllowedHostAuditV2"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "server_policy_hash",
+        "server_policy"
+      ]
+    },
+    "HttpPolicyFormatAuditV2": {
+      "type": "string",
+      "enum": [
+        "obelisk-http-policy-v1"
+      ]
+    },
+    "AllowedHostAuditV2": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string"
+        },
+        "methods": {
+          "$ref": "#/$defs/AuditMethodsV2"
+        },
+        "request_url_regex": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "replace_in": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pattern",
+        "methods",
+        "secrets",
+        "replace_in"
+      ]
+    },
+    "AuditMethodsV2": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  }
+}

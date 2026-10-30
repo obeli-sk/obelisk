@@ -580,7 +580,7 @@ fn generate_app_policy_schema(output: Option<PathBuf>) -> Result<(), anyhow::Err
 
 #[cfg(test)]
 fn generate_server_audit_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
-    write_schema::<crate::command::server::ServerConfigurationAuditV2>(output)
+    write_schema::<crate::command::server::ServerConfigurationAuditV3>(output)
 }
 
 #[cfg(test)]
@@ -1451,7 +1451,7 @@ mod tests {
         generate_app_policy_schema(Some(PathBuf::from("assets/schemas/app-config-v1.json")))
             .unwrap();
         generate_server_audit_schema(Some(PathBuf::from(
-            "assets/schemas/server-configuration-v2.json",
+            "assets/schemas/server-configuration-v3.json",
         )))
         .unwrap();
         generate_authored_schema(Some(PathBuf::from("assets/schemas/toml/authored.json"))).unwrap();

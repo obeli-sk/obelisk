@@ -1,6 +1,6 @@
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
-use crate::http_hooks::{HttpClientTracesContainer, HttpHooks};
+use crate::http_hooks::{HttpClientTracesContainer, HttpHooks, SystemEventSink};
 use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
 use crate::webhook::native_v8_webhook_runtime::NativeV8Imports;
 use crate::webhook::webhook_registry::WebhookStateWatcher;
@@ -12,7 +12,7 @@ use crate::workflow::workflow_ctx::schedule_request_error_to_wast_val;
 use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
 use concepts::prefixed_ulid::{
-    DeploymentId, ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_START_IDX, RunId,
+    DeploymentId, ExecutionIdDerived, ExecutionIdTopLevel, JOIN_SET_START_IDX, RunId, SystemEventId,
 };
 use concepts::storage::{
     AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric, DbErrorRead,
@@ -610,6 +610,7 @@ impl<T> Default for MethodAwareRouter<T> {
 /// Swappable per-server state for hot-redeploy.
 pub struct WebhookServerState {
     pub deployment_id: DeploymentId,
+    pub policy_event_id: SystemEventId,
     pub router: Arc<MethodAwareRouter<WebhookEndpointInstanceLinked>>,
     pub fn_registry: Arc<dyn FunctionRegistry>,
     pub max_persisted_value_size_bytes: u64,
@@ -672,6 +673,7 @@ pub async fn server(
                                     trace!(%execution_id, %deployment_id, method = %req.method(), uri = %req.uri(), "Processing request");
                                     RequestHandler {
                                         deployment_id: state.deployment_id,
+                                        policy_event_id: state.policy_event_id,
                                         max_persisted_value_size_bytes: state.max_persisted_value_size_bytes,
                                         engine: engine.clone(),
                                         clock_fn: clock_fn.clone_box(),
@@ -2110,6 +2112,7 @@ impl WebhookEndpointCtx {
     #[expect(clippy::too_many_arguments)]
     fn new<'a>(
         deployment_id: DeploymentId,
+        policy_event_id: SystemEventId,
         max_persisted_value_size_bytes: u64,
         config: &Arc<WebhookEndpointConfig>,
         resolved_imports_json: Option<&'a str>,
@@ -2240,8 +2243,11 @@ impl WebhookEndpointCtx {
                 component_logger,
                 config_section_hint: config.config_section_hint,
                 component_name: config.component_id.name.to_string(),
-                deployment_id: Some(deployment_id),
-                db_pool: Some(db_pool),
+                system_events: Some(SystemEventSink {
+                    deployment_id,
+                    policy_event_id,
+                    db_pool,
+                }),
                 webhook_execution_row: persist_on_outbound_http.then_some(execution_row),
             },
             last_direct_call_id: None,
@@ -2424,6 +2430,7 @@ impl WasiHttpView for WebhookEndpointCtx {
 
 struct RequestHandler {
     deployment_id: DeploymentId,
+    policy_event_id: SystemEventId,
     max_persisted_value_size_bytes: u64,
     engine: Arc<Engine>,
     clock_fn: Box<dyn ClockFn>,
@@ -2568,6 +2575,7 @@ impl RequestHandler {
             });
             let mut store = WebhookEndpointCtx::new(
                 self.deployment_id,
+                self.policy_event_id,
                 self.max_persisted_value_size_bytes,
                 &found_instance.config,
                 instance_match.handler().resolved_imports_json.as_deref(),
@@ -3219,6 +3227,7 @@ pub(crate) mod tests {
         let (_server_termination_sender, server_termination_watcher) = watch::channel(());
         let (_state_sender, state_watcher) = watch::channel(Arc::new(WebhookServerState {
             deployment_id: DEPLOYMENT_ID_DUMMY,
+            policy_event_id: concepts::prefixed_ulid::SystemEventId::generate(),
             router: Arc::new(router),
             fn_registry,
             max_persisted_value_size_bytes: 1024,
@@ -3416,6 +3425,7 @@ pub(crate) mod tests {
                 let (server_termination_sender, server_termination_watcher) = watch::channel(());
                 let initial_state = Arc::new(webhook_trigger::WebhookServerState {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
+                    policy_event_id: concepts::prefixed_ulid::SystemEventId::generate(),
                     router: Arc::new(router),
                     fn_registry,
                     max_persisted_value_size_bytes: MAX_PERSISTED_VALUE_SIZE_BYTES,
@@ -3551,6 +3561,7 @@ pub(crate) mod tests {
                 .wh_server_state_sender
                 .send_replace(Arc::new(WebhookServerState {
                     deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
+                    policy_event_id: concepts::prefixed_ulid::SystemEventId::generate(),
                     router: Arc::new(MethodAwareRouter::default()),
                     fn_registry: previous.fn_registry.clone(),
                     max_persisted_value_size_bytes: previous.max_persisted_value_size_bytes,
@@ -3939,6 +3950,7 @@ pub(crate) mod tests {
             let (_wh_server_state_sender, wh_server_state_watcher) =
                 watch::channel(Arc::new(WebhookServerState {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
+                    policy_event_id: concepts::prefixed_ulid::SystemEventId::generate(),
                     router: Arc::new(router),
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
@@ -4130,6 +4142,7 @@ pub(crate) mod tests {
             let (_wh_server_state_sender, wh_server_state_watcher) =
                 watch::channel(Arc::new(WebhookServerState {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
+                    policy_event_id: concepts::prefixed_ulid::SystemEventId::generate(),
                     router: Arc::new(router),
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
@@ -4300,6 +4313,7 @@ pub(crate) mod tests {
             let (wh_server_state_sender, wh_server_state_watcher) =
                 watch::channel(Arc::new(WebhookServerState {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
+                    policy_event_id: concepts::prefixed_ulid::SystemEventId::generate(),
                     router: Arc::new(router),
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
@@ -4640,6 +4654,7 @@ pub(crate) mod tests {
             let (wh_server_state_sender, wh_server_state_watcher) =
                 watch::channel(Arc::new(WebhookServerState {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
+                    policy_event_id: concepts::prefixed_ulid::SystemEventId::generate(),
                     router: Arc::new(router),
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
@@ -5942,6 +5957,7 @@ pub(crate) mod tests {
                 let (wh_server_state_sender, wh_server_state_watcher) =
                     watch::channel(Arc::new(WebhookServerState {
                         deployment_id: DEPLOYMENT_ID_DUMMY,
+                        policy_event_id: concepts::prefixed_ulid::SystemEventId::generate(),
                         router: Arc::new(router),
                         fn_registry,
                         max_persisted_value_size_bytes: u64::MAX,

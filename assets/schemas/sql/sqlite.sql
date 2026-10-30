@@ -395,9 +395,5 @@ CREATE INDEX idx_t_component_source_digest ON t_component_source (digest);
 CREATE INDEX t_system_event_cas_digest_idx ON t_system_event (cas_digest) WHERE cas_digest IS NOT NULL;
 CREATE INDEX t_system_event_node_run_idx ON t_system_event (node_run_id, created_at DESC, event_id DESC);
 CREATE INDEX idx_t_file_upload_uploaded_at ON t_file_upload (uploaded_at);
-CREATE INDEX t_system_event_http_policy_idx ON t_system_event (
-    deployment_id, json_extract(details, '$.component'), json_extract(details, '$.component_policy_hash'),
-    json_extract(details, '$.server_policy_hash'), event_id DESC
-) WHERE code = 'component.http_policy.applied';
 CREATE INDEX idx_t_deployment_created_at ON t_deployment (created_at, deployment_id);
 CREATE INDEX idx_t_state_created_at ON t_state (created_at, execution_id);

@@ -1,6 +1,6 @@
 use super::activity_worker::ActivityConfig;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
-use crate::http_hooks::{HttpClientTracesContainer, HttpHooks};
+use crate::http_hooks::{HttpClientTracesContainer, HttpHooks, SystemEventSink};
 use crate::policy_builder::build_http_policy;
 use crate::std_output_stream::{LogStream, StdOutput};
 use concepts::storage::LogLevel;
@@ -60,10 +60,7 @@ pub(crate) fn store(
     stdout: Option<StdOutput>,
     stderr: Option<StdOutput>,
     logs_storage_config: Option<LogStrageConfig>,
-    system_events: Option<(
-        concepts::prefixed_ulid::DeploymentId,
-        std::sync::Arc<dyn concepts::storage::DbPool>,
-    )>,
+    system_events: Option<SystemEventSink>,
 ) -> Store<ActivityCtx> {
     let execution_id = ctx.execution_id;
     let run_id = ctx.locked_event.run_id;
@@ -125,10 +122,7 @@ pub(crate) fn store(
             component_logger: component_logger.clone(),
             config_section_hint: config.config_section_hint,
             component_name: config.component_id.name.to_string(),
-            deployment_id: system_events
-                .as_ref()
-                .map(|(deployment_id, _)| *deployment_id),
-            db_pool: system_events.map(|(_, db_pool)| db_pool),
+            system_events,
             webhook_execution_row: None,
         },
         component_logger,

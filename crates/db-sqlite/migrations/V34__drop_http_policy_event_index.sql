@@ -1,0 +1,1 @@
+DROP INDEX t_system_event_http_policy_idx;

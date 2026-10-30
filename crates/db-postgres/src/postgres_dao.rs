@@ -6,7 +6,7 @@ use concepts::{
     ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
     cas::{Cas, CasError},
     component_id::{ComponentDigest, Digest},
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, NodeRunId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
@@ -23,18 +23,18 @@ use concepts::{
         ExecutionListCreatedAtCursor, ExecutionListPagination, ExecutionRequest,
         ExecutionRetentionCursor, ExecutionWithState, ExecutionWithStateRequestsResponses,
         ExpiredDelay, ExpiredLock, ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent,
-        HttpPolicyEventIds, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED,
-        Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse,
-        ListResponsesResponse, LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor,
-        LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination,
-        PendingState, PendingStateBlockedByJoinSet, PendingStateFinishedError,
-        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
-        RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd, ResponseWithCursor,
-        RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT,
-        SourceMapping, StorageStatus, SubscribeToResponsesError, SystemEvent, SystemEventFilter,
-        SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version,
-        VersionType, WasmBacktrace, deployment_cursor_fallback_created_at,
+        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
+        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
+        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
+        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, SourceMapping, StorageStatus,
+        SubscribeToResponsesError, SystemEvent, SystemEventFilter, SystemEventLevel,
+        SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
+        deployment_cursor_fallback_created_at,
     },
 };
 use db_common::{
@@ -6402,32 +6402,6 @@ impl DbAdmin for PostgresConnection {
             .collect()
     }
 
-    async fn find_http_policy_event_ids(
-        &self,
-        deployment_id: DeploymentId,
-        component: &str,
-        component_policy_hash: &str,
-        server_policy_hash: &str,
-    ) -> Result<Option<HttpPolicyEventIds>, DbErrorRead> {
-        let client = self.client.lock().await;
-        let deployment_id = deployment_id.to_string();
-        let component_row = client.query_opt(
-            "SELECT event_id, details->>'server_configuration_event_id' FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = $1 AND details->>'component' = $2 AND details->>'component_policy_hash' = $3 AND details->>'server_policy_hash' = $4 ORDER BY event_id DESC LIMIT 1",
-            &[&deployment_id, &component, &component_policy_hash, &server_policy_hash],
-        ).await?;
-        let Some(component) = component_row else {
-            return Ok(None);
-        };
-        Ok(Some(HttpPolicyEventIds {
-            component_policy_event_id: get::<String, _>(&component, 0)?.parse().map_err(|err| {
-                consistency_db_err(format!("invalid component policy event ID: {err}"))
-            })?,
-            server_configuration_event_id: get::<String, _>(&component, 1)?.parse().map_err(
-                |err| consistency_db_err(format!("invalid server configuration event ID: {err}")),
-            )?,
-        }))
-    }
-
     async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead> {
         let row = self.client.lock().await.query_one(
             "SELECT pg_database_size(current_database()), (SELECT COUNT(*) FROM t_state WHERE tombstoned = FALSE), (SELECT COUNT(*) FROM t_deployment), (SELECT COUNT(*) FROM t_system_event)", &[]
@@ -6444,15 +6418,17 @@ impl DbAdmin for PostgresConnection {
         &self,
         created_before: DateTime<Utc>,
         limit: u32,
+        keep_node_run_id: NodeRunId,
         dry_run: bool,
     ) -> Result<SystemEventRetentionResult, DbErrorWrite> {
         let limit = limit.clamp(1, 10_000);
+        let keep_node_run_id = keep_node_run_id.to_string();
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
         let rows = tx
             .query(
-                "SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY created_at, event_id LIMIT $2",
-                &[&created_before, &(i64::from(limit) + 1)],
+                "SELECT event_id FROM t_system_event WHERE created_at < $1 AND node_run_id <> $3 ORDER BY created_at, event_id LIMIT $2",
+                &[&created_before, &(i64::from(limit) + 1), &keep_node_run_id],
             )
             .await?;
         let has_more = rows.len() > limit as usize;
@@ -6461,8 +6437,8 @@ impl DbAdmin for PostgresConnection {
         } else {
             tx
             .execute(
-                "DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY created_at, event_id LIMIT $2)",
-                &[&created_before, &i64::from(limit)],
+                "DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < $1 AND node_run_id <> $3 ORDER BY created_at, event_id LIMIT $2)",
+                &[&created_before, &i64::from(limit), &keep_node_run_id],
             )
             .await?
         };
