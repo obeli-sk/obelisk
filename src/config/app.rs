@@ -174,10 +174,18 @@ impl AppConfigToml {
         Ok(())
     }
     pub(crate) fn effective_name(&self) -> anyhow::Result<String> {
-        let name = std::env::var("OBELISK_APP_NAME")
-            .ok()
-            .or_else(|| self.app_name.clone())
-            .context("app name is required: set `app_name` in app.toml or `OBELISK_APP_NAME`")?;
+        let name = match (std::env::var("OBELISK_APP_NAME").ok(), &self.app_name) {
+            (Some(env), Some(name)) => {
+                ensure!(
+                    env == *name,
+                    "`OBELISK_APP_NAME` is `{env}`, but app.toml sets `app_name = \"{name}\"`; unset one of them"
+                );
+                env
+            }
+            (env, name) => env.or_else(|| name.clone()).context(
+                "app name is required: set `app_name` in app.toml or `OBELISK_APP_NAME`",
+            )?,
+        };
         validate_app_name(&name)?;
         Ok(name)
     }

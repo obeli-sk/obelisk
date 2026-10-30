@@ -31,7 +31,7 @@ impl From<&Cloud> for Summary {
                 );
                 match command {
                     CloudApp::Get => Self::App(None),
-                    CloudApp::Status => Self::Status,
+                    CloudApp::Status { .. } => Self::Status,
                     CloudApp::New { .. } => Self::App(Some("App created.")),
                     CloudApp::Apply { .. } | CloudApp::Enable { .. } | CloudApp::Disable { .. } => {
                         Self::Lifecycle

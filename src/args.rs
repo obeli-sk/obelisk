@@ -99,7 +99,6 @@ pub(crate) struct ClientConnection {
     pub(crate) verbose: bool,
     /// Address of the Obelisk server.
     #[arg(
-        short,
         long,
         global = true,
         env = "OBELISK_API_URL",
@@ -655,7 +654,7 @@ pub(crate) enum Server {
         /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
         #[arg(short, long)]
         server_config: Option<PathBuf>,
-        /// App policy path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`).
+        /// App config path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`).
         #[arg(short, long)]
         app_config: Option<PathBuf>,
         /// Path to the deployment TOML file. If provided, the deployment is inserted and activated on startup,
@@ -711,7 +710,7 @@ pub(crate) struct VerifyArgs {
     /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
     #[arg(short, long)]
     pub(crate) server_config: Option<PathBuf>,
-    /// App policy path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`).
+    /// App config path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`).
     #[arg(short, long)]
     pub(crate) app_config: Option<PathBuf>,
     /// Path to the deployment TOML file. If omitted, the database's Enqueued deployment is used,
@@ -1676,7 +1675,7 @@ pub(crate) struct CloudArgs {
 
 #[derive(Debug, clap::Args)]
 pub(crate) struct CloudAppTarget {
-    /// Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in ./app.toml.
+    /// Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config.
     #[arg(long, global = true, env = "OBELISK_APP_NAME", value_name = "NAME")]
     pub(crate) app: Option<String>,
     #[command(subcommand)]
@@ -1716,7 +1715,7 @@ pub(crate) enum CloudToken {
         /// Save the server-issued token in a new private file. Lost responses require revocation and replacement.
         #[arg(long)]
         token_file: PathBuf,
-        /// Restrict access to this app slug; repeat for multiple apps.
+        /// Restrict access to this app; repeat for multiple apps.
         #[arg(long, value_name = "APP_NAME", value_parser = clap::builder::NonEmptyStringValueParser::new())]
         scope: Vec<String>,
         /// Absolute expiry in RFC 3339 format.
@@ -1748,9 +1747,7 @@ pub(crate) enum CloudApp {
     Admin(Admin),
     /// Create a stopped app; apply explicitly to start it.
     New {
-        /// App name; falls back to --app, the policy file's `app_name`, then ./app.toml.
-        name: Option<String>,
-        /// App policy path; defaults to ./app.toml if present.
+        /// App config path; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
         /// Prompt for initial env vars and secrets; requires a terminal.
@@ -1765,20 +1762,24 @@ pub(crate) enum CloudApp {
     /// Inspect the app row.
     Get,
     /// Inspect management, Machine and target API health.
-    Status,
+    Status {
+        /// App config path compared with the staged configuration; defaults to ./app.toml if present.
+        #[arg(short = 'a', long)]
+        app_config: Option<PathBuf>,
+    },
     /// Stage app policy and cloud settings without restarting the VM.
     Stage {
-        /// App policy path; defaults to ./app.toml.
-        #[arg(short = 'a', long, default_value = "app.toml")]
-        app_config: PathBuf,
+        /// App config path; defaults to ./app.toml.
+        #[arg(short = 'a', long)]
+        app_config: Option<PathBuf>,
         #[command(flatten)]
         command_id: CloudCommandId,
     },
     /// Publish the local project, creating or configuring the app and activating its deployment.
     Deploy {
-        /// App configuration path.
-        #[arg(short = 'a', long, default_value = "app.toml")]
-        app_config: PathBuf,
+        /// App config path; defaults to ./app.toml.
+        #[arg(short = 'a', long)]
+        app_config: Option<PathBuf>,
         /// Deployment manifest path.
         #[arg(short = 'd', long, default_value = "deployment.toml")]
         deployment: PathBuf,
@@ -1791,7 +1792,7 @@ pub(crate) enum CloudApp {
     },
     /// Apply the staged configuration and the enqueued (or active) deployment.
     Apply {
-        /// App policy path compared with the staged configuration; defaults to ./app.toml if present.
+        /// App config path compared with the staged configuration; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
         /// Use the staged configuration even when the local app config differs.
@@ -1823,7 +1824,7 @@ pub(crate) enum CloudApp {
     },
     /// Interactively stage declared env vars and secrets, offering process environment values.
     Fill {
-        /// App policy path compared with the staged configuration; defaults to ./app.toml if present.
+        /// App config path compared with the staged configuration; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
         /// Use the staged configuration even when the local app config differs.
