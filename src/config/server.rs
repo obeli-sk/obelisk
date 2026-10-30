@@ -1514,7 +1514,7 @@ const fn default_retention_enabled() -> bool {
 }
 
 const fn default_retention_max_age() -> DurationConfig {
-    DurationConfig::Hours(30 * 24)
+    DurationConfig::Hours(31 * 24)
 }
 
 // HTTP server declaration (referenced by ServerConfigToml)
@@ -1832,7 +1832,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn omitted_retention_uses_enabled_thirty_day_defaults() {
+        fn omitted_retention_uses_enabled_thirty_one_day_defaults() {
             let config: ServerConfigToml = toml::from_str("").unwrap();
             let retention = config.maintenance.gc.retention;
             for policy in [
@@ -1841,7 +1841,7 @@ mod tests {
                 retention.system_events,
             ] {
                 assert!(policy.enabled);
-                assert!(matches!(policy.max_age, DurationConfig::Hours(720)));
+                assert!(matches!(policy.max_age, DurationConfig::Hours(744)));
             }
         }
 
@@ -1864,7 +1864,7 @@ mod tests {
             assert!(!retention.executions.enabled);
             assert!(matches!(
                 retention.executions.max_age,
-                DurationConfig::Hours(720)
+                DurationConfig::Hours(744)
             ));
             assert!(retention.deployments.enabled);
             assert!(matches!(
