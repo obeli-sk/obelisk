@@ -4224,7 +4224,12 @@ async fn record_secret_exposure_audits(
     server_configuration_event_id: &SystemEventId,
 ) -> Result<(), anyhow::Error> {
     for audit in audits {
-        crate::server::system_event_writer::record(
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "exposed_secrets": audit.exposed_secrets,
+        }))
+        .expect("secret exposure audit must encode");
+        let digest = concepts::cas::content_digest(&bytes);
+        crate::server::system_event_writer::record_with_cas(
             db_pool,
             concepts::storage::SystemEventCode::ComponentSecretExposureAuthorized,
             None,
@@ -4233,11 +4238,13 @@ async fn record_secret_exposure_audits(
                 "component_name": audit.component_name,
                 "component_kind": audit.component_kind,
                 "secret_exposure_digest": audit.secret_exposure_digest,
-                "exposed_secrets": audit.exposed_secrets,
                 "server_configuration_event_id": server_configuration_event_id,
             }),
+            digest,
+            bytes,
         )
-        .await;
+        .await
+        .ok_or_else(|| anyhow::anyhow!("cannot persist component secret exposure audit"))?;
     }
     Ok(())
 }
