@@ -26,6 +26,7 @@ fn deployment_record(
         description: None,
         digest: DeploymentRecord::compute_digest("{}"),
         created_at,
+        updated_at: created_at,
         last_active_at: None,
         last_active_app_config_digest: None,
         status: DeploymentStatus::Inactive,

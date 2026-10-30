@@ -5357,6 +5357,7 @@ async fn deployment_insert_and_get(database: Database) {
         description: Some("test deployment".to_string()),
         digest: expected_digest.clone(),
         created_at: now,
+        updated_at: now,
         last_active_at: None,
         last_active_app_config_digest: None,
         status: DeploymentStatus::Inactive,
@@ -5414,6 +5415,7 @@ async fn deployment_files_roundtrip_and_missing_digests(database: Database) {
                 description: None,
                 digest: DeploymentRecord::compute_digest("{}"),
                 created_at: now,
+                updated_at: now,
                 last_active_at: None,
                 last_active_app_config_digest: None,
                 status: DeploymentStatus::Inactive,
@@ -5503,6 +5505,7 @@ async fn deployment_activate(database: Database) {
                 description: None,
                 digest: DeploymentRecord::compute_digest("{}"),
                 created_at: now,
+                updated_at: now,
                 last_active_at: None,
                 last_active_app_config_digest: None,
                 status: DeploymentStatus::Inactive,
@@ -5565,6 +5568,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
                 description: None,
                 digest: DeploymentRecord::compute_digest("{}"),
                 created_at: now,
+                updated_at: now,
                 last_active_at: None,
                 last_active_app_config_digest: None,
                 status: DeploymentStatus::Inactive,
@@ -5593,6 +5597,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
                 description: None,
                 digest: DeploymentRecord::compute_digest("{}"),
                 created_at: now,
+                updated_at: now,
                 last_active_at: None,
                 last_active_app_config_digest: None,
                 status: DeploymentStatus::Inactive,
@@ -5644,6 +5649,7 @@ async fn deployment_enqueue_active_clears_pending(database: Database) {
                     description: None,
                     digest: DeploymentRecord::compute_digest("{}"),
                     created_at: now,
+                    updated_at: now,
                     last_active_at: None,
                     last_active_app_config_digest: None,
                     status: DeploymentStatus::Inactive,
@@ -5666,7 +5672,10 @@ async fn deployment_enqueue_active_clears_pending(database: Database) {
         .unwrap();
     assert_eq!(
         EnqueueOutcome::Enqueued,
-        api_conn.enqueue_deployment(pending_id).await.unwrap()
+        api_conn
+            .enqueue_deployment(pending_id, now + Duration::from_secs(1))
+            .await
+            .unwrap()
     );
     assert_eq!(
         pending_id,
@@ -5680,13 +5689,18 @@ async fn deployment_enqueue_active_clears_pending(database: Database) {
 
     assert_eq!(
         EnqueueOutcome::AlreadyActive,
-        api_conn.enqueue_deployment(active_id).await.unwrap()
+        api_conn
+            .enqueue_deployment(active_id, now + Duration::from_secs(2))
+            .await
+            .unwrap()
     );
 
     let active = api_conn.get_deployment(active_id).await.unwrap().unwrap();
     let pending = api_conn.get_deployment(pending_id).await.unwrap().unwrap();
     assert_eq!(DeploymentStatus::Active, active.status);
     assert_eq!(DeploymentStatus::Inactive, pending.status);
+    assert_eq!(now, active.updated_at);
+    assert_eq!(now + Duration::from_secs(2), pending.updated_at);
     assert_eq!(
         active_id,
         api_conn
@@ -5721,6 +5735,7 @@ async fn deployment_list(database: Database) {
                     description: None,
                     digest: DeploymentRecord::compute_digest("{}"),
                     created_at: now,
+                    updated_at: now,
                     last_active_at: None,
                     last_active_app_config_digest: None,
                     status: DeploymentStatus::Inactive,
@@ -6408,6 +6423,7 @@ async fn app_checkpoint_is_atomic_and_preserves_unrelated_enqueue(database: Data
                 description: None,
                 digest: DeploymentRecord::compute_digest(""),
                 created_at: now,
+                updated_at: now,
                 last_active_at: None,
                 last_active_app_config_digest: None,
                 status: DeploymentStatus::Inactive,
@@ -6431,7 +6447,7 @@ async fn app_checkpoint_is_atomic_and_preserves_unrelated_enqueue(database: Data
     conn.commit_app_checkpoint(checkpoint.clone(), now, "first-policy".into())
         .await
         .unwrap();
-    conn.enqueue_deployment(queued).await.unwrap();
+    conn.enqueue_deployment(queued, now).await.unwrap();
     let missing = concepts::storage::AppCheckpoint {
         deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
         ..checkpoint.clone()

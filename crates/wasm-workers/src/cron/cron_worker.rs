@@ -464,6 +464,7 @@ mod tests {
                     description: None,
                     digest: DeploymentRecord::compute_digest("{}"),
                     created_at: now,
+                    updated_at: now,
                     last_active_at: None,
                     last_active_app_config_digest: None,
                     status: DeploymentStatus::Inactive,

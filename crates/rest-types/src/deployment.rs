@@ -62,6 +62,9 @@ pub struct DeploymentStateSer {
     pub status: DeploymentStatusSer,
     /// When this deployment was submitted
     pub created_at: DateTime<Utc>,
+    /// Last status change: submission, enqueue, activation or demotion
+    // backcompat: 0.43.0-rc.15 deployment responses had no updated_at.
+    pub updated_at: Option<DateTime<Utc>>,
     /// When this deployment was last active; None if never active
     pub last_active_at: Option<DateTime<Utc>>,
     // backcompat: 0.42.0-rc.3 deployment responses had no policy digest.
@@ -121,6 +124,8 @@ pub struct DeploymentRecordSer {
     pub digest: String,
     pub status: DeploymentStatusSer,
     pub created_at: DateTime<Utc>,
+    // backcompat: 0.43.0-rc.15 deployment responses had no updated_at.
+    pub updated_at: Option<DateTime<Utc>>,
     pub last_active_at: Option<DateTime<Utc>>,
     // backcompat: 0.42.0-rc.3 deployment responses had no policy digest.
     pub last_active_app_config_digest: Option<String>,
@@ -138,6 +143,7 @@ impl From<&DeploymentRecord> for DeploymentRecordSer {
             digest: r.digest.to_string(),
             status: DeploymentStatusSer::from(&r.status),
             created_at: r.created_at,
+            updated_at: Some(r.updated_at),
             last_active_at: r.last_active_at,
             last_active_app_config_digest: r.last_active_app_config_digest.clone(),
             deployment_toml: r.deployment_toml.clone(),

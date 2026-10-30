@@ -483,6 +483,7 @@ fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecor
         description: row.get("description")?,
         digest: row.get("digest")?,
         created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
         last_active_at: row.get("last_active_at")?,
         last_active_app_config_digest: row.get("last_active_app_config_digest")?,
         status,
@@ -3730,6 +3731,7 @@ impl SqlitePool {
             d.digest,{count_cols}
             {deployment_toml_col},
             d.created_at,
+            d.updated_at,
             d.last_active_at,
             d.last_active_app_config_digest,
             d.status
@@ -3779,7 +3781,7 @@ impl SqlitePool {
         if include_execution_counts {
             write!(
                 sql,
-                " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.last_active_app_config_digest, d.status"
+                " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.updated_at, d.last_active_at, d.last_active_app_config_digest, d.status"
             )
             .expect("writing to string");
         }
@@ -3830,6 +3832,7 @@ impl SqlitePool {
                         finished_execution_failure: row.get("finished_execution_failure")?,
                         deployment_toml: row.get("deployment_toml")?,
                         created_at: row.get("created_at")?,
+                        updated_at: row.get("updated_at")?,
                         last_active_at: row.get("last_active_at")?,
                         last_active_app_config_digest: row.get("last_active_app_config_digest")?,
                         status,
@@ -3857,13 +3860,14 @@ impl SqlitePool {
         );
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, description, digest, created_at, inactive_at, status, deployment_toml, obelisk_version, created_by) \
-             VALUES (:deployment_id, :description, :digest, :created_at, :created_at, :status, :deployment_toml, :obelisk_version, :created_by)",
+             (deployment_id, description, digest, created_at, inactive_at, updated_at, status, deployment_toml, obelisk_version, created_by) \
+             VALUES (:deployment_id, :description, :digest, :created_at, :created_at, :updated_at, :status, :deployment_toml, :obelisk_version, :created_by)",
             rusqlite::named_params! {
                 ":deployment_id": record.deployment_id.to_string(),
                 ":description": record.description,
                 ":digest": record.digest.to_string(),
                 ":created_at": record.created_at,
+                ":updated_at": record.updated_at,
                 ":status": record.status.as_str(),
                 ":deployment_toml": record.deployment_toml,
                 ":obelisk_version": record.obelisk_version,
@@ -4081,14 +4085,14 @@ impl SqlitePool {
     ) -> Result<(), DbErrorWrite> {
         // Preserve an unrelated enqueued deployment.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive', inactive_at = :now WHERE status = 'active'",
+            "UPDATE t_deployment SET status = 'inactive', inactive_at = :now, updated_at = :now WHERE status = 'active'",
             rusqlite::named_params! { ":now": now },
         )
         .map_err(RusqliteError::from)?;
         // Set target deployment to active, recording activation time.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', last_active_at = :now, last_active_app_config_digest = :app_config_digest, inactive_at = NULL WHERE deployment_id = :deployment_id",
+                "UPDATE t_deployment SET status = 'active', last_active_at = :now, updated_at = :now, last_active_app_config_digest = :app_config_digest, inactive_at = NULL WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! {
                     ":now": now,
                     ":app_config_digest": app_config_digest,
@@ -4105,6 +4109,7 @@ impl SqlitePool {
     fn enqueue_deployment_tx(
         tx: &Transaction,
         deployment_id: DeploymentId,
+        now: DateTime<Utc>,
     ) -> Result<EnqueueOutcome, DbErrorWrite> {
         let status_opt: Option<String> = tx
             .query_row(
@@ -4120,8 +4125,8 @@ impl SqlitePool {
         }
         // Demote any previously enqueued deployment to inactive.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive', inactive_at = strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now') WHERE status = 'enqueued'",
-            [],
+            "UPDATE t_deployment SET status = 'inactive', inactive_at = :now, updated_at = :now WHERE status = 'enqueued'",
+            rusqlite::named_params! { ":now": now },
         )
         .map_err(RusqliteError::from)?;
         // The target is already active: it stays active, only the pending one was cleared.
@@ -4131,8 +4136,9 @@ impl SqlitePool {
         // Set target deployment to enqueued.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'enqueued', inactive_at = NULL WHERE deployment_id = :deployment_id",
+                "UPDATE t_deployment SET status = 'enqueued', inactive_at = NULL, updated_at = :now WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! {
+                    ":now": now,
                     ":deployment_id": deployment_id.to_string(),
                 },
             )
@@ -4149,7 +4155,7 @@ impl SqlitePool {
     ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         let Some(record) = tx
             .query_row(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, updated_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! { ":deployment_id": deployment_id.to_string() },
                 deployment_record_from_row,
@@ -4166,7 +4172,7 @@ impl SqlitePool {
     fn get_active_deployment_tx(tx: &Transaction) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         let Some(record) = tx
             .query_row(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, updated_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment WHERE status = 'active' LIMIT 1",
                 [],
                 deployment_record_from_row,
@@ -4185,7 +4191,7 @@ impl SqlitePool {
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
         let mut sql = String::from(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, updated_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment",
         );
 
@@ -5541,9 +5547,10 @@ impl DbExternalApi for SqlitePool {
     async fn enqueue_deployment(
         &self,
         deployment_id: DeploymentId,
+        now: DateTime<Utc>,
     ) -> Result<EnqueueOutcome, DbErrorWrite> {
         self.transaction(
-            move |tx| Self::enqueue_deployment_tx(tx, deployment_id),
+            move |tx| Self::enqueue_deployment_tx(tx, deployment_id, now),
             TxType::MultipleWrites,
             "enqueue_deployment",
         )
@@ -5580,7 +5587,7 @@ impl DbExternalApi for SqlitePool {
             move |tx| {
                 let Some(record) = tx
                     .query_row(
-                    "SELECT deployment_id, description, digest, created_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
+                    "SELECT deployment_id, description, digest, created_at, updated_at, last_active_at, last_active_app_config_digest, status, deployment_toml, obelisk_version, created_by \
                      FROM t_deployment WHERE status IN ('enqueued', 'active') \
                      ORDER BY CASE status WHEN 'enqueued' THEN 0 ELSE 1 END LIMIT 1",
                         [],

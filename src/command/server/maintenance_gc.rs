@@ -599,6 +599,7 @@ mod tests {
                     description: None,
                     digest: DeploymentRecord::compute_digest("{}"),
                     created_at: chrono::Utc::now() - chrono::Duration::days(age),
+                    updated_at: chrono::Utc::now() - chrono::Duration::days(age),
                     last_active_at: None,
                     last_active_app_config_digest: None,
                     status: DeploymentStatus::Inactive,
