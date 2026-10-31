@@ -953,7 +953,8 @@
                           "name": "--level"
                         },
                         {
-                          "name": "--code"
+                          "name": "--code",
+                          "help": "Only show events whose code starts with this prefix, e.g. `maintenance.gc`"
                         },
                         {
                           "name": "--from",
@@ -2353,7 +2354,8 @@
                   "name": "--level"
                 },
                 {
-                  "name": "--code"
+                  "name": "--code",
+                  "help": "Only show events whose code starts with this prefix, e.g. `maintenance.gc`"
                 },
                 {
                   "name": "--from",
