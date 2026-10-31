@@ -10,7 +10,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll, ready};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use wasmtime_wasi_http::p2::body::{HyperIncomingBody, HyperOutgoingBody};
@@ -113,6 +113,14 @@ impl PoolKey {
 struct IdleConnection {
     sender: SendRequest<HyperOutgoingBody>,
     expires_at: Instant,
+    /// `Instant` does not advance while a VM snapshot is suspended, the wall clock does.
+    expires_at_wall: SystemTime,
+}
+
+impl IdleConnection {
+    fn is_usable(&self, now: Instant, now_wall: SystemTime) -> bool {
+        !self.sender.is_closed() && now < self.expires_at && now_wall < self.expires_at_wall
+    }
 }
 
 struct Pool {
@@ -209,9 +217,8 @@ impl Pool {
     fn pop_idle(&self, key: &PoolKey) -> Option<SendRequest<HyperOutgoingBody>> {
         let mut idle = self.idle.lock().expect("pool mutex not poisoned");
         let connections = idle.get_mut(key)?;
-        let now = Instant::now();
-        connections
-            .retain(|connection| !connection.sender.is_closed() && now < connection.expires_at);
+        let (now, now_wall) = (Instant::now(), SystemTime::now());
+        connections.retain(|connection| connection.is_usable(now, now_wall));
         let sender = connections.pop().map(|connection| connection.sender);
         if connections.is_empty() {
             idle.remove(key);
@@ -236,13 +243,18 @@ impl Pool {
             return;
         }
         let expires_at = Instant::now() + idle_timeout;
+        let expires_at_wall = SystemTime::now() + idle_timeout;
         {
             let mut idle = self.idle.lock().expect("pool mutex not poisoned");
             let connections = idle.entry(key.clone()).or_default();
             if connections.len() >= self.config.max_idle_per_host {
                 connections.remove(0);
             }
-            connections.push(IdleConnection { sender, expires_at });
+            connections.push(IdleConnection {
+                sender,
+                expires_at,
+                expires_at_wall,
+            });
         }
         self.runtime.clone().spawn(async move {
             tokio::time::sleep_until(expires_at.into()).await;
@@ -253,9 +265,8 @@ impl Pool {
     fn evict_expired(&self, key: &PoolKey) {
         let mut idle = self.idle.lock().expect("pool mutex not poisoned");
         if let Some(connections) = idle.get_mut(key) {
-            let now = Instant::now();
-            connections
-                .retain(|connection| !connection.sender.is_closed() && now < connection.expires_at);
+            let (now, now_wall) = (Instant::now(), SystemTime::now());
+            connections.retain(|connection| connection.is_usable(now, now_wall));
             if connections.is_empty() {
                 idle.remove(key);
             }
@@ -530,6 +541,20 @@ pub(crate) mod tests {
         let (addr, accepted) = server_with_keep_alive(Some("max=100, timeout=1")).await;
         get_sequentially(&OutboundHttpClient::default(), addr).await;
         assert_eq!(3, accepted.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn wall_clock_expiry_drops_connection_after_suspension() {
+        let (addr, accepted) = server().await;
+        let client = OutboundHttpClient::default();
+        get_sequentially(&client, addr).await;
+        // A resumed snapshot sees the wall clock jump while `Instant` stayed put.
+        let pool = client.0.as_ref().unwrap();
+        for connection in pool.idle.lock().unwrap().values_mut().flatten() {
+            connection.expires_at_wall = SystemTime::now() - Duration::from_secs(1);
+        }
+        get_sequentially(&client, addr).await;
+        assert_eq!(2, accepted.load(Ordering::SeqCst));
     }
 
     #[test]
