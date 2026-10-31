@@ -1119,7 +1119,7 @@
           "type": "integer",
           "format": "uint32",
           "minimum": 0,
-          "default": 10000
+          "default": 1000
         }
       },
       "additionalProperties": false
