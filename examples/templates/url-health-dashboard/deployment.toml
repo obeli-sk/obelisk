@@ -16,15 +16,15 @@ exec.lock_expiry.seconds = 30
 max_retries = 2
 
 [[activity_js.allowed_host]]
-pattern = "https://*"
+pattern = "https://example.com"
 methods = ["GET"]
 
 [[workflow_js]]
-name = "check_batch"
-location = "workflow/check-batch.js"
-ffqn = "starter:app/workflow.check-batch"
-params = [{ name = "urls", type = "list<string>" }]
-return_type = """result<list<record {
+name = "check_site"
+location = "workflow/check-site.js"
+ffqn = "starter:app/workflow.check-site"
+params = [{ name = "url", type = "string" }]
+return_type = """result<record {
   url: string,
   check: result<record {
     status: u16,
@@ -35,14 +35,31 @@ return_type = """result<list<record {
     server: option<string>,
     title: option<string>
   }, string>
-}>>"""
+}>"""
 
 [[webhook_endpoint_js]]
 name = "dashboard"
 location = "webhook/dashboard.js"
-env_vars = [{ key = "WEBUI_URL", optional = true }]
+env_vars = [
+  { key = "TARGET_URL", value = "https://example.com/" },
+  "OBELISK_API_URL",
+  "OBELISK_UI_URL",
+]
 routes = [
   { methods = ["GET"], route = "/" },
+  { methods = ["GET"], route = "/api/status" },
   { methods = ["POST"], route = "/api/check" },
-  { methods = ["GET"], route = "/api/result/*" },
 ]
+
+[[webhook_endpoint_js.allowed_host]]
+url_prefix = "${OBELISK_API_URL}"
+methods = ["GET"]
+url_regex_suffix = "/v1/executions$"
+secrets = ["INTERNAL_TOKEN"]
+replace_in = ["headers"]
+
+[[cron]]
+name = "probe"
+ffqn = "starter:app/workflow.check-site"
+params = '["https://example.com/"]'
+schedule = "*/5 * * * *"

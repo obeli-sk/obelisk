@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(cli)* The default `obelisk generate new` template probes one site on a cron schedule and shows
+  its uptime and latency history. The dashboard reads probe runs through the Obelisk API using
+  internal secrets and URLs supplied by the server, so it needs no configuration.
+
 ### Fixed
 
 - *(gc)* Successful periodic garbage collection system events use DEBUG severity.

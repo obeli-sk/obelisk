@@ -1,14 +1,14 @@
-# URL health dashboard
+# Site health dashboard
 
-A web page where you paste a list of URLs and see each one's HTTP status, latency, size and page
-title. It is built from three components:
+A cron schedule probes one website every 5 minutes, and a web page shows its uptime, latency
+history and the log of recent probes. It is built from three components:
 
-- `webhook/dashboard.js` serves the page and a small JSON API. `POST /api/check` schedules the
-  workflow and returns its execution ID; `GET /api/result/<id>` reports progress or the results.
-- `workflow/check-batch.js` is a durable workflow. It submits one `check-url` activity per URL so
-  the checks run in parallel, then collects the results in input order.
 - `activity/check-url.js` performs one GET request. A network error throws, so Obelisk retries the
-  activity (`max_retries` in `deployment.toml`) before the workflow records the error.
+  activity (`max_retries` in `deployment.toml`) before the workflow sees the error.
+- `workflow/check-site.js` is a durable workflow that runs the activity and returns the probed URL with
+  its outcome, recording an outage once the retries are exhausted. The `[[cron]]` entry in `deployment.toml` schedules it.
+- `webhook/dashboard.js` serves the page. `GET /api/status` lists recent workflow runs through the
+  Obelisk API and reads their results; `POST /api/check` schedules a probe right away.
 
 Run it from this directory:
 
@@ -16,23 +16,18 @@ Run it from this directory:
 obelisk server run --app-config app.toml --deployment deployment.toml
 ```
 
-Then open <http://localhost:9090/> or use the API directly:
+Then open <http://localhost:9090/>.
 
-```sh
-curl -X POST http://localhost:9090/api/check -d '{"urls": ["https://example.com"]}'
-curl http://localhost:9090/api/result/<execution_id>
-```
+## Monitoring another site
 
-## Outbound HTTP
+The site is `https://example.com/`. To change it, edit `deployment.toml` (the cron `params`, the
+activity's `allowed_host` and the dashboard's `TARGET_URL`) and the matching `allowed_host` in
+`app.toml`. `app.toml` defines the app administrator's maximum allowance; `deployment.toml` selects
+what this deployment uses.
 
-The dashboard fetches whatever URLs its visitors submit, so the allowed destinations matter. Both
-`app.toml` and `deployment.toml` allow `GET` to any HTTPS host on port 443. `app.toml` defines the
-app administrator's maximum allowance; `deployment.toml` selects what this deployment uses.
-Before exposing the dashboard beyond your machine, narrow both patterns to the hosts you want to
-monitor, e.g. `https://*.example.com`.
+## Obelisk API access
 
-## Web UI link
-
-After scheduling a check, the page links the execution in the Obelisk Web UI. By default the link
-points to port 8080 on the dashboard's own host, which matches a local server and Obelisk cloud. Set
-`WEBUI_URL` (e.g. `WEBUI_URL=https://webui.example.com`) before starting the server to override it.
+The dashboard calls the Obelisk API with `INTERNAL_TOKEN`, an internal secret that the server
+supplies. It grants full API access, so `app.toml` and `deployment.toml` allow sending it only to
+`GET /v1/executions`. The component sees an opaque placeholder; Obelisk substitutes the real token
+in the request headers. `OBELISK_API_URL` and `OBELISK_UI_URL` are likewise supplied by the server.

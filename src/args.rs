@@ -479,7 +479,7 @@ pub(crate) enum Deployment {
 
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
 pub(crate) enum StarterTemplate {
-    /// Web dashboard that checks URLs in parallel via a workflow and a retried activity.
+    /// Cron-driven site health probe with a dashboard of uptime and latency history.
     #[default]
     UrlHealthDashboard,
     /// One webhook calling one workflow calling one HTTP activity.
