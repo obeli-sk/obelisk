@@ -107,7 +107,7 @@ console-subscriber = { workspace = true, optional = true }
 tikv-jemallocator = "0.7.0"
 
 [dev-dependencies]
-jsonschema = { version = "0.58.6", default-features = false }
+jsonschema = { version = "0.60.2", default-features = false }
 http-body-util.workspace = true
 hyper.workspace = true
 db-tests.workspace = true
@@ -229,7 +229,7 @@ db-common = { package = "obeli-sk-db-common", path = "crates/db-common" }
 db-postgres = { package = "obeli-sk-db-postgres", path = "crates/db-postgres" }
 db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite" }
 db-tests = { package = "obeli-db-tests", path = "crates/testing/db-tests" }
-deno_core = "0.412.0"
+deno_core = "0.413.0"
 deno_error = "=0.7.1"
 embedded-assets = { package = "obeli-sk-embedded-assets", path = "crates/embedded-assets" }
 executor = { package = "obeli-sk-executor", path = "crates/executor" }
@@ -270,7 +270,7 @@ async-trait = "0.1"
 axum = { version = "0.8.9", features = ["http2", "multipart"] }
 axum-accept = "0.0.7"
 axum-extra = { version = "0.12.6", features = ["query"] }
-base64 = "0.22.1" # keep on 0.22 to match axum/hyper-util; only reqwest/oci pull 0.23
+base64 = "0.23.1" # keep on 0.22 to match axum/hyper-util; only reqwest/oci pull 0.23
 bytes = "1.12.1"
 cargo_metadata = "0.23"
 cfg-if = "1.0.5"
@@ -316,16 +316,16 @@ id-arena = "2.3.0"
 indexmap = { version = "2.14", features = ["serde"] }
 insta = { version = "1.49.0", features = ["json"] }
 itertools = "0.15"
-jsonwebtoken = { version = "10", default-features = false } # keep in sync with oci-client's jsonwebtoken
+jsonwebtoken = { version = "11", default-features = false } # keep in sync with oci-client's jsonwebtoken
 lazy_static = "1.5"
 rpassword = "7.5.4"
 libc = "0.2.191"
 lzma-rs = "0.3"
-oci-client = { version = "0.17.0", default-features = false }
+oci-client = { version = "0.18.0", default-features = false }
 oci-wasm = { version = "0.6.0", default-features = false } # Dependent on matching oci-client
 paste = "1.0"
 quote = "1"
-rand = "0.9" # postgres-protocol pulls rand 0.10; obelisk stays on 0.9 (0.10 reorganized the Rng traits)
+rand = "0.10" # postgres-protocol pulls rand 0.10; obelisk stays on 0.9 (0.10 reorganized the Rng traits)
 rcgen = "0.14"
 regex = "1.13"
 refinery = { version = "0.10.0", default-features = false, features = ["rusqlite", "tokio-postgres-rustls"] }
@@ -345,8 +345,8 @@ ruzstd = "0.9"
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12"] }
 webpki-roots = "1"
 route-recognizer = "0.3.1"
-rstest = "0.27"
-rusqlite = { version = "0.40.2", features = [
+rstest = "0.28"
+rusqlite = { version = "0.41.1", features = [
     "bundled",
     "chrono",
     "serde_json",
@@ -382,7 +382,7 @@ tokio-stream = "0.1.19"
 toml = { version = "1.1.8", features = ["preserve_order"] }
 toml_edit = "0.25.17"
 tower = "0.5.3"
-tower-http = { version = "0.6.11", features = ["trace", "cors"] } # keep in sync with reqwest's tower-http
+tower-http = { version = "0.7.1", features = ["trace", "cors"] } # keep in sync with reqwest's tower-http
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.5"
 tracing-error = "0.2.1"
@@ -399,13 +399,13 @@ wasmtime-wasi = { version = "50.0.1", features = ["p3"] }
 wasmtime-wasi-io = "50.0.1"
 wasmtime-wasi-http = { version = "50.0.1", features = ["p3", "component-model-async"] }
 wasmtime-environ = "50.0.1"
-wasip3 = "0.9.0"
+wasip3 = "0.10.0"
 # wasm-tools (keep in sync with wasmtime's pinned wasm-tools suite)
-wast = "261.0.0"
-wat = "~1.261.0"
-wit-parser = "0.261.0"
-wasmparser = "0.261.0"
-wit-component = "0.261.0"
+wast = "263.0.0"
+wat = "~1.263.0"
+wit-parser = "0.263.0"
+wasmparser = "0.263.0"
+wit-component = "0.263.0"
 
 # boa
 boa_engine = { package="obeli-sk-boa-engine", version="1.0.0-obeli-sk.15", default-features = false }
@@ -422,8 +422,8 @@ boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.15", de
 
 # testing components
 wasip2 = "2.0.1"
-wit-bindgen = "0.62.0"
-wit-bindgen-rust = "0.62.0"
+wit-bindgen = "0.63.0"
+wit-bindgen-rust = "0.63.0"
 wstd = "0.6.8"
 
 # otlp
