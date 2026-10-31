@@ -334,6 +334,7 @@ reqwest = { version = "0.13", default-features = false, features = [
     "multipart",
     "rustls-no-provider",
 ] }
+rsa = { version = "0.9.10", default-features = false, features = ["sha2"] } # std pulls an OS RNG into deterministic workflows
 ring = "0.17" # Verifies OIDC JWTs (jsonwebtoken has no crypto backend enabled)
 rustls = { version = "0.23", default-features = false, features = [
     "logging",

@@ -1,0 +1,15 @@
+{
+  "jwk": {
+    "kty": "RSA",
+    "n": "q8BBYwN_oi7FnLOx_FiC2GKt-hVFN8L_sWlr7wz4E2Z-J7m2mcJLLOlVBuuYU4SWDnZNxnfiswEHtKViiYqOJB5QwTJ-itGHLwkLNW5xEz5ODxuhcKUrpvysiY-4dDHnzEWNeaofKHq1jCG36r5BmgNcmD01MPvSTp8UETdsIv7EBDTqlfpLihjSvYzJ10ke7gLZybcJXwZNayg5WHpwKmgRKkXxkZkhSWaP1fMUxSwTdDrn7VSsYV1e8JAeYVmGrUSc8SA7d2NRZVMXEuCK9slYbNml1cCQAGyEejf9QmlX-94MQhdtOg7saqJWNKUT2BN3MBXgHaBNGoDxMs8bzw",
+    "e": "AQAB",
+    "alg": "RS256",
+    "use": "sig",
+    "key_ops": [
+      "verify"
+    ],
+    "ext": false
+  },
+  "message": "Obelisk RS256 verification fixture",
+  "signature": "ab803e45c2e4cbe4e802175db877fbad8050a6f61bc129e7bc8ad08541242db1df44dfe7cdc867ad758bb45e1d3f938412f753047e09cf23635127eb4ded1c154b91880c0229aef7397ae6967f817b15366bfeb78849c000ec90c4da284ad8f9b434c76e48ad86baa6fd6081f4d1323e4730cf5d0c4f925987020be0efea7ee8a0a1fb688bc803e67e0cc72aa24a6159976c4fda3e153cd224b6e8ea638740d3825a32162eb1c060fd64830d8fbbbd14dfbb1f23dad10b20ef8aeecc1be7fbf6e86e748646859ef6837bb688632ae86911d4bfc9754ba9268bfb6ee84d7f6a29149848f3fbbc1e5529397c71bc2938b485fad16193685613ba60700b791d008f"
+}

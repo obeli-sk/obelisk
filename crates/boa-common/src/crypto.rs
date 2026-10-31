@@ -1,13 +1,14 @@
 //! Web Crypto API (`crypto.subtle`) for Boa-based Obelisk runtimes.
 //!
-//! Implements the subset of the [Web Crypto API][spec] needed for SHA-256/384/512 digests
-//! and HMAC signature generation and verification.
+//! Implements the subset of the [Web Crypto API][spec] needed for SHA-256/384/512 digests,
+//! HMAC signatures, and public RSA JWK verification (RS256).
 //!
 //! Supported operations:
 //! - `crypto.subtle.digest("SHA-256", data)`
 //! - `crypto.subtle.importKey("raw", keyData, {name:"HMAC", hash:"SHA-256"}, extractable, usages)`
+//! - `crypto.subtle.importKey("jwk", jwk, {name:"RSASSA-PKCS1-v1_5", hash:"SHA-256"}, false, ["verify"])`
 //! - `crypto.subtle.sign({name:"HMAC"}, key, data)`
-//! - `crypto.subtle.verify({name:"HMAC"}, key, signature, data)`
+//! - `crypto.subtle.verify("HMAC" | "RSASSA-PKCS1-v1_5", key, signature, data)`
 //! - `crypto.getRandomValues(integerTypedArray)`
 //!
 //! All `subtle.*` methods return immediately-resolved `Promise`s (hashing is synchronous).
@@ -26,11 +27,17 @@ use js_crypto::HashAlgorithm;
 
 // ── Key material ──────────────────────────────────────────────────────────────
 
+#[derive(Debug)]
+enum KeyMaterial {
+    Hmac(Vec<u8>),
+    Rsa(js_crypto::RsaVerificationKey),
+}
+
 /// Rust data stored inside a `CryptoKey` JS object.
 #[derive(Debug, Trace, Finalize, boa_engine::JsData)]
 pub struct CryptoKeyData {
     #[unsafe_ignore_trace]
-    key_bytes: Vec<u8>,
+    material: KeyMaterial,
     #[unsafe_ignore_trace]
     hash: HashAlgorithm,
     extractable: bool,
@@ -133,15 +140,31 @@ fn parse_algorithm(
 // ── CryptoKey construction ────────────────────────────────────────────────────
 
 fn make_crypto_key(
-    key_bytes: Vec<u8>,
+    material: KeyMaterial,
     hash: HashAlgorithm,
     extractable: bool,
     usages: Vec<String>,
     context: &mut Context,
 ) -> JsResult<JsObject> {
     let hash_name = hash.name();
+    let (key_type, algorithm_name) = match &material {
+        KeyMaterial::Hmac(_) => ("secret", "HMAC"),
+        KeyMaterial::Rsa(_) => ("public", "RSASSA-PKCS1-v1_5"),
+    };
+    let alg_obj = JsObject::default(context.intrinsics());
+    if let KeyMaterial::Rsa(rsa) = &material {
+        alg_obj.set(
+            js_string!("modulusLength"),
+            rsa.modulus_length(),
+            false,
+            context,
+        )?;
+        let exponent =
+            boa_engine::object::builtins::JsUint8Array::from_iter(rsa.public_exponent(), context)?;
+        alg_obj.set(js_string!("publicExponent"), exponent, false, context)?;
+    }
     let data = CryptoKeyData {
-        key_bytes,
+        material,
         hash,
         extractable,
         usages: usages.clone(),
@@ -154,7 +177,7 @@ fn make_crypto_key(
     );
 
     // Spec-required read-only enumerable properties.
-    obj.set(js_string!("type"), js_string!("secret"), false, context)?;
+    obj.set(js_string!("type"), js_string!(key_type), false, context)?;
     obj.set(
         js_string!("extractable"),
         JsValue::from(extractable),
@@ -162,11 +185,14 @@ fn make_crypto_key(
         context,
     )?;
 
-    // algorithm: { name: "HMAC", hash: { name: "SHA-256" } }
     let hash_obj = JsObject::default(context.intrinsics());
     hash_obj.set(js_string!("name"), js_string!(hash_name), false, context)?;
-    let alg_obj = JsObject::default(context.intrinsics());
-    alg_obj.set(js_string!("name"), js_string!("HMAC"), false, context)?;
+    alg_obj.set(
+        js_string!("name"),
+        js_string!(algorithm_name),
+        false,
+        context,
+    )?;
     alg_obj.set(js_string!("hash"), hash_obj, false, context)?;
     obj.set(js_string!("algorithm"), alg_obj, false, context)?;
 
@@ -198,7 +224,7 @@ fn digest(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
 ///
 /// Spec: <https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-importKey>
 ///
-/// Only `"raw"` format and `"HMAC"` algorithm are supported.
+/// Supports raw HMAC keys and public RSA JWKs for SHA-256 verification.
 fn import_key(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let format = args
         .get_or_undefined(0)
@@ -206,7 +232,7 @@ fn import_key(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
         .ok_or_else(|| JsNativeError::typ().with_message("importKey: format must be a string"))?
         .to_std_string_escaped();
 
-    if format != "raw" {
+    if format != "raw" && format != "jwk" {
         return Err(JsNativeError::error()
             .with_message(format!(
                 "NotSupportedError: key format '{format}' is not supported"
@@ -214,7 +240,7 @@ fn import_key(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
             .into());
     }
 
-    let key_data = buffer_source_to_bytes(args.get_or_undefined(1), context)?;
+    let key_input = args.get_or_undefined(1);
     let algorithm_val = args.get_or_undefined(2);
     let extractable = args.get_or_undefined(3).to_boolean();
 
@@ -238,8 +264,32 @@ fn import_key(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
         usages.push(usage);
     }
 
-    // Only HMAC is supported.
     let (alg_name, hash_opt) = parse_algorithm(algorithm_val, context)?;
+    if format == "jwk" {
+        if !alg_name.eq_ignore_ascii_case("RSASSA-PKCS1-v1_5")
+            || hash_opt != Some(HashAlgorithm::Sha256)
+        {
+            return Err(JsNativeError::error()
+                .with_message(
+                    "NotSupportedError: JWK import only supports RSASSA-PKCS1-v1_5 with SHA-256",
+                )
+                .into());
+        }
+        let jwk = key_input
+            .to_json(context)?
+            .ok_or_else(|| JsNativeError::typ().with_message("importKey: expected a JWK object"))?;
+        let rsa = js_crypto::RsaVerificationKey::import(&jwk.to_string(), extractable, &usages)
+            .map_err(|err| JsNativeError::error().with_message(err))?;
+        let obj = make_crypto_key(
+            KeyMaterial::Rsa(rsa),
+            HashAlgorithm::Sha256,
+            extractable,
+            usages,
+            context,
+        )?;
+        return Ok(JsPromise::resolve(obj, context)?.into());
+    }
+    let key_data = buffer_source_to_bytes(key_input, context)?;
     if alg_name.to_uppercase() != "HMAC" {
         return Err(JsNativeError::error()
             .with_message(format!(
@@ -251,7 +301,13 @@ fn import_key(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
         JsNativeError::error().with_message("DataError: HMAC importKey requires a hash algorithm")
     })?;
 
-    let key_obj = make_crypto_key(key_data, hash, extractable, usages, context)?;
+    let key_obj = make_crypto_key(
+        KeyMaterial::Hmac(key_data),
+        hash,
+        extractable,
+        usages,
+        context,
+    )?;
     let promise = JsPromise::resolve(key_obj, context)?;
     Ok(promise.into())
 }
@@ -277,6 +333,11 @@ fn sign(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     let key_data = key_obj
         .downcast_ref::<CryptoKeyData>()
         .ok_or_else(|| JsNativeError::typ().with_message("sign: key is not a valid CryptoKey"))?;
+    let KeyMaterial::Hmac(key_bytes) = &key_data.material else {
+        return Err(JsNativeError::error()
+            .with_message("InvalidAccessError: expected an HMAC signing key")
+            .into());
+    };
     if !key_data.usages.iter().any(|u| u == "sign") {
         return Err(JsNativeError::error()
             .with_message("InvalidAccessError: key does not have the 'sign' usage")
@@ -284,7 +345,7 @@ fn sign(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     }
 
     let data = buffer_source_to_bytes(args.get_or_undefined(2), context)?;
-    let sig = key_data.hash.sign(&key_data.key_bytes, &data);
+    let sig = key_data.hash.sign(key_bytes, &data);
 
     let ab = bytes_to_array_buffer(sig, context)?;
     let promise = JsPromise::resolve(ab, context)?;
@@ -297,7 +358,8 @@ fn sign(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
 fn verify(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let algorithm_val = args.get_or_undefined(0);
     let (alg_name, _) = parse_algorithm(algorithm_val, context)?;
-    if alg_name.to_uppercase() != "HMAC" {
+    if !alg_name.eq_ignore_ascii_case("HMAC") && !alg_name.eq_ignore_ascii_case("RSASSA-PKCS1-v1_5")
+    {
         return Err(JsNativeError::error()
             .with_message(format!(
                 "NotSupportedError: algorithm '{alg_name}' is not supported"
@@ -320,7 +382,18 @@ fn verify(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
 
     let signature = buffer_source_to_bytes(args.get_or_undefined(2), context)?;
     let data = buffer_source_to_bytes(args.get_or_undefined(3), context)?;
-    let result = key_data.hash.verify(&key_data.key_bytes, &data, &signature);
+    let result = match (
+        &key_data.material,
+        alg_name.eq_ignore_ascii_case("RSASSA-PKCS1-v1_5"),
+    ) {
+        (KeyMaterial::Rsa(rsa), true) => rsa.verify(&data, &signature),
+        (KeyMaterial::Hmac(key_bytes), false) => key_data.hash.verify(key_bytes, &data, &signature),
+        _ => {
+            return Err(JsNativeError::error()
+                .with_message("InvalidAccessError: algorithm does not match key")
+                .into());
+        }
+    };
 
     let promise = JsPromise::resolve(JsValue::from(result), context)?;
     Ok(promise.into())

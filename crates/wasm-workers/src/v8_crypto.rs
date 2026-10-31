@@ -60,6 +60,37 @@ fn op_crypto_hmac_verify(
     })
 }
 
+#[op2]
+#[serde]
+fn op_crypto_rsa_import(
+    state: &mut OpState,
+    #[string] jwk: &str,
+    extractable: bool,
+    #[serde] usages: serde_json::Value,
+) -> Result<serde_json::Value, JsErrorBox> {
+    catch(state, || {
+        let usages: Vec<String> = serde_json::from_value(usages)
+            .map_err(|err| format!("TypeError: invalid key usages: {err}"))?;
+        let key = js_crypto::RsaVerificationKey::import(jwk, extractable, &usages)?;
+        Ok(serde_json::json!({
+            "modulusLength": key.modulus_length(),
+            "publicExponent": key.public_exponent(),
+        }))
+    })
+}
+
+#[op2]
+fn op_crypto_rsa_verify(
+    state: &mut OpState,
+    #[string] jwk: &str,
+    #[anybuffer] signature: &[u8],
+    #[anybuffer] data: &[u8],
+) -> Result<bool, JsErrorBox> {
+    catch(state, || {
+        Ok(js_crypto::RsaVerificationKey::import(jwk, false, &[])?.verify(data, signature))
+    })
+}
+
 // Ops expect a `V8PanicState` in the `OpState`.
 deno_core::extension!(
     obelisk_crypto_v8,
@@ -68,7 +99,9 @@ deno_core::extension!(
         op_crypto_digest,
         op_crypto_hmac_hash,
         op_crypto_hmac_sign,
-        op_crypto_hmac_verify
+        op_crypto_hmac_verify,
+        op_crypto_rsa_import,
+        op_crypto_rsa_verify
     ]
 );
 
@@ -78,11 +111,13 @@ const keyBytes = new WeakMap();
 const toBytes = data => ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : new Uint8Array(data);
 const hmacKey = (algorithm, key, usage) => {
   if (String(typeof algorithm === 'string' ? algorithm : algorithm?.name).toUpperCase() !== 'HMAC') throw new Error('NotSupportedError: only HMAC is supported');
+  if (rsaKeys.has(key)) throw new Error('InvalidAccessError: algorithm does not match key');
   const bytes = keyBytes.get(key);
   if (!bytes) throw new TypeError(`${usage}: key is not a valid CryptoKey`);
   if (!key.usages.includes(usage)) throw new Error(`InvalidAccessError: key does not have the '${usage}' usage`);
   return bytes;
 };
+const rsaKeys = new WeakMap();
 const integerArrays = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, BigInt64Array, BigUint64Array];
 globalThis.crypto = {
   getRandomValues(array) {
@@ -96,6 +131,16 @@ globalThis.crypto = {
       return ops.op_crypto_digest(String(typeof algorithm === 'string' ? algorithm : algorithm?.name), toBytes(data)).buffer;
     },
     async importKey(format, keyData, algorithm, extractable, usages) {
+      if (format === 'jwk') {
+        if (String(algorithm?.name).toUpperCase() !== 'RSASSA-PKCS1-V1_5') throw new Error('NotSupportedError: unsupported JWK algorithm');
+        if (ops.op_crypto_hmac_hash(typeof algorithm.hash === 'string' ? algorithm.hash : algorithm.hash?.name) !== 'SHA-256') throw new Error('NotSupportedError: RSA verification only supports SHA-256');
+        const jwk = JSON.stringify(keyData);
+        const keyUsages = [...usages];
+        const info = ops.op_crypto_rsa_import(jwk, Boolean(extractable), keyUsages);
+        const key = Object.freeze({ type: 'public', extractable: Boolean(extractable), algorithm: Object.freeze({ name: 'RSASSA-PKCS1-v1_5', hash: Object.freeze({ name: 'SHA-256' }), modulusLength: info.modulusLength, publicExponent: new Uint8Array(info.publicExponent) }), usages: Object.freeze([...keyUsages]) });
+        rsaKeys.set(key, { jwk, usages: keyUsages });
+        return key;
+      }
       if (format !== 'raw') throw new Error(`NotSupportedError: key format '${format}' is not supported`);
       if (String(algorithm?.name).toUpperCase() !== 'HMAC') throw new Error(`NotSupportedError: algorithm '${algorithm?.name}' is not supported`);
       if (algorithm.hash === undefined) throw new Error('DataError: HMAC importKey requires a hash algorithm');
@@ -109,6 +154,11 @@ globalThis.crypto = {
       return ops.op_crypto_hmac_sign(key.algorithm.hash.name, bytes, toBytes(data)).buffer;
     },
     async verify(algorithm, key, signature, data) {
+      if (String(typeof algorithm === 'string' ? algorithm : algorithm?.name).toUpperCase() === 'RSASSA-PKCS1-V1_5') {
+        const entry = rsaKeys.get(key);
+        if (!entry || !entry.usages.includes('verify')) throw new Error('InvalidAccessError: expected an RSA verification key');
+        return ops.op_crypto_rsa_verify(entry.jwk, toBytes(signature), toBytes(data));
+      }
       const bytes = hmacKey(algorithm, key, 'verify');
       return ops.op_crypto_hmac_verify(key.algorithm.hash.name, bytes, toBytes(signature), toBytes(data));
     }
