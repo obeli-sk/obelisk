@@ -550,11 +550,18 @@ where
             break;
         }
     }
-    let started = std::time::Instant::now();
-    stats.space_reclamation.affected = async { db_pool.admin_conn().await?.reclaim_space().await }
-        .await
-        .map_err(|source| Box::new(SweepFailure::new("space_reclamation", stats, source)))?;
-    stats.space_reclamation.active = started.elapsed();
+    loop {
+        let started = std::time::Instant::now();
+        let reclaimed = async { db_pool.admin_conn().await?.reclaim_space().await }
+            .await
+            .map_err(|source| Box::new(SweepFailure::new("space_reclamation", stats, source)))?;
+        stats.space_reclamation.active += started.elapsed();
+        stats.space_reclamation.affected += reclaimed;
+        if reclaimed == 0 {
+            break;
+        }
+        delay_after_work(reclaimed, config.batch_delay).await;
+    }
     Ok(stats)
 }
 
@@ -598,6 +605,44 @@ mod tests {
             }),
             system_events: Some(Duration::from_secs(60)),
         }
+    }
+
+    #[tokio::test]
+    async fn sweep_reclaims_more_than_one_batch_of_free_sqlite_pages() {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let blob = vec![5; 4 * 1024 * 1024];
+        db_pool
+            .cas_conn()
+            .await
+            .unwrap()
+            .write_blob(&blob)
+            .await
+            .unwrap();
+        let stats = run_sweep(&db_pool, sweep_config(), &mut false, || async {
+            Ok(Some(
+                db_pool
+                    .cas_gc_conn()
+                    .await?
+                    .gc_cas(false, 100, chrono::Utc::now())
+                    .await?,
+            ))
+        })
+        .await
+        .unwrap_or_else(|failure| panic!("{}: {}", failure.category, failure.source));
+        assert_eq!(stats.cas_bytes, blob.len() as u64);
+        assert!(stats.space_reclamation.affected > 100);
+        assert_eq!(
+            db_pool
+                .admin_conn()
+                .await
+                .unwrap()
+                .reclaim_space()
+                .await
+                .unwrap(),
+            0
+        );
+        db_close.close().await;
     }
 
     async fn insert_deployment(db_pool: &dyn DbPool, age: i64) -> DeploymentId {
