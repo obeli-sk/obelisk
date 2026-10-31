@@ -930,6 +930,9 @@ impl ComponentBacktraceConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WebhookWasmComponentConfigToml {
+    /// Accepted OIDC bearer tokens; issuer, audience and claim values support public environment interpolation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) oidc: Vec<crate::config::server::OidcProviderConfig>,
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     /// Generated content digest, only accepted in processed manifests.
@@ -967,6 +970,9 @@ pub(crate) struct WebhookWasmComponentConfigToml {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WebhookJsComponentConfigToml {
+    /// Accepted OIDC bearer tokens; issuer, audience and claim values support public environment interpolation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) oidc: Vec<crate::config::server::OidcProviderConfig>,
     pub(crate) name: ConfigName,
     /// Location of the JavaScript source file.
     /// Supports local file paths and OCI registry references (`oci://...`).

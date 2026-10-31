@@ -1683,6 +1683,7 @@ pub(crate) async fn resolve_local_refs(
     let mut webhooks_wasm = Vec::with_capacity(deployment.webhooks_wasm.len());
     for w in deployment.webhooks_wasm {
         webhooks_wasm.push(WebhookWasmComponentConfigResolved {
+            oidc: w.oidc,
             common: w.common,
             content_digest: w.content_digest,
             http_server: w.http_server,
@@ -1702,6 +1703,7 @@ pub(crate) async fn resolve_local_refs(
     let mut webhooks_js = Vec::with_capacity(deployment.webhooks_js.len());
     for w in deployment.webhooks_js {
         webhooks_js.push(WebhookJsComponentConfigResolved {
+            oidc: w.oidc,
             location: resolve_script_toml(
                 ScriptToml::JavaScript {
                     location: w.location,
@@ -2209,6 +2211,7 @@ pub(crate) fn resolve_backtrace(
 
 #[derive(Debug)]
 pub(crate) struct WebhookWasmComponentConfigVerified {
+    pub(crate) oidc: Option<Arc<crate::server::auth::oidc::OidcVerifier>>,
     pub(crate) component_id: ComponentId,
     pub(crate) wasm_path: PathBuf,
     pub(crate) routes: Vec<WebhookRouteVerified>,
@@ -2260,6 +2263,7 @@ impl TryFrom<WebhookRoute> for WebhookRouteVerified {
 
 #[derive(Debug)]
 pub(crate) struct WebhookJsConfigVerified {
+    pub(crate) oidc: Option<Arc<crate::server::auth::oidc::OidcVerifier>>,
     pub(crate) wasm_path: Option<Arc<Path>>, // Boa runtime; None under V8
     pub(crate) component_id: ComponentId,
     pub(crate) js_entry_path: String,
@@ -2345,6 +2349,7 @@ impl WebhookWasmComponentConfigResolvedExt for WebhookWasmComponentConfigResolve
         Ok((
             common.name,
             WebhookWasmComponentConfigVerified {
+                oidc: resolve_webhook_oidc(self.oidc, secret_registry)?,
                 component_id,
                 wasm_path,
                 routes: self
@@ -2421,6 +2426,7 @@ impl WebhookJsComponentConfigResolvedExt for WebhookJsComponentConfigResolved {
         Ok((
             self.name,
             WebhookJsConfigVerified {
+                oidc: resolve_webhook_oidc(self.oidc, secret_registry)?,
                 wasm_path,
                 component_id,
                 js_entry_path,
@@ -2793,6 +2799,26 @@ pub(crate) struct AllowedHostAdvisory {
 /// `[[*.allowed_host]]` block it came from in the source file.
 pub(crate) fn allowed_host_fingerprint(entry: &AllowedHostToml) -> String {
     toml::to_string(entry).expect("allowed host must serialize")
+}
+
+fn resolve_webhook_oidc(
+    mut configs: Vec<crate::config::server::OidcProviderConfig>,
+    secret_registry: &SecretRegistry,
+) -> anyhow::Result<Option<Arc<crate::server::auth::oidc::OidcVerifier>>> {
+    for config in &mut configs {
+        for field in std::iter::once(&mut config.issuer)
+            .chain(std::iter::once(&mut config.audience))
+            .chain(config.claims.values_mut())
+        {
+            *field = interpolate_deployment_env_vars_plaintext(field, secret_registry)?;
+        }
+    }
+    crate::config::server::validate_oidc_providers(&configs)?;
+    let verifier = crate::server::auth::oidc::OidcVerifier::new(&configs)?;
+    if let Some(verifier) = &verifier {
+        verifier.spawn_prefetch();
+    }
+    Ok(verifier)
 }
 
 pub(crate) fn resolve_allowed_hosts(
@@ -3171,6 +3197,7 @@ pub struct WorkflowJsComponentConfigResolved {
 /// Resolved form of `WebhookWasmComponentConfigToml`.
 #[derive(Debug, Clone)]
 pub struct WebhookWasmComponentConfigResolved {
+    pub oidc: Vec<crate::config::server::OidcProviderConfig>,
     pub common: ComponentCommon,
     pub content_digest: Option<ContentDigest>,
     pub http_server: ConfigName,
@@ -3189,6 +3216,7 @@ pub struct WebhookWasmComponentConfigResolved {
 /// Resolved form of `WebhookJsComponentConfigToml`.
 #[derive(Debug, Clone)]
 pub struct WebhookJsComponentConfigResolved {
+    pub oidc: Vec<crate::config::server::OidcProviderConfig>,
     pub name: ConfigName,
     pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
@@ -3232,6 +3260,81 @@ pub struct DeploymentResolved {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn webhook_oidc_resolves_public_env_and_rejects_unsafe_rules() {
+        test_utils::set_up();
+        let registry =
+            SecretRegistry::empty_with_public_env(["OBELISK_TEST_OIDC_INSTANCE".to_string()]);
+        let parse = |issuer: &str, audience: &str, claims: &str| {
+            toml::from_str::<crate::config::server::OidcProviderConfig>(&format!(
+                "issuer = '{issuer}'\naudience = '{audience}'\nclaims = {claims}"
+            ))
+            .unwrap()
+        };
+        for (issuer, audience, claims, message) in [
+            (
+                "http://issuer.example",
+                "obelisk",
+                "{app_name = 'integrations'}",
+                "must use https",
+            ),
+            (
+                "https://issuer.example",
+                "",
+                "{app_name = 'integrations'}",
+                "must not be empty",
+            ),
+            (
+                "https://issuer.example",
+                "obelisk",
+                "{}",
+                "at least one claim",
+            ),
+            (
+                "${OBELISK_TEST_OIDC_UNDECLARED}",
+                "obelisk",
+                "{app_name = 'integrations'}",
+                "OBELISK_TEST_OIDC_UNDECLARED",
+            ),
+            (
+                "https://issuer.example",
+                "${OBELISK_TEST_OIDC_INSTANCE}",
+                "{app_name = 'integrations'}",
+                "OBELISK_TEST_OIDC_INSTANCE",
+            ),
+        ] {
+            let error =
+                resolve_webhook_oidc(vec![parse(issuer, audience, claims)], &registry).unwrap_err();
+            assert!(format!("{error:#}").contains(message), "{error:#}");
+        }
+        for issuer in ["http://127.0.0.1:1", "http://[::1]:1", "http://localhost:1"] {
+            assert!(
+                resolve_webhook_oidc(
+                    vec![parse(
+                        issuer,
+                        "http://${OBELISK_TEST_OIDC_INSTANCE:-local}-provisioner.internal:5011",
+                        "{app_name = '${OBELISK_TEST_OIDC_INSTANCE:-local}-integrations'}",
+                    )],
+                    &registry
+                )
+                .unwrap()
+                .is_some()
+            );
+        }
+        assert!(
+            resolve_webhook_oidc(
+                vec![parse(
+                    "${OBELISK_TEST_OIDC_INSTANCE:-https://localhost:1}",
+                    "obelisk",
+                    "{app_name = 'integrations'}",
+                )],
+                &registry
+            )
+            .unwrap()
+            .is_some()
+        );
+    }
 
     #[test]
     fn exec_secret_exposure_digest_binds_code_and_complete_sorted_secret_set() {
