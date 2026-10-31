@@ -1674,7 +1674,7 @@ impl SystemEventCode {
             | Self::WorkflowReplayLockExpired
             | Self::MaintenanceGcDeploymentsInUse
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
-            Self::DeploymentPolicyApplied => SystemEventLevel::Debug,
+            Self::DeploymentPolicyApplied | Self::MaintenanceGcCompleted => SystemEventLevel::Debug,
             _ => SystemEventLevel::Info,
         }
     }

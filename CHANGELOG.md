@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(gc)* Successful periodic garbage collection system events use DEBUG severity.
 - *(sqlite)* Periodic GC drains free database pages in bounded incremental vacuum batches
   instead of reclaiming only 100 pages per sweep, reducing delays after large deletions.
 
