@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- *(sqlite)* Periodic GC drains free database pages in bounded incremental vacuum batches
+  instead of reclaiming only 100 pages per sweep, reducing delays after large deletions.
+
 ## [0.43.0-rc.15](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.14...v0.43.0-rc.15)
 
 This release candidate bounds SQLite polling cost as execution history grows and improves
