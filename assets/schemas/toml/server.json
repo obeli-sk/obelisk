@@ -985,7 +985,7 @@
                 "max_age": {
                   "hours": 744
                 },
-                "max_count": 10000
+                "max_count": 1000
               },
               "deployments": {
                 "enabled": true,
@@ -1046,7 +1046,7 @@
               "max_age": {
                 "hours": 744
               },
-              "max_count": 10000
+              "max_count": 1000
             },
             "deployments": {
               "enabled": true,
@@ -1076,7 +1076,7 @@
             "max_age": {
               "hours": 744
             },
-            "max_count": 10000
+            "max_count": 1000
           }
         },
         "deployments": {

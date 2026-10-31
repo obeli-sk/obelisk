@@ -79,7 +79,7 @@
 ## Unfinished executions and active cron trackers are excluded.
 # enabled = true
 # max_age.hours = 744
-# max_count = 10000
+# max_count = 1000
 # [maintenance.gc.retention.deployments]
 ## Active, enqueued and last-good checkpoint deployments are excluded.
 # enabled = true
