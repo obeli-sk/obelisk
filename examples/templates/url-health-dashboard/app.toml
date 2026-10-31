@@ -1,11 +1,23 @@
 app_name = "__APP_NAME__"
 
+# Obelisk supplies its own API token and URLs; nothing needs to be exported.
+[secrets]
+INTERNAL_TOKEN = { type = "internal" }
+
+[public_env]
+OBELISK_API_URL = { type = "internal", source = "api-url" }
+OBELISK_UI_URL = { type = "internal", source = "webui-url" }
+
 # The app admin reviews which external requests a deployment may make.
-# `https://*` allows any HTTPS host on port 443; narrow it to the hosts you want to monitor.
+# The monitored site, also set in deployment.toml.
 [[outbound_http.allowed_host]]
-pattern = "https://*"
+pattern = "https://example.com"
 methods = ["GET"]
 
-# Optional base URL of the Web UI, linked from the dashboard. Defaults to the dashboard's host on port 8080.
-[public_env]
-WEBUI_URL = { optional = true }
+# The dashboard lists probe runs through the Obelisk API.
+[[outbound_http.allowed_host]]
+url_prefix = "${OBELISK_API_URL}"
+methods = ["GET"]
+url_regex_suffix = "/v1/executions$"
+secrets = ["INTERNAL_TOKEN"]
+replace_in = ["headers"]

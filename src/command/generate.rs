@@ -50,7 +50,7 @@ impl StarterTemplate {
                 "app.toml",
                 "deployment.toml",
                 "activity/check-url.js",
-                "workflow/check-batch.js",
+                "workflow/check-site.js",
                 "webhook/dashboard.js",
                 "README.md",
             ),
@@ -1310,7 +1310,7 @@ mod tests {
         let deployment = std::fs::read_to_string(directory.join("deployment.toml")).unwrap();
         assert!(deployment.contains("starter:app/activity.check-url"));
         assert!(directory.join("activity/check-url.js").exists());
-        assert!(directory.join("workflow/check-batch.js").exists());
+        assert!(directory.join("workflow/check-site.js").exists());
         assert!(directory.join("webhook/dashboard.js").exists());
         assert!(directory.join("README.md").exists());
         assert!(
