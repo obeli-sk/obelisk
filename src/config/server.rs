@@ -1562,7 +1562,7 @@ const fn default_retention_max_age() -> DurationConfig {
 }
 
 const fn default_execution_retention_max_count() -> u32 {
-    10_000
+    1_000
 }
 
 const fn default_deployment_retention_max_count() -> u32 {
@@ -1898,7 +1898,7 @@ mod tests {
                 assert!(enabled);
                 assert!(matches!(max_age, DurationConfig::Hours(744)));
             }
-            assert_eq!(retention.executions.max_count, 10_000);
+            assert_eq!(retention.executions.max_count, 1_000);
             assert_eq!(retention.deployments.max_count, 100);
         }
 
