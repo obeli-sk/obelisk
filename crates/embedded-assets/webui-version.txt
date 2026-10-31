@@ -1,1 +1,1 @@
-oci://docker.io/getobelisk/webui:2026-10-31@sha256:9e975724a99bb78f26387de07fbc54c0600729093296ca2e420e2de5e4ee7abb
+oci://docker.io/getobelisk/webui:2026-10-31-1@sha256:49073f290460483d149a35070ab2b571789109fbe0adc0f7a1a7284597cdaef5
