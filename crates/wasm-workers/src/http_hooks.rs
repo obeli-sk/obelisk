@@ -3,7 +3,7 @@ use crate::http_request_policy::{HttpRequestPolicy, PolicyError, PolicyLayer};
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
 use concepts::{
-    prefixed_ulid::DeploymentId,
+    prefixed_ulid::{DeploymentId, SystemEventId},
     storage::{DbPool, LogLevel, SystemEvent, SystemEventCode},
 };
 use http_body_util::BodyExt;
@@ -65,6 +65,15 @@ pub enum ConfigSectionHint {
     WebhookEndpointWasm,
 }
 
+/// Destination of outbound HTTP denial events.
+#[derive(Clone)]
+pub struct SystemEventSink {
+    pub deployment_id: DeploymentId,
+    /// The `deployment.policy.applied` event that denials link to.
+    pub policy_event_id: SystemEventId,
+    pub db_pool: Arc<dyn DbPool>,
+}
+
 pub(crate) struct HttpHooks {
     pub(crate) clock_fn: Box<dyn ClockFn>,
     pub(crate) http_client_traces: HttpClientTracesContainer,
@@ -75,8 +84,7 @@ pub(crate) struct HttpHooks {
     pub(crate) config_section_hint: ConfigSectionHint,
     /// The deployment component name for error-message TOML snippets.
     pub(crate) component_name: String,
-    pub(crate) deployment_id: Option<DeploymentId>,
-    pub(crate) db_pool: Option<Arc<dyn DbPool>>,
+    pub(crate) system_events: Option<SystemEventSink>,
     /// Webhook executions are persisted once they send an outbound request.
     pub(crate) webhook_execution_row:
         Option<Arc<crate::webhook::webhook_trigger::WebhookExecutionRow>>,
@@ -249,8 +257,7 @@ impl HttpHooks {
         let http_policy_res = self.http_policy.apply(&mut request);
         if let Err(err) = http_policy_res {
             if let (
-                Some(deployment_id),
-                Some(db_pool),
+                Some(system_events),
                 PolicyError::RequestDenied {
                     method,
                     scheme,
@@ -259,7 +266,7 @@ impl HttpHooks {
                     denied_by,
                     ..
                 },
-            ) = (self.deployment_id, self.db_pool.as_ref(), &err)
+            ) = (self.system_events.as_ref(), &err)
             {
                 let dedupe_key = format!(
                     "{}|{}|{}|{}|{}|{}|{}|{}",
@@ -292,52 +299,38 @@ impl HttpHooks {
                 let host = host.clone();
                 let port = *port;
                 let rejected_by = denied_by.audit_name();
-                let db_pool = db_pool.clone();
+                let SystemEventSink {
+                    deployment_id,
+                    policy_event_id,
+                    db_pool,
+                } = system_events.clone();
                 tokio::spawn(async move {
-                    match db_pool.admin_conn().await {
-                        Ok(admin) => {
-                            let policy_event_ids = match admin
-                                .find_http_policy_event_ids(
-                                    deployment_id,
-                                    &component,
-                                    &component_policy_hash,
-                                    &server_policy_hash,
-                                )
-                                .await
-                            {
-                                Ok(ids) => ids,
-                                Err(err) => {
-                                    tracing::warn!("Cannot resolve HTTP policy event IDs: {err}");
-                                    None
-                                }
-                            };
-                            let event = SystemEvent::new(
-                                SystemEventCode::OutboundHttpDenied,
-                                Some(execution_id),
-                                Some(deployment_id),
-                                serde_json::json!({
-                                    "component": component,
-                                    "method": method,
-                                    "scheme": scheme,
-                                    "host": host,
-                                    "port": port,
-                                    "url": attempted_url,
-                                    "rejected_by": rejected_by,
-                                    "component_policy_hash": component_policy_hash,
-                                    "server_policy_hash": server_policy_hash,
-                                    "component_policy_event_id": policy_event_ids.as_ref().map(|ids| &ids.component_policy_event_id),
-                                    "server_configuration_event_id": policy_event_ids.as_ref().map(|ids| &ids.server_configuration_event_id),
-                                    "server_toml": server_toml,
-                                }),
-                            )
-                            .map(|event| event.with_dedupe_key(dedupe_key));
-                            if let Ok(event) = event
-                                && let Err(err) = admin.append_system_event(event).await
-                            {
-                                tracing::warn!("Cannot persist outbound HTTP denial: {err}");
-                            }
+                    let event = SystemEvent::new(
+                        SystemEventCode::OutboundHttpDenied,
+                        Some(execution_id),
+                        Some(deployment_id),
+                        serde_json::json!({
+                            "component": component,
+                            "method": method,
+                            "scheme": scheme,
+                            "host": host,
+                            "port": port,
+                            "url": attempted_url,
+                            "rejected_by": rejected_by,
+                            "component_policy_hash": component_policy_hash,
+                            "server_policy_hash": server_policy_hash,
+                            "policy_event_id": policy_event_id,
+                            "server_toml": server_toml,
+                        }),
+                    )
+                    .map(|event| event.with_dedupe_key(dedupe_key));
+                    if let Ok(event) = event {
+                        let result =
+                            async { db_pool.admin_conn().await?.append_system_event(event).await }
+                                .await;
+                        if let Err(err) = result {
+                            tracing::warn!("Cannot persist outbound HTTP denial: {err}");
                         }
-                        Err(err) => tracing::warn!("Cannot persist outbound HTTP denial: {err}"),
                     }
                 });
             }
@@ -539,8 +532,7 @@ mod tests {
             },
             config_section_hint: ConfigSectionHint::ActivityWasm,
             component_name: "redirect-test".to_owned(),
-            deployment_id: None,
-            db_pool: None,
+            system_events: None,
             webhook_execution_row: None,
         };
 

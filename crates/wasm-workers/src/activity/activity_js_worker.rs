@@ -7,6 +7,7 @@
 use super::activity_worker::{ActivityWorker, ActivityWorkerCompiled};
 use super::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
+use crate::http_hooks::SystemEventSink;
 use async_trait::async_trait;
 use concepts::storage::LogInfoAppendRow;
 use concepts::{
@@ -14,7 +15,6 @@ use concepts::{
     ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable,
     SupportedFunctionReturnValue,
 };
-use concepts::{prefixed_ulid::DeploymentId, storage::DbPool};
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
@@ -137,7 +137,7 @@ impl ActivityJsWorkerCompiled {
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         logs_storage_config: Option<LogStrageConfig>,
-        system_events: Option<(DeploymentId, Arc<dyn DbPool>)>,
+        system_events: Option<SystemEventSink>,
     ) -> ActivityJsWorker {
         let inner = self.inner.into_worker_with_system_events(
             cancel_registry,

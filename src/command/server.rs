@@ -117,7 +117,7 @@ use concepts::storage::EnqueueOutcome;
 use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
 use concepts::storage::{
-    ComponentMetadataRecord, DeploymentRecord, DeploymentStatus, SourceMapping,
+    ComponentMetadataRecord, DeploymentRecord, DeploymentStatus, SourceMapping, SystemEvent,
 };
 use concepts::time::ClockFn;
 use concepts::time::Now;
@@ -182,6 +182,7 @@ use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::http_client::OutboundHttpClient;
+use wasm_workers::http_hooks::SystemEventSink;
 use wasm_workers::http_request_policy::{AllowedHostConfig, GlobalHttpConfig};
 use wasm_workers::js_imports::{WEBHOOK_BUILTIN_MODULES, WORKFLOW_BUILTIN_MODULES};
 use wasm_workers::log_db_forwarder;
@@ -2907,8 +2908,9 @@ pub(crate) struct ServerCompiledLinked {
     supressed_errors: Option<String>,
     frame_files: Vec<(ComponentDigest, FrameFilesToSource)>,
     max_persisted_value_size_bytes: u64,
-    http_policy_audits: Vec<serde_json::Value>,
-    secret_exposure_audits: Vec<SecretConfigDigestOutput>,
+    policy_audit: serde_json::Value,
+    /// Generated before linking so webhooks and activities can reference it before it is recorded.
+    policy_event_id: SystemEventId,
 }
 
 impl ServerCompiledLinked {
@@ -2921,8 +2923,7 @@ impl ServerCompiledLinked {
         suppress_linking_errors: bool,
     ) -> Result<Self, anyhow::Error> {
         trace!("Verified deployment: {deployment_verified:#?}");
-        let http_policy_audits = deployment_verified.http_policy_audits();
-        let secret_exposure_audits = deployment_verified.secret_config_digests();
+        let policy_audit = deployment_verified.policy_audit();
         let DeploymentVerified {
             cache_paths: _,
             cache_lease,
@@ -2971,6 +2972,7 @@ impl ServerCompiledLinked {
         if !suppress_type_checking_errors && linked.supressed_errors.is_some() {
             bail!("type checking errors detected");
         }
+        let policy_event_id = SystemEventId::generate();
         let http_server_len = http_servers_to_webhook_names.len();
         let http_servers_to_webhooks = Self::connect_http_servers_to_webhooks(
             &http_servers_to_webhook_names,
@@ -2989,6 +2991,7 @@ impl ServerCompiledLinked {
             .map(|(http_server, webhooks)| {
                 let state = Arc::new(build_webhook_server_state(
                     deployment_id,
+                    policy_event_id,
                     &webhooks,
                     fn_registry.clone(),
                     server_verified.max_persisted_value_size_bytes,
@@ -3014,8 +3017,8 @@ impl ServerCompiledLinked {
             supressed_errors: linked.supressed_errors,
             frame_files: linked.all_frame_files,
             max_persisted_value_size_bytes: server_verified.max_persisted_value_size_bytes,
-            http_policy_audits,
-            secret_exposure_audits,
+            policy_audit,
+            policy_event_id,
         })
     }
 
@@ -4057,13 +4060,11 @@ async fn prepare_switch_deployment(
 /// Shared by initial startup ([`spawn_tasks_and_threads`]) and hot redeploy
 /// ([`switch_hot_redeploy`]) so the two paths cannot drift. Webhook-registry wiring
 /// (create vs swap) and where the context is stored differ and stay at the call sites.
-#[cfg_attr(test, expect(clippy::too_many_arguments))]
 fn spawn_deployment_context(
-    deployment_id: DeploymentId,
+    system_events: &SystemEventSink,
     cache_lease: Option<Arc<cache_gc::Lease>>,
     workers_linked: Vec<WorkerLinked>,
     component_registry_ro: ComponentConfigRegistryRO,
-    db_pool: &Arc<dyn DbPool>,
     cancel_registry: &CancelRegistry,
     log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
     #[cfg(test)] test_hooks: &RuntimeTestHooks,
@@ -4072,8 +4073,7 @@ fn spawn_deployment_context(
     let mut replay_workers = ReplayWorkerRegistry::default();
     for pre_spawn in workers_linked {
         let (handle, replay_entry) = pre_spawn.spawn(
-            deployment_id,
-            db_pool,
+            system_events,
             cancel_registry.clone(),
             log_forwarder_sender,
             #[cfg(test)]
@@ -4085,7 +4085,7 @@ fn spawn_deployment_context(
         }
     }
     DeploymentContext {
-        deployment_id,
+        deployment_id: system_events.deployment_id,
         _cache_lease: cache_lease,
         component_registry_ro,
         exec_task_handles,
@@ -4131,18 +4131,11 @@ async fn switch_hot_redeploy(
     )
     .await;
 
-    let http_policy_audits = server_compiled_linked.http_policy_audits;
-    record_http_policy_audits(
+    record_policy_audit(
         db_pool.as_ref(),
         deployment_id,
-        http_policy_audits,
-        &server_configuration_event_id,
-    )
-    .await?;
-    record_secret_exposure_audits(
-        db_pool.as_ref(),
-        deployment_id,
-        server_compiled_linked.secret_exposure_audits,
+        server_compiled_linked.policy_event_id,
+        &server_compiled_linked.policy_audit,
         &server_configuration_event_id,
     )
     .await?;
@@ -4156,11 +4149,14 @@ async fn switch_hot_redeploy(
     );
 
     *write_guard_ctx = spawn_deployment_context(
-        deployment_id,
+        &SystemEventSink {
+            deployment_id,
+            policy_event_id: server_compiled_linked.policy_event_id,
+            db_pool: db_pool.clone(),
+        },
         server_compiled_linked.cache_lease,
         server_compiled_linked.workers_linked,
         server_compiled_linked.component_registry_ro,
-        &db_pool,
         &cancel_registry,
         &log_forwarder_sender,
         #[cfg(test)]
@@ -4172,90 +4168,49 @@ async fn switch_hot_redeploy(
     Ok(SwitchOutcome::Switched)
 }
 
-async fn record_http_policy_audits(
+async fn record_policy_audit(
     db_pool: &dyn DbPool,
     deployment_id: DeploymentId,
-    audits: impl IntoIterator<Item = serde_json::Value>,
+    event_id: SystemEventId,
+    audit: &serde_json::Value,
     server_configuration_event_id: &SystemEventId,
 ) -> Result<(), anyhow::Error> {
-    for mut policy in audits {
-        let object = policy
-            .as_object_mut()
-            .expect("HTTP policy audit must be an object");
-        let component = object
-            .remove("component")
-            .expect("HTTP policy audit must identify its component");
-        let component_policy_hash = object
-            .remove("component_policy_hash")
-            .expect("HTTP policy audit must have a component hash");
-        let server_policy_hash = object
-            .remove("server_policy_hash")
-            .expect("HTTP policy audit must have a server hash");
-        let server_policy_kind = object
-            .remove("server_policy_kind")
-            .expect("HTTP policy audit must identify the server policy");
-        let bytes = serde_json::to_vec(&policy).expect("HTTP policy audit must encode");
-        let digest = concepts::cas::content_digest(&bytes);
-        crate::server::system_event_writer::record_with_cas(
-            db_pool,
-            concepts::storage::SystemEventCode::ComponentHttpPolicyApplied,
-            None,
-            Some(deployment_id),
-            serde_json::json!({
-                "component": component,
-                "component_policy_hash": component_policy_hash,
-                "server_policy_hash": server_policy_hash,
-                "server_policy_kind": server_policy_kind,
-                "server_configuration_event_id": server_configuration_event_id,
-            }),
-            digest,
-            bytes,
-        )
+    let bytes = serde_json::to_vec(audit).expect("deployment policy audit must encode");
+    let digest = concepts::cas::content_digest(&bytes);
+    let event = SystemEvent::new(
+        concepts::storage::SystemEventCode::DeploymentPolicyApplied,
+        None,
+        Some(deployment_id),
+        serde_json::json!({
+            "server_configuration_event_id": server_configuration_event_id,
+        }),
+    )?
+    .with_event_id(event_id)
+    .with_cas_digest(digest);
+    db_pool
+        .admin_conn()
+        .await?
+        .append_system_event_with_cas(event, bytes)
         .await
-        .ok_or_else(|| anyhow::anyhow!("cannot persist component HTTP policy audit"))?;
-    }
-    Ok(())
-}
-
-async fn record_secret_exposure_audits(
-    db_pool: &dyn DbPool,
-    deployment_id: DeploymentId,
-    audits: impl IntoIterator<Item = SecretConfigDigestOutput>,
-    server_configuration_event_id: &SystemEventId,
-) -> Result<(), anyhow::Error> {
-    for audit in audits {
-        crate::server::system_event_writer::record(
-            db_pool,
-            concepts::storage::SystemEventCode::ComponentSecretExposureAuthorized,
-            None,
-            Some(deployment_id),
-            serde_json::json!({
-                "component_name": audit.component_name,
-                "component_kind": audit.component_kind,
-                "secret_exposure_digest": audit.secret_exposure_digest,
-                "exposed_secrets": audit.exposed_secrets,
-                "server_configuration_event_id": server_configuration_event_id,
-            }),
-        )
-        .await;
-    }
+        .context("cannot persist deployment policy audit")?;
     Ok(())
 }
 
 #[derive(Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ServerConfigurationAuditV2 {
-    format: ServerConfigurationFormatV2,
+pub(crate) struct ServerConfigurationAuditV3 {
+    format: ServerConfigurationFormatV3,
     obelisk_version: String,
     app_config_digest: AppConfigDigest,
+    app_policy: AppPolicyV1,
     environment: EnvironmentAuditV2,
     deployment_security: DeploymentSecurityAuditV2,
 }
 
 #[derive(Serialize, JsonSchema)]
-enum ServerConfigurationFormatV2 {
-    #[serde(rename = "obelisk-server-configuration-v2")]
-    V2,
+enum ServerConfigurationFormatV3 {
+    #[serde(rename = "obelisk-server-configuration-v3")]
+    V3,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -4355,10 +4310,11 @@ async fn record_server_configuration_audit(
     server_verified: &ServerVerified,
     maintenance_gc_config: GarbageCollectionTomlConfig,
 ) -> Option<SystemEventId> {
-    let snapshot = ServerConfigurationAuditV2 {
-        format: ServerConfigurationFormatV2::V2,
+    let snapshot = ServerConfigurationAuditV3 {
+        format: ServerConfigurationFormatV3::V3,
         obelisk_version: PKG_VERSION.to_owned(),
         app_config_digest: server_verified.app_config_digest.clone(),
+        app_policy: server_verified.app_policy.clone(),
         environment: serde_json::from_value(server_verified.environment_audit.clone())
             .expect("environment audit must match its canonical schema"),
         deployment_security: DeploymentSecurityAuditV2 {
@@ -4474,17 +4430,11 @@ async fn spawn_tasks_and_threads(
     .await
     .ok_or_else(|| anyhow::anyhow!("cannot persist server configuration audit"))?;
     server_verified.server_configuration_event_id = Some(server_configuration_event_id);
-    record_http_policy_audits(
+    record_policy_audit(
         db_pool.as_ref(),
         deployment_id,
-        server_compiled_linked.http_policy_audits.clone(),
-        &server_configuration_event_id,
-    )
-    .await?;
-    record_secret_exposure_audits(
-        db_pool.as_ref(),
-        deployment_id,
-        server_compiled_linked.secret_exposure_audits.clone(),
+        server_compiled_linked.policy_event_id,
+        &server_compiled_linked.policy_audit,
         &server_configuration_event_id,
     )
     .await?;
@@ -4571,11 +4521,14 @@ async fn spawn_tasks_and_threads(
     .await?;
     let deployment_ctx: DeploymentContextHandle =
         Arc::new(tokio::sync::RwLock::new(spawn_deployment_context(
-            deployment_id,
+            &SystemEventSink {
+                deployment_id,
+                policy_event_id: server_compiled_linked.policy_event_id,
+                db_pool: db_pool.clone(),
+            },
             server_compiled_linked.cache_lease,
             server_compiled_linked.workers_linked,
             server_compiled_linked.component_registry_ro,
-            &db_pool,
             cancel_registry,
             &log_forwarder_sender,
             #[cfg(test)]
@@ -4750,6 +4703,7 @@ type WebhookInstancesAndRoutes = (WebhookEndpointInstanceLinked, Vec<WebhookRout
 /// Used both at startup and during hot-redeploy.
 pub(crate) fn build_webhook_server_state(
     deployment_id: DeploymentId,
+    policy_event_id: SystemEventId,
     webhooks: &[WebhookInstancesAndRoutes],
     fn_registry: Arc<dyn FunctionRegistry>,
     max_persisted_value_size_bytes: u64,
@@ -4774,6 +4728,7 @@ pub(crate) fn build_webhook_server_state(
     }
     WebhookServerState {
         deployment_id,
+        policy_event_id,
         router: Arc::new(router),
         fn_registry,
         max_persisted_value_size_bytes,
@@ -5092,13 +5047,13 @@ async fn generate_secret_config_digests_with_server_config(
 }
 
 impl DeploymentVerified {
-    fn http_policy_audits(&self) -> Vec<serde_json::Value> {
+    fn policy_audit(&self) -> serde_json::Value {
         fn audit(
             component_id: &ComponentId,
             allowed_hosts: &[AllowedHostConfig],
             global_http_config: &GlobalHttpConfig,
             server_policy_kind: &'static str,
-        ) -> serde_json::Value {
+        ) -> (String, serde_json::Value) {
             let (component_policy_hash, mut details) =
                 wasm_workers::http_request_policy::audit_http_policy(allowed_hosts);
             let server_policy_hash =
@@ -5108,19 +5063,17 @@ impl DeploymentVerified {
                 .as_object_mut()
                 .expect("HTTP policy audit details must be an object");
             object.insert(
-                "component".to_string(),
-                component_id.name.to_string().into(),
-            );
-            object.insert(
                 "component_policy_hash".to_string(),
                 component_policy_hash.into(),
             );
             object.insert("server_policy_hash".to_string(), server_policy_hash.into());
             object.insert("server_policy_kind".to_string(), server_policy_kind.into());
-            details
+            (component_id.name.to_string(), details)
         }
 
-        self.activities_wasm
+        // BTreeMap keeps the document canonical so unchanged policies share one CAS blob.
+        let mut components: BTreeMap<String, serde_json::Map<String, serde_json::Value>> = self
+            .activities_wasm
             .iter()
             .map(|activity| {
                 audit(
@@ -5171,7 +5124,30 @@ impl DeploymentVerified {
                     "server",
                 )
             }))
-            .collect()
+            .map(|(name, http)| {
+                (
+                    name,
+                    serde_json::Map::from_iter([("http".to_string(), http)]),
+                )
+            })
+            .collect();
+        for secrets in self.secret_config_digests() {
+            components
+                .entry(secrets.component_name)
+                .or_default()
+                .insert(
+                    "secret_exposure".to_string(),
+                    serde_json::json!({
+                        "component_kind": secrets.component_kind,
+                        "secret_exposure_digest": secrets.secret_exposure_digest,
+                        "exposed_secrets": secrets.exposed_secrets,
+                    }),
+                );
+        }
+        serde_json::json!({
+            "format": "obelisk-deployment-policy-v1",
+            "components": components,
+        })
     }
 
     fn validate_component_digests(&self) -> Result<(), anyhow::Error> {
@@ -7317,12 +7293,13 @@ pub(crate) struct WorkerLinked {
 impl WorkerLinked {
     pub(crate) fn spawn(
         self,
-        deployment_id: DeploymentId,
-        db_pool: &Arc<dyn DbPool>,
+        system_events: &SystemEventSink,
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         #[cfg(test)] test_hooks: &RuntimeTestHooks,
     ) -> (ExecutorTaskHandle, Option<(ComponentId, ReplayWorker)>) {
+        let deployment_id = system_events.deployment_id;
+        let db_pool = &system_events.db_pool;
         let logs_storage_config = self.logs_store_min_level.map(|min_level| LogStrageConfig {
             min_level,
             log_sender: log_forwarder_sender.clone(),
@@ -7334,7 +7311,7 @@ impl WorkerLinked {
                     cancel_registry,
                     log_forwarder_sender,
                     logs_storage_config,
-                    Some((deployment_id, db_pool.clone())),
+                    Some(system_events.clone()),
                 ))
             }
             LinkedWorkerKind::ActivityJs(js_activity_compiled) => {
@@ -7342,7 +7319,7 @@ impl WorkerLinked {
                     cancel_registry,
                     log_forwarder_sender,
                     logs_storage_config,
-                    Some((deployment_id, db_pool.clone())),
+                    Some(system_events.clone()),
                 ))
             }
             LinkedWorkerKind::ActivityExec(exec_activity_compiled) => {

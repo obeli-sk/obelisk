@@ -770,13 +770,6 @@ CREATE INDEX t_system_event_deployment_idx ON public.t_system_event USING btree 
 
 
 --
--- Name: t_system_event_http_policy_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX t_system_event_http_policy_idx ON public.t_system_event USING btree (deployment_id, ((details ->> 'component'::text)), ((details ->> 'component_policy_hash'::text)), ((details ->> 'server_policy_hash'::text)), event_id DESC) WHERE ((code)::text = 'component.http_policy.applied'::text);
-
-
---
 -- Name: t_system_event_node_run_idx; Type: INDEX; Schema: public; Owner: -
 --
 

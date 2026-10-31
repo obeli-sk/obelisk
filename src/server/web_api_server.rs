@@ -720,7 +720,12 @@ pub(crate) mod admin {
                 .admin_conn()
                 .await
                 .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))?
-                .retain_system_events(cutoff, request.batch_size, request.dry_run)
+                .retain_system_events(
+                    cutoff,
+                    request.batch_size,
+                    concepts::storage::initialize_node_run_id(),
+                    request.dry_run,
+                )
                 .await
                 .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))
         })
