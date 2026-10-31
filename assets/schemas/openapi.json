@@ -207,6 +207,7 @@
           {
             "name": "code",
             "in": "query",
+            "description": "Prefix of the event code, e.g. `maintenance.gc`.",
             "required": false,
             "schema": {
               "type": "string"

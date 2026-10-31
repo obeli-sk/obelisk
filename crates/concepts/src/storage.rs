@@ -1859,6 +1859,7 @@ pub struct SystemEventFilter {
     pub event_id: Option<SystemEventId>,
     pub node_run_id: Option<NodeRunId>,
     pub level: Option<SystemEventLevel>,
+    /// Prefix of the event code, e.g. `maintenance.gc`.
     pub code: Option<String>,
     pub deployment_id: Option<DeploymentId>,
     pub before_event_id: Option<SystemEventId>,

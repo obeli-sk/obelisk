@@ -203,6 +203,7 @@ pub(crate) enum AdminEvents {
         node_run_id: Option<NodeRunId>,
         #[arg(long)]
         level: Option<String>,
+        /// Only show events whose code starts with this prefix, e.g. `maintenance.gc`.
         #[arg(long)]
         code: Option<String>,
         /// Only show events created at or after this RFC 3339 time.

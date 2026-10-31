@@ -536,6 +536,7 @@ pub(crate) mod admin {
         #[param(value_type = Option<String>)]
         node_run_id: Option<NodeRunId>,
         level: Option<String>,
+        /// Prefix of the event code, e.g. `maintenance.gc`.
         code: Option<String>,
         #[param(value_type = Option<String>)]
         deployment_id: Option<DeploymentId>,

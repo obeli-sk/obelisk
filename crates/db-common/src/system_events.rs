@@ -9,7 +9,6 @@ pub fn system_event_list_sql(
         (1, "event_id", filter.event_id.is_some()),
         (2, "node_run_id", filter.node_run_id.is_some()),
         (3, "level", filter.level.is_some()),
-        (4, "code", filter.code.is_some()),
         (5, "deployment_id", filter.deployment_id.is_some()),
     ] {
         let param = parameter(index);
@@ -19,6 +18,12 @@ pub fn system_event_list_sql(
             format!("{param} IS NULL")
         });
     }
+    let code = parameter(4);
+    predicates.push(if filter.code.is_some() {
+        format!("substr(code, 1, length({code})) = {code}")
+    } else {
+        format!("{code} IS NULL")
+    });
     let cursor = parameter(6);
     predicates.push(if filter.before_event_id.is_some() {
         format!("(created_at, event_id) < (SELECT created_at, event_id FROM t_system_event WHERE event_id = {cursor})")

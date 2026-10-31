@@ -103,6 +103,16 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         .unwrap();
     assert_eq!(debug.len(), 1);
     assert_eq!(debug[0].event_id, first_id);
+    let gc = admin
+        .list_system_events(SystemEventFilter {
+            code: Some("maintenance.gc".into()),
+            limit: 100,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(gc.len(), 1);
+    assert_eq!(gc[0].event_id, second_id);
     assert_eq!(
         debug[0].app_config_digest.as_deref(),
         Some("app-config:v1:sha256:test")
