@@ -6,7 +6,10 @@ use concepts::{
     ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
     cas::{Cas, CasError},
     component_id::{ComponentDigest, Digest},
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, NodeRunId, RunId},
+    prefixed_ulid::{
+        DelayId, DeploymentId, ExecutionIdDerived, ExecutionIdTopLevel, ExecutorId, NodeRunId,
+        RunId,
+    },
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
@@ -6719,15 +6722,26 @@ impl DbAdmin for PostgresConnection {
         Ok(result)
     }
 
-    async fn gc_executions(&self, batch_size: u32) -> Result<ExecutionGcResult, DbErrorWrite> {
+    async fn gc_executions(
+        &self,
+        batch_size: u32,
+        after: Option<ExecutionIdTopLevel>,
+    ) -> Result<ExecutionGcResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let row = tx
-            .query_opt(
+        let row = if let Some(after) = after {
+            tx.query_opt(
+                "SELECT execution_id FROM t_state WHERE is_top_level = TRUE AND tombstoned = TRUE AND execution_id > $1 ORDER BY execution_id FOR UPDATE SKIP LOCKED LIMIT 1",
+                &[&after.to_string()],
+            )
+            .await?
+        } else {
+            tx.query_opt(
                 "SELECT execution_id FROM t_state WHERE is_top_level = TRUE AND tombstoned = TRUE ORDER BY execution_id FOR UPDATE SKIP LOCKED LIMIT 1",
                 &[],
             )
-            .await?;
+            .await?
+        };
         let Some(row) = row else {
             let limit = i64::from(batch_size.max(1));
             for (table, predicate) in [
@@ -6754,6 +6768,7 @@ impl DbAdmin for PostgresConnection {
                         tombstoned_roots: 0,
                         deleted_rows,
                         has_more: true,
+                        skipped_locked_root: None,
                     });
                 }
             }
@@ -6762,9 +6777,14 @@ impl DbAdmin for PostgresConnection {
                 tombstoned_roots: 0,
                 deleted_rows: 0,
                 has_more: false,
+                skipped_locked_root: None,
             });
         };
         let root = row.get::<_, String>(0);
+        let root_id = root
+            .parse::<ExecutionId>()
+            .expect("database execution id must be valid")
+            .get_top_level();
         let descendants_start = format!("{root}.");
         let tree_end = db_common::execution_tree_upper_bound(&root);
         let limit = i64::from(batch_size.max(1));
@@ -6780,6 +6800,7 @@ impl DbAdmin for PostgresConnection {
                 tombstoned_roots: 1,
                 deleted_rows: propagated,
                 has_more: true,
+                skipped_locked_root: None,
             });
         }
         let locked = tx
@@ -6795,6 +6816,7 @@ impl DbAdmin for PostgresConnection {
                 tombstoned_roots: 1,
                 deleted_rows: 0,
                 has_more: true,
+                skipped_locked_root: Some(root_id),
             });
         }
 
@@ -6810,6 +6832,7 @@ impl DbAdmin for PostgresConnection {
                 tombstoned_roots: 1,
                 deleted_rows,
                 has_more: true,
+                skipped_locked_root: None,
             });
         }
         for (table, predicate) in [
@@ -6840,14 +6863,11 @@ impl DbAdmin for PostgresConnection {
                     tombstoned_roots: 1,
                     deleted_rows,
                     has_more: true,
+                    skipped_locked_root: None,
                 });
             }
         }
-        lock_join_set_response_append_order(
-            &tx,
-            &root.parse().expect("database execution id must be valid"),
-        )
-        .await?;
+        lock_join_set_response_append_order(&tx, &ExecutionId::TopLevel(root_id)).await?;
         let remaining = tx
             .query_one(
                 "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id >= $1 AND execution_id < $3 UNION ALL SELECT 1 FROM t_join_set_response WHERE (execution_id >= $2 AND execution_id < $3) OR (child_execution_id >= $2 AND child_execution_id < $3) UNION ALL SELECT 1 FROM t_delay WHERE execution_id >= $2 AND execution_id < $3 UNION ALL SELECT 1 FROM t_execution_backtrace WHERE execution_id >= $2 AND execution_id < $3 UNION ALL SELECT 1 FROM t_log WHERE execution_id >= $2 AND execution_id < $3 UNION ALL SELECT 1 FROM t_execution_log WHERE execution_id >= $2 AND execution_id < $3)",
@@ -6867,6 +6887,7 @@ impl DbAdmin for PostgresConnection {
                 tombstoned_roots: 0,
                 deleted_rows,
                 has_more: true,
+                skipped_locked_root: None,
             });
         }
         tx.commit().await?;
@@ -6874,6 +6895,7 @@ impl DbAdmin for PostgresConnection {
             tombstoned_roots: 0,
             deleted_rows: 0,
             has_more: false,
+            skipped_locked_root: None,
         })
     }
 }

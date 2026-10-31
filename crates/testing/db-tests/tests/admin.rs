@@ -1,8 +1,8 @@
 use chrono::Duration;
 use concepts::{
-    ComponentId, ExecutionId, JoinSetId, JoinSetKind, Params, SUPPORTED_RETURN_VALUE_OK_EMPTY,
-    StrVariant,
-    prefixed_ulid::{DeploymentId, NodeRunId, SystemEventId},
+    ComponentId, ComponentRetryConfig, ExecutionId, JoinSetId, JoinSetKind, Params,
+    SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant,
+    prefixed_ulid::{DeploymentId, ExecutorId, NodeRunId, RunId, SystemEventId},
     storage::{
         AppendRequest, CAS_GC_BATCH_SIZE_BYTES, CreateRequest, DbPoolCloseable,
         DeleteDeploymentResult, DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord,
@@ -502,7 +502,7 @@ async fn insert_deployment(
 
 async fn collect_execution_garbage(admin: &dyn concepts::storage::DbAdmin) {
     for _ in 0..100 {
-        if !admin.gc_executions(10).await.unwrap().has_more {
+        if !admin.gc_executions(10, None).await.unwrap().has_more {
             return;
         }
     }
@@ -658,6 +658,68 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
         DeleteExecutionTreeResult::AlreadyDeleted
     );
     drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn execution_gc_skips_locked_tree(database: Database) {
+    set_up();
+    let clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let deployment_id = DeploymentId::generate();
+    let mut roots = vec![
+        create_execution(db_pool.as_ref(), &clock, deployment_id, false).await,
+        create_execution(db_pool.as_ref(), &clock, deployment_id, true).await,
+    ];
+    roots.sort_by_key(ToString::to_string);
+    let [locked, unlocked] = roots.try_into().unwrap();
+    db_pool
+        .connection()
+        .await
+        .unwrap()
+        .lock_one(
+            clock.now(),
+            ComponentId::dummy_activity(),
+            deployment_id,
+            &locked,
+            RunId::generate(),
+            concepts::storage::Version::new(1),
+            ExecutorId::generate(),
+            clock.now() + Duration::minutes(1),
+            ComponentRetryConfig {
+                retry_exp_backoff: std::time::Duration::ZERO,
+                max_retries: Some(0),
+            },
+        )
+        .await
+        .unwrap();
+    let admin = db_pool.admin_conn().await.unwrap();
+    for root in [&locked, &unlocked] {
+        assert_eq!(
+            admin.delete_execution_tree(root, true).await.unwrap(),
+            DeleteExecutionTreeResult::Deleted
+        );
+    }
+
+    let mut after = None;
+    let mut skipped = Vec::new();
+    for _ in 0..100 {
+        let result = admin.gc_executions(10, after).await.unwrap();
+        if let Some(root) = result.skipped_locked_root {
+            skipped.push(root);
+            after = Some(root);
+        }
+        if !result.has_more {
+            break;
+        }
+    }
+    assert_eq!(skipped, vec![locked.get_top_level()]);
+    let conn = db_pool.connection().await.unwrap();
+    assert!(conn.get(&unlocked).await.is_err());
+    assert!(conn.get(&locked).await.is_ok());
+    drop((admin, conn));
     db_close.close().await;
 }
 

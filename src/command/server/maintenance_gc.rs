@@ -147,6 +147,7 @@ struct SweepStats {
     deployment_execution_trees: u64,
     system_event_retention: CategoryStats,
     execution_gc: CategoryStats,
+    execution_gc_locked_trees: u64,
     cas_gc: CategoryStats,
     cas_bytes: u64,
     space_reclamation: CategoryStats,
@@ -170,6 +171,7 @@ impl SweepStats {
             system_event_retention_active = ?self.system_event_retention.active,
             execution_rows_deleted = self.execution_gc.affected,
             execution_gc_active = ?self.execution_gc.active,
+            execution_gc_locked_trees_skipped = self.execution_gc_locked_trees,
             cas_blobs_deleted = self.cas_gc.affected,
             cas_bytes_deleted = self.cas_bytes,
             cas_gc_active = ?self.cas_gc.active,
@@ -214,6 +216,7 @@ impl SweepStats {
             "system_event_retention": category_details(self.system_event_retention),
             "space_reclamation": category_details(self.space_reclamation),
             "execution_gc": category_details(self.execution_gc),
+            "execution_gc_locked_trees_skipped": self.execution_gc_locked_trees,
             "cas_gc": {
                 "affected": self.cas_gc.affected,
                 "active_ms": duration_millis(self.cas_gc.active),
@@ -507,19 +510,24 @@ where
             }
         }
     }
+    let mut after = None;
     loop {
         let started = std::time::Instant::now();
         let result = async {
             db_pool
                 .admin_conn()
                 .await?
-                .gc_executions(config.batch_size)
+                .gc_executions(config.batch_size, after)
                 .await
         }
         .await
         .map_err(|source| Box::new(SweepFailure::new("execution_gc", stats, source)))?;
         stats.execution_gc.active += started.elapsed();
         stats.execution_gc.affected += result.deleted_rows;
+        if let Some(skipped) = result.skipped_locked_root {
+            stats.execution_gc_locked_trees += 1;
+            after = Some(skipped);
+        }
         delay_after_work(result.deleted_rows, config.batch_delay).await;
         if !result.has_more {
             break;

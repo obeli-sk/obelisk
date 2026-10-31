@@ -1557,6 +1557,8 @@ pub struct ExecutionGcResult {
     pub tombstoned_roots: u64,
     pub deleted_rows: u64,
     pub has_more: bool,
+    /// Tombstoned root left in place because its tree still has a locked execution; pass it as `after` to move on.
+    pub skipped_locked_root: Option<ExecutionIdTopLevel>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1970,7 +1972,12 @@ pub trait DbAdmin: Send + Sync {
         cursor: Option<DeploymentRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite>;
 
-    async fn gc_executions(&self, batch_size: u32) -> Result<ExecutionGcResult, DbErrorWrite>;
+    /// Physically delete one bounded step of the first tombstoned tree whose root sorts after `after`.
+    async fn gc_executions(
+        &self,
+        batch_size: u32,
+        after: Option<ExecutionIdTopLevel>,
+    ) -> Result<ExecutionGcResult, DbErrorWrite>;
 
     /// Reclaim a bounded amount of unused database space, returning reclaimed pages; default is a no-op.
     async fn reclaim_space(&self) -> Result<u64, DbErrorWrite> {

@@ -6,7 +6,10 @@ use concepts::{
     ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
     cas::{Cas, CasError},
     component_id::{ComponentDigest, Digest},
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, NodeRunId, RunId},
+    prefixed_ulid::{
+        DelayId, DeploymentId, ExecutionIdDerived, ExecutionIdTopLevel, ExecutorId, NodeRunId,
+        RunId,
+    },
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
@@ -6434,17 +6437,28 @@ impl DbAdmin for SqlitePool {
         .await
     }
 
-    async fn gc_executions(&self, batch_size: u32) -> Result<ExecutionGcResult, DbErrorWrite> {
+    async fn gc_executions(
+        &self,
+        batch_size: u32,
+        after: Option<ExecutionIdTopLevel>,
+    ) -> Result<ExecutionGcResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
-                let root = tx
-                    .query_row(
+                let root = if let Some(after) = after {
+                    tx.query_row(
+                        "SELECT execution_id FROM t_state WHERE is_top_level = TRUE AND tombstoned = TRUE AND execution_id > ?1 ORDER BY execution_id LIMIT 1",
+                        [after.to_string()],
+                        |row| Ok(row.get::<_, ExecutionId>(0)?.get_top_level()),
+                    )
+                } else {
+                    tx.query_row(
                         "SELECT execution_id FROM t_state WHERE is_top_level = TRUE AND tombstoned = TRUE ORDER BY execution_id LIMIT 1",
                         [],
-                        |row| row.get::<_, String>(0),
+                        |row| Ok(row.get::<_, ExecutionId>(0)?.get_top_level()),
                     )
-                    .optional()?;
-                let Some(root) = root else {
+                }
+                .optional()?;
+                let Some(root_id) = root else {
                     let limit = i64::from(batch_size.max(1));
                     for (table, predicate) in [
                         ("t_wasm_backtrace", "NOT EXISTS (SELECT 1 FROM t_execution_backtrace e WHERE e.backtrace_hash = t_wasm_backtrace.backtrace_hash)"),
@@ -6456,11 +6470,12 @@ impl DbAdmin for SqlitePool {
                             [limit],
                         )? as u64;
                         if deleted_rows > 0 {
-                            return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows, has_more: true });
+                            return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows, has_more: true, skipped_locked_root: None });
                         }
                     }
-                    return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows: 0, has_more: false });
+                    return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows: 0, has_more: false, skipped_locked_root: None });
                 };
+                let root = root_id.to_string();
                 let descendants_start = format!("{root}.");
         let tree_end = db_common::execution_tree_upper_bound(&root);
                 let limit = i64::from(batch_size.max(1));
@@ -6469,7 +6484,7 @@ impl DbAdmin for SqlitePool {
                     rusqlite::params![descendants_start, tree_end, limit],
                 )?;
                 if propagated > 0 {
-                    return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows: propagated as u64, has_more: true });
+                    return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows: propagated as u64, has_more: true, skipped_locked_root: None });
                 }
                 let locked = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM t_state WHERE (execution_id >= ?1 AND execution_id < ?2) AND state = 'locked')",
@@ -6477,14 +6492,14 @@ impl DbAdmin for SqlitePool {
                     |row| row.get::<_, bool>(0),
                 )?;
                 if locked {
-                    return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows: 0, has_more: true });
+                    return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows: 0, has_more: true, skipped_locked_root: Some(root_id) });
                 }
                 let deleted_rows = tx.execute(
                     "DELETE FROM t_state WHERE rowid IN (SELECT rowid FROM t_state WHERE execution_id >= ?1 AND execution_id < ?2 ORDER BY execution_id LIMIT ?3)",
                     rusqlite::params![descendants_start, tree_end, limit],
                 )? as u64;
                 if deleted_rows > 0 {
-                    return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows, has_more: true });
+                    return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows, has_more: true, skipped_locked_root: None });
                 }
                 for (table, predicate) in [
                     ("t_join_set_response", "(execution_id >= ?1 AND execution_id < ?2) OR (child_execution_id >= ?1 AND child_execution_id < ?2)"),
@@ -6498,7 +6513,7 @@ impl DbAdmin for SqlitePool {
                         rusqlite::params![root, tree_end, limit],
                     )? as u64;
                     if deleted_rows > 0 {
-                        return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows, has_more: true });
+                        return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows, has_more: true, skipped_locked_root: None });
                     }
                 }
                 let remaining = tx.query_row(
@@ -6511,9 +6526,9 @@ impl DbAdmin for SqlitePool {
                         "DELETE FROM t_state WHERE execution_id = ?1 AND is_top_level = TRUE AND tombstoned = TRUE",
                         [&root],
                     )? as u64;
-                    return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows, has_more: true });
+                    return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows, has_more: true, skipped_locked_root: None });
                 }
-                Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows: 0, has_more: false })
+                Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows: 0, has_more: false, skipped_locked_root: None })
             },
             TxType::MultipleWrites,
             "gc_executions",

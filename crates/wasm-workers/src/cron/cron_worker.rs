@@ -283,7 +283,7 @@ mod tests {
 
     async fn collect_executions(db_pool: &Arc<dyn DbPool>) {
         let admin = db_pool.admin_conn().await.unwrap();
-        while admin.gc_executions(10).await.unwrap().has_more {}
+        while admin.gc_executions(10, None).await.unwrap().has_more {}
     }
 
     #[rstest::rstest]
