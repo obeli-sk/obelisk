@@ -451,6 +451,16 @@
 # secrets = ["API_KEY"]
 # replace_in = ["headers"]
 
+## Require a bearer JWT matching any entry; each entry needs at least one exact string claim.
+## Issuer must use HTTPS (HTTP is allowed on loopback). Values support ${VAR} from app.toml [public_env].
+## Missing/invalid tokens return 401; verified tokens with mismatched audience/claims return 403.
+## Authorization is removed before execution. obelisk-oidc-claims contains all verified claims as JSON.
+## Client-supplied obelisk-oidc-claims is always removed, including on endpoints without OIDC.
+# [[webhook_endpoint_wasm.oidc]]
+# issuer = "https://identity.example.com"
+# audience = "https://webhooks.example.com"
+# claims = { sub = "${WEBHOOK_CALLER_ID}" }
+
 ### JavaScript Webhook Endpoint components configuration
 # [[webhook_endpoint_js]]
 # name = "name"                              # Required. Component name.
@@ -488,6 +498,16 @@
 # request_url_regex = "^(GET|POST) https://api\\.example\\.com/v1/"
 # secrets = ["API_KEY"]
 # replace_in = ["headers"]
+
+## Require a bearer JWT matching any entry; each entry needs at least one exact string claim.
+## Issuer must use HTTPS (HTTP is allowed on loopback). Values support ${VAR} from app.toml [public_env].
+## Missing/invalid tokens return 401; verified tokens with mismatched audience/claims return 403.
+## Authorization is removed before execution. obelisk-oidc-claims contains all verified claims as JSON.
+## Client-supplied obelisk-oidc-claims is always removed, including on endpoints without OIDC.
+# [[webhook_endpoint_js.oidc]]
+# issuer = "https://identity.example.com"
+# audience = "https://webhooks.example.com"
+# claims = { sub = "${WEBHOOK_CALLER_ID}" }
 
 ### Cron components configuration
 ### Schedules trigger a target function on a cron-like schedule.

@@ -361,13 +361,14 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/OidcProviderConfig"
-          }
+          },
+          "default": []
         }
       },
       "additionalProperties": false
     },
     "OidcProviderConfig": {
-      "description": "An OIDC issuer whose signed ID tokens (JWTs) grant full API access when they match.",
+      "description": "An OIDC issuer whose signed ID tokens (JWTs) must match audience and claim constraints.",
       "type": "object",
       "properties": {
         "issuer": {

@@ -695,10 +695,10 @@ pub(crate) struct ApiConfig {
     pub(crate) oidc: Vec<OidcProviderConfig>,
 }
 
-/// An OIDC issuer whose signed ID tokens (JWTs) grant full API access when they match.
-#[derive(Debug, Deserialize, JsonSchema, Clone)]
+/// An OIDC issuer whose signed ID tokens (JWTs) must match audience and claim constraints.
+#[derive(Debug, Deserialize, serde::Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct OidcProviderConfig {
+pub struct OidcProviderConfig {
     /// Exact `iss` value, also the base URL for OIDC discovery. Must be `https://` unless the host is loopback.
     pub(crate) issuer: String,
     /// Required `aud` value, the audience clients request when minting the token.
@@ -712,25 +712,27 @@ where
     D: serde::Deserializer<'de>,
 {
     let configs = Vec::<OidcProviderConfig>::deserialize(deserializer)?;
-    for config in &configs {
-        validate_oidc_url(&config.issuer)
-            .with_context(|| format!("invalid `api.oidc` issuer {:?}", config.issuer))
-            .map_err(|err| serde::de::Error::custom(format!("{err:#}")))?;
-        if config.audience.is_empty() {
-            return Err(serde::de::Error::custom(format!(
-                "`api.oidc` audience of issuer {:?} must not be empty",
-                config.issuer
-            )));
-        }
-        if config.claims.is_empty() {
-            return Err(serde::de::Error::custom(format!(
-                "`api.oidc` entry of issuer {:?} must constrain at least one claim, otherwise every \
-                token of that issuer would be accepted",
-                config.issuer
-            )));
-        }
-    }
+    validate_oidc_providers(&configs)
+        .map_err(|err| serde::de::Error::custom(format!("{err:#}")))?;
     Ok(configs)
+}
+
+pub(crate) fn validate_oidc_providers(configs: &[OidcProviderConfig]) -> anyhow::Result<()> {
+    for config in configs {
+        validate_oidc_url(&config.issuer)
+            .with_context(|| format!("invalid OIDC issuer {:?}", config.issuer))?;
+        anyhow::ensure!(
+            !config.audience.is_empty(),
+            "OIDC audience of issuer {:?} must not be empty",
+            config.issuer
+        );
+        anyhow::ensure!(
+            !config.claims.is_empty(),
+            "OIDC entry of issuer {:?} must constrain at least one claim, otherwise every token of that issuer would be accepted",
+            config.issuer
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_oidc_url(url: &str) -> anyhow::Result<reqwest::Url> {

@@ -5319,6 +5319,7 @@ impl DeploymentVerified {
             let target_url = format!("http://{api_listening_addr}");
             deployment.webhooks_wasm.push(
                 crate::config::deployment::WebhookWasmComponentConfigResolved {
+                    oidc: Vec::new(),
                     common: ComponentCommon {
                         name: ConfigName::new(StrVariant::Static(COMPONENT_NAME_WEBUI)).unwrap(),
                         location: webui_location(&wasm_cache_dir).await?,
@@ -6034,6 +6035,7 @@ async fn compile_and_link(
                                 &global_http_config,
                             );
                             let config = WebhookEndpointConfig {
+                                request_auth: webhook.oidc.map(|auth| auth as Arc<dyn webhook_trigger::WebhookRequestAuth>),
                                 component_id,
                                 forward_stdout: webhook.forward_stdout,
                                 forward_stderr: webhook.forward_stderr,
@@ -6081,6 +6083,7 @@ async fn compile_and_link(
                         span.in_scope(|| {
                             let frame_files = webhook_js.as_frame_sources();
                             let config = WebhookEndpointConfig {
+                                request_auth: webhook_js.oidc.map(|auth| auth as Arc<dyn webhook_trigger::WebhookRequestAuth>),
                                 component_id: webhook_js.component_id,
                                 forward_stdout: webhook_js.forward_stdout,
                                 forward_stderr: webhook_js.forward_stderr,

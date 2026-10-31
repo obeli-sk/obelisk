@@ -1,4 +1,4 @@
-//! OIDC ID tokens (JWTs) accepted as API bearer tokens.
+//! OIDC ID tokens (JWTs) accepted as API and webhook bearer tokens.
 
 use crate::config::server::{OidcProviderConfig, validate_oidc_url};
 use anyhow::{Context as _, ensure};
@@ -15,6 +15,7 @@ use serde_json::{Map, Value};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
+    fmt::Write as _,
     str::FromStr as _,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -31,11 +32,13 @@ pub(crate) const MIN_REFRESH_INTERVAL: Duration = if cfg!(test) {
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const LEEWAY_SECS: u64 = 60;
 
+#[derive(Debug)]
 pub(crate) struct OidcVerifier {
     issuers: Vec<Arc<Issuer>>,
     http: reqwest::Client,
 }
 
+#[derive(Debug)]
 struct Issuer {
     iss: String,
     rules: Vec<Rule>,
@@ -43,15 +46,81 @@ struct Issuer {
     refresh_lock: Arc<AsyncMutex<()>>,
 }
 
+#[derive(Debug)]
 struct Rule {
     audience: String,
     claims: BTreeMap<String, String>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct KeyCache {
     jwks: Option<(JwkSet, Instant)>,
     last_attempt: Option<Instant>,
+}
+
+enum VerificationError {
+    Invalid(Cow<'static, str>),
+    Forbidden(Cow<'static, str>),
+}
+
+impl VerificationError {
+    fn reason(self) -> Cow<'static, str> {
+        match self {
+            Self::Invalid(reason) | Self::Forbidden(reason) => reason,
+        }
+    }
+}
+
+impl From<&'static str> for VerificationError {
+    fn from(reason: &'static str) -> Self {
+        Self::Invalid(reason.into())
+    }
+}
+
+impl From<Cow<'static, str>> for VerificationError {
+    fn from(reason: Cow<'static, str>) -> Self {
+        Self::Invalid(reason)
+    }
+}
+
+#[async_trait::async_trait]
+impl wasm_workers::webhook::webhook_trigger::WebhookRequestAuth for OidcVerifier {
+    async fn authenticate(
+        &self,
+        headers: &http::HeaderMap,
+    ) -> Result<http::header::HeaderValue, http::StatusCode> {
+        let unauthorized = http::StatusCode::UNAUTHORIZED;
+        let mut authorization = headers.get_all(http::header::AUTHORIZATION).iter();
+        let presented = authorization
+            .next()
+            .ok_or(unauthorized)?
+            .to_str()
+            .map_err(|_| unauthorized)?;
+        if authorization.next().is_some() {
+            return Err(unauthorized);
+        }
+        let (scheme, token) = presented.split_once(' ').ok_or(unauthorized)?;
+        if !scheme.eq_ignore_ascii_case("bearer") || token.trim().is_empty() {
+            return Err(unauthorized);
+        }
+        let claims = self
+            .verify_claims(token.trim())
+            .await
+            .map_err(|err| match err {
+                VerificationError::Invalid(_) => unauthorized,
+                VerificationError::Forbidden(_) => http::StatusCode::FORBIDDEN,
+            })?;
+        let json = serde_json::to_string(&claims).expect("JWT claims serialize");
+        let mut header = String::with_capacity(json.len());
+        // ASCII JSON also survives WASI and JS header string decoding for Unicode claims.
+        for unit in json.encode_utf16() {
+            match u8::try_from(unit).ok().filter(u8::is_ascii) {
+                Some(ascii) => header.push(char::from(ascii)),
+                None => write!(header, "\\u{unit:04x}").expect("writing to a String"),
+            }
+        }
+        Ok(header.parse().expect("ASCII JSON is a valid header value"))
+    }
 }
 
 impl OidcVerifier {
@@ -97,6 +166,18 @@ impl OidcVerifier {
 
     /// Verify a bearer token, returning the audit identity `oidc:<iss>#<sub>`.
     pub(crate) async fn verify(&self, token: &str) -> Result<String, Cow<'static, str>> {
+        let claims = self
+            .verify_claims(token)
+            .await
+            .map_err(VerificationError::reason)?;
+        Ok(format!(
+            "oidc:{}#{}",
+            claims["iss"].as_str().unwrap(),
+            claims["sub"].as_str().unwrap()
+        ))
+    }
+
+    async fn verify_claims(&self, token: &str) -> Result<Map<String, Value>, VerificationError> {
         #[derive(Deserialize)]
         struct UnverifiedIssuer {
             iss: String,
@@ -123,7 +204,7 @@ impl OidcVerifier {
         let claims = jsonwebtoken::decode::<Map<String, Value>>(token, &key, &validation)
             .map_err(|err| describe_error(err.kind()))?
             .claims;
-        let sub = claims
+        claims
             .get("sub")
             .and_then(Value::as_str)
             .ok_or("JWT `sub` is not a string")?;
@@ -131,13 +212,15 @@ impl OidcVerifier {
         let mut first_mismatch = None;
         for rule in &issuer.rules {
             match rule.check(&claims) {
-                Ok(()) => return Ok(format!("oidc:{}#{sub}", issuer.iss)),
+                Ok(()) => return Ok(claims),
                 Err(reason) => {
                     first_mismatch.get_or_insert(reason);
                 }
             }
         }
-        Err(first_mismatch.expect("every issuer has a rule").into())
+        Err(VerificationError::Forbidden(
+            first_mismatch.expect("every issuer has a rule").into(),
+        ))
     }
 }
 

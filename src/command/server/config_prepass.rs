@@ -506,6 +506,19 @@ pub(super) fn collect_required_public_env_from_allowed_hosts(
     required.extend(referenced);
 }
 
+fn deployment_oidc_fields(deployment: &DeploymentResolved) -> impl Iterator<Item = &str> {
+    deployment
+        .webhooks_wasm
+        .iter()
+        .flat_map(|c| &c.oidc)
+        .chain(deployment.webhooks_js.iter().flat_map(|c| &c.oidc))
+        .flat_map(|config| {
+            std::iter::once(config.issuer.as_str())
+                .chain(std::iter::once(config.audience.as_str()))
+                .chain(config.claims.values().map(String::as_str))
+        })
+}
+
 pub(super) fn collect_deployment_required_public_env(
     deployment: &DeploymentResolved,
     required: &mut BTreeSet<String>,
@@ -523,6 +536,9 @@ pub(super) fn collect_deployment_required_public_env(
     }
     for hosts in deployment_allowed_host_lists(deployment) {
         collect_required_public_env_from_allowed_hosts(hosts, required);
+    }
+    for field in deployment_oidc_fields(deployment) {
+        collect_required_env_var_references(field, required);
     }
 }
 
@@ -566,6 +582,14 @@ pub(super) fn collect_deployment_unregistered_public_env(
     for hosts in deployment_allowed_host_lists(deployment) {
         collect_unregistered_public_env_from_allowed_hosts(hosts, secret_registry, undeclared);
     }
+    let mut referenced = BTreeSet::new();
+    for field in deployment_oidc_fields(deployment) {
+        collect_env_var_references(field, &mut referenced);
+    }
+    undeclared.extend(referenced.into_iter().filter(|name| {
+        !secret_registry.public_env_is_allowed(name)
+            && !secret_registry.public_env_is_sensitive(name)
+    }));
 }
 
 pub(super) fn preflight_runtime_config(
