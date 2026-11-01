@@ -7,6 +7,6 @@ pkg-config 0.29.2
 qemu 11.1.2
 rustc 1.98.1 (48a229cea 2026-09-01)
 rust-version 1.98.1
-wasm-tools 1.261.0
+wasm-tools 1.262.0
 cargo-zigbuild 0.23.4
 ldd (GNU libc) 2.44
