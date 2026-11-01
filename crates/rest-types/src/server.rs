@@ -1,1 +1,4 @@
-pub use crate::lifecycle::ServerInfoResponse;
+pub use crate::lifecycle::{
+    ServerInfoGc, ServerInfoGcCountedRetention, ServerInfoGcRetention, ServerInfoGcRetentionPolicy,
+    ServerInfoResponse,
+};

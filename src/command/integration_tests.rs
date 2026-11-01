@@ -2105,8 +2105,9 @@ async fn app_policy_webapi_reports_running_policy() {
         .await
         .unwrap();
     let info = lifecycle_response(response, "/v1/info", "get", reqwest::StatusCode::OK).await;
-    let _: rest_types::lifecycle::ServerInfoResponse =
+    let parsed: rest_types::lifecycle::ServerInfoResponse =
         serde_json::from_value(info.clone()).unwrap();
+    assert!(parsed.gc.is_some());
     assert_eq!(info["app_config_digest"], expected_digest);
 
     for endpoint in ["deployment-id", "execution-id"] {

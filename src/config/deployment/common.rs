@@ -170,6 +170,16 @@ pub enum DurationConfig {
     Minutes(u64),
     Hours(u64),
 }
+impl DurationConfig {
+    pub(crate) fn as_millis_saturating(self) -> u64 {
+        match self {
+            DurationConfig::Milliseconds(millis) => millis,
+            DurationConfig::Seconds(secs) => secs.saturating_mul(1000),
+            DurationConfig::Minutes(mins) => mins.saturating_mul(60 * 1000),
+            DurationConfig::Hours(hrs) => hrs.saturating_mul(60 * 60 * 1000),
+        }
+    }
+}
 impl From<DurationConfig> for Duration {
     fn from(value: DurationConfig) -> Self {
         match value {
