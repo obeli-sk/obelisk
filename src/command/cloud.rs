@@ -96,6 +96,12 @@ impl From<CloudCommandId> for Kind {
     }
 }
 
+enum Body {
+    Json(Value),
+    /// Verbatim app.toml, which the provisioner parses and stages.
+    Toml(String),
+}
+
 struct Client {
     http: crate::client::HttpClient,
     origin: Url,
@@ -166,6 +172,15 @@ impl Client {
         body: Option<Value>,
         kind: Kind,
     ) -> anyhow::Result<Value> {
+        self.send(method, path, body.map(Body::Json), kind).await
+    }
+    async fn send(
+        &self,
+        method: Method,
+        path: &[&str],
+        body: Option<Body>,
+        kind: Kind,
+    ) -> anyhow::Result<Value> {
         let mut request = self.http.request(method, self.url(path)?);
         let command_id = if let Kind::Command(id) | Kind::SecretCommand(id) = kind {
             let id = id.unwrap_or_else(ExecutionIdTopLevel::generate);
@@ -175,8 +190,14 @@ impl Client {
         } else {
             None
         };
-        if let Some(body) = body {
-            request = request.json(&body);
+        match body {
+            Some(Body::Json(body)) => request = request.json(&body),
+            Some(Body::Toml(text)) => {
+                request = request
+                    .header(header::CONTENT_TYPE, "application/toml")
+                    .body(text);
+            }
+            None => {}
         }
         let response = request
             .send()
@@ -256,6 +277,19 @@ impl Client {
         path.extend_from_slice(suffix);
         self.request(method, &path, body, kind).await
     }
+    async fn app_toml(
+        &self,
+        name: &str,
+        method: Method,
+        suffix: &[&str],
+        app_toml: &str,
+        kind: Kind,
+    ) -> anyhow::Result<Value> {
+        let mut path = vec!["v1", "apps", name];
+        path.extend_from_slice(suffix);
+        self.send(method, &path, Some(Body::Toml(app_toml.to_owned())), kind)
+            .await
+    }
 }
 async fn app_name(name: Option<&str>) -> anyhow::Result<String> {
     let name = match name {
@@ -264,6 +298,7 @@ async fn app_name(name: Option<&str>) -> anyhow::Result<String> {
             policy(Path::new("app.toml"))
                 .await
                 .context("Select an app with --app, OBELISK_APP_NAME or app_name in ./app.toml")?
+                .config
                 .app_name
         }
     };
@@ -291,14 +326,39 @@ fn config_name(name: &str) -> anyhow::Result<()> {
     );
     Ok(())
 }
-async fn policy(path: &Path) -> anyhow::Result<AppConfigToml> {
+/// A local app config, parsed for prompts and kept verbatim for the provisioner.
+#[derive(Clone)]
+struct LocalConfig {
+    config: AppConfigToml,
+    text: String,
+}
+impl std::ops::Deref for LocalConfig {
+    type Target = AppConfigToml;
+    fn deref(&self) -> &AppConfigToml {
+        &self.config
+    }
+}
+impl LocalConfig {
+    fn parse(text: String) -> anyhow::Result<Self> {
+        let config: AppConfigToml = toml::from_str(&text)?;
+        config.validate_cloud_integrations()?;
+        Ok(Self { config, text })
+    }
+}
+async fn policy(path: &Path) -> anyhow::Result<LocalConfig> {
     let text = tokio::fs::read_to_string(path)
         .await
         .with_context(|| format!("Cannot read app config {}", path.display()))?;
-    let config: AppConfigToml =
-        toml::from_str(&text).with_context(|| format!("Invalid app config {}", path.display()))?;
-    config.validate_cloud_integrations()?;
-    Ok(config)
+    LocalConfig::parse(text).with_context(|| format!("Invalid app config {}", path.display()))
+}
+/// Returns `app_toml` with `app_name` set to `name`, keeping the rest of the document.
+fn with_app_name(app_toml: &str, name: &str) -> anyhow::Result<String> {
+    let mut document = app_toml.parse::<toml_edit::DocumentMut>()?;
+    if document.get("app_name").and_then(|item| item.as_str()) == Some(name) {
+        return Ok(app_toml.to_owned());
+    }
+    document["app_name"] = toml_edit::value(name);
+    Ok(document.to_string())
 }
 /// App config path of commands that read one, with whether `-a` was given.
 fn app_config_path(command: &CloudApp) -> anyhow::Result<Option<(PathBuf, bool)>> {
@@ -320,9 +380,9 @@ fn discover_app_config(app_config: Option<PathBuf>) -> anyhow::Result<Option<(Pa
 /// Never use another app's config: an explicit or required one is an error, a discovered optional one is ignored.
 fn config_for_app(
     name: &str,
-    config: Option<(AppConfigToml, (PathBuf, bool))>,
+    config: Option<(LocalConfig, (PathBuf, bool))>,
     required: bool,
-) -> anyhow::Result<Option<(AppConfigToml, PathBuf)>> {
+) -> anyhow::Result<Option<(LocalConfig, PathBuf)>> {
     let Some((config, (path, explicit))) = config else {
         ensure!(
             !required,
@@ -544,7 +604,7 @@ impl CloudArgs {
             )
             && let Some((path, _)) = app_config_path(command)?
         {
-            *app = Some(policy(&path).await?.app_name);
+            *app = Some(policy(&path).await?.config.app_name);
         }
         let json = self.json;
         let verbose = self.verbose;
@@ -599,13 +659,12 @@ impl CloudArgs {
                     !(fill || fill_non_interactive) || config.is_some(),
                     "`--fill` requires an app config"
                 );
-                let mut body = json!({"app_name":name});
+                let mut body = json!({"app_toml":with_app_name("", &name)?});
                 if let Some(config) = config {
-                    body["policy"] = serde_json::to_value(config.policy())?;
-                    body["cloud"] = serde_json::to_value(config.cloud)?;
+                    body["app_toml"] = json!(config.text);
                     let mut ask = ask;
                     let values = initial_values(
-                        &user_supplied_policy(&body),
+                        &user_supplied_policy(&desired_config(&config)),
                         Values::new(fill, fill_non_interactive, terminal().then_some(&mut ask))?,
                     )?;
                     body["env"] = values["env"].clone();
@@ -652,8 +711,7 @@ impl CloudArgs {
                             .app(name, Method::GET, &["status"], None, Kind::Read)
                             .await?;
                         if let Some((config, path)) = local {
-                            let comparison =
-                                compare_config(&client, name, &desired_config(&config)).await;
+                            let comparison = compare_config(&client, name, &config.text).await;
                             value["local_config"] = json!({
                                 "path": path.display().to_string(),
                                 "comparison": comparison.as_ref().ok(),
@@ -665,11 +723,11 @@ impl CloudArgs {
                     CloudApp::Stage { command_id, .. } => {
                         let (config, _) = local.expect("stage requires an app config");
                         client
-                            .app(
+                            .app_toml(
                                 name,
                                 Method::PUT,
                                 &["config"],
-                                Some(json!({"policy":config.policy(), "cloud":config.cloud})),
+                                &config.text,
                                 command_id.into(),
                             )
                             .await
@@ -868,14 +926,14 @@ fn desired_config(config: &AppConfigToml) -> Value {
     json!({"policy":config.policy(), "cloud":config.cloud})
 }
 
-/// Asks the provisioner how `desired` differs from the staged configuration.
-async fn compare_config(client: &Client, name: &str, desired: &Value) -> anyhow::Result<Value> {
+/// Asks the provisioner how `app_toml` differs from the staged configuration.
+async fn compare_config(client: &Client, name: &str, app_toml: &str) -> anyhow::Result<Value> {
     client
-        .app(
+        .app_toml(
             name,
             Method::POST,
             &["config", "compare"],
-            Some(desired.clone()),
+            app_toml,
             Kind::Read,
         )
         .await
@@ -892,7 +950,7 @@ async fn staged_or_local(
     client: &Client,
     name: &str,
     current: &Value,
-    local: Option<(AppConfigToml, std::path::PathBuf)>,
+    local: Option<(LocalConfig, std::path::PathBuf)>,
     prompt: Option<Prompt<'_>>,
 ) -> anyhow::Result<(Value, u64)> {
     #[derive(Clone, Copy, PartialEq)]
@@ -906,7 +964,7 @@ async fn staged_or_local(
         return Ok((staged, staged_revision(current)?));
     };
     let desired = desired_config(&config);
-    let comparison = compare_config(client, name, &desired).await?;
+    let comparison = compare_config(client, name, &config.text).await?;
     let revision = staged_revision(&comparison)?;
     let changes = comparison["changes"]
         .as_array()
@@ -935,11 +993,11 @@ async fn staged_or_local(
     match choose(prompt, &text, &choices, Use::Local)? {
         Use::Local => {
             let staged = client
-                .app(
+                .app_toml(
                     name,
                     Method::PUT,
                     &["config"],
-                    Some(desired.clone()),
+                    &config.text,
                     Kind::Command(None),
                 )
                 .await?;
@@ -1441,11 +1499,7 @@ mod tests {
         use axum::response::IntoResponse as _;
         assert_eq!(headers["authorization"], "Bearer cloud-token");
         assert!(!headers.contains_key("x-obelisk-user"));
-        let body: Value = if body.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&body).unwrap()
-        };
+        let body = request_body(&headers, &body);
         let mut state = state.lock().unwrap();
         state
             .received
@@ -1475,17 +1529,19 @@ mod tests {
         }
         let result = match uri.path() {
             "/prefix/v1/apps/demo/config" if method == Method::PUT => {
-                let changed = state.staged != body;
+                let desired = staged_config(body.as_str().unwrap());
+                let changed = state.staged != desired;
                 if changed {
-                    state.staged = body;
+                    state.staged = desired;
                     state.revision += 1;
                 }
                 json!({"revision":state.revision,"changed":changed})
             }
             "/prefix/v1/apps/demo/config/compare" => {
+                let desired = staged_config(body.as_str().unwrap());
                 let changes: Vec<_> = ["policy", "cloud"]
                     .into_iter()
-                    .filter(|key| state.staged[key] != body[key])
+                    .filter(|key| state.staged[key] != desired[key])
                     .map(|key| format!("/{key}"))
                     .collect();
                 json!({"changes":changes,"revision":state.revision})
@@ -1530,6 +1586,26 @@ mod tests {
             _ => json!({"ok":true}),
         };
         axum::Json(result).into_response()
+    }
+    /// Request body as JSON, or as a string when it is app.toml text.
+    pub(super) fn request_body(headers: &HeaderMap, body: &Bytes) -> Value {
+        if headers
+            .get("content-type")
+            .is_some_and(|value| value == "application/toml")
+        {
+            Value::String(String::from_utf8(body.to_vec()).unwrap())
+        } else if body.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(body).unwrap()
+        }
+    }
+    /// What the provisioner stages from an app.toml.
+    pub(super) fn staged_config(app_toml: &str) -> Value {
+        let config = LocalConfig::parse(app_toml.to_owned()).unwrap();
+        let mut value = desired_config(&config);
+        value["app_name"] = json!(config.app_name);
+        value
     }
     async fn server() -> (String, Arc<Mutex<Requests>>, tokio::task::JoinHandle<()>) {
         test_utils::set_up();
@@ -1673,12 +1749,23 @@ mod tests {
         assert_eq!(state.lock().unwrap().received.len(), 1);
         task.abort();
     }
+    #[test]
+    fn with_app_name_keeps_matching_text_verbatim() {
+        let text = "# comment\napp_name='demo'\n[cloud]\nmemory_mb=512\n";
+        assert_eq!(with_app_name(text, "demo").unwrap(), text);
+        assert_eq!(
+            with_app_name(text, "renamed").unwrap(),
+            "# comment\napp_name= \"renamed\"\n[cloud]\nmemory_mb=512\n"
+        );
+        assert_eq!(with_app_name("", "demo").unwrap(), "app_name = \"demo\"\n");
+    }
     #[tokio::test]
     async fn local_config_differing_from_staged_needs_a_choice() {
         let (origin, state, task) = server().await;
         let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
-        let config: AppConfigToml =
-            toml::from_str("app_name='demo'\n[public_env]\nREGION={optional=true}\n").unwrap();
+        let config =
+            LocalConfig::parse("app_name='demo'\n[public_env]\nREGION={optional=true}\n".into())
+                .unwrap();
         let staged = json!({"policy":{"public_env":[]},"cloud":{"memory_mb":512}});
         state.lock().unwrap().staged = staged.clone();
         state.lock().unwrap().revision = 4;
@@ -1725,7 +1812,7 @@ mod tests {
             puts(),
             [(
                 "PUT /prefix/v1/apps/demo/config".to_owned(),
-                desired.clone()
+                json!(config.text)
             )]
         );
         let mut unexpected = |_: &Question| -> anyhow::Result<String> { unreachable!() };
@@ -1768,17 +1855,12 @@ mod tests {
             .await
             .unwrap();
         let received = &state.lock().unwrap().received;
+        let app_toml = std::fs::read_to_string(&path).unwrap();
         assert_eq!(received[0].0, "POST /prefix/v1/apps");
-        assert_eq!(received[0].1["app_name"], "demo");
-        assert_eq!(received[0].1["policy"]["format"], "obelisk-app-config-v1");
-        assert_eq!(received[0].1["cloud"]["memory_mb"], 1024);
+        assert_eq!(received[0].1["app_toml"], app_toml);
+        assert!(received[0].1.get("policy").is_none());
         assert_eq!(received[1].0, "PUT /prefix/v1/apps/demo/config");
-        assert_eq!(received[1].1["cloud"]["memory_mb"], 1024);
-        assert!(received[1].1.get("app_name").is_none());
-        assert_eq!(
-            received[1].1["policy"]["outbound_http"][0]["pattern"],
-            "${REGION}"
-        );
+        assert_eq!(received[1].1, app_toml);
         let applies: Vec<_> = received
             .iter()
             .filter(|(path, _)| path.ends_with("/apply"))

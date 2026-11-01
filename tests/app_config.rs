@@ -120,14 +120,24 @@ async fn cloud_new_and_stage_load_local_policy() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let received = requests.clone();
     let router = axum::Router::new().fallback(any(
-        move |method: axum::http::Method, uri: axum::http::Uri, body: Bytes| {
+        move |method: axum::http::Method,
+              headers: axum::http::HeaderMap,
+              uri: axum::http::Uri,
+              body: Bytes| {
             let received = received.clone();
             async move {
-                received.lock().unwrap().push((
-                    method.to_string(),
-                    uri.to_string(),
-                    serde_json::from_slice::<Value>(&body).unwrap(),
-                ));
+                let body = if headers
+                    .get("content-type")
+                    .is_some_and(|value| value == "application/toml")
+                {
+                    Value::String(String::from_utf8(body.to_vec()).unwrap())
+                } else {
+                    serde_json::from_slice::<Value>(&body).unwrap()
+                };
+                received
+                    .lock()
+                    .unwrap()
+                    .push((method.to_string(), uri.to_string(), body));
                 Json(json!({"ok":true}))
             }
         },
@@ -136,11 +146,8 @@ async fn cloud_new_and_stage_load_local_policy() {
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("app.toml"),
-        "app_name='local-app'\n[cloud]\nmemory_mb=512\n[public_env]\nREGION={}\n",
-    )
-    .unwrap();
+    let app_toml = "app_name='local-app'\n[cloud]\nmemory_mb=512\n[public_env]\nREGION={}\n";
+    std::fs::write(dir.path().join("app.toml"), app_toml).unwrap();
     tokio::task::spawn_blocking(move || {
         let run = |args: &[&str], region: Option<&str>| {
             let mut command = Command::new(env!("CARGO_BIN_EXE_obelisk"));
@@ -180,13 +187,12 @@ async fn cloud_new_and_stage_load_local_policy() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].0, "POST");
     assert_eq!(requests[0].1, "/v1/apps");
-    assert_eq!(requests[0].2["app_name"], "local-app");
-    assert_eq!(requests[0].2["policy"]["public_env"], json!(["REGION"]));
-    assert_eq!(requests[0].2["env"], json!({"REGION":"eu"}));
-    assert_eq!(requests[0].2["cloud"], json!({"memory_mb":512}));
+    assert_eq!(
+        requests[0].2,
+        json!({"app_toml":app_toml,"env":{"REGION":"eu"},"secrets":{}})
+    );
     assert_eq!(requests[1].0, "PUT");
     assert_eq!(requests[1].1, "/v1/apps/local-app/config");
-    assert_eq!(requests[1].2["policy"], requests[0].2["policy"]);
-    assert_eq!(requests[1].2["cloud"], requests[0].2["cloud"]);
+    assert_eq!(requests[1].2, app_toml);
     task.abort();
 }

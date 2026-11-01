@@ -51,11 +51,11 @@ impl CloudArgs {
         let mut current = if existing.is_some() {
             step("stage");
             client
-                .app(
+                .app_toml(
                     &name,
                     Method::PUT,
                     &["config"],
-                    Some(desired.clone()),
+                    &config.text,
                     Kind::Command(None),
                 )
                 .await?
@@ -74,8 +74,7 @@ impl CloudArgs {
             let original_name = name.clone();
             let current = loop {
                 step("new");
-                let mut body = desired.clone();
-                body["app_name"] = json!(name);
+                let mut body = json!({"app_toml":with_app_name(&config.text, &name)?});
                 body["env"] = values["env"].clone();
                 body["secrets"] = values["secrets"].clone();
                 match client
@@ -98,15 +97,14 @@ impl CloudArgs {
                 }
             };
             if save_name && name != original_name {
-                let source = std::fs::read_to_string(&app_config)?;
-                let mut document = source.parse::<toml_edit::DocumentMut>()?;
-                document["app_name"] = toml_edit::value(&name);
-                std::fs::write(&app_config, document.to_string()).with_context(|| {
-                    format!(
-                        "App {name} was created, but {} could not be updated; use --app {name}",
-                        app_config.display()
-                    )
-                })?;
+                std::fs::write(&app_config, with_app_name(&config.text, &name)?).with_context(
+                    || {
+                        format!(
+                            "App {name} was created, but {} could not be updated; use --app {name}",
+                            app_config.display()
+                        )
+                    },
+                )?;
                 eprintln!("Updated app_name to {name} in {}", app_config.display());
             }
             current
@@ -227,9 +225,14 @@ fn choose_app_name(
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::{request_body, staged_config};
     use super::*;
     use axum::{
-        Router, body::Bytes, extract::State, http::StatusCode, response::IntoResponse as _,
+        Router,
+        body::Bytes,
+        extract::State,
+        http::{HeaderMap, StatusCode},
+        response::IntoResponse as _,
         routing::any,
     };
     use std::sync::{Arc, Mutex};
@@ -247,6 +250,7 @@ mod tests {
     async fn handle(
         State(state): State<Arc<Mutex<Server>>>,
         method: Method,
+        headers: HeaderMap,
         uri: axum::http::Uri,
         body: Bytes,
     ) -> axum::response::Response {
@@ -254,18 +258,15 @@ mod tests {
         state.calls.push(format!("{method} {}", uri.path()));
         let routed_path = uri.path().replace("/v1/apps/renamed", "/v1/apps/demo");
         let path = routed_path.as_str();
-        let body: Value = if body.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&body).unwrap()
-        };
+        let body = request_body(&headers, &body);
         let mut value = match (method, path) {
             (Method::GET, "/v1/apps/demo") => match &state.app {
                 Some(app) => app.clone(),
                 None => return (StatusCode::NOT_FOUND, "missing").into_response(),
             },
             (Method::POST, "/v1/apps") => {
-                if state.name_taken && body["app_name"] == "demo" {
+                let mut app = staged_config(body["app_toml"].as_str().unwrap());
+                if state.name_taken && app["app_name"] == "demo" {
                     return (
                         StatusCode::CONFLICT,
                         axum::Json(
@@ -274,11 +275,11 @@ mod tests {
                     )
                         .into_response();
                 }
-                if body["policy"]["secrets"].get("INITIAL_KEY").is_some() {
+                if app["policy"]["secrets"].get("INITIAL_KEY").is_some() {
                     assert_eq!(body["env"]["INITIAL_REGION"], "initial-value");
                     assert_eq!(body["secrets"]["INITIAL_KEY"], "initial-value");
                 }
-                let mut app = body;
+                app["env"] = body["env"].clone();
                 app["status"] = json!("running");
                 app["potentially_stale"] = json!(false);
                 app["revision"] = json!(1);
@@ -288,6 +289,7 @@ mod tests {
                 app
             }
             (Method::PUT, "/v1/apps/demo/config") => {
+                let body = staged_config(body.as_str().unwrap());
                 let app = state.app.as_mut().unwrap();
                 let changed = app["policy"] != body["policy"] || app["cloud"] != body["cloud"];
                 if changed {
