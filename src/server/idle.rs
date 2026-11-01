@@ -151,7 +151,7 @@ async fn record_resume(db: &SqlitePool, detector: &mut Detector) {
     if let Some((gap, period)) = detector.resumed.take() {
         super::system_event_writer::record(
             db as &dyn DbPool,
-            SystemEventCode::ServerResumeDetected,
+            SystemEventCode::ServerIdleResumed,
             None,
             None,
             serde_json::json!({
