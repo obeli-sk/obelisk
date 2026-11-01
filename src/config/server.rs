@@ -83,6 +83,8 @@ pub(crate) struct ServerConfigToml {
     #[serde(default)]
     pub(crate) api: ApiConfig,
     #[serde(default)]
+    pub(crate) idle_report: IdleReportConfig,
+    #[serde(default)]
     pub(crate) database: DatabaseConfigToml,
     #[serde(default)]
     pub(crate) webui: WebUIConfig,
@@ -111,6 +113,58 @@ pub(crate) struct ServerConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct IdleReportConfig {
+    pub(crate) url: Option<String>,
+    pub(crate) check_interval: DurationConfig,
+    pub(crate) quiet_period: DurationConfig,
+    pub(crate) horizon: DurationConfig,
+    pub(crate) resume_threshold: DurationConfig,
+    pub(crate) request_timeout: DurationConfig,
+}
+
+impl Default for IdleReportConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            check_interval: DurationConfig::Seconds(30),
+            quiet_period: DurationConfig::Seconds(60),
+            horizon: DurationConfig::Minutes(1),
+            resume_threshold: DurationConfig::Seconds(5),
+            request_timeout: DurationConfig::Seconds(10),
+        }
+    }
+}
+
+impl IdleReportConfig {
+    pub(crate) fn validate(&self, database: &DatabaseConfigToml) -> anyhow::Result<()> {
+        if let Some(url) = &self.url {
+            anyhow::ensure!(
+                matches!(database, DatabaseConfigToml::Sqlite(_)),
+                "idle_report requires the SQLite backend"
+            );
+            let url = reqwest::Url::parse(url).context("invalid idle_report.url")?;
+            anyhow::ensure!(
+                matches!(url.scheme(), "http" | "https")
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none(),
+                "idle_report.url must be an HTTP(S) URL without credentials"
+            );
+            anyhow::ensure!(
+                !Duration::from(self.check_interval).is_zero(),
+                "idle_report.check_interval must be greater than zero"
+            );
+            anyhow::ensure!(
+                !Duration::from(self.request_timeout).is_zero(),
+                "idle_report.request_timeout must be greater than zero"
+            );
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
@@ -1595,6 +1649,40 @@ pub(crate) const MAX_DEPLOYMENT_FILE_BYTES: u32 = 20 * 1024 * 1024; // 20MiB
 mod tests {
     use super::*;
     use crate::config::deployment::{MethodsInput, ReplaceIn};
+
+    #[test]
+    fn idle_report_configuration_validation() {
+        let postgres: DatabaseConfigToml = toml::from_str(
+            "[postgres]\nhost = 'localhost'\nuser = 'postgres'\npassword = ''\ndb_name = 'obelisk'",
+        )
+        .unwrap();
+        let disabled = IdleReportConfig::default();
+        assert!(disabled.validate(&postgres).is_ok());
+        let enabled = IdleReportConfig {
+            url: Some("http://127.0.0.1:9194/v1/idle".into()),
+            ..disabled
+        };
+        assert!(enabled.validate(&DatabaseConfigToml::default()).is_ok());
+        assert!(
+            enabled
+                .validate(&postgres)
+                .unwrap_err()
+                .to_string()
+                .contains("SQLite")
+        );
+        for settings in [
+            "url = 'ftp://localhost/report'",
+            "url = 'http://user:password@localhost/report'",
+            "url = 'http://localhost/report'\ncheck_interval.seconds = 0",
+            "url = 'http://localhost/report'\nrequest_timeout.seconds = 0",
+        ] {
+            let config: IdleReportConfig = toml::from_str(settings).unwrap();
+            assert!(
+                config.validate(&DatabaseConfigToml::default()).is_err(),
+                "{settings}"
+            );
+        }
+    }
 
     mod limits {
         use super::*;

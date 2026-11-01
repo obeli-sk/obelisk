@@ -1601,6 +1601,7 @@ pub struct SystemEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemEventCode {
+    ServerIdleReported,
     ServerConfigurationResolved,
     ServerStartupCompleted,
     ServerStartupFailed,
@@ -1634,6 +1635,7 @@ impl SystemEventCode {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::ServerIdleReported => "server.idle.reported",
             Self::ServerConfigurationResolved => "server.configuration.resolved",
             Self::ServerStartupCompleted => "server.startup.completed",
             Self::ServerStartupFailed => "server.startup.failed",
@@ -1674,7 +1676,9 @@ impl SystemEventCode {
             | Self::WorkflowReplayLockExpired
             | Self::MaintenanceGcDeploymentsInUse
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
-            Self::DeploymentPolicyApplied | Self::MaintenanceGcCompleted => SystemEventLevel::Debug,
+            Self::ServerIdleReported
+            | Self::DeploymentPolicyApplied
+            | Self::MaintenanceGcCompleted => SystemEventLevel::Debug,
             _ => SystemEventLevel::Info,
         }
     }
@@ -1682,6 +1686,7 @@ impl SystemEventCode {
     #[must_use]
     pub fn message(self) -> &'static str {
         match self {
+            Self::ServerIdleReported => "Server idle reported",
             Self::ServerConfigurationResolved => "Server configuration resolved",
             Self::ServerStartupCompleted => "Server startup completed",
             Self::ServerStartupFailed => "Server startup failed",
@@ -1798,6 +1803,7 @@ impl SystemEvent {
             "server.configuration.resolved" => {
                 SystemEventCode::ServerConfigurationResolved.message()
             }
+            "server.idle.reported" => SystemEventCode::ServerIdleReported.message(),
             "server.startup.completed" => SystemEventCode::ServerStartupCompleted.message(),
             "server.startup.failed" => SystemEventCode::ServerStartupFailed.message(),
             "server.shutdown.requested" => SystemEventCode::ServerShutdownRequested.message(),

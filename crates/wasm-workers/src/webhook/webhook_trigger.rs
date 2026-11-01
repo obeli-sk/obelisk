@@ -630,6 +630,7 @@ pub async fn server(
     sleep: Arc<dyn Sleep>,
     webhooks_wasm_cell: Option<Arc<tokio::sync::Semaphore>>,
     mut server_termination_watcher: watch::Receiver<()>,
+    http_activity: utils::http_activity::HttpActivity,
 ) -> Result<(), WebhookServerError> {
     loop {
         let (stream, _) = select! {
@@ -660,6 +661,7 @@ pub async fn server(
                 let server_termination_watcher = server_termination_watcher.clone();
                 let mut connection_termination_watcher = server_termination_watcher.clone();
                 let log_forwarder_sender = log_forwarder_sender.clone();
+                let http_activity = http_activity.clone();
                 async move {
                     let (connection_drop_sender, connection_drop_watcher) = watch::channel(());
                     let deployment_id = state.deployment_id;
@@ -669,9 +671,10 @@ pub async fn server(
                             stream,
                             hyper::service::service_fn({
                                 move |req| {
+                                    let guard = http_activity.begin();
                                     let execution_id = ExecutionId::generate().get_top_level();
                                     trace!(%execution_id, %deployment_id, method = %req.method(), uri = %req.uri(), "Processing request");
-                                    RequestHandler {
+                                    let handler = RequestHandler {
                                         deployment_id: state.deployment_id,
                                         policy_event_id: state.policy_event_id,
                                         max_persisted_value_size_bytes: state.max_persisted_value_size_bytes,
@@ -687,8 +690,13 @@ pub async fn server(
                                         log_forwarder_sender: log_forwarder_sender.clone(),
                                         request_timeout: state.request_timeout,
                                         persist_on_outbound_http: state.persist_on_outbound_http,
+                                    };
+                                    let cell = webhooks_wasm_cell.clone();
+                                    async move {
+                                        handler.handle_request(req, cell).await.map(|response| response.map(|body| {
+                                            UnsyncBoxBody::new(utils::http_activity::TrackedBody::new(body, guard))
+                                        }))
                                     }
-                                    .handle_request(req, webhooks_wasm_cell.clone())
                                 }.instrument(info_span!(parent: &connection_span, "request", %deployment_id))
                             })
                         );
@@ -3279,6 +3287,7 @@ pub(crate) mod tests {
             Arc::new(TokioSleep),
             None,
             server_termination_watcher,
+            utils::http_activity::HttpActivity::default(),
         ));
 
         let mut stream = TcpStream::connect(server_addr).await.unwrap();
@@ -3480,6 +3489,7 @@ pub(crate) mod tests {
                     Arc::new(TokioSleep),
                     wasm_cell,
                     server_termination_watcher,
+                    utils::http_activity::HttpActivity::default(),
                 ));
                 SetUpFiboWebhook {
                     set,
@@ -4004,6 +4014,7 @@ pub(crate) mod tests {
                 Arc::new(TokioSleep),
                 None,
                 server_termination_watcher,
+                utils::http_activity::HttpActivity::default(),
             ));
 
             // Send request to webhook with mock server port as route param
@@ -4197,6 +4208,7 @@ pub(crate) mod tests {
                 Arc::new(TokioSleep),
                 None,
                 server_termination_watcher,
+                utils::http_activity::HttpActivity::default(),
             ));
 
             // Send request to webhook
@@ -4369,6 +4381,7 @@ pub(crate) mod tests {
                 Arc::new(TokioSleep),
                 None,
                 server_termination_watcher,
+                utils::http_activity::HttpActivity::default(),
             ));
             (
                 set,
@@ -4711,6 +4724,7 @@ pub(crate) mod tests {
                 Arc::new(TokioSleep),
                 None,
                 server_termination_watcher,
+                utils::http_activity::HttpActivity::default(),
             ));
             (
                 set,
@@ -6015,6 +6029,7 @@ pub(crate) mod tests {
                     Arc::new(TokioSleep),
                     None,
                     server_termination_watcher,
+                    utils::http_activity::HttpActivity::default(),
                 ));
 
                 Self {
