@@ -883,7 +883,7 @@ impl TestServer {
             .unwrap();
         let mut config = config_holder.load_config().unwrap();
         let (app, app_toml) = config_holder.load_app_config_with_text().unwrap();
-        config.app_toml = app_toml.unwrap();
+        config.app_toml = app_toml;
         config.app_policy = app.policy();
         config.secrets = app.secrets;
         config.public_env = app.public_env;

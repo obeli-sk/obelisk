@@ -25,15 +25,14 @@ pub(crate) fn resolve_app_config(
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AppConfigToml {
-    #[serde(default)]
     #[schemars(
         length(min = 4, max = 25),
         regex(pattern = "^[a-z0-9][a-z0-9-]{2,23}[a-z0-9]$")
     )]
-    pub(crate) app_name: Option<String>,
+    pub(crate) app_name: String,
     #[serde(default)]
     pub(crate) cloud: CloudConfigToml,
     #[serde(default)]
@@ -108,6 +107,26 @@ enum AppPolicySecretV1 {
 }
 
 impl AppConfigToml {
+    /// App config of a server started without app.toml: only `app_name`, from `OBELISK_APP_NAME`.
+    pub(crate) fn from_env_app_name() -> anyhow::Result<Self> {
+        let name = std::env::var("OBELISK_APP_NAME").context(
+            "app name is required: pass --app-config, create ./app.toml or set `OBELISK_APP_NAME`",
+        )?;
+        validate_app_name(&name)?;
+        Ok(Self::with_name(name))
+    }
+
+    pub(crate) fn with_name(name: String) -> Self {
+        Self {
+            app_name: name,
+            cloud: CloudConfigToml::default(),
+            secrets: SecretsToml::default(),
+            public_env: PublicEnvToml::default(),
+            allowed_exec_activities: AllowExecActivities::default(),
+            outbound_http: OutboundHttpToml::default(),
+        }
+    }
+
     pub(crate) fn validate_cloud_integrations(&self) -> anyhow::Result<()> {
         let mut supplied = std::collections::BTreeSet::new();
         for (name, integration) in &self.cloud.integrations {
@@ -173,21 +192,17 @@ impl AppConfigToml {
         }
         Ok(())
     }
-    pub(crate) fn effective_name(&self) -> anyhow::Result<String> {
-        let name = match (std::env::var("OBELISK_APP_NAME").ok(), &self.app_name) {
-            (Some(env), Some(name)) => {
-                ensure!(
-                    env == *name,
-                    "`OBELISK_APP_NAME` is `{env}`, but app.toml sets `app_name = \"{name}\"`; unset one of them"
-                );
-                env
-            }
-            (env, name) => env.or_else(|| name.clone()).context(
-                "app name is required: set `app_name` in app.toml or `OBELISK_APP_NAME`",
-            )?,
-        };
-        validate_app_name(&name)?;
-        Ok(name)
+    /// Validates `app_name`; `OBELISK_APP_NAME`, when set, must select the same app.
+    pub(crate) fn verify_app_name(&self) -> anyhow::Result<()> {
+        validate_app_name(&self.app_name)?;
+        if let Ok(env) = std::env::var("OBELISK_APP_NAME") {
+            ensure!(
+                env == self.app_name,
+                "`OBELISK_APP_NAME` is `{env}`, but app.toml sets `app_name = \"{}\"`; unset `OBELISK_APP_NAME` or fix `app_name`",
+                self.app_name
+            );
+        }
+        Ok(())
     }
 
     pub(crate) fn policy(&self) -> AppPolicyV1 {
@@ -284,7 +299,7 @@ mod tests {
 
     #[test]
     fn cloud_integrations_are_open_typed_bindings_with_local_required_values() {
-        let app: AppConfigToml = toml::from_str("[cloud.integrations]\nlimited={type='future-llm',env='OBELISK_TEST_INTEGRATION_URL_UNSET'}\n[public_env]\nOBELISK_TEST_INTEGRATION_URL_UNSET={}\n").unwrap();
+        let app: AppConfigToml = toml::from_str("app_name='test-app'\n[cloud.integrations]\nlimited={type='future-llm',env='OBELISK_TEST_INTEGRATION_URL_UNSET'}\n[public_env]\nOBELISK_TEST_INTEGRATION_URL_UNSET={}\n").unwrap();
         app.validate_cloud_integrations().unwrap();
         let error = app
             .validate_local_integrations(&super::StartupEnvVars::capture())
@@ -296,9 +311,9 @@ mod tests {
             "{error}"
         );
         for text in [
-            "[cloud.integrations]\nllm={type='llm',env='MISSING'}",
-            "[cloud.integrations]\nllm={type='llm',env='URL'}\n[public_env]\nURL={type='internal',source='api-url'}",
-            "[cloud.integrations]\nllm={type='llm',env='URL'}\nother={type='llm',env='URL'}\n[public_env]\nURL={}",
+            "app_name='test-app'\n[cloud.integrations]\nllm={type='llm',env='MISSING'}",
+            "app_name='test-app'\n[cloud.integrations]\nllm={type='llm',env='URL'}\n[public_env]\nURL={type='internal',source='api-url'}",
+            "app_name='test-app'\n[cloud.integrations]\nllm={type='llm',env='URL'}\nother={type='llm',env='URL'}\n[public_env]\nURL={}",
         ] {
             let app: AppConfigToml = toml::from_str(text).unwrap();
             assert!(app.validate_cloud_integrations().is_err(), "{text}");
@@ -308,7 +323,7 @@ mod tests {
     #[test]
     fn secret_types_default_to_env_and_internal_rejects_optional() {
         let config: AppConfigToml = toml::from_str(
-            "[secrets]\nDEFAULT = {}\nEXPLICIT = { type = 'env', optional = true }\nINTERNAL = { type = 'internal' }",
+            "app_name = 'test-app'\n[secrets]\nDEFAULT = {}\nEXPLICIT = { type = 'env', optional = true }\nINTERNAL = { type = 'internal' }",
         ).unwrap();
         let policy = serde_json::to_value(config.policy()).unwrap();
         assert_eq!(
@@ -324,8 +339,9 @@ mod tests {
             serde_json::json!({"type": "internal", "exposed_to": {}})
         );
         for optional in [false, true] {
-            let config =
-                format!("[secrets]\nTOKEN = {{ type = 'internal', optional = {optional} }}");
+            let config = format!(
+                "app_name = 'test-app'\n[secrets]\nTOKEN = {{ type = 'internal', optional = {optional} }}"
+            );
             assert!(toml::from_str::<AppConfigToml>(&config).is_err());
         }
     }
@@ -380,6 +396,7 @@ mod tests {
     fn generated_policy_preserves_wire_shape() {
         let app: AppConfigToml = toml::from_str(
             r#"
+            app_name = "test-app"
             [public_env]
             REGION = {}
             TRACE_ID = { optional = true }
@@ -411,20 +428,28 @@ mod tests {
 
     #[test]
     fn public_env_requires_named_entries() {
-        let err =
-            toml::from_str::<AppConfigToml>("[public_env]\nallowed = ['REGION']").unwrap_err();
+        let err = toml::from_str::<AppConfigToml>(
+            "app_name = 'test-app'\n[public_env]\nallowed = ['REGION']",
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("allowed"));
     }
 
     #[test]
     fn rejects_secret_source_alias() {
-        assert!(toml::from_str::<AppConfigToml>("[secrets]\nTOKEN = { env = 'OTHER' }").is_err());
+        assert!(
+            toml::from_str::<AppConfigToml>(
+                "app_name = 'test-app'\n[secrets]\nTOKEN = { env = 'OTHER' }"
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn outbound_policy_cannot_interpolate_a_registered_secret() {
         let mut app: AppConfigToml = toml::from_str(
             r#"
+            app_name = "test-app"
             [secrets]
             TOKEN = {}
             [[outbound_http.allowed_host]]

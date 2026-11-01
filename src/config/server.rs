@@ -1890,6 +1890,7 @@ mod tests {
         fn app_allowlist_uses_deployment_allowed_host_shape() {
             let config: crate::config::app::AppConfigToml = toml::from_str(
                 r#"
+                app_name = "test-app"
                 [secrets]
                 API_KEY = {}
 
@@ -1915,7 +1916,8 @@ mod tests {
 
         #[test]
         fn omitted_app_allowlist_is_empty() {
-            let config: crate::config::app::AppConfigToml = toml::from_str("").unwrap();
+            let config: crate::config::app::AppConfigToml =
+                toml::from_str("app_name = 'test-app'").unwrap();
             assert!(config.outbound_http.allowed_hosts.is_empty());
         }
     }
@@ -1963,7 +1965,7 @@ mod tests {
                 matches!(reviewed.platform_exec_activities, PlatformExecActivities::Allowlist(ref entries) if entries["worker"].iter().count() == 2)
             );
             let app_toml = format!(
-                "{allowlist_toml}\n[secrets]\nTOKEN = {{ exposed_to = {{ worker = ['{DIGEST}', '{next_digest}'] }} }}"
+                "app_name = 'test-app'\n{allowlist_toml}\n[secrets]\nTOKEN = {{ exposed_to = {{ worker = ['{DIGEST}', '{next_digest}'] }} }}"
             );
             let app: crate::config::app::AppConfigToml = toml::from_str(&app_toml).unwrap();
             assert_eq!(app.allowed_exec_activities["worker"].iter().count(), 2);

@@ -35,7 +35,7 @@ impl CloudArgs {
         };
         let mut name = app_name(
             app.as_deref()
-                .or_else(|| config.as_ref().and_then(|c| c.app_name.as_deref())),
+                .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
         )
         .await?;
         let (config, app_config) = config_for_app(&name, config.zip(config_path), true)?
@@ -496,12 +496,12 @@ mod tests {
                 let saved: AppConfigToml =
                     toml::from_str(&std::fs::read_to_string(&app_path).unwrap()).unwrap();
                 assert_eq!(
-                    saved.app_name.as_deref(),
-                    Some(if scenario == "rename" {
+                    saved.app_name,
+                    if scenario == "rename" {
                         "renamed"
                     } else {
                         "demo"
-                    })
+                    }
                 );
                 assert!(
                     state

@@ -195,20 +195,20 @@ impl ConfigHolder {
         self.load_app_config_with_text().map(|(app, _)| app)
     }
 
-    /// Also returns the file contents verbatim, `None` without an app config file.
-    pub(crate) fn load_app_config_with_text(
-        &self,
-    ) -> anyhow::Result<(AppConfigToml, Option<String>)> {
-        match &self.app_source {
-            Some(path) => {
-                let contents = std::fs::read_to_string(path)
-                    .with_context(|| format!("cannot read app config {path:?}"))?;
-                let app: AppConfigToml = toml::from_str(&contents)
-                    .with_context(|| format!("cannot parse app config {path:?}"))?;
-                app.validate_cloud_integrations()?;
-                Ok((app, Some(contents)))
-            }
-            None => Ok((AppConfigToml::default(), None)),
+    /// Returns the app config with `app_name` verified, and its app.toml text: verbatim, or generated without an app config file.
+    pub(crate) fn load_app_config_with_text(&self) -> anyhow::Result<(AppConfigToml, String)> {
+        if let Some(path) = &self.app_source {
+            let contents = std::fs::read_to_string(path)
+                .with_context(|| format!("cannot read app config {path:?}"))?;
+            let app: AppConfigToml = toml::from_str(&contents)
+                .with_context(|| format!("cannot parse app config {path:?}"))?;
+            app.validate_cloud_integrations()?;
+            app.verify_app_name()?;
+            Ok((app, contents))
+        } else {
+            let app = AppConfigToml::from_env_app_name()?;
+            let contents = toml::to_string(&app)?;
+            Ok((app, contents))
         }
     }
 
@@ -390,16 +390,18 @@ mod tests {
     #[test]
     fn omitted_app_config_has_empty_file_digest() {
         let file = tempfile::NamedTempFile::new().unwrap();
-        let default = super::ConfigHolder::new(None, None, None)
-            .unwrap()
-            .load_app_config()
-            .unwrap();
+        std::fs::write(file.path(), "app_name = \"test-app\"\n").unwrap();
         let explicit = super::ConfigHolder::new(None, None, None)
             .unwrap()
             .with_app_source(Some(file.path().to_path_buf()))
             .unwrap()
             .load_app_config()
             .unwrap();
-        assert_eq!(default.policy().digest(), explicit.policy().digest());
+        assert_eq!(
+            AppConfigToml::with_name("test-app".to_string())
+                .policy()
+                .digest(),
+            explicit.policy().digest()
+        );
     }
 }

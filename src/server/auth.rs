@@ -184,8 +184,10 @@ mod tests {
 
     #[tokio::test]
     async fn internal_secret_authenticates_without_an_operator_token() {
-        let app: AppConfigToml =
-            toml::from_str("[secrets]\nINTERNAL_TOKEN = { type = 'internal' }").unwrap();
+        let app: AppConfigToml = toml::from_str(
+            "app_name = 'test-app'\n[secrets]\nINTERNAL_TOKEN = { type = 'internal' }",
+        )
+        .unwrap();
         let registry = SecretRegistry::resolve(
             app.secrets,
             PublicEnvToml::default(),

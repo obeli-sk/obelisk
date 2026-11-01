@@ -630,7 +630,7 @@ mod tests {
         }
         let env = StartupEnvVars::capture().prefixed(PREFIX);
         let secrets = toml::from_str::<crate::config::app::AppConfigToml>(&format!(
-            "[secrets]\n{NAME} = {{}}"
+            "app_name = 'test-app'\n[secrets]\n{NAME} = {{}}"
         ))
         .unwrap()
         .secrets;
@@ -676,7 +676,8 @@ mod tests {
     #[test]
     fn internal_sources_ignore_env_and_preserve_component_restrictions() {
         let app: crate::config::app::AppConfigToml =
-            toml::from_str("[secrets]\nPATH = { type = 'internal' }").unwrap();
+            toml::from_str("app_name = 'test-app'\n[secrets]\nPATH = { type = 'internal' }")
+                .unwrap();
         let registry = SecretRegistry::resolve(
             app.secrets,
             PublicEnvToml::default(),

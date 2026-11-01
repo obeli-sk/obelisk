@@ -309,12 +309,11 @@ fn prepare_server_startup_with_exec_policy(
         .with_app_source(config::app::resolve_app_config(app_config)?)?;
     let mut config = config_holder.load_config()?;
     let (mut app, app_toml) = config_holder.load_app_config_with_text()?;
-    config_holder.path_prefixes.app_name = app.effective_name()?;
-    app.app_name = Some(config_holder.path_prefixes.app_name.clone());
-    config.app_toml = match app_toml {
-        Some(app_toml) => app_toml,
-        None => toml::to_string(&app)?,
-    };
+    config_holder
+        .path_prefixes
+        .app_name
+        .clone_from(&app.app_name);
+    config.app_toml = app_toml;
     let app_policy = app.policy();
     let app_config_digest = app_policy.digest();
     info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");
@@ -603,7 +602,7 @@ methods = ['GET']
         ] {
             assert!(
                 toml::from_str::<config::app::AppConfigToml>(&format!(
-                    "[public_env]\nURL={declaration}"
+                    "app_name = 'test-app'\n[public_env]\nURL={declaration}"
                 ))
                 .is_err()
             );

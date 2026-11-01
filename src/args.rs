@@ -685,7 +685,7 @@ pub(crate) enum Server {
         /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
         #[arg(short, long)]
         server_config: Option<PathBuf>,
-        /// App config path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`).
+        /// App config path; defaults to ./app.toml if present, otherwise only the app name from `OBELISK_APP_NAME`.
         #[arg(short, long)]
         app_config: Option<PathBuf>,
         /// Path to the deployment TOML file. If provided, the deployment is inserted and activated on startup,
@@ -741,7 +741,7 @@ pub(crate) struct VerifyArgs {
     /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
     #[arg(short, long)]
     pub(crate) server_config: Option<PathBuf>,
-    /// App config path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`).
+    /// App config path; defaults to ./app.toml if present, otherwise only the app name from `OBELISK_APP_NAME`.
     #[arg(short, long)]
     pub(crate) app_config: Option<PathBuf>,
     /// Path to the deployment TOML file. If omitted, the database's Enqueued deployment is used,
