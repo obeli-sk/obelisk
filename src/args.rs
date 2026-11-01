@@ -479,9 +479,9 @@ pub(crate) enum Deployment {
     },
     /// Retrieve a deployment as editable TOML without generated metadata, plus its source files.
     Pull {
-        /// Deployment ID
+        /// Deployment ID. Defaults to the active deployment.
         #[arg(value_name = "ID")]
-        id: DeploymentId,
+        id: Option<DeploymentId>,
         /// Directory to write `deployment.toml` and source files into. Defaults to the
         /// current directory.
         #[arg(long, short)]

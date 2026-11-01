@@ -272,8 +272,7 @@
                   "positionals": [
                     {
                       "name": "id",
-                      "help": "Deployment ID",
-                      "required": true
+                      "help": "Deployment ID. Defaults to the active deployment"
                     }
                   ]
                 },
@@ -2207,8 +2206,7 @@
           "positionals": [
             {
               "name": "id",
-              "help": "Deployment ID",
-              "required": true
+              "help": "Deployment ID. Defaults to the active deployment"
             }
           ]
         },

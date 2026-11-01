@@ -193,6 +193,22 @@ impl args::Deployment {
                 force,
                 include_generated_metadata,
             } => {
+                let id = if let Some(id) = id {
+                    id
+                } else {
+                    let client = client_startup.web_api_client()?;
+                    let info: ServerInfoResponse = send_json(
+                        client
+                            .get(format!("{api_url}/v1/info"))
+                            .header(ACCEPT, "application/json"),
+                    )
+                    .await?;
+                    let id: DeploymentId = info.deployment_id.parse().with_context(|| {
+                        format!("invalid deployment ID `{}`", info.deployment_id)
+                    })?;
+                    eprintln!("Pulling active deployment {id}");
+                    id
+                };
                 let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
                 pull_deployment(
                     &client_startup,

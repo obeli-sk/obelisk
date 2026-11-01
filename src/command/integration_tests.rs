@@ -2205,6 +2205,25 @@ async fn app_policy_webapi_reports_running_policy() {
     );
     assert!(pulled.path().join("deployment.toml").is_file());
 
+    let pulled_active = tempfile::tempdir().unwrap();
+    crate::args::Deployment::Pull {
+        id: None,
+        output: Some(pulled_active.path().to_path_buf()),
+        force: false,
+        include_generated_metadata: false,
+    }
+    .run(crate::client::ClientStartup::new(
+        server.base_url.clone(),
+        None,
+        false,
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(pulled_active.path().join("deployment.toml")).unwrap(),
+        std::fs::read_to_string(pulled.path().join("deployment.toml")).unwrap()
+    );
+
     let switch_path = "/v1/deployments/{deployment_id}/switch";
     let switch_url = format!(
         "{}/v1/deployments/{}/switch",
