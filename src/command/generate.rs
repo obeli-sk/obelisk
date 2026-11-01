@@ -397,7 +397,14 @@ async fn split_config(server_path: &Path, app_path: Option<&Path>) -> anyhow::Re
         .parse::<DocumentMut>()
         .context("cannot parse server.toml")?;
     let mut app = DocumentMut::new();
-    for key in ["app_name", "secrets", "public_env", "outbound_http"] {
+    let app_name = match server.as_table_mut().remove("app_name") {
+        Some(app_name) => app_name,
+        None => toml_edit::value(std::env::var("OBELISK_APP_NAME").context(
+            "server.toml has no `app_name`; add it or set `OBELISK_APP_NAME` before splitting",
+        )?),
+    };
+    app.as_table_mut().insert("app_name", app_name);
+    for key in ["secrets", "public_env", "outbound_http"] {
         if let Some(item) = server.as_table_mut().remove(key) {
             app.as_table_mut().insert(key, item);
         }
@@ -1306,7 +1313,7 @@ mod tests {
             .unwrap();
         let app = std::fs::read_to_string(directory.join("app.toml")).unwrap();
         let parsed: crate::config::app::AppConfigToml = toml::from_str(&app).unwrap();
-        assert_eq!(parsed.app_name.as_deref(), Some("my-cool-app"));
+        assert_eq!(parsed.app_name, "my-cool-app");
         let deployment = std::fs::read_to_string(directory.join("deployment.toml")).unwrap();
         assert!(deployment.contains("starter:app/activity.check-url"));
         assert!(directory.join("activity/check-url.js").exists());
@@ -1370,7 +1377,7 @@ mod tests {
         let app_path = dir.path().join("app.toml");
         std::fs::write(
             &server_path,
-            "api.enabled = false\n[secrets]\nTOKEN = { env = 'OTHER' }\n",
+            "app_name = 'split-app'\napi.enabled = false\n[secrets]\nTOKEN = { env = 'OTHER' }\n",
         )
         .unwrap();
         let err = split_config(&server_path, None)
@@ -1379,7 +1386,7 @@ mod tests {
             .to_string();
         assert!(err.contains("env alias"));
         assert!(!app_path.exists());
-        std::fs::write(&server_path, "api.enabled = false\n[secrets]\nTOKEN = { env = 'TOKEN' }\n[public_env]\nallowed = ['REGION', { name = 'TRACE_ID', optional = true }]\n").unwrap();
+        std::fs::write(&server_path, "app_name = 'split-app'\napi.enabled = false\n[secrets]\nTOKEN = { env = 'TOKEN' }\n[public_env]\nallowed = ['REGION', { name = 'TRACE_ID', optional = true }]\n").unwrap();
         split_config(&server_path, None).await.unwrap();
         let server = std::fs::read_to_string(&server_path).unwrap();
         let app = std::fs::read_to_string(&app_path).unwrap();

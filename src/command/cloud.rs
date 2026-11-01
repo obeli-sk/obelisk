@@ -260,11 +260,12 @@ impl Client {
 async fn app_name(name: Option<&str>) -> anyhow::Result<String> {
     let name = match name {
         Some(name) => name.to_owned(),
-        None => policy(Path::new("app.toml"))
-            .await
-            .context("Select an app with --app, OBELISK_APP_NAME or app_name in ./app.toml")?
-            .app_name
-            .context("Set app_name in ./app.toml, --app or OBELISK_APP_NAME")?,
+        None => {
+            policy(Path::new("app.toml"))
+                .await
+                .context("Select an app with --app, OBELISK_APP_NAME or app_name in ./app.toml")?
+                .app_name
+        }
     };
     validate_cloud_app_name(&name)?;
     Ok(name)
@@ -329,9 +330,8 @@ fn config_for_app(
         );
         return Ok(None);
     };
-    if let Some(other) = config.app_name.as_deref()
-        && other != name
-    {
+    if config.app_name != name {
+        let other = &config.app_name;
         ensure!(
             !explicit && !required,
             "{} is for app `{other}`, but the selected app is `{name}` (from --app or OBELISK_APP_NAME); pass `--app {other}` or fix `app_name`",
@@ -544,7 +544,7 @@ impl CloudArgs {
             )
             && let Some((path, _)) = app_config_path(command)?
         {
-            *app = policy(&path).await?.app_name;
+            *app = Some(policy(&path).await?.app_name);
         }
         let json = self.json;
         let verbose = self.verbose;
@@ -590,7 +590,7 @@ impl CloudArgs {
                 };
                 let name = app_name(
                     app.as_deref()
-                        .or_else(|| config.as_ref().and_then(|c| c.app_name.as_deref())),
+                        .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
                 )
                 .await?;
                 let config = config_for_app(&name, config.zip(config_path), false)?
@@ -632,7 +632,7 @@ impl CloudArgs {
                 };
                 let name = &app_name(
                     app.as_deref()
-                        .or_else(|| config.as_ref().and_then(|c| c.app_name.as_deref())),
+                        .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
                 )
                 .await?;
                 let local = config_for_app(
@@ -1678,7 +1678,7 @@ mod tests {
         let (origin, state, task) = server().await;
         let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
         let config: AppConfigToml =
-            toml::from_str("[public_env]\nREGION={optional=true}\n").unwrap();
+            toml::from_str("app_name='demo'\n[public_env]\nREGION={optional=true}\n").unwrap();
         let staged = json!({"policy":{"public_env":[]},"cloud":{"memory_mb":512}});
         state.lock().unwrap().staged = staged.clone();
         state.lock().unwrap().revision = 4;
@@ -2005,7 +2005,7 @@ mod tests {
         assert!(error.to_string().contains("CLOUD_TEST_MISSING_REQUIRED"));
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("app.toml");
-        tokio::fs::write(&path, "[public_env]\nREGION={}\n")
+        tokio::fs::write(&path, "app_name='demo'\n[public_env]\nREGION={}\n")
             .await
             .unwrap();
         let error = args(&origin, &["app", "fill", "-a", path.to_str().unwrap()])

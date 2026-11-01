@@ -4,14 +4,10 @@
   "type": "object",
   "properties": {
     "app_name": {
-      "type": [
-        "string",
-        "null"
-      ],
+      "type": "string",
       "minLength": 4,
       "maxLength": 25,
-      "pattern": "^[a-z0-9][a-z0-9-]{2,23}[a-z0-9]$",
-      "default": null
+      "pattern": "^[a-z0-9][a-z0-9-]{2,23}[a-z0-9]$"
     },
     "cloud": {
       "$ref": "#/$defs/CloudConfigToml",
@@ -46,6 +42,9 @@
     }
   },
   "additionalProperties": false,
+  "required": [
+    "app_name"
+  ],
   "$defs": {
     "CloudConfigToml": {
       "type": "object",

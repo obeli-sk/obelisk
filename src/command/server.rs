@@ -8275,7 +8275,7 @@ mod tests {
         let new: concepts::component_id::SecretExposureDigest =
             "sha256:1111111111111111111111111111111111111111111111111111111111111111".parse()?;
         let server_toml = format!(
-            "[allowed_exec_activities]\nworker = \"{old}\"\n[secrets]\nTOKEN = {{ exposed_to = {{ worker = \"{old}\" }} }}\n"
+            "app_name = 'test-app'\n[allowed_exec_activities]\nworker = \"{old}\"\n[secrets]\nTOKEN = {{ exposed_to = {{ worker = \"{old}\" }} }}\n"
         );
         tokio::fs::write(&server_config_path, server_toml).await?;
         fix_app_digest_permissions(
