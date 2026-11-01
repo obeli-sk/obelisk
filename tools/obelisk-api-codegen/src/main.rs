@@ -87,7 +87,9 @@ fn main() -> Result<()> {
     let mut app: Value =
         serde_json::from_slice(&std::fs::read(root.join("assets/schemas/toml/app.json"))?)?;
     app_config_schema(&mut app);
-    let app = app.as_object_mut().context("Expected an app config schema object")?;
+    let app = app
+        .as_object_mut()
+        .context("Expected an app config schema object")?;
     app.remove("$schema");
     let app_definitions = app.remove("$defs").context("Missing app config $defs")?;
     let app_definitions = serde_json::from_value::<BTreeMap<String, Value>>(app_definitions)?

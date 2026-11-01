@@ -486,7 +486,10 @@ mod tests {
             "app_name='test-app'\n[cloud.integrations]\nllm={type='llm',env='MISSING'}",
             "app_name='test-app'\n[cloud.integrations]\nllm={type='llm',env='URL'}\n[public_env]\nURL={type='internal',source='api-url'}",
             "app_name='test-app'\n[cloud.integrations]\nllm={type='llm',env='URL'}\nother={type='llm',env='URL'}\n[public_env]\nURL={}",
-            &format!("app_name='test-app'\n[allowed_exec_activities]\nw=['{upper}','{}']", upper.to_lowercase()),
+            &format!(
+                "app_name='test-app'\n[allowed_exec_activities]\nw=['{upper}','{}']",
+                upper.to_lowercase()
+            ),
             "app_name='test-app'\n[allowed_exec_activities]\nw='sha256:abc'",
         ] {
             assert!(
