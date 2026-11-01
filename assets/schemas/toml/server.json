@@ -468,6 +468,7 @@
       "type": "object",
       "properties": {
         "url": {
+          "description": "Receiver of idle reports; absent disables the detector.",
           "type": [
             "string",
             "null"
@@ -481,18 +482,17 @@
           }
         },
         "quiet_period": {
-          "$ref": "#/$defs/DurationConfig",
-          "default": {
-            "seconds": 60
-          }
+          "$ref": "#/$defs/IdleQuietPeriodConfig"
         },
         "horizon": {
+          "description": "Executions scheduled to run within this window keep the server busy.",
           "$ref": "#/$defs/DurationConfig",
           "default": {
             "minutes": 1
           }
         },
         "resume_threshold": {
+          "description": "Wall time advancing this much beyond monotonic time between checks is a resume.",
           "$ref": "#/$defs/DurationConfig",
           "default": {
             "seconds": 5
@@ -502,6 +502,27 @@
           "$ref": "#/$defs/DurationConfig",
           "default": {
             "seconds": 10
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "IdleQuietPeriodConfig": {
+      "description": "How long each kind of activity must be absent before the server is idle.",
+      "type": "object",
+      "properties": {
+        "http": {
+          "description": "Since the last HTTP request finished, on any listener.",
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 60
+          }
+        },
+        "executions": {
+          "description": "Since the first check that saw no locked, cancelling or soon-due execution.",
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 0
           }
         }
       },

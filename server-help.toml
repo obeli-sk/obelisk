@@ -21,17 +21,31 @@
 # app_env_prefix = ""
 
 ## Idle reporting (SQLite only). Without a URL the detector is disabled.
-## All incoming requests, including health probes and open streams, count as activity.
+## The server is idle when no HTTP request is in flight, no execution is active, and both quiet periods have elapsed.
 ## The report is POSTed as {"period_id": "IdlePeriod_<ULID>", "next_run_at": <RFC 3339 UTC timestamp or null>}.
 ## It repeats every check interval while idle, ignoring the response status, so the receiver
 ## only needs to act on it (suspend) or wait for the next one. All reports of one idle period
 ## share its id, and any activity or resume starts a new period, so a receiver can discard
 ## late reports of a period it already suspended.
+## Receiver of the idle reports, typically the platform that suspends this server.
 # idle_report.url = "http://127.0.0.1:9194/v1/idle"
+## How often idleness is evaluated, and how often reports repeat while idle.
 # idle_report.check_interval.seconds = 30
-# idle_report.quiet_period.seconds = 60
+## How long after the last incoming request finished the server stays busy. All requests on the API,
+## webui and external listeners count, including health probes; an open stream counts until it ends.
+# idle_report.quiet_period.http.seconds = 60
+## How long the server stays busy after executions became inactive. Executions are active while one
+## is locked (running, or with an unexpired lock from a previous process) or cancelling, or while one is
+## due within `horizon`. Measured from the first check that saw none active, so it is rounded up to the check interval.
+# idle_report.quiet_period.executions.seconds = 0
+## Executions or delays due within this window keep the server busy, sparing a suspension that would end right away.
+## Later ones are reported in `next_run_at`, so the receiver can schedule a wake-up.
+## Must not be shorter than the check interval, otherwise an execution could run unseen between two checks.
 # idle_report.horizon.minutes = 1
+## Wall time advancing this much more than monotonic time between two checks means the server was suspended
+## and resumed. That check is skipped, as the request that caused the resume may not be accepted yet.
 # idle_report.resume_threshold.seconds = 5
+## Timeout of one report request.
 # idle_report.request_timeout.seconds = 10
 
 ## API authentication. The API port denies requests without a valid `Authorization: Bearer <token>` header.

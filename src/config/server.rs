@@ -118,12 +118,34 @@ pub(crate) struct ServerConfigToml {
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct IdleReportConfig {
+    /// Receiver of idle reports; absent disables the detector.
     pub(crate) url: Option<String>,
     pub(crate) check_interval: DurationConfig,
-    pub(crate) quiet_period: DurationConfig,
+    pub(crate) quiet_period: IdleQuietPeriodConfig,
+    /// Executions scheduled to run within this window keep the server busy.
     pub(crate) horizon: DurationConfig,
+    /// Wall time advancing this much beyond monotonic time between checks is a resume.
     pub(crate) resume_threshold: DurationConfig,
     pub(crate) request_timeout: DurationConfig,
+}
+
+/// How long each kind of activity must be absent before the server is idle.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct IdleQuietPeriodConfig {
+    /// Since the last HTTP request finished, on any listener.
+    pub(crate) http: DurationConfig,
+    /// Since the first check that saw no locked, cancelling or soon-due execution.
+    pub(crate) executions: DurationConfig,
+}
+
+impl Default for IdleQuietPeriodConfig {
+    fn default() -> Self {
+        Self {
+            http: DurationConfig::Seconds(60),
+            executions: DurationConfig::Seconds(0),
+        }
+    }
 }
 
 impl Default for IdleReportConfig {
@@ -131,7 +153,7 @@ impl Default for IdleReportConfig {
         Self {
             url: None,
             check_interval: DurationConfig::Seconds(30),
-            quiet_period: DurationConfig::Seconds(60),
+            quiet_period: IdleQuietPeriodConfig::default(),
             horizon: DurationConfig::Minutes(1),
             resume_threshold: DurationConfig::Seconds(5),
             request_timeout: DurationConfig::Seconds(10),
@@ -157,6 +179,11 @@ impl IdleReportConfig {
             anyhow::ensure!(
                 !Duration::from(self.check_interval).is_zero(),
                 "idle_report.check_interval must be greater than zero"
+            );
+            // An execution due past a shorter horizon could run unseen between two checks.
+            anyhow::ensure!(
+                Duration::from(self.horizon) >= Duration::from(self.check_interval),
+                "idle_report.horizon must not be shorter than idle_report.check_interval"
             );
             anyhow::ensure!(
                 !Duration::from(self.request_timeout).is_zero(),
@@ -1725,6 +1752,7 @@ mod tests {
             "url = 'http://user:password@localhost/report'",
             "url = 'http://localhost/report'\ncheck_interval.seconds = 0",
             "url = 'http://localhost/report'\nrequest_timeout.seconds = 0",
+            "url = 'http://localhost/report'\nhorizon.seconds = 29",
         ] {
             let config: IdleReportConfig = toml::from_str(settings).unwrap();
             assert!(
