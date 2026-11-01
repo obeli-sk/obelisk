@@ -34,6 +34,31 @@ fn references(value: &mut Value, pending: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
+/// Points `$defs` references at `definitions` and turns `anyOf` into `oneOf`.
+/// The app config's untagged enums have disjoint variants; typify reads `anyOf` as a
+/// struct of optional flattened variants instead.
+/// String patterns are dropped so the types need no regex engine; they are checked by hand.
+fn app_config_schema(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            if let Some(Value::String(reference)) = object.get_mut("$ref")
+                && let Some(name) = reference.strip_prefix("#/$defs/")
+            {
+                *reference = format!("#/definitions/{name}");
+            }
+            if matches!(object.get("pattern"), Some(Value::String(_))) {
+                object.remove("pattern");
+            }
+            if let Some(variants) = object.remove("anyOf") {
+                object.insert("oneOf".into(), variants);
+            }
+            object.values_mut().for_each(app_config_schema);
+        }
+        Value::Array(array) => array.iter_mut().for_each(app_config_schema),
+        _ => {}
+    }
+}
+
 fn main() -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let output = std::env::args().nth(1).context("Expected output path")?;
@@ -58,6 +83,23 @@ fn main() -> Result<()> {
             references(&mut schema, &mut pending)?;
             entry.insert(serde_json::from_value(schema)?);
         }
+    }
+    let mut app: Value =
+        serde_json::from_slice(&std::fs::read(root.join("assets/schemas/toml/app.json"))?)?;
+    app_config_schema(&mut app);
+    let app = app
+        .as_object_mut()
+        .context("Expected an app config schema object")?;
+    app.remove("$schema");
+    let app_definitions = app.remove("$defs").context("Missing app config $defs")?;
+    let app_definitions = serde_json::from_value::<BTreeMap<String, Value>>(app_definitions)?
+        .into_iter()
+        .chain([("AppConfigToml".to_owned(), Value::Object(app.clone()))]);
+    for (name, schema) in app_definitions {
+        let Entry::Vacant(entry) = definitions.entry(name.clone()) else {
+            anyhow::bail!("App config type `{name}` collides with an OpenAPI type");
+        };
+        entry.insert(serde_json::from_value(schema)?);
     }
     let mut settings = typify::TypeSpaceSettings::default();
     settings.with_derive("PartialEq".into());

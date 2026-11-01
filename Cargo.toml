@@ -107,6 +107,7 @@ console-subscriber = { workspace = true, optional = true }
 tikv-jemallocator = "0.7.0"
 
 [dev-dependencies]
+obelisk-api-types = { path = "crates/api-types" }
 jsonschema = { version = "0.58.6", default-features = false }
 http-body-util.workspace = true
 hyper.workspace = true

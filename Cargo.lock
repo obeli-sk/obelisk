@@ -4210,6 +4210,7 @@ dependencies = [
  "obeli-sk-worker-common",
  "obelisk-activity-vm-runner",
  "obelisk-activity-vm-worker",
+ "obelisk-api-types",
  "oci-client",
  "oci-wasm",
  "opentelemetry",

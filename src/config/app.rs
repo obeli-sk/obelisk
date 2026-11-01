@@ -426,6 +426,82 @@ mod tests {
         );
     }
 
+    /// The provisioner derives the policy with `obelisk-api-types`; it must match Obelisk's.
+    #[test]
+    fn api_types_policy_matches() {
+        let upper = format!("sha256:{}", "AB".repeat(32));
+        let lower = format!("sha256:{}", "01".repeat(32));
+        for text in [
+            r#"app_name = "test-app""#.to_owned(),
+            format!(
+                r#"
+                app_name = "a-1b"
+                [allowed_exec_activities]
+                single = "{upper}"
+                many = ["{upper}", "{lower}"]
+                [public_env]
+                REGION = {{}}
+                TRACE_ID = {{ optional = true }}
+                TYPED = {{ type = "env", optional = false }}
+                API_URL = {{ type = "internal", source = "api-url" }}
+                WEBUI_URL = {{ type = "internal", source = "webui-url" }}
+                LLM_URL = {{}}
+                [secrets]
+                TOKEN = {{ exposed_to = {{ worker = ["{upper}", "{lower}"] }} }}
+                OPTIONAL_TOKEN = {{ optional = true }}
+                REQUIRED_TOKEN = {{ optional = false, type = "env" }}
+                KEY = {{ type = "internal", exposed_to = {{ worker = "{lower}" }} }}
+                [cloud]
+                memory_mb = 512
+                integrations.llm = {{ type = "llm", env = "LLM_URL" }}
+                [[outbound_http.allowed_host]]
+                pattern = "api.example.com"
+                methods = "*"
+                request_url_regex = "^/v1/"
+                [[outbound_http.allowed_host]]
+                url_prefix = "https://example.com/api/"
+                url_regex_suffix = "[a-z]+"
+                methods = ["GET"]
+                secrets = ["TOKEN", {{ name = "OPTIONAL_TOKEN", optional = true }}, {{ name = "REQUIRED_TOKEN" }}]
+                replace_in = ["headers", "body", "params"]
+                [[outbound_http.allowed_host]]
+                pattern = "unused.example.com"
+            "#
+            ),
+        ] {
+            let expected = toml::from_str::<AppConfigToml>(&text).unwrap().policy();
+            let actual = toml::from_str::<obelisk_api_types::AppConfigToml>(&text)
+                .unwrap()
+                .policy()
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(actual).unwrap(),
+                serde_json::to_value(expected).unwrap(),
+                "{text}"
+            );
+        }
+        for text in [
+            "app_name='-bad'",
+            "app_name='Bad-app'",
+            "app_name='test-app'\n[cloud.integrations]\nllm={type='llm',env='MISSING'}",
+            "app_name='test-app'\n[cloud.integrations]\nllm={type='llm',env='URL'}\n[public_env]\nURL={type='internal',source='api-url'}",
+            "app_name='test-app'\n[cloud.integrations]\nllm={type='llm',env='URL'}\nother={type='llm',env='URL'}\n[public_env]\nURL={}",
+            &format!(
+                "app_name='test-app'\n[allowed_exec_activities]\nw=['{upper}','{}']",
+                upper.to_lowercase()
+            ),
+            "app_name='test-app'\n[allowed_exec_activities]\nw='sha256:abc'",
+        ] {
+            assert!(
+                toml::from_str::<obelisk_api_types::AppConfigToml>(text)
+                    .map_err(|err| err.to_string())
+                    .and_then(|app| app.policy().map_err(|err| err.to_string()))
+                    .is_err(),
+                "{text}"
+            );
+        }
+    }
+
     #[test]
     fn public_env_requires_named_entries() {
         let err = toml::from_str::<AppConfigToml>(
