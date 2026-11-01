@@ -11,7 +11,11 @@ struct Detector {
     previous: (DateTime<Utc>, Instant),
     generation: u64,
     reported: bool,
+    /// The idle event is recorded once per idle period, not per report attempt.
+    recorded: bool,
     backoff: Duration,
+    /// Wall time skipped by the last detected resume, until recorded.
+    resumed: Option<chrono::TimeDelta>,
 }
 
 impl Detector {
@@ -21,7 +25,9 @@ impl Detector {
             previous: (now, monotonic),
             generation: 0,
             reported: false,
+            recorded: false,
             backoff: Duration::from_secs(1),
+            resumed: None,
         }
     }
 
@@ -34,8 +40,13 @@ impl Detector {
     ) -> bool {
         let wall_delta = now.signed_duration_since(self.previous.0);
         let monotonic_delta = chrono::TimeDelta::from_std(monotonic - self.previous.1).unwrap();
-        let resumed = wall_delta - monotonic_delta
-            > chrono::TimeDelta::from_std(self.config.resume_threshold.into()).unwrap();
+        let gap = wall_delta - monotonic_delta;
+        // Also catches a suspension during a report whose response was lost.
+        let resumed =
+            gap > chrono::TimeDelta::from_std(self.config.resume_threshold.into()).unwrap();
+        if resumed {
+            self.resumed = Some(gap);
+        }
         self.previous = (now, monotonic);
         let idle = http.in_flight == 0
             && now.signed_duration_since(http.last_finished_at)
@@ -53,6 +64,7 @@ impl Detector {
 
     fn reset(&mut self) {
         self.reported = false;
+        self.recorded = false;
         self.backoff = Duration::from_secs(1);
     }
 
@@ -86,18 +98,21 @@ pub(crate) async fn run(config: IdleReportConfig, db: SqlitePool, http: HttpActi
         match db.idle_state().await {
             Ok(state) => {
                 let activity = http.snapshot();
-                if detector.check(Utc::now(), Instant::now(), activity, state)
-                    && activity.generation == generation
-                {
+                let idle = detector.check(Utc::now(), Instant::now(), activity, state);
+                record_resume(&db, &mut detector).await;
+                if idle && activity.generation == generation {
                     let report = serde_json::json!({"next_run_at": state.next_run_at});
-                    super::system_event_writer::record(
-                        &db as &dyn DbPool,
-                        SystemEventCode::ServerIdleReported,
-                        None,
-                        None,
-                        report.clone(),
-                    )
-                    .await;
+                    if !detector.recorded {
+                        detector.recorded = true;
+                        super::system_event_writer::record(
+                            &db as &dyn DbPool,
+                            SystemEventCode::ServerIdleReported,
+                            None,
+                            None,
+                            report.clone(),
+                        )
+                        .await;
+                    }
                     // Event persistence can yield to an incoming request.
                     let activity = http.snapshot();
                     if activity.generation == generation
@@ -129,6 +144,19 @@ pub(crate) async fn run(config: IdleReportConfig, db: SqlitePool, http: HttpActi
                 tracing::warn!("Cannot read idle state: {err}");
             }
         }
+    }
+}
+
+async fn record_resume(db: &SqlitePool, detector: &mut Detector) {
+    if let Some(gap) = detector.resumed.take() {
+        super::system_event_writer::record(
+            db as &dyn DbPool,
+            SystemEventCode::ServerResumeDetected,
+            None,
+            None,
+            serde_json::json!({"suspended_ms": gap.num_milliseconds()}),
+        )
+        .await;
     }
 }
 
@@ -318,6 +346,38 @@ mod tests {
         assert_eq!(detector.failed(), Duration::from_secs(1));
     }
 
+    #[test]
+    fn idle_report_lost_to_suspension_is_not_retried() {
+        let now = Utc::now();
+        let instant = Instant::now();
+        let http = Snapshot {
+            in_flight: 0,
+            last_finished_at: now - Duration::from_secs(60),
+            generation: 0,
+        };
+        let mut detector = Detector::new(IdleReportConfig::default(), now, instant);
+        assert!(detector.check(now, instant, http, IdleState::default()));
+        assert!(detector.resumed.is_none());
+        // Suspended for 10 minutes while the report was in flight; the response was lost.
+        let delay = detector.failed();
+        let after = now + Duration::from_secs(600) + delay;
+        assert!(!detector.check(after, instant + delay, http, IdleState::default()));
+        assert_eq!(
+            detector.resumed.take(),
+            Some(chrono::TimeDelta::seconds(600))
+        );
+        assert_eq!(detector.failed(), Duration::from_secs(1));
+        // The next check starts a fresh idle period.
+        let delay = Duration::from_secs(30);
+        assert!(detector.check(
+            after + delay,
+            instant + Duration::from_secs(1) + delay,
+            http,
+            IdleState::default()
+        ));
+        assert!(detector.resumed.is_none());
+    }
+
     #[tokio::test]
     async fn idle_report_once_per_period_and_retry() {
         use wiremock::{
@@ -372,6 +432,19 @@ mod tests {
         wait_for(&sink, 3).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(sink.received_requests().await.unwrap().len(), 3);
+        // One event per idle period, not per attempt.
+        let events = (&db as &dyn DbPool)
+            .admin_conn()
+            .await
+            .unwrap()
+            .list_system_events(concepts::storage::SystemEventFilter {
+                code: Some(SystemEventCode::ServerIdleReported.as_str().to_owned()),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 2);
         drop(task);
         db.close().await;
     }
