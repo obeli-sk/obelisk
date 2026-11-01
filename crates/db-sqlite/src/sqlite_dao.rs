@@ -546,7 +546,30 @@ struct PendingAfterEventUpdate {
     component_input_digest: ComponentDigest,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct IdleState {
+    pub busy: bool,
+    pub next_run_at: Option<DateTime<Utc>>,
+}
+
 impl SqlitePool {
+    pub async fn idle_state(&self) -> Result<IdleState, DbErrorGeneric> {
+        self.transaction(
+            |tx| {
+                Ok::<_, RusqliteError>(tx.query_row(polling::IDLE_STATE, [], |row| {
+                    Ok(IdleState {
+                        busy: row.get(0)?,
+                        next_run_at: row.get(1)?,
+                    })
+                })?)
+            },
+            TxType::Other,
+            "idle_state",
+        )
+        .await
+        .map_err(to_generic_error)
+    }
+
     fn ancillary_root_is_live(
         tx: &Transaction<'_>,
         execution_id: &ExecutionId,
@@ -7531,6 +7554,75 @@ mod tests {
     use rusqlite::named_params;
 
     const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn");
+
+    #[rstest::rstest]
+    #[case("locked", "active", false, true, false)]
+    #[case("locked", "paused", false, false, false)]
+    #[case("blocked_by_join_set", "cancelling", false, true, false)]
+    #[case("pending_at", "active", false, false, true)]
+    #[case("pending_at", "paused", false, false, false)]
+    #[case("pending_at", "active", true, false, false)]
+    #[case("blocked_by_join_set", "active", false, false, false)]
+    #[case("finished", "active", false, false, false)]
+    #[tokio::test]
+    async fn idle_state_execution_rules(
+        #[case] state: &'static str,
+        #[case] lifecycle: &'static str,
+        #[case] tombstoned: bool,
+        #[case] busy: bool,
+        #[case] pending: bool,
+    ) {
+        let (pool, _file) = sqlite_pool().await;
+        let at = chrono::Utc::now() - std::time::Duration::from_secs(3600);
+        pool.transaction(move |tx| {
+            tx.execute("INSERT INTO t_state (
+                execution_id, is_top_level, corresponding_version, ffqn, created_at,
+                component_id_input_digest, component_type, first_scheduled_at, deployment_id,
+                pending_expires_finished, state, updated_at, intermittent_event_count, lifecycle, tombstoned
+            ) VALUES ('Execution_root', TRUE, 0, 'missing:component/ifc.fn', :at,
+                X'00', 'workflow', :at, 'Dep_00000000000000000000000000', :at,
+                :state, :at, 0, :lifecycle, :tombstoned)", named_params! {
+                    ":at": at, ":state": state, ":lifecycle": lifecycle, ":tombstoned": tombstoned,
+                })?;
+            Ok::<_, super::RusqliteError>(())
+        }, TxType::Other, "idle_state_fixture").await.unwrap();
+        let actual = pool.idle_state().await.unwrap();
+        assert_eq!(actual.busy, busy);
+        assert_eq!(actual.next_run_at, pending.then_some(at));
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn idle_state_delays_and_paused_parent() {
+        let (pool, _file) = sqlite_pool().await;
+        let at = chrono::Utc::now();
+        pool.transaction(move |tx| {
+            tx.execute("INSERT INTO t_state (
+                execution_id, is_top_level, corresponding_version, ffqn, created_at,
+                component_id_input_digest, component_type, first_scheduled_at, deployment_id,
+                pending_expires_finished, state, updated_at, intermittent_event_count, lifecycle, tombstoned
+            ) VALUES ('Execution_root', TRUE, 0, 'ns:pkg/ifc.fn', :at,
+                X'00', 'workflow', :at, 'Dep_00000000000000000000000000', :at,
+                'blocked_by_join_set', :at, 0, 'paused', FALSE)", named_params! { ":at": at })?;
+            tx.execute("INSERT INTO t_delay VALUES ('Execution_root.child', 'join-set', 'delay', :at, FALSE)", named_params! { ":at": at })?;
+            Ok::<_, super::RusqliteError>(())
+        }, TxType::Other, "idle_delay_fixture").await.unwrap();
+        assert_eq!(pool.idle_state().await.unwrap().next_run_at, Some(at));
+        for sql in [
+            "UPDATE t_delay SET is_paused = TRUE",
+            "UPDATE t_delay SET is_paused = FALSE; UPDATE t_state SET tombstoned = TRUE",
+        ] {
+            pool.transaction(
+                move |tx| Ok::<_, super::RusqliteError>(tx.execute_batch(sql)?),
+                TxType::Other,
+                "idle_delay_pause",
+            )
+            .await
+            .unwrap();
+            assert!(pool.idle_state().await.unwrap().next_run_at.is_none());
+        }
+        pool.close().await;
+    }
 
     #[rstest::rstest]
     #[case::pending_by_ffqn(crate::polling::PENDING_BY_FFQN)]

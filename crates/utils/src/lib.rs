@@ -1,3 +1,4 @@
+pub mod http_activity;
 pub mod panic_hook;
 pub mod sha256sum;
 pub mod spawn;

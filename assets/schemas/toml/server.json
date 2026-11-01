@@ -25,6 +25,9 @@
     "api": {
       "$ref": "#/$defs/ApiConfig"
     },
+    "idle_report": {
+      "$ref": "#/$defs/IdleReportConfig"
+    },
     "database": {
       "$ref": "#/$defs/DatabaseConfigToml"
     },
@@ -394,6 +397,109 @@
         "claims"
       ]
     },
+    "IdleReportConfig": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "check_interval": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 30
+          }
+        },
+        "quiet_period": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 60
+          }
+        },
+        "horizon": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "minutes": 1
+          }
+        },
+        "resume_threshold": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 5
+          }
+        },
+        "request_timeout": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 10
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "DurationConfig": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "milliseconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "milliseconds"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "seconds"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "minutes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "minutes"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hours": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "hours"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
     "DatabaseConfigToml": {
       "oneOf": [
         {
@@ -458,66 +564,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "DurationConfig": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "milliseconds": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "milliseconds"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "seconds": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "seconds"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "minutes": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "minutes"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "hours": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "hours"
-          ],
-          "additionalProperties": false
-        }
-      ]
     },
     "PostgresConfigToml": {
       "type": "object",

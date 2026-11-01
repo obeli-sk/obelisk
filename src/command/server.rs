@@ -2263,6 +2263,9 @@ pub(crate) async fn run_internal(
     secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
+    config.idle_report.validate(&config.database)?;
+    let idle_config = config.idle_report.clone();
+    let mut idle_db = None;
     let selected_deployment = config.startup_deployment_id;
     let api_auth = match &params.auth {
         ServerAuth::Auth { api_token } if api_listening_addr.is_some() => Some(Arc::new(
@@ -2312,6 +2315,7 @@ pub(crate) async fn run_internal(
                 let db_pool = db_pool.clone();
                 async move { db_pool.close().await }
             });
+            idle_db = Some(db_pool.as_ref().clone());
             (db_pool, db_close)
         }
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
@@ -2494,6 +2498,22 @@ pub(crate) async fn run_internal(
     )
     .await?;
     let deployment_switch_manager = server_init.deployment_switch_manager.clone();
+    let http_activity = server_init.server_verified.http_activity.clone();
+    let _idle_task = if idle_config.url.is_some() {
+        let db = idle_db.expect("idle configuration requires SQLite");
+        Some(AbortOnDropHandle::new(
+            utils::spawn::spawn_named(
+                "idle_detector",
+                crate::server::request_cancellation::until_terminated(
+                    termination_watcher.clone(),
+                    crate::server::idle::run(idle_config, db, http_activity.clone()),
+                ),
+            )
+            .abort_handle(),
+        ))
+    } else {
+        None
+    };
     let app_router = app_router(WebApiState {
         server_verified: server_init.server_verified.clone(),
         deployment_ctx: server_init.deployment_ctx.clone(),
@@ -2509,7 +2529,11 @@ pub(crate) async fn run_internal(
         let app_svc = match api_auth {
             None => {
                 warn!("API authentication is disabled by --no-auth: accepting all API requests");
-                app.into_make_service()
+                app.layer(axum::middleware::from_fn_with_state(
+                    http_activity.clone(),
+                    crate::server::idle::middleware,
+                ))
+                .into_make_service()
             }
             Some(api_auth) => {
                 // Not `tracing`, see `auth_middleware`.
@@ -2520,6 +2544,10 @@ pub(crate) async fn run_internal(
                 app.layer(axum::middleware::from_fn_with_state(
                     api_auth,
                     crate::server::auth::auth_middleware,
+                ))
+                .layer(axum::middleware::from_fn_with_state(
+                    http_activity.clone(),
+                    crate::server::idle::middleware,
                 ))
                 .into_make_service()
             }
@@ -2639,6 +2667,7 @@ fn obelisk_is_ready() {
 
 #[derive(Clone)]
 pub(crate) struct ServerVerified {
+    http_activity: utils::http_activity::HttpActivity,
     pub(crate) app_toml: String,
     pub(crate) app_env_prefix: String,
     pub(crate) app_name: String,
@@ -2717,6 +2746,7 @@ impl ServerVerified {
         activity_vm_runtime: ActivityVmRuntimeMode,
     ) -> Result<ServerVerified, anyhow::Error> {
         debug!("Using server toml: {config:#?}");
+        config.idle_report.validate(&config.database)?;
         let v8_config = config.v8;
         let webhook_request_timeout = config.webhooks.request_timeout.into();
         let concurrency_cells = config.limits.resolve_cells()?;
@@ -2832,6 +2862,7 @@ impl ServerVerified {
         let environment_audit = secret_registry.environment_audit();
 
         Ok(Self {
+            http_activity: utils::http_activity::HttpActivity::default(),
             app_name: config.app_name.clone(),
             js_runtime,
             activity_vm_runtime,
@@ -4517,6 +4548,7 @@ async fn spawn_tasks_and_threads(
         webhooks_wasm_cell.clone(),
         termination_watcher,
         &log_forwarder_sender,
+        &server_verified.http_activity,
     )
     .await?;
     let deployment_ctx: DeploymentContextHandle =
@@ -4737,6 +4769,7 @@ pub(crate) fn build_webhook_server_state(
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn start_http_servers(
     http_servers: impl Iterator<Item = &HttpServer>,
     webhook_registry: &WebhookRegistry,
@@ -4745,6 +4778,7 @@ async fn start_http_servers(
     webhooks_wasm_cell: Option<Arc<tokio::sync::Semaphore>>,
     termination_watcher: &watch::Receiver<()>,
     log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+    http_activity: &utils::http_activity::HttpActivity,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
     let mut abort_handles = Vec::new();
     let engine = &engines.webhook_engine;
@@ -4779,6 +4813,7 @@ async fn start_http_servers(
                     Arc::new(TokioSleep),
                     webhooks_wasm_cell.clone(),
                     termination_watcher.clone(),
+                    http_activity.clone(),
                 ),
             )
             .abort_handle(),
