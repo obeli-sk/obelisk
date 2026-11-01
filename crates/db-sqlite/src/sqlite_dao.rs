@@ -7556,16 +7556,19 @@ mod tests {
     const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn");
 
     #[rstest::rstest]
-    #[case("locked", "active", false, true, false)]
-    #[case("locked", "paused", false, false, false)]
-    #[case("blocked_by_join_set", "cancelling", false, true, false)]
-    #[case("pending_at", "active", false, false, true)]
-    #[case("pending_at", "paused", false, false, false)]
-    #[case("pending_at", "active", true, false, false)]
-    #[case("blocked_by_join_set", "active", false, false, false)]
-    #[case("finished", "active", false, false, false)]
+    #[case("workflow", "locked", "active", false, true, false)]
+    #[case("workflow", "locked", "paused", false, false, false)]
+    #[case("workflow", "blocked_by_join_set", "cancelling", false, true, false)]
+    #[case("workflow", "pending_at", "active", false, false, true)]
+    #[case("workflow", "pending_at", "paused", false, false, false)]
+    #[case("workflow", "pending_at", "active", true, false, false)]
+    #[case("workflow", "blocked_by_join_set", "active", false, false, false)]
+    #[case("workflow", "finished", "active", false, false, false)]
+    // Stubs are finished externally, never run by an executor.
+    #[case("activity_stub", "pending_at", "active", false, false, false)]
     #[tokio::test]
     async fn idle_state_execution_rules(
+        #[case] component_type: &'static str,
         #[case] state: &'static str,
         #[case] lifecycle: &'static str,
         #[case] tombstoned: bool,
@@ -7580,9 +7583,9 @@ mod tests {
                 component_id_input_digest, component_type, first_scheduled_at, deployment_id,
                 pending_expires_finished, state, updated_at, intermittent_event_count, lifecycle, tombstoned
             ) VALUES ('Execution_root', TRUE, 0, 'missing:component/ifc.fn', :at,
-                X'00', 'workflow', :at, 'Dep_00000000000000000000000000', :at,
+                X'00', :component_type, :at, 'Dep_00000000000000000000000000', :at,
                 :state, :at, 0, :lifecycle, :tombstoned)", named_params! {
-                    ":at": at, ":state": state, ":lifecycle": lifecycle, ":tombstoned": tombstoned,
+                    ":at": at, ":component_type": component_type, ":state": state, ":lifecycle": lifecycle, ":tombstoned": tombstoned,
                 })?;
             Ok::<_, super::RusqliteError>(())
         }, TxType::Other, "idle_state_fixture").await.unwrap();

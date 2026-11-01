@@ -40,6 +40,7 @@ pub(crate) const IDLE_STATE: &str = "
         (SELECT MIN(run_at) FROM (
             SELECT MIN(pending_expires_finished) AS run_at FROM t_state
             WHERE state = 'pending_at' AND lifecycle = 'active' AND tombstoned = FALSE
+            AND component_type <> 'activity_stub'
             UNION ALL
             SELECT MIN(d.expires_at) AS run_at FROM t_delay d WHERE NOT d.is_paused
             AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE
