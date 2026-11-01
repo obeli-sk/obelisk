@@ -35,6 +35,179 @@ return_type = "result<string, string>"
 
 const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
+async fn wait_finished(server: &TestServer, execution_id: &str) -> Value {
+    tokio::time::timeout(STREAM_TIMEOUT, async {
+        loop {
+            let status = server.get_status(execution_id).await;
+            if status["pending_state"]["status"] == "finished" {
+                break status;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn api_stream_limit_closes_silent_streams_and_preserves_cursors() {
+    let server = TestServer::start_inline_deployment(
+        test_addr!(40_161),
+        "[api.max_stream_duration]\nmilliseconds = 200\n",
+        DEPLOYMENT,
+        &[],
+    )
+    .await;
+    let execution_id = submit(&server).await;
+    tokio::time::timeout(STREAM_TIMEOUT, async {
+        loop {
+            let status = server.get_status(&execution_id).await;
+            let logs = server.get_logs(&execution_id, 200).await;
+            if status["pending_state"]["status"] == "blocked_by_join_set"
+                && logs
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["message"] == "submitted")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let mut statuses =
+        SseReader::open(&server, &format!("{execution_id}/status?follow=true"), None).await;
+    let initial = statuses.next().await.unwrap();
+    assert!(statuses.next().await.is_none());
+    let resumed = SseReader::open(
+        &server,
+        &format!("{execution_id}/status?follow=true"),
+        initial.id.as_deref(),
+    )
+    .await
+    .collect()
+    .await;
+    assert!(
+        resumed.is_empty(),
+        "unchanged status must not be repeated after expiry"
+    );
+    for path in [
+        format!("{execution_id}?follow=true"),
+        format!("{execution_id}/responses?follow=true"),
+    ] {
+        assert!(
+            SseReader::open(&server, &path, None)
+                .await
+                .collect()
+                .await
+                .is_empty()
+        );
+    }
+    let events = SseReader::open(
+        &server,
+        &format!("{execution_id}/events-and-responses?follow=true"),
+        None,
+    )
+    .await
+    .collect()
+    .await;
+    assert!(!events.is_empty());
+    let logs = SseReader::open(&server, &format!("{execution_id}/logs?follow=true"), None)
+        .await
+        .collect()
+        .await;
+    assert_eq!(
+        logs.iter()
+            .flat_map(|frame| frame.data.as_array().unwrap())
+            .filter(|row| row["message"] == "submitted")
+            .count(),
+        1
+    );
+    let batch = SseReader::send(
+        server
+            .client
+            .post(format!(
+                "{}/v1/executions/status/batch?follow=true",
+                server.base_url
+            ))
+            .json(&json!({"execution_ids": [execution_id]})),
+    )
+    .await
+    .collect()
+    .await;
+    assert_eq!(batch.len(), 1);
+    let last_id = events.last().unwrap().id.as_deref();
+    stub_child(&server, &execution_id).await;
+    wait_finished(&server, &execution_id).await;
+    let resumed = SseReader::open(
+        &server,
+        &format!("{execution_id}/events-and-responses?follow=true"),
+        last_id,
+    )
+    .await
+    .collect()
+    .await;
+    let mut all = events;
+    all.extend(resumed);
+    let actual = versions(&all);
+    assert_eq!(
+        actual,
+        (0..=all.last().unwrap().data["max_version"].as_u64().unwrap()).collect::<Vec<_>>()
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn cli_follow_reconnects_after_clean_eof_with_last_event_id() {
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{header, method},
+    };
+    let server = TestServer::start_inline_deployment(test_addr!(40_162), "", DEPLOYMENT, &[]).await;
+    let execution_id = submit(&server).await;
+    let pending = server.get_status(&execution_id).await;
+    stub_child(&server, &execution_id).await;
+    let finished = wait_finished(&server, &execution_id).await;
+    let sink = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(format!("event: status\nid: pending\ndata: {pending}\n\n")),
+        )
+        .up_to_n_times(1)
+        .with_priority(1)
+        .expect(1)
+        .mount(&sink)
+        .await;
+    Mock::given(header("last-event-id", "pending"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(format!("event: status\nid: finished\ndata: {finished}\n\n")),
+        )
+        .expect(1)
+        .mount(&sink)
+        .await;
+    tokio::time::timeout(
+        STREAM_TIMEOUT,
+        crate::args::Execution::Status {
+            execution_id: execution_id.parse().unwrap(),
+            follow: true,
+            no_reconnect: false,
+            json: true,
+        }
+        .run(crate::client::ClientStartup::new(sink.uri(), None, false)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    sink.verify().await;
+    server.shutdown().await;
+}
+
 struct SseFrame {
     event: String,
     id: Option<String>,

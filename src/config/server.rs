@@ -676,6 +676,9 @@ pub(crate) struct WebhooksGlobalConfigToml {
     /// other executions, or store logs, are persisted regardless.
     #[serde(default)]
     pub(crate) persist_on_outbound_http: bool,
+    /// Maximum wall time of a streaming response, measured from its response headers.
+    #[serde(default = "default_max_stream_duration")]
+    pub(crate) max_stream_duration: DurationConfig,
 }
 
 impl Default for WebhooksGlobalConfigToml {
@@ -683,12 +686,17 @@ impl Default for WebhooksGlobalConfigToml {
         Self {
             request_timeout: default_webhook_request_timeout(),
             persist_on_outbound_http: false,
+            max_stream_duration: default_max_stream_duration(),
         }
     }
 }
 
 const fn default_webhook_request_timeout() -> DurationConfig {
     DurationConfig::Seconds(30)
+}
+
+const fn default_max_stream_duration() -> DurationConfig {
+    DurationConfig::Minutes(10)
 }
 
 /// Reuse of idle outbound HTTP/1 connections made by activities and webhooks.
@@ -733,6 +741,9 @@ const fn default_outbound_http_pool_idle_timeout() -> DurationConfig {
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ApiConfig {
+    /// Maximum wall time of an API follow/SSE response, measured from its response headers.
+    #[serde(default = "default_max_stream_duration")]
+    pub(crate) max_stream_duration: DurationConfig,
     #[serde(default = "default_true")]
     pub(crate) enabled: bool,
     #[serde(default = "default_api_listening_addr")]
@@ -809,6 +820,7 @@ pub(crate) fn validate_oidc_url(url: &str) -> anyhow::Result<reqwest::Url> {
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
+            max_stream_duration: default_max_stream_duration(),
             enabled: true,
             listening_addr: default_api_listening_addr(),
             token_hashes: Vec::new(),
@@ -1841,12 +1853,21 @@ mod tests {
                 r"
                 [webhooks]
                 request_timeout.milliseconds = 250
+                max_stream_duration.seconds = 2
                 ",
             )
             .unwrap();
             assert!(matches!(
                 config.webhooks.request_timeout,
                 DurationConfig::Milliseconds(250)
+            ));
+            assert!(matches!(
+                config.webhooks.max_stream_duration,
+                DurationConfig::Seconds(2)
+            ));
+            assert!(matches!(
+                default_config.webhooks.max_stream_duration,
+                DurationConfig::Minutes(10)
             ));
         }
 

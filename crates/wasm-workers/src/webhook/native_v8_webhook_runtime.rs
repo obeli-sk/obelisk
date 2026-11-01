@@ -369,6 +369,7 @@ pub(super) async fn execute(
     stream_tx: oneshot::Sender<StreamedResponse>,
     max_heap_size: Option<usize>,
     request_deadline: tokio::time::Instant,
+    mut stream_expired: tokio::sync::watch::Receiver<()>,
 ) -> Result<Option<NativeResponse>, NativeWebhookFailure> {
     let mut connection_drop_watcher = ctx.connection_drop_watcher.clone();
     let mut server_termination_watcher = ctx.server_termination_watcher.clone();
@@ -415,6 +416,7 @@ pub(super) async fn execute(
     };
     let result = tokio::select! {
         result = execution => result,
+        Ok(()) = stream_expired.changed() => Ok(None),
         // A client leaving a streamed response is the normal end of e.g. an SSE stream.
         _ = connection_drop_watcher.changed() => if responded.get() {
             Ok(None)

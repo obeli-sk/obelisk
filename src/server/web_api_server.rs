@@ -261,10 +261,43 @@ fn pretty_json_response<T: Serialize>(status: StatusCode, value: &T) -> Response
 
 pub(crate) fn app_router(state: WebApiState) -> Router {
     let max_transport_message_size_bytes = state.server_verified.max_transport_message_size_bytes();
+    let max_stream_duration = state.server_verified.api_max_stream_duration;
     Router::new()
         .route("/openapi.json", routing::get(openapi_json))
         .nest("/v1", v1_router(max_transport_message_size_bytes))
         .with_state(Arc::new(state))
+        .layer(axum::middleware::from_fn_with_state(
+            max_stream_duration,
+            limit_stream_duration,
+        ))
+}
+
+async fn limit_stream_duration(
+    State(duration): State<Duration>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let response = next.run(request).await;
+    if response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .is_some_and(|content_type| {
+            content_type
+                .to_str()
+                .is_ok_and(|value| value.split(';').next() == Some("text/event-stream"))
+        })
+    {
+        response.map(|body| {
+            Body::new(utils::http_stream::LimitedBody::new(
+                body,
+                duration,
+                Box::new(concepts::time::Now),
+                None,
+            ))
+        })
+    } else {
+        response
+    }
 }
 
 #[expect(deprecated)]

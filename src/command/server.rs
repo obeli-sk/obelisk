@@ -2667,6 +2667,7 @@ fn obelisk_is_ready() {
 
 #[derive(Clone)]
 pub(crate) struct ServerVerified {
+    pub(crate) api_max_stream_duration: Duration,
     http_activity: utils::http_activity::HttpActivity,
     pub(crate) app_toml: String,
     pub(crate) app_env_prefix: String,
@@ -2712,6 +2713,7 @@ struct ServerVerifiedLaunch {
     /// `limits.webhooks.wasm.memory`, applied to every WASM webhook store.
     webhooks_wasm_memory: Option<u64>,
     webhook_request_timeout: Duration,
+    webhook_max_stream_duration: Duration,
     webhook_persist_on_outbound_http: bool,
     build_semaphore: Option<u64>,
     max_persisted_value_size_bytes: u64,
@@ -2862,6 +2864,7 @@ impl ServerVerified {
         let environment_audit = secret_registry.environment_audit();
 
         Ok(Self {
+            api_max_stream_duration: config.api.max_stream_duration.into(),
             http_activity: utils::http_activity::HttpActivity::default(),
             app_name: config.app_name.clone(),
             js_runtime,
@@ -2876,6 +2879,7 @@ impl ServerVerified {
                 v8_executor,
                 webhooks_wasm_memory: component_cells.webhooks_wasm.memory(),
                 webhook_request_timeout,
+                webhook_max_stream_duration: config.webhooks.max_stream_duration.into(),
                 webhook_persist_on_outbound_http: config.webhooks.persist_on_outbound_http,
                 build_semaphore,
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
@@ -3027,6 +3031,7 @@ impl ServerCompiledLinked {
                     fn_registry.clone(),
                     server_verified.max_persisted_value_size_bytes,
                     server_verified.webhook_request_timeout,
+                    server_verified.webhook_max_stream_duration,
                     server_verified.webhook_persist_on_outbound_http,
                 ));
                 (http_server, (webhooks, state))
@@ -4739,6 +4744,7 @@ type WebhookInstancesAndRoutes = (WebhookEndpointInstanceLinked, Vec<WebhookRout
 
 /// Build a `WebhookServerState` from a list of webhook instances and their routes.
 /// Used both at startup and during hot-redeploy.
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn build_webhook_server_state(
     deployment_id: DeploymentId,
     policy_event_id: SystemEventId,
@@ -4746,6 +4752,7 @@ pub(crate) fn build_webhook_server_state(
     fn_registry: Arc<dyn FunctionRegistry>,
     max_persisted_value_size_bytes: u64,
     request_timeout: Duration,
+    max_stream_duration: Duration,
     persist_on_outbound_http: bool,
 ) -> WebhookServerState {
     let mut router = MethodAwareRouter::default();
@@ -4771,6 +4778,7 @@ pub(crate) fn build_webhook_server_state(
         fn_registry,
         max_persisted_value_size_bytes,
         request_timeout,
+        max_stream_duration,
         persist_on_outbound_http,
     }
 }
