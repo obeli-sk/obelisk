@@ -1679,6 +1679,7 @@ impl SystemEventCode {
             | Self::MaintenanceGcDeploymentsInUse
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
             Self::ServerIdleReported
+            | Self::ServerResumeDetected
             | Self::DeploymentPolicyApplied
             | Self::MaintenanceGcCompleted => SystemEventLevel::Debug,
             _ => SystemEventLevel::Info,

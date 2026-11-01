@@ -10,10 +10,8 @@ struct Detector {
     config: IdleReportConfig,
     previous: (DateTime<Utc>, Instant),
     generation: u64,
-    reported: bool,
-    /// The idle event is recorded once per idle period, not per report attempt.
+    /// The idle event is recorded once per idle period, not per report.
     recorded: bool,
-    backoff: Duration,
     /// Wall time skipped by the last detected resume, until recorded.
     resumed: Option<chrono::TimeDelta>,
 }
@@ -24,13 +22,13 @@ impl Detector {
             config,
             previous: (now, monotonic),
             generation: 0,
-            reported: false,
             recorded: false,
-            backoff: Duration::from_secs(1),
             resumed: None,
         }
     }
 
+    /// Whether to report. Every idle check reports until the Machine is suspended, so a
+    /// failed or skipped suspension needs no response handling.
     fn check(
         &mut self,
         now: DateTime<Utc>,
@@ -41,7 +39,6 @@ impl Detector {
         let wall_delta = now.signed_duration_since(self.previous.0);
         let monotonic_delta = chrono::TimeDelta::from_std(monotonic - self.previous.1).unwrap();
         let gap = wall_delta - monotonic_delta;
-        // Also catches a suspension during a report whose response was lost.
         let resumed =
             gap > chrono::TimeDelta::from_std(self.config.resume_threshold.into()).unwrap();
         if resumed {
@@ -56,24 +53,11 @@ impl Detector {
                 .next_run_at
                 .is_none_or(|at| at > now + Duration::from(self.config.horizon));
         if !idle || resumed || self.generation != http.generation {
-            self.reset();
+            self.recorded = false;
         }
         self.generation = http.generation;
-        idle && !self.reported && !resumed
-    }
-
-    fn reset(&mut self) {
-        self.reported = false;
-        self.recorded = false;
-        self.backoff = Duration::from_secs(1);
-    }
-
-    fn failed(&mut self) -> Duration {
-        let delay = self.backoff.min(self.config.check_interval.into());
-        self.backoff = delay
-            .saturating_mul(2)
-            .min(self.config.check_interval.into());
-        delay
+        // The connection that woke the Machine may not be accepted yet; skip one check.
+        idle && !resumed
     }
 }
 
@@ -90,10 +74,8 @@ pub(crate) async fn run(config: IdleReportConfig, db: SqlitePool, http: HttpActi
         }
     };
     let mut detector = Detector::new(config, Utc::now(), Instant::now());
-    let mut delay = Duration::from(detector.config.check_interval);
     loop {
-        tokio::time::sleep(delay).await;
-        delay = detector.config.check_interval.into();
+        tokio::time::sleep(detector.config.check_interval.into()).await;
         let generation = http.snapshot().generation;
         match db.idle_state().await {
             Ok(state) => {
@@ -118,29 +100,24 @@ pub(crate) async fn run(config: IdleReportConfig, db: SqlitePool, http: HttpActi
                     if activity.generation == generation
                         && detector.check(Utc::now(), Instant::now(), activity, state)
                     {
-                        let result = client
+                        // The status is informational: an unsuspended Machine reports again.
+                        match client
                             .post(detector.config.url.as_ref().unwrap())
                             .json(&report)
                             .send()
-                            .await;
-                        match result {
-                            Ok(response) if response.status().is_success() => {
-                                detector.reported = true;
-                            }
+                            .await
+                        {
+                            Ok(response) if response.status().is_success() => {}
                             Ok(response) => {
-                                tracing::warn!(status = %response.status(), "Idle report failed");
-                                delay = detector.failed();
+                                tracing::debug!(status = %response.status(), "Idle report not accepted");
                             }
-                            Err(err) => {
-                                tracing::warn!("Idle report failed: {err}");
-                                delay = detector.failed();
-                            }
+                            Err(err) => tracing::warn!("Idle report failed: {err}"),
                         }
                     }
                 }
             }
             Err(err) => {
-                detector.reset();
+                detector.recorded = false;
                 tracing::warn!("Cannot read idle state: {err}");
             }
         }
@@ -276,8 +253,10 @@ mod tests {
                 next_run_at: Some(now + Duration::from_secs(61))
             }
         ));
-        detector.reported = true;
-        assert!(!detector.check(now, instant, http, IdleState::default()));
+        // Reports repeat until the Machine is suspended.
+        detector.recorded = true;
+        assert!(detector.check(now, instant, http, IdleState::default()));
+        assert!(detector.recorded);
         assert!(detector.check(
             now,
             instant,
@@ -287,21 +266,11 @@ mod tests {
             },
             IdleState::default()
         ));
-        detector.reported = true;
-        assert!(!detector.check(
-            now,
-            instant,
-            http,
-            IdleState {
-                busy: true,
-                next_run_at: None
-            }
-        ));
-        assert!(detector.check(now, instant, http, IdleState::default()));
+        assert!(!detector.recorded);
     }
 
     #[test]
-    fn idle_resume_threshold_and_retry_abort() {
+    fn idle_resume_skips_one_check() {
         let now = Utc::now();
         let instant = Instant::now();
         let http = Snapshot {
@@ -310,68 +279,30 @@ mod tests {
             generation: 0,
         };
         let mut detector = Detector::new(IdleReportConfig::default(), now, instant);
-        detector.reported = true;
-        assert!(!detector.check(
+        detector.recorded = true;
+        // A gap within the threshold is not a resume.
+        assert!(detector.check(
             now + Duration::from_secs(35),
             instant + Duration::from_secs(30),
             http,
             IdleState::default()
         ));
-        assert!(detector.reported);
+        assert!(detector.resumed.is_none() && detector.recorded);
+        // Suspended for 10 minutes, possibly with a report in flight.
         assert!(!detector.check(
-            now + Duration::from_secs(72),
+            now + Duration::from_mins(11),
             instant + Duration::from_secs(60),
             http,
             IdleState::default()
         ));
-        assert!(!detector.reported);
-        assert!(detector.check(
-            now + Duration::from_secs(102),
-            instant + Duration::from_secs(90),
-            http,
-            IdleState::default()
-        ));
-        for expected in [1, 2, 4, 8, 16, 30, 30] {
-            assert_eq!(detector.failed(), Duration::from_secs(expected));
-        }
-        assert!(!detector.check(
-            now + Duration::from_secs(102),
-            instant + Duration::from_secs(90),
-            Snapshot {
-                in_flight: 1,
-                ..http
-            },
-            IdleState::default()
-        ));
-        assert_eq!(detector.failed(), Duration::from_secs(1));
-    }
-
-    #[test]
-    fn idle_report_lost_to_suspension_is_not_retried() {
-        let now = Utc::now();
-        let instant = Instant::now();
-        let http = Snapshot {
-            in_flight: 0,
-            last_finished_at: now - Duration::from_secs(60),
-            generation: 0,
-        };
-        let mut detector = Detector::new(IdleReportConfig::default(), now, instant);
-        assert!(detector.check(now, instant, http, IdleState::default()));
-        assert!(detector.resumed.is_none());
-        // Suspended for 10 minutes while the report was in flight; the response was lost.
-        let delay = detector.failed();
-        let after = now + Duration::from_secs(600) + delay;
-        assert!(!detector.check(after, instant + delay, http, IdleState::default()));
         assert_eq!(
             detector.resumed.take(),
-            Some(chrono::TimeDelta::seconds(600))
+            Some(chrono::TimeDelta::seconds(595))
         );
-        assert_eq!(detector.failed(), Duration::from_secs(1));
-        // The next check starts a fresh idle period.
-        let delay = Duration::from_secs(30);
+        assert!(!detector.recorded);
         assert!(detector.check(
-            after + delay,
-            instant + Duration::from_secs(1) + delay,
+            now + Duration::from_secs(690),
+            instant + Duration::from_secs(90),
             http,
             IdleState::default()
         ));
@@ -379,7 +310,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn idle_report_once_per_period_and_retry() {
+    async fn idle_report_repeats_while_idle() {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
             matchers::{body_json, header, method},
@@ -387,17 +318,9 @@ mod tests {
         test_utils::set_up();
         let sink = MockServer::start().await;
         Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(503))
-            .up_to_n_times(1)
-            .with_priority(1)
-            .expect(1)
-            .mount(&sink)
-            .await;
-        Mock::given(method("POST"))
             .and(header("content-type", "application/json"))
             .and(body_json(serde_json::json!({"next_run_at": null})))
-            .respond_with(ResponseTemplate::new(204))
-            .expect(2)
+            .respond_with(ResponseTemplate::new(503))
             .mount(&sink)
             .await;
         let file = tempfile::NamedTempFile::new().unwrap();
@@ -413,6 +336,7 @@ mod tests {
         };
         let task = tokio::spawn(run(config, db.clone(), http.clone()));
         let task = executor::AbortOnDropHandle::new(task.abort_handle());
+        let count = async || sink.received_requests().await.unwrap().len();
         async fn wait_for(sink: &MockServer, count: usize) {
             tokio::time::timeout(Duration::from_secs(5), async {
                 while sink.received_requests().await.unwrap().len() < count {
@@ -422,17 +346,15 @@ mod tests {
             .await
             .unwrap();
         }
-        wait_for(&sink, 2).await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert_eq!(sink.received_requests().await.unwrap().len(), 2);
+        wait_for(&sink, 3).await;
         let request = http.begin();
         tokio::time::sleep(Duration::from_millis(60)).await;
-        assert_eq!(sink.received_requests().await.unwrap().len(), 2);
+        let busy = count().await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert_eq!(count().await, busy);
         drop(request);
-        wait_for(&sink, 3).await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert_eq!(sink.received_requests().await.unwrap().len(), 3);
-        // One event per idle period, not per attempt.
+        wait_for(&sink, busy + 1).await;
+        // One event per idle period, not per report.
         let events = (&db as &dyn DbPool)
             .admin_conn()
             .await
