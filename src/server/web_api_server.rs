@@ -369,6 +369,7 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
         )
         .route("/deployment-id", routing::get(deployment::current))
         .route("/app-policy", routing::get(app_config::policy))
+        .route("/app-toml", routing::get(app_config::app_toml))
         .route("/app-config", routing::get(app_config::get))
         .route("/app-config-digest", routing::get(app_config::digest))
         .route("/info", routing::get(server_info::get))
@@ -466,6 +467,25 @@ pub(crate) mod app_config {
             }
             AppConfigAcceptHeader::Toml => json_or_toml(accept, &state.server_verified.app_policy),
         }
+    }
+
+    #[derive(AcceptExtractor, Clone, Copy, Default)]
+    pub(crate) enum AppTomlAcceptHeader {
+        #[accept(mediatype = "application/toml")]
+        #[default]
+        Toml,
+    }
+
+    pub(crate) async fn app_toml(
+        State(state): State<Arc<WebApiState>>,
+        _accept: AppTomlAcceptHeader,
+    ) -> Response {
+        (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/toml")],
+            state.server_verified.app_toml.clone(),
+        )
+            .into_response()
     }
 
     #[utoipa::path(get, path = "/v1/app-config", tag = "app policy", responses((status = 200, content((AppConfigResponse = "application/json"), (String = "application/toml")))))]

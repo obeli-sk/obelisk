@@ -1017,6 +1017,29 @@
               ]
             },
             {
+              "name": "pull",
+              "about": "Write the running app config as `app.toml`, plus the active deployment and its source files",
+              "options": [
+                {
+                  "name": "--output",
+                  "short": "o",
+                  "help": "Directory to write `app.toml`, `deployment.toml` and source files into. Defaults to the current directory",
+                  "accepts": {
+                    "path": true
+                  }
+                },
+                {
+                  "name": "--force",
+                  "short": "f",
+                  "help": "Overwrite existing files in the output directory"
+                },
+                {
+                  "name": "--include-generated-metadata",
+                  "help": "Keep generated content digests and JavaScript module metadata in `deployment.toml`"
+                }
+              ]
+            },
+            {
               "name": "new",
               "about": "Create a stopped app; apply explicitly to start it",
               "options": [
@@ -1957,6 +1980,49 @@
               "name": "component_name",
               "help": "Component name in the target deployment TOML",
               "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "app",
+      "about": "Retrieve the running app config and active deployment",
+      "options": [
+        {
+          "name": "--verbose",
+          "help": "Show HTTP requests and response statuses on stderr"
+        },
+        {
+          "name": "--api-url",
+          "help": "Address of the Obelisk server"
+        },
+        {
+          "name": "--api-token",
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`"
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "pull",
+          "about": "Write the running app config as `app.toml`, plus the active deployment and its source files",
+          "options": [
+            {
+              "name": "--output",
+              "short": "o",
+              "help": "Directory to write `app.toml`, `deployment.toml` and source files into. Defaults to the current directory",
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--force",
+              "short": "f",
+              "help": "Overwrite existing files in the output directory"
+            },
+            {
+              "name": "--include-generated-metadata",
+              "help": "Keep generated content digests and JavaScript module metadata in `deployment.toml`"
             }
           ]
         }

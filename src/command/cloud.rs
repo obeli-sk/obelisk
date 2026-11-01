@@ -1,9 +1,9 @@
 use super::output::{print_json, print_value};
 use crate::args::CloudToken;
 use crate::args::{
-    AdminArgs, ClientConnection, Cloud, CloudApp, CloudAppTarget, CloudApps, CloudArgs,
-    CloudCommandId, CloudEndpoint, CloudEnv, CloudSecrets, ComponentArgs, DeploymentArgs,
-    ExecutionArgs, Subcommand,
+    AdminArgs, App, AppArgs, ClientConnection, Cloud, CloudApp, CloudAppTarget, CloudApps,
+    CloudArgs, CloudCommandId, CloudEndpoint, CloudEnv, CloudSecrets, ComponentArgs,
+    DeploymentArgs, ExecutionArgs, Subcommand,
 };
 use crate::client::ClientStartup;
 use crate::config::app::AppConfigToml;
@@ -471,6 +471,13 @@ impl CloudArgs {
                 command: CloudApp::Admin(command),
                 ..
             }) => Subcommand::Admin(AdminArgs { command, token }),
+            Cloud::App(CloudAppTarget {
+                command: CloudApp::Pull(pull),
+                ..
+            }) => Subcommand::App(AppArgs {
+                command: App::Pull(pull),
+                token,
+            }),
             _ => unreachable!(),
         };
         crate::command_future(command, Some(startup))?.await
@@ -521,7 +528,8 @@ impl CloudArgs {
                 command: CloudApp::Deployment(_)
                     | CloudApp::Execution(_)
                     | CloudApp::Component(_)
-                    | CloudApp::Admin(_),
+                    | CloudApp::Admin(_)
+                    | CloudApp::Pull(_),
                 ..
             })
         ) {
@@ -636,7 +644,8 @@ impl CloudArgs {
                     CloudApp::Deployment(_)
                     | CloudApp::Execution(_)
                     | CloudApp::Component(_)
-                    | CloudApp::Admin(_) => unreachable!("API commands are dispatched in run"),
+                    | CloudApp::Admin(_)
+                    | CloudApp::Pull(_) => unreachable!("API commands are dispatched in run"),
                     CloudApp::Get => client.app(name, Method::GET, &[], None, Kind::Read).await,
                     CloudApp::Status { .. } => {
                         let mut value = client

@@ -52,7 +52,8 @@ impl From<&Cloud> for Summary {
                     | CloudApp::Deployment(_)
                     | CloudApp::Execution(_)
                     | CloudApp::Component(_)
-                    | CloudApp::Admin(_) => unreachable!("command has its own output"),
+                    | CloudApp::Admin(_)
+                    | CloudApp::Pull(_) => unreachable!("command has its own output"),
                 }
             }
         }

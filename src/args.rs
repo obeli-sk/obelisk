@@ -129,6 +129,8 @@ pub(crate) enum Subcommand {
     Execution(ExecutionArgs),
     /// Inspect components or add/push them to an OCI registry.
     Component(ComponentArgs),
+    /// Retrieve the running app config and active deployment.
+    App(AppArgs),
     /// Manage deployments.
     Deployment(DeploymentArgs),
     /// Perform operator-only destructive maintenance.
@@ -152,6 +154,34 @@ pub(crate) struct ComponentArgs {
     pub(crate) command: Component,
     #[command(flatten)]
     pub(crate) token: ClientConnection,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct AppArgs {
+    #[command(subcommand)]
+    pub(crate) command: App,
+    #[command(flatten)]
+    pub(crate) token: ClientConnection,
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum App {
+    /// Write the running app config as `app.toml`, plus the active deployment and its source files.
+    Pull(AppPull),
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct AppPull {
+    /// Directory to write `app.toml`, `deployment.toml` and source files into. Defaults to the
+    /// current directory.
+    #[arg(long, short)]
+    pub(crate) output: Option<PathBuf>,
+    /// Overwrite existing files in the output directory.
+    #[arg(long, short)]
+    pub(crate) force: bool,
+    /// Keep generated content digests and JavaScript module metadata in `deployment.toml`.
+    #[arg(long)]
+    pub(crate) include_generated_metadata: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -1746,6 +1776,8 @@ pub(crate) enum CloudApp {
     /// Perform operator-only destructive maintenance on the selected app.
     #[command(subcommand)]
     Admin(Admin),
+    /// Write the running app config as `app.toml`, plus the active deployment and its source files.
+    Pull(AppPull),
     /// Create a stopped app; apply explicitly to start it.
     New {
         /// App config path; defaults to ./app.toml if present.

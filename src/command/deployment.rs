@@ -14,7 +14,7 @@ use rest_types::deployment::{
 };
 use rest_types::server::ServerInfoResponse;
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 impl args::Deployment {
     pub(crate) async fn run(self, client_startup: ClientStartup) -> Result<(), anyhow::Error> {
@@ -193,49 +193,15 @@ impl args::Deployment {
                 force,
                 include_generated_metadata,
             } => {
-                let client = client_startup.web_api_client()?;
-                let dep: DeploymentRecordSer = send_json(
-                    client
-                        .get(format!("{api_url}/v1/deployments/{id}"))
-                        .header(ACCEPT, "application/json")
-                        .query(&[(
-                            "include_generated_metadata",
-                            include_generated_metadata.to_string(),
-                        )]),
-                )
-                .await?;
-                let deployment_toml = dep.deployment_toml;
-
                 let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
-                tokio::fs::create_dir_all(&output_dir)
-                    .await
-                    .with_context(|| format!("cannot create output directory {output_dir:?}"))?;
-
-                let toml_path = output_dir.join("deployment.toml");
-                write_new_file(&toml_path, deployment_toml.as_bytes(), force).await?;
-                let file_count = dep.files.len();
-                for file_ref in &dep.files {
-                    // Defensively re-validate the relative path so a malformed stored
-                    // manifest can never write outside the output directory.
-                    let rel =
-                        sanitize_deployment_relative_path(&file_ref.path).with_context(|| {
-                            format!("refusing to write unsafe source path `{}`", file_ref.path)
-                        })?;
-                    let path = output_dir.join(&rel);
-                    if let Some(parent) = path.parent() {
-                        tokio::fs::create_dir_all(parent).await.with_context(|| {
-                            format!("cannot create source directory {parent:?}")
-                        })?;
-                    }
-                    let bytes = fetch_file(&client, api_url, &file_ref.digest).await?;
-                    write_new_file(&path, &bytes, force).await?;
-                }
-                eprintln!(
-                    "Wrote {} ({file_count} source file{}) for deployment {id}",
-                    toml_path.display(),
-                    if file_count == 1 { "" } else { "s" }
-                );
-                Ok(())
+                pull_deployment(
+                    &client_startup,
+                    id,
+                    &output_dir,
+                    force,
+                    include_generated_metadata,
+                )
+                .await
             }
 
             // `deployment verify` is dispatched through the local verification path in `main`.
@@ -263,8 +229,59 @@ impl args::Deployment {
     }
 }
 
+/// Write the deployment manifest and its source files into `output_dir`.
+pub(crate) async fn pull_deployment(
+    client_startup: &ClientStartup,
+    id: DeploymentId,
+    output_dir: &Path,
+    force: bool,
+    include_generated_metadata: bool,
+) -> anyhow::Result<()> {
+    let api_url = client_startup.api_url();
+    let client = client_startup.web_api_client()?;
+    let dep: DeploymentRecordSer = send_json(
+        client
+            .get(format!("{api_url}/v1/deployments/{id}"))
+            .header(ACCEPT, "application/json")
+            .query(&[(
+                "include_generated_metadata",
+                include_generated_metadata.to_string(),
+            )]),
+    )
+    .await?;
+    let deployment_toml = dep.deployment_toml;
+
+    tokio::fs::create_dir_all(output_dir)
+        .await
+        .with_context(|| format!("cannot create output directory {output_dir:?}"))?;
+
+    let toml_path = output_dir.join("deployment.toml");
+    write_new_file(&toml_path, deployment_toml.as_bytes(), force).await?;
+    let file_count = dep.files.len();
+    for file_ref in &dep.files {
+        // Defensively re-validate the relative path so a malformed stored
+        // manifest can never write outside the output directory.
+        let rel = sanitize_deployment_relative_path(&file_ref.path)
+            .with_context(|| format!("refusing to write unsafe source path `{}`", file_ref.path))?;
+        let path = output_dir.join(&rel);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("cannot create source directory {parent:?}"))?;
+        }
+        let bytes = fetch_file(&client, api_url, &file_ref.digest).await?;
+        write_new_file(&path, &bytes, force).await?;
+    }
+    eprintln!(
+        "Wrote {} ({file_count} source file{}) for deployment {id}",
+        toml_path.display(),
+        if file_count == 1 { "" } else { "s" }
+    );
+    Ok(())
+}
+
 /// Write `contents` to `path`. Refuses to overwrite an existing file unless `force`.
-async fn write_new_file(
+pub(crate) async fn write_new_file(
     path: &std::path::Path,
     contents: &[u8],
     force: bool,

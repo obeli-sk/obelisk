@@ -407,6 +407,36 @@
         }
       }
     },
+    "/v1/app-toml": {
+      "get": {
+        "tags": [
+          "app policy"
+        ],
+        "operationId": "app_toml",
+        "responses": {
+          "200": {
+            "description": "App config the server started with, verbatim",
+            "content": {
+              "application/toml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Accept must allow application/toml",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/components": {
       "get": {
         "tags": [

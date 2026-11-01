@@ -882,7 +882,8 @@ impl TestServer {
             .with_app_source(Some(server_path.with_file_name("app.toml")))
             .unwrap();
         let mut config = config_holder.load_config().unwrap();
-        let app = config_holder.load_app_config().unwrap();
+        let (app, app_toml) = config_holder.load_app_config_with_text().unwrap();
+        config.app_toml = app_toml.unwrap();
         config.app_policy = app.policy();
         config.secrets = app.secrets;
         config.public_env = app.public_env;
@@ -2153,6 +2154,56 @@ async fn app_policy_webapi_reports_running_policy() {
     let policy = lifecycle_response(policy, "/v1/app-policy", "get", reqwest::StatusCode::OK).await;
     let policy: toml::Value = toml::from_str(policy.as_str().unwrap()).unwrap();
     assert_eq!(policy, toml::Value::try_from(app.policy()).unwrap());
+
+    let app_toml_file = std::fs::read_to_string(server.tmp_dir.path().join("app.toml")).unwrap();
+    let app_toml = server
+        .client
+        .get(format!("{}/v1/app-toml", server.base_url))
+        .header("Accept", "application/toml")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        app_toml.headers()[reqwest::header::CONTENT_TYPE],
+        "application/toml"
+    );
+    let app_toml =
+        lifecycle_response(app_toml, "/v1/app-toml", "get", reqwest::StatusCode::OK).await;
+    assert_eq!(app_toml.as_str().unwrap(), app_toml_file);
+
+    let not_acceptable = server
+        .client
+        .get(format!("{}/v1/app-toml", server.base_url))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap();
+    lifecycle_response(
+        not_acceptable,
+        "/v1/app-toml",
+        "get",
+        reqwest::StatusCode::NOT_ACCEPTABLE,
+    )
+    .await;
+
+    let pulled = tempfile::tempdir().unwrap();
+    crate::args::App::Pull(crate::args::AppPull {
+        output: Some(pulled.path().to_path_buf()),
+        force: false,
+        include_generated_metadata: false,
+    })
+    .run(crate::client::ClientStartup::new(
+        server.base_url.clone(),
+        None,
+        false,
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(pulled.path().join("app.toml")).unwrap(),
+        app_toml_file
+    );
+    assert!(pulled.path().join("deployment.toml").is_file());
 
     let switch_path = "/v1/deployments/{deployment_id}/switch";
     let switch_url = format!(
