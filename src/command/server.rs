@@ -4366,6 +4366,12 @@ async fn register_crons(
     let conn = db_pool.connection().await?;
     for cron_config in cron_configs {
         let now = chrono::Utc::now();
+        // A new tracker waits for the first occurrence, otherwise it would submit on deploy.
+        let scheduled_at = cron_config
+            .cron_schedule
+            .next_occurrence(now)
+            .with_context(|| format!("invalid cron `{}`", cron_config.component_id.name))?
+            .unwrap_or(now);
         conn.register_cron(
             CreateRequest {
                 created_at: now,
@@ -4373,7 +4379,7 @@ async fn register_crons(
                 ffqn: cron_worker::cron_ffqn(&cron_config.target_ffqn),
                 params: Params::empty(),
                 parent: None,
-                scheduled_at: now,
+                scheduled_at,
                 component_id: cron_config.component_id.clone(),
                 deployment_id,
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -8247,6 +8253,60 @@ mod tests {
         assert!(config.allowed_exec_activities["worker"].contains(&new));
         assert!(config.secrets["TOKEN"].exposed_to()["worker"].contains(&new));
         Ok(())
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn new_cron_tracker_waits_for_first_occurrence(
+        #[values(db_tests::Database::Sqlite, db_tests::Database::Postgres)]
+        database: db_tests::Database,
+    ) {
+        use concepts::storage::{DbPoolCloseable as _, PendingState, PendingStatePendingAt};
+        use wasm_workers::cron::cron_worker::{CronOrOnce, CronOverlap};
+        let (_guard, db_pool, close) = database.set_up().await;
+        let cron_config = super::ScheduleWorkerConfig {
+            component_id: ComponentId::new(
+                ComponentType::Cron,
+                StrVariant::Static("yearly"),
+                ComponentDigest(Digest([1; 32])),
+            )
+            .unwrap(),
+            target_ffqn: FunctionFqn::new_static("test:pkg/ifc", "do-work"),
+            target_component_id: ComponentId::dummy_activity(),
+            params: concepts::Params::empty(),
+            cron_schedule: CronOrOnce::Cron(Box::new("@yearly".parse().unwrap())),
+            overlap: CronOverlap::default(),
+        };
+        let before = chrono::Utc::now();
+        super::register_crons(
+            &db_pool,
+            DeploymentId::generate(),
+            u64::MAX,
+            std::iter::once(&cron_config),
+        )
+        .await
+        .unwrap();
+        let conn = db_pool.connection().await.unwrap();
+        let record = conn
+            .get_cron(&cron_config.component_id.component_digest)
+            .await
+            .unwrap();
+        let tracker = conn
+            .get_pending_state(&record.tracking_execution_id.unwrap())
+            .await
+            .unwrap();
+        let expected = cron_config
+            .cron_schedule
+            .next_occurrence(before)
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(tracker.pending_state, PendingState::PendingAt(PendingStatePendingAt { scheduled_at, .. }) if scheduled_at == expected),
+            "{:?}",
+            tracker.pending_state
+        );
+        drop(conn);
+        close.close().await;
     }
 
     #[tokio::test]

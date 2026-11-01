@@ -36,6 +36,18 @@ pub enum CronOrOnce {
     Once,
 }
 
+impl CronOrOnce {
+    pub fn next_occurrence(
+        &self,
+        after: DateTime<Utc>,
+    ) -> Result<Option<DateTime<Utc>>, croner::errors::CronError> {
+        match self {
+            CronOrOnce::Once => Ok(None),
+            CronOrOnce::Cron(cron) => cron.find_next_occurrence(&after, false).map(Some),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CronOverlap {
     /// Skip the tick while the previously scheduled execution is not finished.
@@ -74,16 +86,11 @@ impl CronWorker {
         &self,
         after: DateTime<Utc>,
     ) -> Result<Option<DateTime<Utc>>, executor::worker::FatalError> {
-        match &self.cron_schedule {
-            CronOrOnce::Once => Ok(None),
-            CronOrOnce::Cron(cron) => {
-                cron.find_next_occurrence(&after, false)
-                    .map(Some)
-                    .map_err(|err| executor::worker::FatalError::ConstraintViolation {
-                        reason: format!("cron next occurrence error: {err}").into(),
-                    })
+        self.cron_schedule.next_occurrence(after).map_err(|err| {
+            executor::worker::FatalError::ConstraintViolation {
+                reason: format!("cron next occurrence error: {err}").into(),
             }
-        }
+        })
     }
 }
 
