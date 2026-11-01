@@ -4,6 +4,10 @@ export type DeploymentSwitchOutcome = "switched" | "restart_required";
 
 export interface LifecycleModels {
   ServerInfoResponse: ServerInfoResponse;
+  ServerInfoGc: ServerInfoGc;
+  ServerInfoGcRetention: ServerInfoGcRetention;
+  ServerInfoGcCountedRetention: ServerInfoGcCountedRetention;
+  ServerInfoGcRetentionPolicy: ServerInfoGcRetentionPolicy;
   AppPolicyV1: AppPolicyV1;
   DeploymentSwitchPayload: DeploymentSwitchPayload;
   DeploymentSwitchResponse: DeploymentSwitchResponse;
@@ -14,9 +18,42 @@ export interface ServerInfoResponse {
   app_env_prefix: string;
   app_name: string;
   deployment_id: string;
+  gc?: ServerInfoGc;
   node_run_id: string;
   obelisk_version: string;
   started_at: string;
+  [k: string]: unknown;
+}
+/**
+ * The `[maintenance.gc]` configuration of the running server.
+ */
+export interface ServerInfoGc {
+  batch_delay_ms: number;
+  batch_size: number;
+  enabled: boolean;
+  interval_ms: number;
+  retention: ServerInfoGcRetention;
+  upload_grace_period_ms: number;
+  [k: string]: unknown;
+}
+export interface ServerInfoGcRetention {
+  deployments: ServerInfoGcCountedRetention;
+  executions: ServerInfoGcCountedRetention;
+  system_events: ServerInfoGcRetentionPolicy;
+  [k: string]: unknown;
+}
+export interface ServerInfoGcCountedRetention {
+  enabled: boolean;
+  max_age_ms: number;
+  /**
+   * Keep at most this many newest records; 0 disables the limit.
+   */
+  max_count: number;
+  [k: string]: unknown;
+}
+export interface ServerInfoGcRetentionPolicy {
+  enabled: boolean;
+  max_age_ms: number;
   [k: string]: unknown;
 }
 export interface AppPolicyV1 {
@@ -125,6 +162,10 @@ export interface DeploymentSwitchResponse {
 }
 
 export function parseServerInfoResponse(value: unknown): ServerInfoResponse;
+export function parseServerInfoGc(value: unknown): ServerInfoGc;
+export function parseServerInfoGcRetention(value: unknown): ServerInfoGcRetention;
+export function parseServerInfoGcCountedRetention(value: unknown): ServerInfoGcCountedRetention;
+export function parseServerInfoGcRetentionPolicy(value: unknown): ServerInfoGcRetentionPolicy;
 export function parseAppPolicyV1(value: unknown): AppPolicyV1;
 export function parseDeploymentSwitchPayload(value: unknown): DeploymentSwitchPayload;
 export function parseDeploymentSwitchResponse(value: unknown): DeploymentSwitchResponse;

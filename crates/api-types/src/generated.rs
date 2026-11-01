@@ -1037,6 +1037,37 @@ pub struct SecretRefTableToml {
     #[serde(default)]
     pub optional: bool,
 }
+///The `[maintenance.gc]` configuration of the running server.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ServerInfoGc {
+    pub batch_delay_ms: u64,
+    pub batch_size: u32,
+    pub enabled: bool,
+    pub interval_ms: u64,
+    pub retention: ServerInfoGcRetention,
+    pub upload_grace_period_ms: u64,
+}
+///`ServerInfoGcCountedRetention`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ServerInfoGcCountedRetention {
+    pub enabled: bool,
+    pub max_age_ms: u64,
+    ///Keep at most this many newest records; 0 disables the limit.
+    pub max_count: u32,
+}
+///`ServerInfoGcRetention`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ServerInfoGcRetention {
+    pub deployments: ServerInfoGcCountedRetention,
+    pub executions: ServerInfoGcCountedRetention,
+    pub system_events: ServerInfoGcRetentionPolicy,
+}
+///`ServerInfoGcRetentionPolicy`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ServerInfoGcRetentionPolicy {
+    pub enabled: bool,
+    pub max_age_ms: u64,
+}
 ///`ServerInfoResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ServerInfoResponse {
@@ -1044,6 +1075,8 @@ pub struct ServerInfoResponse {
     pub app_env_prefix: ::std::string::String,
     pub app_name: ::std::string::String,
     pub deployment_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub gc: ::std::option::Option<ServerInfoGc>,
     pub node_run_id: ::std::string::String,
     pub obelisk_version: ::std::string::String,
     pub started_at: ::chrono::DateTime<::chrono::offset::Utc>,

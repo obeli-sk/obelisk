@@ -2523,6 +2523,7 @@ pub(crate) async fn run_internal(
         subscription_interruption,
         prepared_dirs: server_init.prepared_dirs.clone(),
         deployment_switch_manager: deployment_switch_manager.clone(),
+        gc_info: maintenance_gc_config.server_info(),
     });
     if let Some(api_listening_addr) = api_listening_addr {
         let app = app_router;

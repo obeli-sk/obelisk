@@ -1277,6 +1277,44 @@ impl Default for RetentionPolicyTomlConfig {
     }
 }
 
+impl GarbageCollectionTomlConfig {
+    pub(crate) fn server_info(&self) -> rest_types::server::ServerInfoGc {
+        use rest_types::server::{
+            ServerInfoGc, ServerInfoGcCountedRetention, ServerInfoGcRetention,
+            ServerInfoGcRetentionPolicy,
+        };
+        let counted = |enabled, max_age: DurationConfig, max_count| ServerInfoGcCountedRetention {
+            enabled,
+            max_age_ms: max_age.as_millis_saturating(),
+            max_count,
+        };
+        let retention = &self.retention;
+        ServerInfoGc {
+            enabled: self.enabled,
+            interval_ms: self.interval.as_millis_saturating(),
+            batch_size: self.batch_size,
+            batch_delay_ms: self.batch_delay.as_millis_saturating(),
+            upload_grace_period_ms: self.upload_grace_period.as_millis_saturating(),
+            retention: ServerInfoGcRetention {
+                executions: counted(
+                    retention.executions.enabled,
+                    retention.executions.max_age,
+                    retention.executions.max_count,
+                ),
+                deployments: counted(
+                    retention.deployments.enabled,
+                    retention.deployments.max_age,
+                    retention.deployments.max_count,
+                ),
+                system_events: ServerInfoGcRetentionPolicy {
+                    enabled: retention.system_events.enabled,
+                    max_age_ms: retention.system_events.max_age.as_millis_saturating(),
+                },
+            },
+        }
+    }
+}
+
 impl Default for GarbageCollectionTomlConfig {
     fn default() -> Self {
         Self {

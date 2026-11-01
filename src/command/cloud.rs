@@ -1567,6 +1567,7 @@ mod tests {
                 deployment_id: concepts::prefixed_ulid::DeploymentId::generate().to_string(),
                 node_run_id: concepts::prefixed_ulid::NodeRunId::generate().to_string(),
                 app_config_digest: "digest".to_owned(),
+                gc: None,
                 started_at: chrono::Utc::now(),
             }),
             "/prefix/v1/tokens" if method == Method::POST => {

@@ -329,6 +329,7 @@ mod tests {
                 deployment_id: state.active.to_string(),
                 node_run_id: concepts::prefixed_ulid::NodeRunId::generate().to_string(),
                 app_config_digest: "digest".to_owned(),
+                gc: None,
                 started_at: chrono::Utc::now(),
             }),
             (Method::GET, _) if path.starts_with("/tenant/v1/deployments/") => json!({

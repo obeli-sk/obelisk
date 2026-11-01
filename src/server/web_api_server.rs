@@ -81,6 +81,7 @@ pub(crate) struct WebApiState {
     pub(crate) subscription_interruption: Option<Duration>,
     pub(crate) prepared_dirs: PreparedDirs,
     pub(crate) deployment_switch_manager: crate::command::server::DeploymentSwitchManagerHandle,
+    pub(crate) gc_info: rest_types::server::ServerInfoGc,
 }
 
 async fn until_terminated<T>(
@@ -568,6 +569,7 @@ pub(crate) mod server_info {
             deployment_id: state.deployment_ctx.read().await.deployment_id.to_string(),
             node_run_id: node_run_id.to_string(),
             app_config_digest: state.server_verified.app_config_digest.to_string(),
+            gc: Some(state.gc_info.clone()),
             started_at,
         };
         pretty_json_response(StatusCode::OK, &body)
