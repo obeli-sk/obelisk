@@ -180,10 +180,11 @@ impl IdleReportConfig {
                 !Duration::from(self.check_interval).is_zero(),
                 "idle_report.check_interval must be greater than zero"
             );
-            // An execution due past a shorter horizon could run unseen between two checks.
+            // Checks run slightly further apart than the interval, so an execution due past a horizon
+            // equal to it could run unseen between two checks.
             anyhow::ensure!(
-                Duration::from(self.horizon) >= Duration::from(self.check_interval),
-                "idle_report.horizon must not be shorter than idle_report.check_interval"
+                Duration::from(self.horizon) > Duration::from(self.check_interval),
+                "idle_report.horizon must be longer than idle_report.check_interval"
             );
             anyhow::ensure!(
                 !Duration::from(self.request_timeout).is_zero(),
@@ -1752,7 +1753,7 @@ mod tests {
             "url = 'http://user:password@localhost/report'",
             "url = 'http://localhost/report'\ncheck_interval.seconds = 0",
             "url = 'http://localhost/report'\nrequest_timeout.seconds = 0",
-            "url = 'http://localhost/report'\nhorizon.seconds = 29",
+            "url = 'http://localhost/report'\nhorizon.seconds = 30",
         ] {
             let config: IdleReportConfig = toml::from_str(settings).unwrap();
             assert!(
