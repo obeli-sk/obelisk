@@ -1342,7 +1342,7 @@
             {
               "name": "--app-config",
               "short": "a",
-              "help": "App config path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`)",
+              "help": "App config path; defaults to ./app.toml if present, otherwise only the app name from `OBELISK_APP_NAME`",
               "accepts": {
                 "path": true
               }
@@ -1417,7 +1417,7 @@
             {
               "name": "--app-config",
               "short": "a",
-              "help": "App config path; defaults to ./app.toml if present, otherwise built-in defaults (set `OBELISK_APP_NAME`)",
+              "help": "App config path; defaults to ./app.toml if present, otherwise only the app name from `OBELISK_APP_NAME`",
               "accepts": {
                 "path": true
               }
