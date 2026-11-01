@@ -50,12 +50,5 @@ Generation uses locked Rust and npm workspaces. `scripts/update-api-types.sh`
 regenerates both packages; `--check` compares temporary output to committed files.
 Run `node --test tools/obelisk-api-codegen-js/client.test.mjs` for decoder tests.
 
-Apps vendor their language's package in `vendor/obelisk-api`, the lifecycle
-contract in `assets/schemas/obelisk-openapi.json`, and its upstream revision in
-`assets/schemas/obelisk-openapi.rev`. `obelisk-api.language` selects the package.
-Copy `scripts/import-api-client.sh` to the app's `scripts/update-obelisk-api.sh`.
-The importer fetches the immutable revision or accepts a matching clean local
-checkout as its argument. `--check` verifies package, contract and importer against
-that revision. Ordinary app builds use the checked-in artifacts and need neither
-network access nor code generation. The API contract pin is independent of the
-app's Obelisk runtime pin.
+Client apps consume these packages from their own pin of this repository, for
+example a git submodule or a flake input, and own the tooling that copies them.
