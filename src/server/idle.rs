@@ -4,16 +4,18 @@ use concepts::storage::{DbPool, SystemEventCode};
 use db_sqlite::sqlite_dao::{IdleState, SqlitePool};
 use std::time::Duration;
 use tokio::time::Instant;
+use ulid::Ulid;
 use utils::http_activity::{HttpActivity, Snapshot};
 
 struct Detector {
     config: IdleReportConfig,
     previous: (DateTime<Utc>, Instant),
     generation: u64,
-    /// The idle event is recorded once per idle period, not per report.
-    recorded: bool,
-    /// Wall time skipped by the last detected resume, until recorded.
-    resumed: Option<chrono::TimeDelta>,
+    /// Identity of the current idle period, assigned when its event is recorded. Every report
+    /// carries it, so the receiver can discard reports of a period it already suspended.
+    period: Option<Ulid>,
+    /// Wall time skipped by the last detected resume and the period it ended, until recorded.
+    resumed: Option<(chrono::TimeDelta, Option<Ulid>)>,
 }
 
 impl Detector {
@@ -22,7 +24,7 @@ impl Detector {
             config,
             previous: (now, monotonic),
             generation: 0,
-            recorded: false,
+            period: None,
             resumed: None,
         }
     }
@@ -42,7 +44,7 @@ impl Detector {
         let resumed =
             gap > chrono::TimeDelta::from_std(self.config.resume_threshold.into()).unwrap();
         if resumed {
-            self.resumed = Some(gap);
+            self.resumed = Some((gap, self.period));
         }
         self.previous = (now, monotonic);
         let idle = http.in_flight == 0
@@ -53,7 +55,7 @@ impl Detector {
                 .next_run_at
                 .is_none_or(|at| at > now + Duration::from(self.config.horizon));
         if !idle || resumed || self.generation != http.generation {
-            self.recorded = false;
+            self.period = None;
         }
         self.generation = http.generation;
         // The connection that woke the Machine may not be accepted yet; skip one check.
@@ -83,9 +85,16 @@ pub(crate) async fn run(config: IdleReportConfig, db: SqlitePool, http: HttpActi
                 let idle = detector.check(Utc::now(), Instant::now(), activity, state);
                 record_resume(&db, &mut detector).await;
                 if idle && activity.generation == generation {
-                    let report = serde_json::json!({"next_run_at": state.next_run_at});
-                    if !detector.recorded {
-                        detector.recorded = true;
+                    let (period, new_period) = match detector.period {
+                        Some(period) => (period, false),
+                        None => (Ulid::generate(), true),
+                    };
+                    detector.period = Some(period);
+                    let report = serde_json::json!({
+                        "period_id": period.to_string(),
+                        "next_run_at": state.next_run_at,
+                    });
+                    if new_period {
                         super::system_event_writer::record(
                             &db as &dyn DbPool,
                             SystemEventCode::ServerIdleReported,
@@ -117,7 +126,7 @@ pub(crate) async fn run(config: IdleReportConfig, db: SqlitePool, http: HttpActi
                 }
             }
             Err(err) => {
-                detector.recorded = false;
+                detector.period = None;
                 tracing::warn!("Cannot read idle state: {err}");
             }
         }
@@ -125,13 +134,16 @@ pub(crate) async fn run(config: IdleReportConfig, db: SqlitePool, http: HttpActi
 }
 
 async fn record_resume(db: &SqlitePool, detector: &mut Detector) {
-    if let Some(gap) = detector.resumed.take() {
+    if let Some((gap, period)) = detector.resumed.take() {
         super::system_event_writer::record(
             db as &dyn DbPool,
             SystemEventCode::ServerResumeDetected,
             None,
             None,
-            serde_json::json!({"suspended_ms": gap.num_milliseconds()}),
+            serde_json::json!({
+                "suspended_ms": gap.num_milliseconds(),
+                "period_id": period.map(|period| period.to_string()),
+            }),
         )
         .await;
     }
@@ -253,10 +265,11 @@ mod tests {
                 next_run_at: Some(now + Duration::from_secs(61))
             }
         ));
-        // Reports repeat until the Machine is suspended.
-        detector.recorded = true;
+        // Reports repeat within one period until the Machine is suspended.
+        let period = Ulid::generate();
+        detector.period = Some(period);
         assert!(detector.check(now, instant, http, IdleState::default()));
-        assert!(detector.recorded);
+        assert_eq!(detector.period, Some(period));
         assert!(detector.check(
             now,
             instant,
@@ -266,7 +279,7 @@ mod tests {
             },
             IdleState::default()
         ));
-        assert!(!detector.recorded);
+        assert!(detector.period.is_none());
     }
 
     #[test]
@@ -279,7 +292,8 @@ mod tests {
             generation: 0,
         };
         let mut detector = Detector::new(IdleReportConfig::default(), now, instant);
-        detector.recorded = true;
+        let period = Ulid::generate();
+        detector.period = Some(period);
         // A gap within the threshold is not a resume.
         assert!(detector.check(
             now + Duration::from_secs(35),
@@ -287,7 +301,7 @@ mod tests {
             http,
             IdleState::default()
         ));
-        assert!(detector.resumed.is_none() && detector.recorded);
+        assert!(detector.resumed.is_none() && detector.period == Some(period));
         // Suspended for 10 minutes, possibly with a report in flight.
         assert!(!detector.check(
             now + Duration::from_mins(11),
@@ -297,9 +311,9 @@ mod tests {
         ));
         assert_eq!(
             detector.resumed.take(),
-            Some(chrono::TimeDelta::seconds(595))
+            Some((chrono::TimeDelta::seconds(595), Some(period)))
         );
-        assert!(!detector.recorded);
+        assert!(detector.period.is_none());
         assert!(detector.check(
             now + Duration::from_secs(690),
             instant + Duration::from_secs(90),
@@ -313,13 +327,12 @@ mod tests {
     async fn idle_report_repeats_while_idle() {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
-            matchers::{body_json, header, method},
+            matchers::{header, method},
         };
         test_utils::set_up();
         let sink = MockServer::start().await;
         Mock::given(method("POST"))
             .and(header("content-type", "application/json"))
-            .and(body_json(serde_json::json!({"next_run_at": null})))
             .respond_with(ResponseTemplate::new(503))
             .mount(&sink)
             .await;
@@ -367,6 +380,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(events.len(), 2);
+        // Reports of one period share its id; the event carries it too.
+        let periods: Vec<String> = sink
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|request| {
+                let body: serde_json::Value = request.body_json().unwrap();
+                assert_eq!(body["next_run_at"], serde_json::Value::Null);
+                body["period_id"].as_str().unwrap().to_owned()
+            })
+            .collect();
+        assert!(periods[..busy].iter().all(|period| *period == periods[0]));
+        let last = periods.last().unwrap();
+        assert_ne!(*last, periods[0]);
+        let mut recorded: Vec<_> = events
+            .iter()
+            .map(|event| event.details["period_id"].as_str().unwrap())
+            .collect();
+        recorded.sort_unstable();
+        assert_eq!(recorded, [periods[0].as_str(), last.as_str()]);
         drop(task);
         db.close().await;
     }

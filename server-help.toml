@@ -22,9 +22,11 @@
 
 ## Idle reporting (SQLite only). Without a URL the detector is disabled.
 ## All incoming requests, including health probes and open streams, count as activity.
-## The report is POSTed as {"next_run_at": <RFC 3339 UTC timestamp or null>}.
+## The report is POSTed as {"period_id": "<ULID>", "next_run_at": <RFC 3339 UTC timestamp or null>}.
 ## It repeats every check interval while idle, ignoring the response status, so the receiver
-## only needs to act on it (suspend) or wait for the next one.
+## only needs to act on it (suspend) or wait for the next one. All reports of one idle period
+## share its id, and any activity or resume starts a new period, so a receiver can discard
+## late reports of a period it already suspended.
 # idle_report.url = "http://127.0.0.1:9194/v1/idle"
 # idle_report.check_interval.seconds = 30
 # idle_report.quiet_period.seconds = 60
