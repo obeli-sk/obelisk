@@ -1,3 +1,4 @@
+use crate::config::deployment::DurationConfig;
 use crate::config::server::IdleReportConfig;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::IdlePeriodId;
@@ -11,6 +12,8 @@ struct Detector {
     config: IdleReportConfig,
     previous: (DateTime<Utc>, Instant),
     generation: u64,
+    /// First check that saw no execution activity since the last one that did.
+    executions_quiet_since: Option<DateTime<Utc>>,
     /// Identity of the current idle period, assigned when its event is recorded. Every report
     /// carries it, so the receiver can discard reports of a period it already suspended.
     period: Option<IdlePeriodId>,
@@ -24,6 +27,7 @@ impl Detector {
             config,
             previous: (now, monotonic),
             generation: 0,
+            executions_quiet_since: Some(now),
             period: None,
             resumed: None,
         }
@@ -47,13 +51,23 @@ impl Detector {
             self.resumed = Some((gap, self.period));
         }
         self.previous = (now, monotonic);
-        let idle = http.in_flight == 0
-            && now.signed_duration_since(http.last_finished_at)
-                >= chrono::TimeDelta::from_std(self.config.quiet_period.into()).unwrap()
-            && !db.busy
-            && db
+        let executions_active = db.busy
+            || db
                 .next_run_at
-                .is_none_or(|at| at > now + Duration::from(self.config.horizon));
+                .is_some_and(|at| at <= now + Duration::from(self.config.horizon));
+        let executions_quiet_since = if executions_active {
+            None
+        } else {
+            Some(*self.executions_quiet_since.get_or_insert(now))
+        };
+        self.executions_quiet_since = executions_quiet_since;
+        let quiet_for = |since: DateTime<Utc>, period: DurationConfig| {
+            now.signed_duration_since(since) >= chrono::TimeDelta::from_std(period.into()).unwrap()
+        };
+        let idle = http.in_flight == 0
+            && quiet_for(http.last_finished_at, self.config.quiet_period.http)
+            && executions_quiet_since
+                .is_some_and(|since| quiet_for(since, self.config.quiet_period.executions));
         if !idle || resumed || self.generation != http.generation {
             self.period = None;
         }
@@ -163,7 +177,6 @@ pub(crate) async fn middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::deployment::DurationConfig;
     use concepts::storage::DbPoolCloseable;
 
     #[tokio::test]
@@ -283,6 +296,45 @@ mod tests {
     }
 
     #[test]
+    fn idle_execution_quiet_period_starts_at_first_quiet_check() {
+        let now = Utc::now();
+        let instant = Instant::now();
+        let http = Snapshot {
+            in_flight: 0,
+            last_finished_at: now - Duration::from_secs(60),
+            generation: 0,
+        };
+        let config = IdleReportConfig {
+            quiet_period: crate::config::server::IdleQuietPeriodConfig {
+                http: DurationConfig::Seconds(0),
+                executions: DurationConfig::Seconds(60),
+            },
+            ..Default::default()
+        };
+        let mut detector = Detector::new(config, now, instant);
+        let mut check = |seconds, db| {
+            let elapsed = Duration::from_secs(seconds);
+            detector.check(now + elapsed, instant + elapsed, http, db)
+        };
+        let busy = IdleState {
+            busy: true,
+            next_run_at: None,
+        };
+        assert!(!check(0, busy));
+        assert!(!check(30, IdleState::default()));
+        assert!(!check(89, IdleState::default()));
+        assert!(check(90, IdleState::default()));
+        // An execution due within the horizon counts as execution activity.
+        let due = IdleState {
+            busy: false,
+            next_run_at: Some(now + Duration::from_secs(120)),
+        };
+        assert!(!check(100, due));
+        assert!(!check(130, IdleState::default()));
+        assert!(check(190, IdleState::default()));
+    }
+
+    #[test]
     fn idle_resume_skips_one_check() {
         let now = Utc::now();
         let instant = Instant::now();
@@ -344,7 +396,10 @@ mod tests {
         let config = IdleReportConfig {
             url: Some(sink.uri()),
             check_interval: DurationConfig::Milliseconds(20),
-            quiet_period: DurationConfig::Milliseconds(0),
+            quiet_period: crate::config::server::IdleQuietPeriodConfig {
+                http: DurationConfig::Milliseconds(0),
+                executions: DurationConfig::Milliseconds(0),
+            },
             ..Default::default()
         };
         let task = tokio::spawn(run(config, db.clone(), http.clone()));
