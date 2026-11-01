@@ -1,10 +1,10 @@
 use crate::config::server::IdleReportConfig;
 use chrono::{DateTime, Utc};
+use concepts::prefixed_ulid::IdlePeriodId;
 use concepts::storage::{DbPool, SystemEventCode};
 use db_sqlite::sqlite_dao::{IdleState, SqlitePool};
 use std::time::Duration;
 use tokio::time::Instant;
-use ulid::Ulid;
 use utils::http_activity::{HttpActivity, Snapshot};
 
 struct Detector {
@@ -13,9 +13,9 @@ struct Detector {
     generation: u64,
     /// Identity of the current idle period, assigned when its event is recorded. Every report
     /// carries it, so the receiver can discard reports of a period it already suspended.
-    period: Option<Ulid>,
+    period: Option<IdlePeriodId>,
     /// Wall time skipped by the last detected resume and the period it ended, until recorded.
-    resumed: Option<(chrono::TimeDelta, Option<Ulid>)>,
+    resumed: Option<(chrono::TimeDelta, Option<IdlePeriodId>)>,
 }
 
 impl Detector {
@@ -87,11 +87,11 @@ pub(crate) async fn run(config: IdleReportConfig, db: SqlitePool, http: HttpActi
                 if idle && activity.generation == generation {
                     let (period, new_period) = match detector.period {
                         Some(period) => (period, false),
-                        None => (Ulid::generate(), true),
+                        None => (IdlePeriodId::generate(), true),
                     };
                     detector.period = Some(period);
                     let report = serde_json::json!({
-                        "period_id": period.to_string(),
+                        "period_id": period,
                         "next_run_at": state.next_run_at,
                     });
                     if new_period {
@@ -142,7 +142,7 @@ async fn record_resume(db: &SqlitePool, detector: &mut Detector) {
             None,
             serde_json::json!({
                 "suspended_ms": gap.num_milliseconds(),
-                "period_id": period.map(|period| period.to_string()),
+                "period_id": period,
             }),
         )
         .await;
@@ -266,7 +266,7 @@ mod tests {
             }
         ));
         // Reports repeat within one period until the Machine is suspended.
-        let period = Ulid::generate();
+        let period = IdlePeriodId::generate();
         detector.period = Some(period);
         assert!(detector.check(now, instant, http, IdleState::default()));
         assert_eq!(detector.period, Some(period));
@@ -292,7 +292,7 @@ mod tests {
             generation: 0,
         };
         let mut detector = Detector::new(IdleReportConfig::default(), now, instant);
-        let period = Ulid::generate();
+        let period = IdlePeriodId::generate();
         detector.period = Some(period);
         // A gap within the threshold is not a resume.
         assert!(detector.check(

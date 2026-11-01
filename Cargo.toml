@@ -86,7 +86,6 @@ tower.workspace = true
 tracing-appender.workspace = true
 tracing-error.workspace = true
 tracing-subscriber.workspace = true
-ulid.workspace = true
 tracing.workspace = true
 utoipa-axum.workspace = true
 utoipa.workspace = true

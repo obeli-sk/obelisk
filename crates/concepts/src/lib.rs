@@ -989,6 +989,7 @@ pub mod prefixed_ulid {
         pub struct Dep;
         pub struct Sysevt;
         pub struct NodeRun;
+        pub struct IdlePeriod;
     }
 
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
@@ -998,6 +999,7 @@ pub mod prefixed_ulid {
     pub type DeploymentId = PrefixedUlid<prefix::Dep>;
     pub type SystemEventId = PrefixedUlid<prefix::Sysevt>;
     pub type NodeRunId = PrefixedUlid<prefix::NodeRun>;
+    pub type IdlePeriodId = PrefixedUlid<prefix::IdlePeriod>;
 
     #[cfg(any(test, feature = "test"))]
     pub const DEPLOYMENT_ID_DUMMY: DeploymentId = DeploymentId::from_parts(0, 0);
