@@ -343,6 +343,13 @@
     "ApiConfig": {
       "type": "object",
       "properties": {
+        "max_stream_duration": {
+          "description": "Maximum wall time of an API follow/SSE response, measured from its response headers.",
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "minutes": 10
+          }
+        },
         "enabled": {
           "type": "boolean",
           "default": true
@@ -369,6 +376,66 @@
         }
       },
       "additionalProperties": false
+    },
+    "DurationConfig": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "milliseconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "milliseconds"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "seconds"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "minutes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "minutes"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hours": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "hours"
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "OidcProviderConfig": {
       "description": "An OIDC issuer whose signed ID tokens (JWTs) must match audience and claim constraints.",
@@ -439,66 +506,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "DurationConfig": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "milliseconds": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "milliseconds"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "seconds": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "seconds"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "minutes": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "minutes"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "hours": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "hours"
-          ],
-          "additionalProperties": false
-        }
-      ]
     },
     "DatabaseConfigToml": {
       "oneOf": [
@@ -923,6 +930,13 @@
           "description": "Persist a webhook execution once it sends an outbound HTTP request, keeping its HTTP\nclient traces. Costs a database write per such request. Executions that schedule or call\nother executions, or store logs, are persisted regardless.",
           "type": "boolean",
           "default": false
+        },
+        "max_stream_duration": {
+          "description": "Maximum wall time of a streaming response, measured from its response headers.",
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "minutes": 10
+          }
         }
       },
       "additionalProperties": false

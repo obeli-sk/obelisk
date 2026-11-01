@@ -615,6 +615,7 @@ pub struct WebhookServerState {
     pub fn_registry: Arc<dyn FunctionRegistry>,
     pub max_persisted_value_size_bytes: u64,
     pub request_timeout: Duration,
+    pub max_stream_duration: Duration,
     pub persist_on_outbound_http: bool,
 }
 
@@ -689,6 +690,7 @@ pub async fn server(
                                         server_termination_watcher: server_termination_watcher.clone(),
                                         log_forwarder_sender: log_forwarder_sender.clone(),
                                         request_timeout: state.request_timeout,
+                                        max_stream_duration: state.max_stream_duration,
                                         persist_on_outbound_http: state.persist_on_outbound_http,
                                     };
                                     let cell = webhooks_wasm_cell.clone();
@@ -2462,6 +2464,7 @@ struct RequestHandler {
     server_termination_watcher: watch::Receiver<()>,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     request_timeout: Duration,
+    max_stream_duration: Duration,
     persist_on_outbound_http: bool,
 }
 
@@ -2510,15 +2513,33 @@ impl RequestHandler {
         req: hyper::Request<hyper::body::Incoming>,
         wasm_cell: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<hyper::Response<HyperOutgoingBody>, hyper::Error> {
+        use hyper::body::Body as _;
+        let max_stream_duration = self.max_stream_duration;
+        let (stream_expired_sender, stream_expired) = watch::channel(());
         let deadline = tokio::time::Instant::now() + self.request_timeout;
         let res = tokio::time::timeout_at(
             deadline,
-            self.handle_request_inner(req, wasm_cell, Span::current(), deadline),
+            self.handle_request_inner(req, wasm_cell, Span::current(), deadline, stream_expired),
         )
         .await
         .unwrap_or(Err(HandleRequestError::Timeout));
         match res {
-            Ok(body) => Ok(body),
+            Ok(mut response) => {
+                if response.body().size_hint().exact().is_none() {
+                    // A truncated Content-Length would turn the clean end into a protocol error.
+                    response.headers_mut().remove(hyper::header::CONTENT_LENGTH);
+                    Ok(response.map(|body| {
+                        UnsyncBoxBody::new(utils::http_stream::LimitedBody::new(
+                            body,
+                            max_stream_duration,
+                            Box::new(concepts::time::Now),
+                            Some(stream_expired_sender),
+                        ))
+                    }))
+                } else {
+                    Ok(response)
+                }
+            }
             Err(err) => {
                 debug!("{err:?}");
                 Ok(match err {
@@ -2559,6 +2580,7 @@ impl RequestHandler {
         wasm_cell: Option<Arc<tokio::sync::Semaphore>>,
         request_span: Span,
         request_deadline: tokio::time::Instant,
+        mut stream_expired: watch::Receiver<()>,
     ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
         if let Some(instance_match) = self.router.find(req.method(), req.uri()) {
             let found_instance = instance_match.handler();
@@ -2649,6 +2671,7 @@ impl RequestHandler {
                     v8_admission.expect("admitted above for a native V8 endpoint"),
                     found_instance.v8_executor.clone(),
                     request_deadline,
+                    stream_expired,
                 )
                 .await;
             }
@@ -2691,10 +2714,16 @@ impl RequestHandler {
                                     status,
                                 })
                             };
+                            let call = proxy
+                                .wasi_http_incoming_handler()
+                                .call_handle(&mut store, req, out);
                             let (result, http_response) = run_forwarding_response(
-                                proxy
-                                    .wasi_http_incoming_handler()
-                                    .call_handle(&mut store, req, out),
+                                async {
+                                    tokio::select! {
+                                        result = call => result,
+                                        Ok(()) = stream_expired.changed() => Ok(()),
+                                    }
+                                },
                                 forward,
                             )
                             .await;
@@ -2739,46 +2768,47 @@ impl RequestHandler {
                             let _wasm_guard = wasm_guard;
                             let clock_fn = store.data().clock_fn.clone_box();
                             let mut http_response = None;
-                            let result = store
-                                .run_concurrent(async |accessor| {
-                                    let response = async {
-                                        let response =
-                                            proxy.handle(accessor, req).await?.map_err(|err| {
-                                                wasmtime::format_err!(
-                                                    "WASIp3 HTTP handler failed: {err:?}"
-                                                )
-                                            })?;
-                                        let response = accessor.with(|store| {
-                                            response.into_http(store, async { Ok(()) })
+                            let run = store.run_concurrent(async |accessor| {
+                                let response = async {
+                                    let response =
+                                        proxy.handle(accessor, req).await?.map_err(|err| {
+                                            wasmtime::format_err!(
+                                                "WASIp3 HTTP handler failed: {err:?}"
+                                            )
                                         })?;
-                                        http_response = Some(ResponseTrace {
-                                            finished_at: clock_fn.now(),
-                                            status: Ok(response.status().as_u16()),
-                                        });
-                                        let (body_done_sender, body_done) =
-                                            tokio::sync::oneshot::channel::<()>();
-                                        let response = response.map(|body| {
-                                            UnsyncBoxBody::new(NotifyOnDropBody {
-                                                body,
-                                                _done: body_done_sender,
-                                            })
-                                        });
-                                        // A dropped receiver drops the body, which ends the wait below.
-                                        let _ = sender.send(response);
-                                        // Keep the event loop alive until hyper drops the body.
-                                        let _ = body_done.await;
-                                        wasmtime::Result::Ok(())
-                                    };
-                                    let ((), ()) = futures_util::try_join!(response, async {
-                                        request_io.await.map_err(wasmtime::Error::from)
+                                    let response = accessor.with(|store| {
+                                        response.into_http(store, async { Ok(()) })
                                     })?;
+                                    http_response = Some(ResponseTrace {
+                                        finished_at: clock_fn.now(),
+                                        status: Ok(response.status().as_u16()),
+                                    });
+                                    let (body_done_sender, body_done) =
+                                        tokio::sync::oneshot::channel::<()>();
+                                    let response = response.map(|body| {
+                                        UnsyncBoxBody::new(NotifyOnDropBody {
+                                            body,
+                                            _done: body_done_sender,
+                                        })
+                                    });
+                                    // A dropped receiver drops the body, which ends the wait below.
+                                    let _ = sender.send(response);
+                                    // Keep the event loop alive until hyper drops the body.
+                                    let _ = body_done.await;
                                     wasmtime::Result::Ok(())
-                                })
-                                .await
-                                .flatten()
-                                .inspect_err(|err| {
-                                    debug!("Webhook instance finished with error: {err:?}");
-                                });
+                                };
+                                let ((), ()) = futures_util::try_join!(response, async {
+                                    request_io.await.map_err(wasmtime::Error::from)
+                                })?;
+                                wasmtime::Result::Ok(())
+                            });
+                            let result = tokio::select! {
+                                result = run => result.flatten(),
+                                Ok(()) = stream_expired.changed() => Ok(()),
+                            }
+                            .inspect_err(|err| {
+                                debug!("Webhook instance finished with error: {err:?}");
+                            });
                             let ctx = store.into_data();
                             ctx.close(result, assigned_fuel, http_response).await
                         }
@@ -2802,6 +2832,7 @@ impl RequestHandler {
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn handle_native_v8_request(
     req: hyper::Request<hyper::body::Incoming>,
     mut ctx: WebhookEndpointCtx,
@@ -2810,6 +2841,7 @@ async fn handle_native_v8_request(
     admission: crate::v8_executor::V8Admission,
     v8_executor: crate::v8_executor::V8Executor,
     request_deadline: tokio::time::Instant,
+    mut stream_expired: watch::Receiver<()>,
 ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
     use crate::webhook::native_v8_webhook_runtime::{
         NativeRequest, NativeWebhookFailure, execute, into_hyper_response,
@@ -2866,6 +2898,7 @@ async fn handle_native_v8_request(
     let max_heap_size = v8_executor.max_heap_size(crate::v8_executor::V8Workload::Webhook);
     let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
     let (stream_tx, mut stream_rx) = tokio::sync::oneshot::channel();
+    let execution_stream_expired = stream_expired.clone();
     let mut task = tokio::spawn(async move {
         admission
             .run(move || async move {
@@ -2880,6 +2913,7 @@ async fn handle_native_v8_request(
                     stream_tx,
                     max_heap_size,
                     request_deadline,
+                    execution_stream_expired,
                 )
                 .await;
                 (result, ctx)
@@ -2927,6 +2961,7 @@ async fn handle_native_v8_request(
                     }
                     let end = tokio::select! {
                         result = &mut task => StreamEnd::Complete(result),
+                        Ok(()) = stream_expired.changed() => StreamEnd::ClientGone,
                         _ = connection_drop_watcher.changed() => StreamEnd::ClientGone,
                         _ = server_termination_watcher.changed() => StreamEnd::Shutdown,
                     };
@@ -3190,8 +3225,11 @@ pub(crate) mod tests {
         assert_wasip3_webhook_links_as_http_service(wasm_file.path().to_str().unwrap()).await;
     }
 
+    #[rstest::rstest]
+    #[case::complete(false)]
+    #[case::limited(true)]
     #[tokio::test]
-    async fn wasip3_webhook_streams_response_body() {
+    async fn wasip3_webhook_streams_response_body(#[case] limited: bool) {
         use crate::http_hooks::ConfigSectionHint;
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
@@ -3273,6 +3311,11 @@ pub(crate) mod tests {
             fn_registry,
             max_persisted_value_size_bytes: 1024,
             request_timeout: Duration::from_secs(30),
+            max_stream_duration: if limited {
+                Duration::from_millis(500)
+            } else {
+                Duration::from_secs(600)
+            },
             persist_on_outbound_http: false,
         }));
         let (log_sender, _log_receiver) = mpsc::channel(1);
@@ -3302,11 +3345,13 @@ pub(crate) mod tests {
         // The request body is still open, so a buffering server cannot answer yet.
         read_until(&mut stream, &mut received, "first-chunk").await;
         assert!(String::from_utf8_lossy(&received).starts_with("HTTP/1.1 200"));
-        stream
-            .write_all(b"c\r\nsecond-chunk\r\n0\r\n\r\n")
-            .await
-            .unwrap();
-        read_until(&mut stream, &mut received, "second-chunk").await;
+        if !limited {
+            stream
+                .write_all(b"c\r\nsecond-chunk\r\n0\r\n\r\n")
+                .await
+                .unwrap();
+            read_until(&mut stream, &mut received, "second-chunk").await;
+        }
         read_until(&mut stream, &mut received, "\r\n0\r\n\r\n").await;
 
         server.abort();
@@ -3473,6 +3518,7 @@ pub(crate) mod tests {
                     fn_registry,
                     max_persisted_value_size_bytes: MAX_PERSISTED_VALUE_SIZE_BYTES,
                     request_timeout: std::time::Duration::from_secs(30),
+                    max_stream_duration: std::time::Duration::from_secs(600),
                     persist_on_outbound_http: false,
                 });
                 let (wh_server_state_sender, wh_server_state_watcher) =
@@ -3610,6 +3656,7 @@ pub(crate) mod tests {
                     fn_registry: previous.fn_registry.clone(),
                     max_persisted_value_size_bytes: previous.max_persisted_value_size_bytes,
                     request_timeout: previous.request_timeout,
+                    max_stream_duration: previous.max_stream_duration,
                     persist_on_outbound_http: previous.persist_on_outbound_http,
                 }));
             assert_eq!(
@@ -4000,6 +4047,7 @@ pub(crate) mod tests {
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
                     request_timeout: std::time::Duration::from_secs(30),
+                    max_stream_duration: std::time::Duration::from_secs(600),
                     persist_on_outbound_http: false,
                 }));
             let mut set = tokio::task::JoinSet::new();
@@ -4194,6 +4242,7 @@ pub(crate) mod tests {
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
                     request_timeout: std::time::Duration::from_secs(30),
+                    max_stream_duration: std::time::Duration::from_secs(600),
                     persist_on_outbound_http: false,
                 }));
             let mut set = tokio::task::JoinSet::new();
@@ -4254,8 +4303,24 @@ pub(crate) mod tests {
 
         struct WatchGuard {
             server_termination_sender: watch::Sender<()>,
-            #[expect(dead_code)]
             wh_server_state_sender: watch::Sender<Arc<WebhookServerState>>,
+        }
+
+        impl WatchGuard {
+            fn set_stream_limit(&self, max_stream_duration: std::time::Duration) {
+                let previous = self.wh_server_state_sender.borrow().clone();
+                self.wh_server_state_sender
+                    .send_replace(Arc::new(WebhookServerState {
+                        deployment_id: previous.deployment_id,
+                        policy_event_id: previous.policy_event_id,
+                        router: previous.router.clone(),
+                        fn_registry: previous.fn_registry.clone(),
+                        max_persisted_value_size_bytes: previous.max_persisted_value_size_bytes,
+                        request_timeout: previous.request_timeout,
+                        max_stream_duration,
+                        persist_on_outbound_http: previous.persist_on_outbound_http,
+                    }));
+            }
         }
 
         fn version_obelisk_test_imports(source: &str) -> String {
@@ -4367,6 +4432,7 @@ pub(crate) mod tests {
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
                     request_timeout: std::time::Duration::from_secs(30),
+                    max_stream_duration: std::time::Duration::from_secs(600),
                     persist_on_outbound_http: false,
                 }));
             let mut set = tokio::task::JoinSet::new();
@@ -4710,6 +4776,7 @@ pub(crate) mod tests {
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
                     request_timeout: std::time::Duration::from_secs(30),
+                    max_stream_duration: std::time::Duration::from_secs(600),
                     persist_on_outbound_http,
                 }));
             let mut set = tokio::task::JoinSet::new();
@@ -5230,6 +5297,120 @@ pub(crate) mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(&chunk[..], b"data: first\n\n");
+        }
+
+        #[rstest::rstest]
+        #[case::boa_silent(WebhookJsRuntime::BoaWasm, false)]
+        #[case::boa_active(WebhookJsRuntime::BoaWasm, true)]
+        #[case::v8_silent(WebhookJsRuntime::V8, false)]
+        #[case::v8_active(WebhookJsRuntime::V8, true)]
+        #[tokio::test]
+        async fn webhook_stream_limit_ends_cleanly_and_finishes_execution(
+            #[case] runtime: WebhookJsRuntime,
+            #[case] active: bool,
+        ) {
+            use crate::v8_executor::{V8Cell, V8Executor, V8ExecutorConfig, V8Workload};
+            use concepts::storage::DbPoolCloseable as _;
+            use std::time::Duration;
+
+            test_utils::set_up();
+            let source = format!(
+                r"
+                import {{ executionIdCurrent }} from 'obelisk:webhook@1.0.0';
+                export default function handle(request) {{
+                    if (request.url.endsWith('/finite')) return new Response('buffered', {{ headers: {{ 'content-length': '8' }} }});
+                    console.info('streaming');
+                    const stream = new ReadableStream({{
+                        async start(controller) {{
+                            controller.enqueue('first\n');
+                            while (true) {{
+                                await new Promise(resolve => setTimeout(resolve, {}));
+                                controller.enqueue('ping\n');
+                            }}
+                        }},
+                    }});
+                    return new Response(stream, {{ headers: {{ 'x-execution-id': executionIdCurrent(), 'content-length': '9999999' }} }});
+                }}
+            ",
+                if active { 20 } else { 60000 }
+            );
+            let executor = V8Executor::new(V8ExecutorConfig {
+                webhooks: V8Cell::standalone(1, 32 * 1024 * 1024),
+                ..V8ExecutorConfig::default()
+            });
+            let (mut server, addr, guard, db_pool, db_guard, db_close) =
+                start_js_webhook_server_with_http_and_db(
+                    &source,
+                    "http://127.0.0.1:1",
+                    None,
+                    runtime,
+                    Some(concepts::storage::LogLevel::Info),
+                    Some(executor.clone()),
+                    false,
+                )
+                .await;
+            guard.set_stream_limit(Duration::from_millis(500));
+            let client = reqwest::Client::new();
+            let mut response = client.get(format!("http://{addr}/")).send().await.unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::OK);
+            assert!(!response.headers().contains_key("content-length"));
+            let execution_id: concepts::ExecutionId = response.headers()["x-execution-id"]
+                .to_str()
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert_eq!(response.chunk().await.unwrap().unwrap(), "first\n");
+            let rest = tokio::time::timeout(Duration::from_secs(5), response.bytes())
+                .await
+                .unwrap()
+                .expect("expiry must be a clean end of stream");
+            assert_eq!(!rest.is_empty(), active);
+            if runtime == WebhookJsRuntime::V8 {
+                drop(
+                    tokio::time::timeout(
+                        Duration::from_secs(5),
+                        executor.admit(V8Workload::Webhook),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                );
+            }
+            let conn = db_pool.connection().await.unwrap();
+            let finished = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let Some(result) = conn
+                        .get(&execution_id)
+                        .await
+                        .ok()
+                        .and_then(|log| log.as_finished_result())
+                    {
+                        break result;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("expired handler must finish even when it was silent");
+            assert_matches::assert_matches!(
+                finished,
+                concepts::SupportedFunctionReturnValue::Ok(_)
+            );
+            let finite = client
+                .get(format!("http://{addr}/finite"))
+                .send()
+                .await
+                .unwrap();
+            if runtime == WebhookJsRuntime::V8 {
+                assert_eq!(finite.headers()["content-length"], "8");
+            }
+            assert_eq!(finite.text().await.unwrap(), "buffered");
+            drop(conn);
+            guard.server_termination_sender.send(()).unwrap();
+            server.join_next().await.unwrap().unwrap().unwrap();
+            drop(db_pool);
+            drop(db_guard);
+            db_close.close().await;
         }
 
         /// Boa notices the client leaving on its next write, so the stream keeps writing.
@@ -6015,6 +6196,7 @@ pub(crate) mod tests {
                         fn_registry,
                         max_persisted_value_size_bytes: u64::MAX,
                         request_timeout: std::time::Duration::from_secs(30),
+                        max_stream_duration: std::time::Duration::from_secs(600),
                         persist_on_outbound_http: false,
                     }));
                 let mut server_set = tokio::task::JoinSet::new();

@@ -459,10 +459,11 @@ async fn get_execution_status_rest(
     json: bool,
     emit: bool,
 ) -> anyhow::Result<()> {
-    let client = client_startup.web_api_client()?;
     if follow {
         let mut last_event_id: Option<String> = None;
         loop {
+            // A fresh connection can wake a server suspended after the preceding stream ended.
+            let client = client_startup.web_api_client()?;
             let mut request = client
                 .get(format!("{api_url}/v1/executions/{execution_id}/status"))
                 .query(&[("follow", "true")])
@@ -525,6 +526,7 @@ async fn get_execution_status_rest(
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
+    let client = client_startup.web_api_client()?;
     let reconnect = !no_reconnect;
     let mut last_status = None;
 

@@ -5,6 +5,8 @@
 ## To disable any of them, set `enabled = false`. To change the address, override `listening_addr`.
 # api.enabled = true                             # Disable the API server (enabled by default).
 # api.listening_addr = "127.0.0.1:5005"          # Address and port on which the API server will listen.
+## Follow/SSE responses end cleanly after this wall-clock duration, including silent streams.
+# api.max_stream_duration.minutes = 10
 # webui.enabled = true                           # Disable the webui (enabled by default).
 # webui.listening_addr = "127.0.0.1:8080"        # Address and port on which the webui will listen.
 ## Public browser URL used by the app's internal webui-url source; defaults to the local listener URL.
@@ -126,6 +128,8 @@
 ## return its HTTP response. It does not limit a streaming response body after the response
 ## has been returned.
 # request_timeout.seconds = 30
+## Streaming responses end cleanly after this wall-clock duration, including silent streams.
+# max_stream_duration.minutes = 10
 ## Persist a webhook execution once it sends an outbound HTTP request, keeping its HTTP client
 ## traces. Costs a database write per such request. Executions that schedule or call other
 ## executions, or store logs, are persisted regardless.
