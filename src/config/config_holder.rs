@@ -190,7 +190,15 @@ impl ConfigHolder {
         Ok(self)
     }
 
+    #[cfg(test)]
     pub(crate) fn load_app_config(&self) -> anyhow::Result<AppConfigToml> {
+        self.load_app_config_with_text().map(|(app, _)| app)
+    }
+
+    /// Also returns the file contents verbatim, `None` without an app config file.
+    pub(crate) fn load_app_config_with_text(
+        &self,
+    ) -> anyhow::Result<(AppConfigToml, Option<String>)> {
         match &self.app_source {
             Some(path) => {
                 let contents = std::fs::read_to_string(path)
@@ -198,9 +206,9 @@ impl ConfigHolder {
                 let app: AppConfigToml = toml::from_str(&contents)
                     .with_context(|| format!("cannot parse app config {path:?}"))?;
                 app.validate_cloud_integrations()?;
-                Ok(app)
+                Ok((app, Some(contents)))
             }
-            None => Ok(AppConfigToml::default()),
+            None => Ok((AppConfigToml::default(), None)),
         }
     }
 

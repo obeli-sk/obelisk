@@ -18,7 +18,7 @@ use crate::command::server::{
 use crate::config::secret_registry::{API_TOKEN, EnvVarSecretsCleanup};
 use anyhow::ensure;
 use args::{
-    AdminArgs, Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs,
+    AdminArgs, AppArgs, Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs,
     ExecutionArgs, Server, Subcommand, VerifyArgs,
 };
 use clap::Parser;
@@ -217,6 +217,12 @@ fn command_future(
             })))
         }
 
+        Subcommand::App(AppArgs { command, token }) => {
+            Box::pin(command.run(client_override.unwrap_or_else(|| {
+                ClientStartup::new(token.api_url, token.api_token, token.verbose)
+            })))
+        }
+
         Subcommand::Admin(AdminArgs { command, token }) => {
             Box::pin(command.run(client_override.unwrap_or_else(|| {
                 ClientStartup::new(token.api_url, token.api_token, token.verbose)
@@ -302,10 +308,13 @@ fn prepare_server_startup_with_exec_policy(
     let mut config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?
         .with_app_source(config::app::resolve_app_config(app_config)?)?;
     let mut config = config_holder.load_config()?;
-    let mut app = config_holder.load_app_config()?;
+    let (mut app, app_toml) = config_holder.load_app_config_with_text()?;
     config_holder.path_prefixes.app_name = app.effective_name()?;
     app.app_name = Some(config_holder.path_prefixes.app_name.clone());
-    config.app_toml = toml::to_string(&app)?;
+    config.app_toml = match app_toml {
+        Some(app_toml) => app_toml,
+        None => toml::to_string(&app)?,
+    };
     let app_policy = app.policy();
     let app_config_digest = app_policy.digest();
     info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");

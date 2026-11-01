@@ -60,6 +60,36 @@
         }
       }
     },
+    "/v1/app-toml": {
+      "get": {
+        "tags": [
+          "app policy"
+        ],
+        "operationId": "app_toml",
+        "responses": {
+          "200": {
+            "content": {
+              "application/toml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "App config the server started with, verbatim"
+          },
+          "406": {
+            "description": "Accept must allow application/toml",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/deployments/{deployment_id}/switch": {
       "put": {
         "tags": [

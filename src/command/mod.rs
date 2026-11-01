@@ -1,4 +1,5 @@
 pub(crate) mod admin;
+pub(crate) mod app;
 pub(crate) mod cloud;
 pub(crate) mod component;
 pub(crate) mod deployment;
