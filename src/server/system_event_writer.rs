@@ -1,10 +1,10 @@
 use concepts::{
     ContentDigest, ExecutionId,
     prefixed_ulid::{DeploymentId, SystemEventId},
-    storage::{DbPool, SystemEvent, SystemEventCode},
+    storage::{DbPool, SystemEvent, SystemEventCode, SystemEventLevel},
 };
 use serde_json::Value;
-use tracing::warn;
+use tracing::{Level, warn};
 
 pub(crate) async fn record(
     db_pool: &dyn DbPool,
@@ -30,6 +30,7 @@ pub(crate) async fn record_retryable(
             return None;
         }
     };
+    log_event(&event);
     let event_id = event.event_id;
     let result = async { db_pool.admin_conn().await?.append_system_event(event).await }.await;
     if let Err(err) = result {
@@ -56,6 +57,7 @@ pub(crate) async fn record_with_cas(
             return None;
         }
     };
+    log_event(&event);
     let event_id = event.event_id;
     let result = async {
         db_pool
@@ -70,6 +72,28 @@ pub(crate) async fn record_with_cas(
         None
     } else {
         Some(event_id)
+    }
+}
+
+fn log_event(event: &SystemEvent) {
+    macro_rules! emit {
+        ($level:expr) => {
+            tracing::event!(
+                $level,
+                event_id = %event.event_id,
+                code = event.code,
+                execution_id = event.execution_id.as_ref().map(display),
+                deployment_id = event.deployment_id.as_ref().map(display),
+                details = %event.details,
+                "System event"
+            )
+        };
+    }
+    match event.level {
+        SystemEventLevel::Debug => emit!(Level::DEBUG),
+        SystemEventLevel::Info => emit!(Level::INFO),
+        SystemEventLevel::Warning => emit!(Level::WARN),
+        SystemEventLevel::Error => emit!(Level::ERROR),
     }
 }
 
