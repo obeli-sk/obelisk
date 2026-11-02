@@ -747,6 +747,27 @@
                   ]
                 },
                 {
+                  "name": "source",
+                  "about": "List the source files registered for a component, or print one of them",
+                  "options": [
+                    {
+                      "name": "--json",
+                      "help": "Output as JSON instead of human-readable text"
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "name": "digest",
+                      "help": "Component digest, as shown by `component list`",
+                      "required": true
+                    },
+                    {
+                      "name": "file",
+                      "help": "Source file to print. Suffix keys like `.../src/lib.rs` match any path ending with them"
+                    }
+                  ]
+                },
+                {
                   "name": "push",
                   "about": "Push a WASM component to an OCI registry with deployment metadata",
                   "options": [
@@ -1925,6 +1946,27 @@
               "name": "--extensions",
               "short": "e",
               "help": "Show auto-generated export extensions"
+            }
+          ]
+        },
+        {
+          "name": "source",
+          "about": "List the source files registered for a component, or print one of them",
+          "options": [
+            {
+              "name": "--json",
+              "help": "Output as JSON instead of human-readable text"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "digest",
+              "help": "Component digest, as shown by `component list`",
+              "required": true
+            },
+            {
+              "name": "file",
+              "help": "Source file to print. Suffix keys like `.../src/lib.rs` match any path ending with them"
             }
           ]
         },

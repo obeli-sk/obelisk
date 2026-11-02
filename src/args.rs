@@ -860,6 +860,16 @@ pub(crate) enum Component {
         #[arg(short, long)]
         extensions: bool,
     },
+    /// List the source files registered for a component, or print one of them.
+    Source {
+        /// Component digest, as shown by `component list`.
+        digest: String,
+        /// Source file to print. Suffix keys like `.../src/lib.rs` match any path ending with them.
+        file: Option<String>,
+        /// Output as JSON instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Push a WASM component to an OCI registry with deployment metadata.
     Push {
         /// Component name in the input deployment TOML

@@ -2,7 +2,7 @@ use super::output::print_json;
 use crate::FunctionMetadataVerbosity;
 use crate::args;
 use crate::args::TomlComponentType;
-use crate::client::{ClientStartup, send_json};
+use crate::client::{ClientStartup, send_bytes, send_json};
 use crate::config::config_holder::{ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML};
 use crate::config::deployment::ComponentLocationToml;
 use crate::config::deployment::ConfigName;
@@ -21,6 +21,7 @@ use anyhow::Context;
 use anyhow::bail;
 use directories::BaseDirs;
 use http::header::ACCEPT;
+use rest_types::backtrace::ComponentSourceSer;
 use rest_types::components::{ComponentConfig, FunctionMetadataLite};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -53,6 +54,9 @@ impl args::Component {
                     json,
                 )
                 .await
+            }
+            args::Component::Source { digest, file, json } => {
+                component_source(&client_startup, api_url, &digest, file, json).await
             }
             args::Component::Push {
                 component_name,
@@ -788,6 +792,49 @@ pub(crate) async fn list_components(
             print_fn_details(component.imports.unwrap_or_default());
         }
         eprintln!();
+    }
+    Ok(())
+}
+
+async fn component_source(
+    client_startup: &ClientStartup,
+    api_url: &str,
+    digest: &str,
+    file: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = client_startup.web_api_client()?;
+    if let Some(file) = file {
+        let accept = if json {
+            "application/json"
+        } else {
+            "text/plain"
+        };
+        let bytes = send_bytes(
+            client
+                .get(format!("{api_url}/v1/components/{digest}/source"))
+                .header(ACCEPT, accept)
+                .query(&[("file", &file)]),
+        )
+        .await
+        .with_context(|| format!("cannot fetch source `{file}` of component {digest}"))?;
+        print!("{}", String::from_utf8_lossy(&bytes));
+        return Ok(());
+    }
+    let sources: Vec<ComponentSourceSer> = send_json(
+        client
+            .get(format!("{api_url}/v1/components/{digest}/sources"))
+            .header(ACCEPT, "application/json"),
+    )
+    .await?;
+    if json {
+        return print_json(&sources);
+    }
+    if sources.is_empty() {
+        eprintln!("No sources registered for component {digest}");
+    }
+    for source in sources {
+        println!("{}", source.file);
     }
     Ok(())
 }
