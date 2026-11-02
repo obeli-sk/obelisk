@@ -2315,6 +2315,7 @@ pub(crate) async fn run_internal(
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
     config.idle_report.validate(&config.database)?;
     let idle_config = config.idle_report.clone();
+    let health_listening_addr = config.health.listening_addr;
     let mut idle_db = None;
     let selected_deployment = config.startup_deployment_id;
     let api_auth = match &params.auth {
@@ -2557,6 +2558,24 @@ pub(crate) async fn run_internal(
                 crate::server::request_cancellation::until_terminated(
                     termination_watcher.clone(),
                     crate::server::idle::run(idle_config, db, http_activity.clone()),
+                ),
+            )
+            .abort_handle(),
+        ))
+    } else {
+        None
+    };
+    let _health_task = if let Some(health_listening_addr) = health_listening_addr {
+        let listener = TcpListener::bind(health_listening_addr)
+            .await
+            .with_context(|| format!("cannot bind health listener to {health_listening_addr}"))?;
+        info!("Serving health probes at http://{health_listening_addr}/health");
+        Some(AbortOnDropHandle::new(
+            utils::spawn::spawn_named(
+                "health_server",
+                crate::server::request_cancellation::until_terminated(
+                    termination_watcher.clone(),
+                    crate::server::health::serve(listener, server_init.db_pool.clone()),
                 ),
             )
             .abort_handle(),

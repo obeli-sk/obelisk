@@ -85,6 +85,8 @@ pub(crate) struct ServerConfigToml {
     #[serde(default)]
     pub(crate) idle_report: IdleReportConfig,
     #[serde(default)]
+    pub(crate) health: HealthConfig,
+    #[serde(default)]
     pub(crate) database: DatabaseConfigToml,
     #[serde(default)]
     pub(crate) webui: WebUIConfig,
@@ -113,6 +115,14 @@ pub(crate) struct ServerConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
+}
+
+/// Unauthenticated health probe listener, not counted as activity by the idle detector.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct HealthConfig {
+    /// Address serving `GET /health`; absent disables the listener.
+    pub(crate) listening_addr: Option<SocketAddr>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
