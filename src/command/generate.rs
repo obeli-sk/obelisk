@@ -34,6 +34,8 @@ use toml_edit::{DocumentMut, Item};
 use utils::{wasm_tools::WasmComponent, wit};
 use wasm_workers::registry::WitOrigin;
 
+mod app_name;
+
 macro_rules! starter_files {
     ($template:literal: $($path:literal),+ $(,)?) => {
         &[$((
@@ -225,6 +227,27 @@ impl Generate {
                 ))
                 .await?;
                 print_generated_path_statuses(&results, json)?;
+                Ok(())
+            }
+            Generate::AppName {
+                app_config,
+                print_only,
+            } => {
+                let name = app_name::random();
+                if !print_only
+                    && let Some(path) = crate::config::app::resolve_app_config(app_config)?
+                {
+                    let text = tokio::fs::read_to_string(&path)
+                        .await
+                        .with_context(|| format!("cannot read app config {}", path.display()))?;
+                    let text = crate::config::app::with_app_name(&text, &name)
+                        .with_context(|| format!("cannot parse app config {}", path.display()))?;
+                    tokio::fs::write(&path, text)
+                        .await
+                        .with_context(|| format!("cannot write app config {}", path.display()))?;
+                    eprintln!("Updated app_name in {}", path.display());
+                }
+                println!("{name}");
                 Ok(())
             }
             Generate::ExecutionId { json } => {

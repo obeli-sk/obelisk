@@ -2740,6 +2740,24 @@
           ]
         },
         {
+          "name": "app-name",
+          "about": "Generate a random app name and print it to stdout",
+          "options": [
+            {
+              "name": "--app-config",
+              "short": "a",
+              "help": "App config whose `app_name` to update, defaults to `./app.toml` if present",
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--print-only",
+              "help": "Only print the name, leaving any app config untouched"
+            }
+          ]
+        },
+        {
           "name": "execution-id",
           "about": "Generate a fresh random execution ID and print it to stdout",
           "options": [
