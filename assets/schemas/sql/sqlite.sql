@@ -113,7 +113,7 @@ CREATE TABLE t_deployment (
     deployment_toml      TEXT NOT NULL,
     obelisk_version  TEXT NOT NULL,
     created_by       TEXT
-, description TEXT, digest TEXT NOT NULL DEFAULT 'sha256:0000000000000000000000000000000000000000000000000000000000000000', inactive_at TEXT, last_active_app_config_digest TEXT, updated_at TEXT NOT NULL DEFAULT '') STRICT;
+, description TEXT, digest TEXT NOT NULL DEFAULT 'sha256:0000000000000000000000000000000000000000000000000000000000000000', last_active_app_config_digest TEXT, updated_at TEXT NOT NULL DEFAULT '') STRICT;
 CREATE INDEX idx_t_deployment_status ON t_deployment (status);
 CREATE UNIQUE INDEX idx_t_deployment_single_active ON t_deployment ((1)) WHERE status = 'active';
 CREATE UNIQUE INDEX idx_t_deployment_single_enqueued ON t_deployment ((1)) WHERE status = 'enqueued';
@@ -334,9 +334,6 @@ CREATE INDEX idx_t_execution_backtrace_backtrace_hash
     ON t_execution_backtrace (backtrace_hash);
 CREATE INDEX idx_t_deployment_component_component_digest
     ON t_deployment_component (component_digest);
-CREATE INDEX idx_t_deployment_inactive_at
-    ON t_deployment (inactive_at, deployment_id)
-    WHERE status = 'inactive';
 CREATE INDEX idx_t_state_retention_updated_at
     ON t_state (updated_at, execution_id)
     WHERE is_top_level = TRUE AND tombstoned = FALSE;
@@ -397,3 +394,6 @@ CREATE INDEX t_system_event_node_run_idx ON t_system_event (node_run_id, created
 CREATE INDEX idx_t_file_upload_uploaded_at ON t_file_upload (uploaded_at);
 CREATE INDEX idx_t_deployment_created_at ON t_deployment (created_at, deployment_id);
 CREATE INDEX idx_t_state_created_at ON t_state (created_at, execution_id);
+CREATE INDEX idx_t_deployment_retention_updated_at ON t_deployment (updated_at, deployment_id)
+    WHERE status = 'inactive';
+CREATE UNIQUE INDEX idx_t_deployment_digest ON t_deployment (digest);

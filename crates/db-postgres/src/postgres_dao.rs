@@ -443,8 +443,8 @@ async fn insert_deployment_tx(
     let digest = record.digest.to_string();
     tx.execute(
         "INSERT INTO t_deployment \
-         (deployment_id, description, digest, created_at, inactive_at, updated_at, status, deployment_toml, obelisk_version, created_by) \
-         VALUES ($1, $2, $3, $4, $4, $9, $5, $6, $7, $8)",
+         (deployment_id, description, digest, created_at, updated_at, status, deployment_toml, obelisk_version, created_by) \
+         VALUES ($1, $2, $3, $4, $9, $5, $6, $7, $8)",
         &[
             &record.deployment_id.to_string(), // $1
             &record.description,               // $2
@@ -5684,14 +5684,14 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         // Preserve an unrelated enqueued deployment.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive', inactive_at = $1, updated_at = $1 WHERE status = 'active'",
+            "UPDATE t_deployment SET status = 'inactive', updated_at = $1 WHERE status = 'active'",
             &[&now],
         )
         .await?;
         // Set target deployment to active, recording activation time.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', last_active_at = $1, updated_at = $1, last_active_app_config_digest = $3, inactive_at = NULL WHERE deployment_id = $2",
+                "UPDATE t_deployment SET status = 'active', last_active_at = $1, updated_at = $1, last_active_app_config_digest = $3 WHERE deployment_id = $2",
                 &[&now, &deployment_id.to_string(), &app_config_digest],
             )
             .await?;
@@ -5711,11 +5711,11 @@ impl DbExternalApi for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         tx.execute(
-            "UPDATE t_deployment SET status='inactive', inactive_at=$1, updated_at=$1 WHERE status='active'",
+            "UPDATE t_deployment SET status='inactive', updated_at=$1 WHERE status='active'",
             &[&now],
         )
         .await?;
-        let rows = tx.execute("UPDATE t_deployment SET status='active', last_active_at=$1, updated_at=$1, last_active_app_config_digest=$3, inactive_at=NULL WHERE deployment_id=$2", &[&now, &checkpoint.deployment_id.to_string(), &app_config_digest]).await?;
+        let rows = tx.execute("UPDATE t_deployment SET status='active', last_active_at=$1, updated_at=$1, last_active_app_config_digest=$3 WHERE deployment_id=$2", &[&now, &checkpoint.deployment_id.to_string(), &app_config_digest]).await?;
         if rows == 0 {
             return Err(DbErrorWrite::NotFound);
         }
@@ -5761,7 +5761,7 @@ impl DbExternalApi for PostgresConnection {
         }
         // Demote any previously enqueued deployment to inactive.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive', inactive_at = $1, updated_at = $1 WHERE status = 'enqueued'",
+            "UPDATE t_deployment SET status = 'inactive', updated_at = $1 WHERE status = 'enqueued'",
             &[&now],
         )
         .await?;
@@ -5773,7 +5773,7 @@ impl DbExternalApi for PostgresConnection {
         // Set target deployment to enqueued.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'enqueued', inactive_at = NULL, updated_at = $2 WHERE deployment_id = $1",
+                "UPDATE t_deployment SET status = 'enqueued', updated_at = $2 WHERE deployment_id = $1",
                 &[&deployment_id.to_string(), &now],
             )
             .await?;
@@ -5782,6 +5782,25 @@ impl DbExternalApi for PostgresConnection {
             return Err(DbErrorWrite::NotFound);
         }
         Ok(EnqueueOutcome::Enqueued)
+    }
+
+    async fn refresh_deployment(
+        &self,
+        deployment_id: DeploymentId,
+        description: Option<String>,
+        now: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        let client_guard = self.client.lock().await;
+        let rows = client_guard
+            .execute(
+                "UPDATE t_deployment SET description = $1, updated_at = $2 WHERE deployment_id = $3",
+                &[&description, &now, &deployment_id.to_string()],
+            )
+            .await?;
+        if rows == 0 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(())
     }
 
     #[instrument(skip(self))]
@@ -5806,6 +5825,27 @@ impl DbExternalApi for PostgresConnection {
         };
         tx.commit().await?;
         Ok(record)
+    }
+
+    #[instrument(skip(self))]
+    async fn get_deployment_id_by_digest(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Option<DeploymentId>, DbErrorRead> {
+        let client_guard = self.client.lock().await;
+        let row = client_guard
+            .query_opt(
+                "SELECT deployment_id FROM t_deployment WHERE digest = $1",
+                &[&digest.to_string()],
+            )
+            .await?;
+        row.map(|row| {
+            let deployment_id: String = get(&row, "deployment_id")?;
+            deployment_id.parse::<DeploymentId>().map_err(|e| {
+                DbErrorRead::Generic(consistency_db_err(format!("invalid deployment_id: {e}")))
+            })
+        })
+        .transpose()
     }
 
     #[instrument(skip(self))]
@@ -6612,13 +6652,8 @@ impl DbAdmin for PostgresConnection {
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let after_created = if cursor.is_some() {
-            "(created_at, deployment_id) > ($3, $4)"
-        } else {
-            "$3::timestamptz IS NULL AND $4::text IS NULL"
-        };
-        let after_inactive = if cursor.is_some() {
-            "(inactive_at, deployment_id) > ($3, $4)"
+        let after = if cursor.is_some() {
+            "(updated_at, deployment_id) > ($3, $4)"
         } else {
             "$3::timestamptz IS NULL AND $4::text IS NULL"
         };
@@ -6627,22 +6662,22 @@ impl DbAdmin for PostgresConnection {
                 let before_retained = if count == 0 {
                     "$1::bigint >= 0".to_owned()
                 } else {
-                    "(created_at, deployment_id) < (
-                               SELECT created_at, deployment_id FROM t_deployment
+                    "(updated_at, deployment_id) < (
+                               SELECT updated_at, deployment_id FROM t_deployment
                                WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id)
-                               ORDER BY created_at DESC, deployment_id DESC LIMIT 1 OFFSET GREATEST($1::bigint - 1, 0))".to_string()
+                               ORDER BY updated_at DESC, deployment_id DESC LIMIT 1 OFFSET GREATEST($1::bigint - 1, 0))".to_string()
                 };
                 tx.query(
-                &format!("SELECT deployment_id, created_at FROM t_deployment
+                &format!("SELECT deployment_id, updated_at FROM t_deployment
                          WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id)
                            AND ({before_retained})
-                           AND ({after_created})
-                         ORDER BY created_at, deployment_id LIMIT $2"),
+                           AND ({after})
+                         ORDER BY updated_at, deployment_id LIMIT $2"),
                 &[&i64::from(count), &(i64::from(batch_size) + 1), &cursor.map(|c| c.timestamp), &cursor.map(|c| c.deployment_id.to_string())],
             ).await?
             },
             RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
-                &format!("SELECT deployment_id, inactive_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) AND inactive_at < $1 AND ({after_inactive}) ORDER BY inactive_at ASC, deployment_id ASC LIMIT $2"),
+                &format!("SELECT deployment_id, updated_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) AND updated_at < $1 AND ({after}) ORDER BY updated_at ASC, deployment_id ASC LIMIT $2"),
                 &[&cutoff, &(i64::from(batch_size) + 1), &cursor.map(|c| c.timestamp), &cursor.map(|c| c.deployment_id.to_string())],
             ).await?,
         };

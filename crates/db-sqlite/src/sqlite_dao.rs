@@ -3935,8 +3935,8 @@ impl SqlitePool {
         );
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, description, digest, created_at, inactive_at, updated_at, status, deployment_toml, obelisk_version, created_by) \
-             VALUES (:deployment_id, :description, :digest, :created_at, :created_at, :updated_at, :status, :deployment_toml, :obelisk_version, :created_by)",
+             (deployment_id, description, digest, created_at, updated_at, status, deployment_toml, obelisk_version, created_by) \
+             VALUES (:deployment_id, :description, :digest, :created_at, :updated_at, :status, :deployment_toml, :obelisk_version, :created_by)",
             rusqlite::named_params! {
                 ":deployment_id": record.deployment_id.to_string(),
                 ":description": record.description,
@@ -4160,14 +4160,14 @@ impl SqlitePool {
     ) -> Result<(), DbErrorWrite> {
         // Preserve an unrelated enqueued deployment.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive', inactive_at = :now, updated_at = :now WHERE status = 'active'",
+            "UPDATE t_deployment SET status = 'inactive', updated_at = :now WHERE status = 'active'",
             rusqlite::named_params! { ":now": now },
         )
         .map_err(RusqliteError::from)?;
         // Set target deployment to active, recording activation time.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', last_active_at = :now, updated_at = :now, last_active_app_config_digest = :app_config_digest, inactive_at = NULL WHERE deployment_id = :deployment_id",
+                "UPDATE t_deployment SET status = 'active', last_active_at = :now, updated_at = :now, last_active_app_config_digest = :app_config_digest WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! {
                     ":now": now,
                     ":app_config_digest": app_config_digest,
@@ -4200,7 +4200,7 @@ impl SqlitePool {
         }
         // Demote any previously enqueued deployment to inactive.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive', inactive_at = :now, updated_at = :now WHERE status = 'enqueued'",
+            "UPDATE t_deployment SET status = 'inactive', updated_at = :now WHERE status = 'enqueued'",
             rusqlite::named_params! { ":now": now },
         )
         .map_err(RusqliteError::from)?;
@@ -4211,7 +4211,7 @@ impl SqlitePool {
         // Set target deployment to enqueued.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'enqueued', inactive_at = NULL, updated_at = :now WHERE deployment_id = :deployment_id",
+                "UPDATE t_deployment SET status = 'enqueued', updated_at = :now WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! {
                     ":now": now,
                     ":deployment_id": deployment_id.to_string(),
@@ -5634,6 +5634,35 @@ impl DbExternalApi for SqlitePool {
         .await
     }
 
+    async fn refresh_deployment(
+        &self,
+        deployment_id: DeploymentId,
+        description: Option<String>,
+        now: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let rows = tx
+                    .execute(
+                        "UPDATE t_deployment SET description = :description, updated_at = :now WHERE deployment_id = :deployment_id",
+                        rusqlite::named_params! {
+                            ":description": description,
+                            ":now": now,
+                            ":deployment_id": deployment_id.to_string(),
+                        },
+                    )
+                    .map_err(RusqliteError::from)?;
+                if rows == 0 {
+                    return Err(DbErrorWrite::NotFound);
+                }
+                Ok(())
+            },
+            TxType::Other,
+            "refresh_deployment",
+        )
+        .await
+    }
+
     #[instrument(skip(self))]
     async fn get_deployment(
         &self,
@@ -5643,6 +5672,28 @@ impl DbExternalApi for SqlitePool {
             move |tx| Self::get_deployment_tx(tx, deployment_id),
             TxType::Other,
             "get_deployment",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn get_deployment_id_by_digest(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Option<DeploymentId>, DbErrorRead> {
+        let digest = digest.to_string();
+        self.transaction(
+            move |tx| {
+                tx.query_row(
+                    "SELECT deployment_id FROM t_deployment WHERE digest = :digest",
+                    rusqlite::named_params! { ":digest": digest },
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| DbErrorRead::from(RusqliteError::from(e)))
+            },
+            TxType::Other,
+            "get_deployment_id_by_digest",
         )
         .await
     }
@@ -6354,24 +6405,23 @@ impl DbAdmin for SqlitePool {
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
-                let after_created = if cursor.is_some() { "(created_at, deployment_id) > (?3, ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
-                let after_inactive = if cursor.is_some() { "(inactive_at, deployment_id) > (?3, ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
+                let after = if cursor.is_some() { "(updated_at, deployment_id) > (?3, ?4)" } else { "?3 IS NULL AND ?4 IS NULL" };
                 let mut ids = match retention {
                     RetentionPolicy::Count(count) => {
                         let before_retained = if count == 0 {
                             "?1 >= 0".to_owned()
                         } else {
-                            "(created_at, deployment_id) < (
-                               SELECT created_at, deployment_id FROM t_deployment
+                            "(updated_at, deployment_id) < (
+                               SELECT updated_at, deployment_id FROM t_deployment
                                WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id)
-                               ORDER BY created_at DESC, deployment_id DESC LIMIT 1 OFFSET MAX(?1 - 1, 0))".to_string()
+                               ORDER BY updated_at DESC, deployment_id DESC LIMIT 1 OFFSET MAX(?1 - 1, 0))".to_string()
                         };
                         tx.prepare(
-                        &format!("SELECT deployment_id, created_at FROM t_deployment
+                        &format!("SELECT deployment_id, updated_at FROM t_deployment
                          WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id)
                            AND ({before_retained})
-                           AND ({after_created})
-                         ORDER BY created_at, deployment_id LIMIT ?2"),
+                           AND ({after})
+                         ORDER BY updated_at, deployment_id LIMIT ?2"),
                     )?
                     .query_map(rusqlite::params![i64::from(count), i64::from(batch_size) + 1, cursor.map(|c| c.timestamp), cursor.map(|c| c.deployment_id.to_string())], |row| {
                         Ok(DeploymentRetentionCursor { deployment_id: row.get(0)?, timestamp: row.get(1)? })
@@ -6379,7 +6429,7 @@ impl DbAdmin for SqlitePool {
                     .collect::<Result<Vec<_>, _>>()?
                     },
                     RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
-                        &format!("SELECT deployment_id, inactive_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) AND inactive_at < ?1 AND ({after_inactive}) ORDER BY inactive_at ASC, deployment_id ASC LIMIT ?2"),
+                        &format!("SELECT deployment_id, updated_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) AND updated_at < ?1 AND ({after}) ORDER BY updated_at ASC, deployment_id ASC LIMIT ?2"),
                     )?.query_map(rusqlite::params![cutoff, i64::from(batch_size) + 1, cursor.map(|c| c.timestamp), cursor.map(|c| c.deployment_id.to_string())], |row| Ok(DeploymentRetentionCursor { deployment_id: row.get(0)?, timestamp: row.get(1)? }))?
                     .collect::<Result<Vec<_>, _>>()?,
                 };

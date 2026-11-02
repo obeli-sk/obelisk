@@ -24,7 +24,7 @@ fn deployment_record(
     DeploymentRecord {
         deployment_id,
         description: None,
-        digest: DeploymentRecord::compute_digest("{}"),
+        digest: DeploymentRecord::compute_digest(&deployment_id.to_string()),
         created_at,
         updated_at: created_at,
         last_active_at: None,

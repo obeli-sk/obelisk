@@ -62,7 +62,7 @@ pub struct DeploymentStateSer {
     pub status: DeploymentStatusSer,
     /// When this deployment was submitted
     pub created_at: DateTime<Utc>,
-    /// Last status change: submission, enqueue, activation or demotion
+    /// Last submission, matching resubmit or status change; deployment retention orders by it
     // backcompat: 0.43.0-rc.15 deployment responses had no updated_at.
     pub updated_at: Option<DateTime<Utc>>,
     /// When this deployment was last active; None if never active
@@ -169,6 +169,13 @@ pub struct DeploymentSubmitPayload {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DeploymentSubmitResponse {
     pub deployment_id: String,
+}
+
+/// The deployment storing a content digest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DeploymentByDigestResponse {
+    #[schema(value_type = String, example = "Dep_01JKXYZ123456789ABCDEFGHIJ")]
+    pub deployment_id: DeploymentId,
 }
 
 /// A single file-set problem found while validating a submit package.

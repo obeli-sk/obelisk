@@ -111,7 +111,6 @@ CREATE TABLE public.t_deployment (
     created_by text,
     description character varying(1024),
     digest character varying(71) DEFAULT 'sha256:0000000000000000000000000000000000000000000000000000000000000000'::text NOT NULL,
-    inactive_at timestamp with time zone,
     last_active_app_config_digest text,
     updated_at timestamp with time zone NOT NULL
 );
@@ -567,6 +566,13 @@ CREATE INDEX idx_t_deployment_created_at ON public.t_deployment USING btree (cre
 
 
 --
+-- Name: idx_t_deployment_digest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_t_deployment_digest ON public.t_deployment USING btree (digest);
+
+
+--
 -- Name: idx_t_deployment_file_digest; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -574,10 +580,10 @@ CREATE INDEX idx_t_deployment_file_digest ON public.t_deployment_file USING btre
 
 
 --
--- Name: idx_t_deployment_inactive_at; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_t_deployment_retention_updated_at; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_t_deployment_inactive_at ON public.t_deployment USING btree (inactive_at, deployment_id) WHERE ((status)::text = 'inactive'::text);
+CREATE INDEX idx_t_deployment_retention_updated_at ON public.t_deployment USING btree (updated_at, deployment_id) WHERE ((status)::text = 'inactive'::text);
 
 
 --

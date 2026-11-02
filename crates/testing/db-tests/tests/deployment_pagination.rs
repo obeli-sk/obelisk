@@ -46,7 +46,7 @@ async fn create_deployment_with_execution(
                 DeploymentRecord {
                     deployment_id,
                     description: None,
-                    digest: DeploymentRecord::compute_digest("{}"),
+                    digest: DeploymentRecord::compute_digest(&deployment_id.to_string()),
                     created_at: now,
                     updated_at: now,
                     last_active_at: None,

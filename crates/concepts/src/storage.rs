@@ -1507,7 +1507,7 @@ pub struct ExecutionRetentionCursor {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeploymentRetentionCursor {
-    /// Ordering timestamp: `created_at` for count retention, `inactive_at` for age retention.
+    /// Ordering timestamp: `updated_at`.
     pub timestamp: DateTime<Utc>,
     pub deployment_id: DeploymentId,
 }
@@ -2528,11 +2528,25 @@ pub trait DbExternalApi: DbConnection {
         now: DateTime<Utc>,
     ) -> Result<EnqueueOutcome, DbErrorWrite>;
 
+    /// Replace the description and bump `updated_at`, which deployment retention orders by.
+    async fn refresh_deployment(
+        &self,
+        deployment_id: DeploymentId,
+        description: Option<String>,
+        now: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite>;
+
     /// Returned [`DeploymentRecord`] must contain `deployment_toml`.
     async fn get_deployment(
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Option<DeploymentRecord>, DbErrorRead>;
+
+    /// Find the deployment storing this content; digests are unique.
+    async fn get_deployment_id_by_digest(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Option<DeploymentId>, DbErrorRead>;
 
     /// Return active deployment.
     /// Returned [`DeploymentRecord`] must contain `deployment_toml`.

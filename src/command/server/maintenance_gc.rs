@@ -655,7 +655,7 @@ mod tests {
                 DeploymentRecord {
                     deployment_id,
                     description: None,
-                    digest: DeploymentRecord::compute_digest("{}"),
+                    digest: DeploymentRecord::compute_digest(&deployment_id.to_string()),
                     created_at: chrono::Utc::now() - chrono::Duration::days(age),
                     updated_at: chrono::Utc::now() - chrono::Duration::days(age),
                     last_active_at: None,

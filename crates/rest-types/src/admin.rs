@@ -110,7 +110,7 @@ impl From<ExecutionRetentionCursor> for storage::ExecutionRetentionCursor {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DeploymentRetentionCursor {
-    /// Ordering timestamp: `created_at` for count retention, `inactive_at` for age retention.
+    /// Ordering timestamp: `updated_at`.
     pub timestamp: DateTime<Utc>,
     #[schema(value_type = String)]
     pub deployment_id: DeploymentId,
