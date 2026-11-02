@@ -5684,8 +5684,11 @@ impl DbExternalApi for SqlitePool {
         let digest = digest.to_string();
         self.transaction(
             move |tx| {
+                // A superseded row answers only after its unique row was deleted.
                 tx.query_row(
-                    "SELECT deployment_id FROM t_deployment WHERE digest = :digest",
+                    "SELECT deployment_id FROM t_deployment WHERE digest = :digest AND superseded_by IS NULL \
+                     UNION ALL SELECT * FROM (SELECT deployment_id FROM t_deployment WHERE digest = :digest \
+                     ORDER BY updated_at DESC, deployment_id DESC LIMIT 1) LIMIT 1",
                     rusqlite::named_params! { ":digest": digest },
                     |row| row.get(0),
                 )
@@ -7594,6 +7597,8 @@ mod tests {
     use crate::sqlite_dao::{SqlitePool, TxType, tempfile::sqlite_pool};
     use assert_matches::assert_matches;
     use chrono::DateTime;
+    use concepts::ContentDigest;
+    use concepts::storage::DbExternalApi;
     use concepts::{
         ComponentId, FunctionFqn, Params,
         prefixed_ulid::{DEPLOYMENT_ID_DUMMY, EXECUTION_ID_DUMMY},
@@ -7904,5 +7909,86 @@ mod tests {
         assert_eq!(2, events.len());
         pool.close().await;
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn migration_marks_duplicate_deployments_superseded() {
+        const DUP: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+        const UNIQUE: &str =
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        let file = ::tempfile::NamedTempFile::new().unwrap();
+        {
+            let mut conn = rusqlite::Connection::open(file.path()).unwrap();
+            super::embedded::migrations::runner()
+                .set_target(refinery::Target::Version(34))
+                .run(&mut conn)
+                .unwrap();
+            // The active row is older than its inactive duplicates, yet stays unique.
+            conn.execute_batch(&format!(
+                "INSERT INTO t_deployment (deployment_id, created_at, status, deployment_toml, obelisk_version, digest, updated_at) VALUES
+                ('Dep_00000000000000000000000001', '2026-01-01', 'active', '', '', '{DUP}', '2026-01-01'),
+                ('Dep_00000000000000000000000002', '2026-01-02', 'inactive', '', '', '{DUP}', '2026-01-03'),
+                ('Dep_00000000000000000000000003', '2026-01-02', 'inactive', '', '', '{DUP}', '2026-01-02'),
+                ('Dep_00000000000000000000000004', '2026-01-02', 'inactive', '', '', '{UNIQUE}', '2026-01-02');"
+            ))
+            .unwrap();
+        }
+        let pool = SqlitePool::new(file.path(), super::SqliteConfig::default())
+            .await
+            .unwrap();
+        let superseded = pool
+            .transaction(
+                |tx| {
+                    let mut stmt = tx.prepare(
+                        "SELECT deployment_id, superseded_by FROM t_deployment ORDER BY deployment_id",
+                    )?;
+                    let rows = stmt
+                        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                        .collect::<Result<Vec<(String, Option<String>)>, _>>()?;
+                    Ok::<_, super::RusqliteError>(rows)
+                },
+                TxType::Other,
+                "superseded",
+            )
+            .await
+            .unwrap();
+        let active = Some("Dep_00000000000000000000000001".to_string());
+        assert_eq!(
+            vec![
+                ("Dep_00000000000000000000000001".to_string(), None),
+                ("Dep_00000000000000000000000002".to_string(), active.clone()),
+                ("Dep_00000000000000000000000003".to_string(), active),
+                ("Dep_00000000000000000000000004".to_string(), None),
+            ],
+            superseded
+        );
+        let dup: ContentDigest = DUP.parse().unwrap();
+        let lookup = async || {
+            pool.get_deployment_id_by_digest(&dup)
+                .await
+                .unwrap()
+                .map(|id| id.to_string())
+        };
+        assert_eq!(
+            Some("Dep_00000000000000000000000001".to_string()),
+            lookup().await
+        );
+        // Once the unique row is gone, the most recently updated superseded row answers.
+        pool.transaction(
+            |tx| {
+                Ok::<_, super::RusqliteError>(tx.execute_batch(
+                    "DELETE FROM t_deployment WHERE deployment_id = 'Dep_00000000000000000000000001'",
+                )?)
+            },
+            TxType::Other,
+            "delete_unique",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            Some("Dep_00000000000000000000000002".to_string()),
+            lookup().await
+        );
+        pool.close().await;
     }
 }

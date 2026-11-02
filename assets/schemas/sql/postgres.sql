@@ -112,7 +112,8 @@ CREATE TABLE public.t_deployment (
     description character varying(1024),
     digest character varying(71) DEFAULT 'sha256:0000000000000000000000000000000000000000000000000000000000000000'::text NOT NULL,
     last_active_app_config_digest text,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    superseded_by character varying(30)
 );
 
 
@@ -562,7 +563,7 @@ CREATE INDEX idx_t_deployment_component_file_path ON public.t_deployment_compone
 -- Name: idx_t_deployment_digest; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_t_deployment_digest ON public.t_deployment USING btree (digest);
+CREATE UNIQUE INDEX idx_t_deployment_digest ON public.t_deployment USING btree (digest) WHERE (superseded_by IS NULL);
 
 
 --

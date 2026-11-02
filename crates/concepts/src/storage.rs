@@ -2544,7 +2544,7 @@ pub trait DbExternalApi: DbConnection {
         deployment_id: DeploymentId,
     ) -> Result<Option<DeploymentRecord>, DbErrorRead>;
 
-    /// Find the deployment storing this content; digests are unique.
+    /// Find the deployment storing this content; digests are unique except for superseded rows.
     async fn get_deployment_id_by_digest(
         &self,
         digest: &ContentDigest,
