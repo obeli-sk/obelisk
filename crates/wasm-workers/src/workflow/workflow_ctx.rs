@@ -4584,9 +4584,10 @@ pub(crate) mod tests {
             .iter()
             .filter(|step| matches!(step, WorkflowStep::Call { .. }))
             .count();
+        // Zero-millis sleeps are already due and get resolved inline, never blocking.
         let mut delay_request_count = steps
             .iter()
-            .filter(|step| matches!(step, WorkflowStep::Sleep { .. }))
+            .filter(|step| matches!(step, WorkflowStep::Sleep { millis } if *millis > 0))
             .count();
 
         let created_at = sim_clock.now();
