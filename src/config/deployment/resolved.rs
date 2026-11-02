@@ -767,6 +767,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         secret_registry: &Arc<SecretRegistry>,
         cell: ConcurrencyCell,
     ) -> Result<ActivityExecConfigVerified, anyhow::Error> {
+        let frame_files_to_sources = script_frame_sources(&self.location);
         let secret_exposure_digest = exec_secret_exposure_digest(
             &resolved_program.content_digest,
             &secret_names(&self.exposed_secrets),
@@ -840,7 +841,20 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
             )?,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
             secret_exposure_digest,
+            frame_files_to_sources,
         })
+    }
+}
+
+/// Exec scripts are their own source; OCI programs have none.
+fn script_frame_sources(location: &ScriptLocationResolved) -> FrameFilesToSource {
+    match location {
+        ScriptLocationResolved::Content { content, file_name } => {
+            FrameFilesToSource::from([(file_name.clone(), FrameSource::Content(content.clone()))])
+        }
+        ScriptLocationResolved::Graph { .. } | ScriptLocationResolved::Oci { .. } => {
+            FrameFilesToSource::default()
+        }
     }
 }
 
@@ -861,6 +875,7 @@ pub(crate) struct ActivityExecConfigVerified {
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
     pub(crate) secret_exposure_digest: SecretExposureDigest,
+    pub(crate) frame_files_to_sources: FrameFilesToSource,
 }
 
 impl ActivityExecConfigVerified {
@@ -967,6 +982,10 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
                 .map(wasm_workers::policy_builder::process_allowed_host_spec_from_config)
                 .collect(),
         };
+        let frame_files_to_sources = location
+            .as_ref()
+            .map(script_frame_sources)
+            .unwrap_or_default();
         let source = if let Some(location) = location {
             ActivityExecComponentConfigResolved {
                 name: name.clone(),
@@ -1101,6 +1120,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             cell,
         )?;
         verified.secret_exposure_digest = secret_exposure_digest;
+        verified.frame_files_to_sources = frame_files_to_sources;
         Ok(ActivityVmConfigVerified {
             runtime: runtime.clone(),
             source_location,

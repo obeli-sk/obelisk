@@ -95,6 +95,48 @@ env_vars = ["PATH"] # for jq
 }
 
 #[tokio::test]
+async fn script_is_registered_as_component_source() {
+    let deployment_toml = r#"[[activity_exec]]
+ffqn = "testing:integration/exec-greet.greet-include"
+location = "./greet.sh"
+params = [
+  { name = "name", type = "string" },
+]
+return_type = "result<string, string>"
+"#;
+    let server = TestServer::start_inline_deployment(
+        test_addr!(252),
+        "",
+        deployment_toml,
+        &[("greet.sh", GREET_SCRIPT)],
+    )
+    .await;
+    let get = async |path: String| {
+        server
+            .client
+            .get(format!("{}{path}", server.base_url))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()
+    };
+    let components = get("/v1/components".to_string()).await;
+    let digest = components[0]["component_id"]["component_digest"]
+        .as_str()
+        .unwrap_or_else(|| panic!("component digest in {components}"))
+        .to_string();
+    let sources = get(format!("/v1/components/{digest}/sources")).await;
+    assert_eq!(sources[0]["file"], json!("greet.sh"), "{sources}");
+    assert_eq!(sources.as_array().unwrap().len(), 1, "{sources}");
+    let source = get(format!("/v1/components/{digest}/source?file=greet.sh")).await;
+    assert_eq!(source, json!(GREET_SCRIPT));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn record_return_type() {
     let deployment_toml = r#"[[activity_exec]]
 ffqn = "testing:integration/exec-record.make-record"

@@ -6033,34 +6033,36 @@ async fn compile_and_link(
                 })
             })
         }))
-        .chain(activities_exec.into_iter().map(|activity_exec| {
+        .chain(activities_exec.into_iter().map(|mut activity_exec| {
             // No build_semaphore and no WASM compilation needed for exec activities.
             let parent_span = parent_span.clone();
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "activity_exec_compile", component_id = %activity_exec.component_id());
+                let frame_files = std::mem::take(&mut activity_exec.frame_files_to_sources);
                 span.in_scope(|| {
                     prespawn_activity_exec(activity_exec).map(|(worker, component_config)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
-                            frame_files: FrameFilesToSource::default(),
+                            frame_files,
                         }
                     })
                 })
             })
         }))
-        .chain(activities_vm.into_iter().map(|activity_vm| {
+        .chain(activities_vm.into_iter().map(|mut activity_vm| {
             let engine = engines.activity_vm_engine.clone();
             let module = activity_vm_module.clone();
             let parent_span = parent_span.clone();
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "activity_vm_compile", component_id = %activity_vm.component_id());
+                let frame_files = std::mem::take(&mut activity_vm.activity.frame_files_to_sources);
                 span.in_scope(|| {
                     prespawn_activity_vm(activity_vm, engine, module).map(|(worker, component_config)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
-                            frame_files: FrameFilesToSource::default(),
+                            frame_files,
                         }
                     })
                 })
