@@ -32,7 +32,7 @@
 ## How often idleness is evaluated, and how often reports repeat while idle.
 # idle_report.check_interval.seconds = 30
 ## How long after the last incoming request finished the server stays busy. All requests on the API,
-## webui and external listeners count, including health probes; an open stream counts until it ends.
+## webui and external listeners count, except those on the `health` listener; an open stream counts until it ends.
 # idle_report.quiet_period.http.seconds = 60
 ## How long the server stays busy after executions became inactive. Executions are active while one
 ## is locked (running, or with an unexpired lock from a previous process) or cancelling, or while one is
@@ -47,6 +47,12 @@
 # idle_report.resume_threshold.seconds = 5
 ## Timeout of one report request.
 # idle_report.request_timeout.seconds = 10
+
+## Health probe listener, disabled unless set. `GET /health` reads the database and answers 200,
+## or 503 when the read fails. It requires no token and does not count as activity for `idle_report`,
+## so a platform health check neither needs the API token nor keeps the server from going idle.
+## Do not expose it publicly.
+# health.listening_addr = "[::]:5006"
 
 ## API authentication. The API port denies requests without a valid `Authorization: Bearer <token>` header.
 ## An ephemeral startup token is always generated and printed to the console.

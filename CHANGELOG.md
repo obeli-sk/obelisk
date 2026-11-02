@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(cli)* The default `obelisk generate new` template probes one site on a cron schedule and shows
   its uptime and latency history. The dashboard reads probe runs through the Obelisk API using
   internal secrets and URLs supplied by the server, so it needs no configuration.
+- *(server)* `health.listening_addr` enables an unauthenticated `GET /health` listener that reads
+  the database. Its requests do not count as activity for `idle_report`.
 
 ### Deprecated
 

@@ -28,6 +28,9 @@
     "idle_report": {
       "$ref": "#/$defs/IdleReportConfig"
     },
+    "health": {
+      "$ref": "#/$defs/HealthConfig"
+    },
     "database": {
       "$ref": "#/$defs/DatabaseConfigToml"
     },
@@ -524,6 +527,21 @@
           "default": {
             "seconds": 0
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "HealthConfig": {
+      "description": "Unauthenticated health probe listener, not counted as activity by the idle detector.",
+      "type": "object",
+      "properties": {
+        "listening_addr": {
+          "description": "Address serving `GET /health`; absent disables the listener.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
       "additionalProperties": false
