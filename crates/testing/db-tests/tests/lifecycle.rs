@@ -5413,7 +5413,7 @@ async fn deployment_files_roundtrip_and_missing_digests(database: Database) {
             DeploymentRecord {
                 deployment_id,
                 description: None,
-                digest: DeploymentRecord::compute_digest("{}"),
+                digest: DeploymentRecord::compute_digest(&deployment_id.to_string()),
                 created_at: now,
                 updated_at: now,
                 last_active_at: None,
@@ -5503,7 +5503,7 @@ async fn deployment_activate(database: Database) {
             DeploymentRecord {
                 deployment_id,
                 description: None,
-                digest: DeploymentRecord::compute_digest("{}"),
+                digest: DeploymentRecord::compute_digest(&deployment_id.to_string()),
                 created_at: now,
                 updated_at: now,
                 last_active_at: None,
@@ -5566,7 +5566,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
             DeploymentRecord {
                 deployment_id: id1,
                 description: None,
-                digest: DeploymentRecord::compute_digest("{}"),
+                digest: DeploymentRecord::compute_digest(&id1.to_string()),
                 created_at: now,
                 updated_at: now,
                 last_active_at: None,
@@ -5595,7 +5595,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
             DeploymentRecord {
                 deployment_id: id2,
                 description: None,
-                digest: DeploymentRecord::compute_digest("{}"),
+                digest: DeploymentRecord::compute_digest(&id2.to_string()),
                 created_at: now,
                 updated_at: now,
                 last_active_at: None,
@@ -5647,7 +5647,7 @@ async fn deployment_enqueue_active_clears_pending(database: Database) {
                 DeploymentRecord {
                     deployment_id: id,
                     description: None,
-                    digest: DeploymentRecord::compute_digest("{}"),
+                    digest: DeploymentRecord::compute_digest(&id.to_string()),
                     created_at: now,
                     updated_at: now,
                     last_active_at: None,
@@ -5733,7 +5733,7 @@ async fn deployment_list(database: Database) {
                 DeploymentRecord {
                     deployment_id: id,
                     description: None,
-                    digest: DeploymentRecord::compute_digest("{}"),
+                    digest: DeploymentRecord::compute_digest(&id.to_string()),
                     created_at: now,
                     updated_at: now,
                     last_active_at: None,
@@ -6421,7 +6421,7 @@ async fn app_checkpoint_is_atomic_and_preserves_unrelated_enqueue(database: Data
             DeploymentRecord {
                 deployment_id: id,
                 description: None,
-                digest: DeploymentRecord::compute_digest(""),
+                digest: DeploymentRecord::compute_digest(&id.to_string()),
                 created_at: now,
                 updated_at: now,
                 last_active_at: None,

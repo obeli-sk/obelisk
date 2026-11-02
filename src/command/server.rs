@@ -2050,7 +2050,7 @@ async fn write_to_cas_prepare_deployment_record(
     Ok((
         DeploymentRecord {
             deployment_id,
-            description,
+            description: description.filter(|description| !description.is_empty()),
             digest,
             created_at: now,
             updated_at: now,
@@ -2098,6 +2098,10 @@ pub(crate) fn create_engines(
 enum DeploymentPersist {
     AlreadyActive,
     ActivateEnqueued,
+    /// The content is already stored under this ID; replace its description and bump `updated_at`.
+    Refresh {
+        description: Option<String>,
+    },
     Insert {
         record: Box<DeploymentRecord>,
         component_files: Vec<DeploymentComponentFileRecord>,
@@ -2113,6 +2117,20 @@ async fn resolve_startup_deployment(
 ) -> Result<(DeploymentId, DeploymentResolved, DeploymentPersist), anyhow::Error> {
     if let Some(deployment) = deployment {
         // --deployment or `--deployment-empty` provided: prepare, insert+activate after verify.
+        if let Some(stored_id) =
+            stored_deployment_id(db_pool, &deployment.processed_deployment_toml).await?
+        {
+            span.record("deployment_id", tracing::field::display(&stored_id));
+            info!("Deployment content already stored, reusing it");
+            let resolved =
+                deployment_resolved_from_manifest(db_pool, &deployment.processed_deployment_toml)
+                    .await?;
+            return Ok((
+                stored_id,
+                resolved,
+                DeploymentPersist::Refresh { description },
+            ));
+        }
         let new_deployment_id = DeploymentId::generate();
         span.record("deployment_id", tracing::field::display(&new_deployment_id));
         let (record, component_files) = write_to_cas_prepare_deployment_record(
@@ -2168,6 +2186,15 @@ async fn resolve_startup_deployment(
             Ok((record.deployment_id, resolved, persist))
         } else {
             // empty db
+            if let Some(stored_id) = stored_deployment_id(db_pool, "").await? {
+                span.record("deployment_id", tracing::field::display(&stored_id));
+                info!("No current deployment; activating the stored empty deployment");
+                return Ok((
+                    stored_id,
+                    DeploymentResolved::default(),
+                    DeploymentPersist::Refresh { description: None },
+                ));
+            }
             let new_deployment_id = DeploymentId::generate();
             span.record("deployment_id", tracing::field::display(&new_deployment_id));
             info!("No deployment found in DB; starting with empty deployment");
@@ -2191,6 +2218,20 @@ async fn resolve_startup_deployment(
     }
 }
 
+/// The deployment storing this processed manifest, as digests are unique.
+async fn stored_deployment_id(
+    db_pool: &dyn DbPool,
+    deployment_toml: &str,
+) -> Result<Option<DeploymentId>, anyhow::Error> {
+    db_pool
+        .external_api_conn()
+        .await
+        .context("cannot get db connection for deployment lookup")?
+        .get_deployment_id_by_digest(&DeploymentRecord::compute_digest(deployment_toml))
+        .await
+        .context("cannot look up deployment by digest")
+}
+
 async fn persist_startup_deployment(
     db_pool: &dyn DbPool,
     deployment_id: DeploymentId,
@@ -2199,6 +2240,15 @@ async fn persist_startup_deployment(
 ) -> Result<(), anyhow::Error> {
     match persist {
         DeploymentPersist::AlreadyActive | DeploymentPersist::ActivateEnqueued => {}
+        DeploymentPersist::Refresh { description } => {
+            db_pool
+                .external_api_conn()
+                .await
+                .context("cannot get db connection for deployment refresh")?
+                .refresh_deployment(deployment_id, description, Utc::now())
+                .await
+                .context("cannot refresh deployment")?;
+        }
         DeploymentPersist::Insert {
             record,
             component_files,
@@ -3426,6 +3476,8 @@ fn validate_submit_package(
 /// deployment. Compile/link verification still happens when the deployment is activated.
 #[instrument(skip_all, fields(%deployment_id))]
 #[expect(clippy::too_many_arguments)]
+/// Returns the stored deployment's ID. Content stored under another ID is reused when
+/// `id_generated`, otherwise it is a conflict, as digests are unique.
 pub(crate) async fn submit_deployment(
     server_verified: ServerVerified,
     deployment_toml: &str,
@@ -3433,6 +3485,7 @@ pub(crate) async fn submit_deployment(
     created_by: Option<String>,
     description: Option<String>,
     deployment_id: DeploymentId,
+    id_generated: bool,
     prepared_dirs: &PreparedDirs,
     supplied_files: Vec<SuppliedFile>,
     db_pool: Arc<dyn DbPool>,
@@ -3469,6 +3522,7 @@ pub(crate) async fn submit_deployment(
                         created_by,
                         description,
                         deployment_id,
+                        id_generated,
                         prepared_dirs,
                         supplied_files,
                         db_pool,
@@ -3484,13 +3538,13 @@ pub(crate) async fn submit_deployment(
     };
 
     match &result {
-        Ok(_) => {
+        Ok(stored_id) => {
             info!(outcome = "success", "Deployment submission finished");
             crate::server::system_event_writer::record(
                 event_db_pool.as_ref(),
                 concepts::storage::SystemEventCode::DeploymentSubmitCompleted,
                 None,
-                Some(deployment_id),
+                Some(*stored_id),
                 serde_json::json!({}),
             )
             .await;
@@ -3568,6 +3622,7 @@ async fn submit_deployment_manifest(
     created_by: Option<String>,
     description: Option<String>,
     deployment_id: DeploymentId,
+    id_generated: bool,
     prepared_dirs: &PreparedDirs,
     supplied_files: Vec<SuppliedFile>,
     db_pool: Arc<dyn DbPool>,
@@ -3583,14 +3638,17 @@ async fn submit_deployment_manifest(
         .await
         .map_err(anyhow::Error::from)?;
 
-    // Client-supplied deployment ID for idempotent submission.
+    // Client-supplied deployment ID for idempotent submission; a matching resubmit keeps it from GC.
     if let Some(existing) = conn
         .get_deployment(deployment_id)
         .await
         .map_err(anyhow::Error::from)?
     {
         if existing.digest == digest {
-            info!("Deployment already exists with matching digest, returning existing ID");
+            info!("Deployment already exists with matching digest, refreshing it");
+            conn.refresh_deployment(deployment_id, description, chrono::Utc::now())
+                .await
+                .map_err(anyhow::Error::from)?;
             return Ok(deployment_id);
         }
         return Err(SubmitDeploymentError::Conflict(anyhow::anyhow!(
@@ -3599,6 +3657,24 @@ async fn submit_deployment_manifest(
             existing.digest
         )));
     }
+    if let Some(stored_id) = conn
+        .get_deployment_id_by_digest(&digest)
+        .await
+        .map_err(anyhow::Error::from)?
+    {
+        if !id_generated {
+            return Err(SubmitDeploymentError::Conflict(anyhow::anyhow!(
+                "deployment content {digest} is already stored as {stored_id}; \
+                 resubmit it under that ID"
+            )));
+        }
+        info!(%stored_id, "Deployment content already stored, refreshing it");
+        conn.refresh_deployment(stored_id, description, chrono::Utc::now())
+            .await
+            .map_err(anyhow::Error::from)?;
+        return Ok(stored_id);
+    }
+    let description = description.filter(|description| !description.is_empty());
 
     // A referenced digest already in the CAS need not be attached to the request.
     let cas = db_pool.cas_conn().await.map_err(anyhow::Error::from)?;

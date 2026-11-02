@@ -46,7 +46,7 @@ async fn create_deployment_with_execution(
                 DeploymentRecord {
                     deployment_id,
                     description: None,
-                    digest: DeploymentRecord::compute_digest("{}"),
+                    digest: DeploymentRecord::compute_digest(&deployment_id.to_string()),
                     created_at: now,
                     updated_at: now,
                     last_active_at: None,
@@ -1003,7 +1003,7 @@ async fn list_deployment_states_cursor_not_found(database: Database) {
     // Use a non-existent deployment ID as cursor
     let fake_cursor = DeploymentId::generate();
 
-    // Should still work: a missing cursor falls back to its ULID timestamp as `created_at`.
+    // Should still work: a missing cursor falls back to its ULID timestamp as `updated_at`.
     let result = api_conn
         .list_deployment_states(
             sim_clock.now(),
@@ -1030,7 +1030,7 @@ async fn list_deployment_states_cursor_not_found(database: Database) {
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn list_deployment_states_sorted_by_created_at(database: Database) {
+async fn list_deployment_states_sorted_by_updated_at(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -1044,7 +1044,13 @@ async fn list_deployment_states_sorted_by_created_at(database: Database) {
         created_order.push(deployment_id);
         sim_clock.move_time_forward(Duration::from_secs(1));
     }
-    let newest_first: Vec<_> = created_order.iter().rev().copied().collect();
+    // Refreshing the oldest deployment moves it to the front.
+    api_conn
+        .refresh_deployment(created_order[0], None, sim_clock.now())
+        .await
+        .unwrap();
+    let mut newest_first: Vec<_> = created_order[1..].iter().rev().copied().collect();
+    newest_first.insert(0, created_order[0]);
 
     let list = async |pagination| {
         api_conn

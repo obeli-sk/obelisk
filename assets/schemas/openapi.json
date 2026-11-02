@@ -713,6 +713,42 @@
         }
       }
     },
+    "/v1/deployment-digests/{digest}": {
+      "get": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Find the deployment storing a content digest.",
+        "description": "Digests are unique. A client can compute one with `obelisk deployment digest` and\nresubmit under the returned ID instead of creating a duplicate.",
+        "operationId": "by_digest",
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "description": "Deployment content digest (sha256:...)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deployment storing the content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentByDigestResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No deployment stores the content"
+          }
+        }
+      }
+    },
     "/v1/deployment-id": {
       "get": {
         "tags": [
@@ -745,7 +781,7 @@
         "tags": [
           "deployments"
         ],
-        "summary": "List deployments",
+        "summary": "List deployments, most recently updated first",
         "operationId": "list",
         "parameters": [
           {
@@ -840,8 +876,8 @@
         "tags": [
           "deployments"
         ],
-        "summary": "Submit a new deployment.",
-        "description": "Accepts either an `application/json` body (no attached file blobs; referenced\nfiles must already exist in the CAS) or a `multipart/form-data` package whose\nparts carry the manifest and the deployment-owned file blobs. On an incomplete\npackage the server stores nothing and returns a `409` `SubmitPackageErrorBody`\nlisting the missing files to attach and retry.",
+        "summary": "Submit a new deployment under a server-generated ID. Deprecated: retries create duplicates.",
+        "description": "Content already stored is not duplicated: its deployment is refreshed and returned with\n`200`.\n\nAccepts either an `application/json` body (no attached file blobs; referenced\nfiles must already exist in the CAS) or a `multipart/form-data` package whose\nparts carry the manifest and the deployment-owned file blobs. On an incomplete\npackage the server stores nothing and returns a `409` `SubmitPackageErrorBody`\nlisting the missing files to attach and retry.",
         "operationId": "submit_post",
         "requestBody": {
           "content": {
@@ -854,6 +890,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "Content already stored; its deployment was refreshed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentSubmitResponse"
+                }
+              }
+            }
+          },
           "201": {
             "description": "Deployment submitted",
             "content": {
@@ -884,7 +930,8 @@
               }
             }
           }
-        }
+        },
+        "deprecated": true
       }
     },
     "/v1/deployments/{deployment_id}": {
@@ -935,6 +982,7 @@
           "deployments"
         ],
         "summary": "Submit a deployment with a client-supplied ID.",
+        "description": "Resubmitting the same content under an existing ID bumps `updated_at`, which deployment\nretention orders by, and updates its description when one is given (empty clears it). Different content under that ID, or\ncontent already stored under another ID, returns `409`; see\n`GET /v1/deployment-digests/{digest}`.",
         "operationId": "submit_put",
         "parameters": [
           {
@@ -3482,6 +3530,19 @@
           }
         }
       },
+      "DeploymentByDigestResponse": {
+        "type": "object",
+        "description": "The deployment storing a content digest.",
+        "required": [
+          "deployment_id"
+        ],
+        "properties": {
+          "deployment_id": {
+            "type": "string",
+            "example": "Dep_01JKXYZ123456789ABCDEFGHIJ"
+          }
+        }
+      },
       "DeploymentComponentCount": {
         "type": "object",
         "required": [
@@ -3607,7 +3668,7 @@
           "timestamp": {
             "type": "string",
             "format": "date-time",
-            "description": "Ordering timestamp: `created_at` for count retention, `inactive_at` for age retention."
+            "description": "Ordering timestamp: `updated_at`."
           }
         }
       },
@@ -3747,7 +3808,7 @@
               "null"
             ],
             "format": "date-time",
-            "description": "Last status change: submission, enqueue, activation or demotion"
+            "description": "Last submission, matching resubmit or status change; deployment retention orders by it"
           }
         }
       },
@@ -3789,7 +3850,7 @@
               "string",
               "null"
             ],
-            "description": "Optional human-readable deployment description"
+            "description": "Human-readable description. When resubmitting stored content, omitting it keeps the\ncurrent one and an empty string clears it."
           }
         }
       },

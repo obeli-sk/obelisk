@@ -1507,7 +1507,7 @@ pub struct ExecutionRetentionCursor {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeploymentRetentionCursor {
-    /// Ordering timestamp: `created_at` for count retention, `inactive_at` for age retention.
+    /// Ordering timestamp: `updated_at`.
     pub timestamp: DateTime<Utc>,
     pub deployment_id: DeploymentId,
 }
@@ -2467,6 +2467,7 @@ pub trait DbExternalApi: DbConnection {
         pagination: Pagination<LogCursor>,
     ) -> Result<ListLogsResponse, DbErrorRead>;
 
+    /// Ordered by `(updated_at, deployment_id)`, most recently updated first.
     async fn list_deployment_states(
         &self,
         current_time: DateTime<Utc>,
@@ -2528,11 +2529,26 @@ pub trait DbExternalApi: DbConnection {
         now: DateTime<Utc>,
     ) -> Result<EnqueueOutcome, DbErrorWrite>;
 
+    /// Bump `updated_at`, which deployment retention orders by. A `None` description keeps the
+    /// current one, an empty one clears it.
+    async fn refresh_deployment(
+        &self,
+        deployment_id: DeploymentId,
+        description: Option<String>,
+        now: DateTime<Utc>,
+    ) -> Result<(), DbErrorWrite>;
+
     /// Returned [`DeploymentRecord`] must contain `deployment_toml`.
     async fn get_deployment(
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Option<DeploymentRecord>, DbErrorRead>;
+
+    /// Find the deployment storing this content; digests are unique.
+    async fn get_deployment_id_by_digest(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Option<DeploymentId>, DbErrorRead>;
 
     /// Return active deployment.
     /// Returned [`DeploymentRecord`] must contain `deployment_toml`.
@@ -2543,6 +2559,7 @@ pub trait DbExternalApi: DbConnection {
     /// Returned [`DeploymentRecord`] must contain `deployment_toml`.
     async fn get_current_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead>;
 
+    /// Ordered by `(updated_at, deployment_id)`, most recently updated first.
     async fn list_deployments(
         &self,
         pagination: Pagination<Option<DeploymentId>>,
@@ -3551,9 +3568,10 @@ pub enum Pagination<T> {
         including_cursor: bool,
     },
 }
-/// Fallback `created_at` for a deployment cursor whose row no longer exists (e.g. garbage collected).
+/// Fallback `updated_at` for a deployment cursor whose row no longer exists (e.g. garbage collected):
+/// its ULID timestamp, the earliest it could have been.
 #[must_use]
-pub fn deployment_cursor_fallback_created_at(cursor: DeploymentId) -> DateTime<Utc> {
+pub fn deployment_cursor_fallback_updated_at(cursor: DeploymentId) -> DateTime<Utc> {
     DateTime::from_timestamp_millis(
         i64::try_from(cursor.timestamp_part()).expect("ULID timestamp is 48 bits"),
     )

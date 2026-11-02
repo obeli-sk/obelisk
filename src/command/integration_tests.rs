@@ -45,6 +45,14 @@ fn append_inline_stub(doc: &mut DocumentMut, name: &str, ffqn: &str) {
         .push(table);
 }
 
+/// `deployment_toml` plus an inline stub, giving it a digest of its own.
+fn with_inline_stub(deployment_toml: &str, name: &str) -> String {
+    let mut doc = deployment_toml.parse::<DocumentMut>().unwrap();
+    let ffqn = format!("testing:integration/stubs.{}", name.replace('_', "-"));
+    append_inline_stub(&mut doc, name, &ffqn);
+    doc.to_string()
+}
+
 /// Find the `[[<section>]]` table named `name` for in-place mutation.
 fn manifest_component_mut<'a>(
     doc: &'a mut DocumentMut,
@@ -1030,6 +1038,14 @@ impl TestServer {
     }
 
     async fn restart_with_persisted_value_limit(self, limit: i64) -> Self {
+        self.restart(|server_doc| {
+            server_doc["limits"]["max_persisted_value_size_bytes"] = value(limit);
+        })
+        .await
+    }
+
+    /// Restart on the same database and `deployment.toml`, after editing `server.toml`.
+    async fn restart(self, edit_server_toml: impl FnOnce(&mut DocumentMut)) -> Self {
         let Self {
             ip,
             termination_sender,
@@ -1045,7 +1061,7 @@ impl TestServer {
             .unwrap()
             .parse::<DocumentMut>()
             .unwrap();
-        server_doc["limits"]["max_persisted_value_size_bytes"] = value(limit);
+        edit_server_toml(&mut server_doc);
         std::fs::write(&server_path, server_doc.to_string()).unwrap();
 
         let deployment_path = tmp_dir.path().join("deployment.toml");
@@ -1305,27 +1321,11 @@ impl TestServer {
 
     /// Submit a new deployment via the Web API and return its deployment ID.
     async fn webapi_submit_deployment(&self, deployment_toml: &str) -> DeploymentId {
+        let deployment_id = DeploymentId::generate();
         let resp = self
-            .client
-            .post(format!("{}/v1/deployments", self.base_url))
-            .header("Accept", "application/json")
-            .json(&json!({
-                "deployment_toml": deployment_toml,
-            }))
-            .send()
-            .await
-            .expect("webapi submit deployment request failed");
-        assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
-        let location = resp
-            .headers()
-            .get(reqwest::header::LOCATION)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-        let body: Value = resp.json().await.unwrap();
-        let deployment_id = body["deployment_id"].as_str().unwrap().parse().unwrap();
-        assert_eq!(location, format!("/v1/deployments/{deployment_id}"));
+            .webapi_submit_deployment_with_id(deployment_toml, deployment_id)
+            .await;
+        assert_eq!(resp.status(), reqwest::StatusCode::NO_CONTENT);
         deployment_id
     }
 
@@ -2411,8 +2411,32 @@ async fn app_policy_webapi_reports_running_policy() {
 async fn submit_deployment_with_generated_id_webapi() {
     let server = TestServer::start(test_addr!(40_105)).await;
 
-    let deployment_toml = server.active_deployment_toml().await;
-    let deployment_id = server.webapi_submit_deployment(&deployment_toml).await;
+    let deployment_toml =
+        with_inline_stub(&server.active_deployment_toml().await, "generated_id_stub");
+    // backcompat: 0.43, the deprecated `POST /v1/deployments`.
+    let post = || async {
+        let resp = server
+            .client
+            .post(format!("{}/v1/deployments", server.base_url))
+            .header("Accept", "application/json")
+            .json(&json!({ "deployment_toml": deployment_toml }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let location = resp.headers()[reqwest::header::LOCATION]
+            .to_str()
+            .unwrap()
+            .to_string();
+        let body: Value = resp.json().await.unwrap();
+        let deployment_id: DeploymentId = body["deployment_id"].as_str().unwrap().parse().unwrap();
+        assert_eq!(location, format!("/v1/deployments/{deployment_id}"));
+        (status, deployment_id)
+    };
+    let (status, deployment_id) = post().await;
+    assert_eq!(status, reqwest::StatusCode::CREATED);
+    // Stored content is reused, not duplicated.
+    assert_eq!(post().await, (reqwest::StatusCode::OK, deployment_id));
 
     let resp = server
         .client
@@ -2433,8 +2457,9 @@ async fn submit_deployment_with_generated_id_webapi() {
 async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
     let server = TestServer::start(test_addr!(40_104)).await;
 
-    // Read the active deployment's verbatim manifest so we can resubmit it.
-    let deployment_toml = server.active_deployment_toml().await;
+    // Digests are unique, so the content must differ from the active deployment.
+    let base_toml = server.active_deployment_toml().await;
+    let deployment_toml = with_inline_stub(&base_toml, "idempotency_stub");
 
     let deployment_id = DeploymentId::generate();
 
@@ -2460,14 +2485,72 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
     );
     assert_eq!(resp2.status(), reqwest::StatusCode::NO_CONTENT);
 
+    // A matching resubmit bumps `updated_at`; an omitted description is kept, an empty one clears it.
+    let get_record = || async {
+        server
+            .client
+            .get(format!(
+                "{}/v1/deployments/{deployment_id}",
+                server.base_url
+            ))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .unwrap()
+            .json::<rest_types::deployment::DeploymentRecordSer>()
+            .await
+            .unwrap()
+    };
+    let resubmit = |description: serde_json::Value| {
+        let (server, get_record, deployment_toml) = (&server, &get_record, deployment_toml.clone());
+        async move {
+            let resp = server
+                .client
+                .put(format!(
+                    "{}/v1/deployments/{deployment_id}",
+                    server.base_url
+                ))
+                .header("Accept", "application/json")
+                .json(&json!({ "deployment_toml": deployment_toml, "description": description }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), reqwest::StatusCode::NO_CONTENT);
+            get_record().await
+        }
+    };
+    let before = get_record().await;
+    let after = resubmit(json!("refreshed")).await;
+    assert_eq!(after.description.as_deref(), Some("refreshed"));
+    assert!(after.updated_at > before.updated_at);
+    let kept = resubmit(serde_json::Value::Null).await;
+    assert_eq!(kept.description.as_deref(), Some("refreshed"));
+    assert!(kept.updated_at > after.updated_at);
+    assert_eq!(resubmit(json!("")).await.description, None);
+
+    let by_digest: rest_types::deployment::DeploymentByDigestResponse = server
+        .client
+        .get(format!(
+            "{}/v1/deployment-digests/{}",
+            server.base_url, after.digest
+        ))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(by_digest.deployment_id, deployment_id);
+
+    // The same content under another ID conflicts, as digests are unique.
+    let resp = server
+        .webapi_submit_deployment_with_id(&deployment_toml, DeploymentId::generate())
+        .await;
+    assert_eq!(resp.status(), reqwest::StatusCode::CONFLICT);
+
     // Submitting a different manifest under the same ID is rejected as a digest conflict.
-    let mut mutated = deployment_toml.parse::<DocumentMut>().unwrap();
-    append_inline_stub(
-        &mut mutated,
-        "idempotency_conflict_stub",
-        "testing:integration/stubs.idempotency-conflict",
-    );
-    let mutated_toml = mutated.to_string();
+    let mutated_toml = with_inline_stub(&base_toml, "idempotency_conflict_stub");
     let resp3 = server
         .webapi_submit_deployment_with_id(&mutated_toml, deployment_id)
         .await;
@@ -2480,12 +2563,34 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
     server.shutdown().await;
 }
 
+/// Starting again with the same deployment file reuses the stored deployment, as digests are unique.
+#[tokio::test]
+async fn startup_with_stored_content_reuses_deployment() {
+    let server = TestServer::start(test_addr!(40_203)).await;
+    let active_and_count = |server: &TestServer| {
+        let connection = rusqlite::Connection::open(&server.sqlite_file).unwrap();
+        connection
+            .query_row(
+                "SELECT deployment_id, (SELECT COUNT(*) FROM t_deployment) FROM t_deployment WHERE status = 'active'",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap()
+    };
+    let before = active_and_count(&server);
+    let server = server.restart(|_| {}).await;
+    assert_eq!(active_and_count(&server), before);
+
+    server.shutdown().await;
+}
+
 /// A retry of an in-flight submit (same ID, e.g. after a client timeout) waits for it instead of
 /// failing with `Busy`.
 #[tokio::test]
 async fn concurrent_submit_with_same_id_waits_webapi() {
     let server = TestServer::start(test_addr!(40_202)).await;
-    let deployment_toml = server.active_deployment_toml().await;
+    let deployment_toml =
+        with_inline_stub(&server.active_deployment_toml().await, "concurrent_stub");
     let deployment_id = DeploymentId::generate();
 
     let (resp1, resp2) = tokio::join!(

@@ -151,6 +151,7 @@ async fn until_terminated<T>(
         deployment::list,
         deployment::current,
         deployment::get,
+        deployment::by_digest,
         deployment::submit_post,
         deployment::submit_put,
         deployment::get_file,
@@ -200,6 +201,7 @@ async fn until_terminated<T>(
         rest_types::functions::FunctionOutput,
         rest_types::deployment::DeploymentStateSer,
         rest_types::deployment::DeploymentSubmitResponse,
+        rest_types::deployment::DeploymentByDigestResponse,
         rest_types::admin::DeleteResponse,
         rest_types::admin::DeleteDeploymentResponse,
         rest_types::admin::CleanupRequest,
@@ -402,6 +404,10 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
             routing::put(deployment::switch),
         )
         .route("/deployment-id", routing::get(deployment::current))
+        .route(
+            "/deployment-digests/{digest}",
+            routing::get(deployment::by_digest),
+        )
         .route("/app-policy", routing::get(app_config::policy))
         .route("/app-toml", routing::get(app_config::app_toml))
         .route("/app-config", routing::get(app_config::get))
@@ -4046,10 +4052,10 @@ pub(crate) mod deployment {
     };
     use http::header;
     use rest_types::deployment::{
-        DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitErrorBody,
-        DeploymentSubmitPayload, DeploymentSubmitResponse, DeploymentSwitchOutcome,
-        DeploymentSwitchPayload, DeploymentSwitchResponse, DigestMismatch, FileIssue,
-        MissingRuntimeConfigErrorBody, SubmitPackageErrorBody,
+        DeploymentByDigestResponse, DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer,
+        DeploymentSubmitErrorBody, DeploymentSubmitPayload, DeploymentSubmitResponse,
+        DeploymentSwitchOutcome, DeploymentSwitchPayload, DeploymentSwitchResponse, DigestMismatch,
+        FileIssue, MissingRuntimeConfigErrorBody, SubmitPackageErrorBody,
     };
 
     /// Map the REST `allow_unavailable_runtime_config` flag to the runtime config policy.
@@ -4147,7 +4153,7 @@ pub(crate) mod deployment {
         true
     }
 
-    /// List deployments
+    /// List deployments, most recently updated first
     #[utoipa::path(
         get,
         path = "/v1/deployments",
@@ -4292,6 +4298,47 @@ pub(crate) mod deployment {
         Ok(pretty_json_response(StatusCode::OK, &ser))
     }
 
+    /// Find the deployment storing a content digest.
+    ///
+    /// Digests are unique. A client can compute one with `obelisk deployment digest` and
+    /// resubmit under the returned ID instead of creating a duplicate.
+    #[utoipa::path(
+        get,
+        path = "/v1/deployment-digests/{digest}",
+        tag = "deployments",
+        params(("digest" = String, Path, description = "Deployment content digest (sha256:...)")),
+        responses(
+            (status = 200, description = "Deployment storing the content", body = DeploymentByDigestResponse),
+            (status = 404, description = "No deployment stores the content")
+        )
+    )]
+    #[instrument(skip_all, fields(%digest))]
+    pub(crate) async fn by_digest(
+        Path(digest): Path<String>,
+        state: State<Arc<WebApiState>>,
+        accept: AcceptHeader,
+    ) -> Result<Response, HttpResponse> {
+        let digest: concepts::ContentDigest = digest.parse().map_err(|err| HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            message: format!("invalid digest: {err}"),
+            accept,
+        })?;
+        let conn = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+        let deployment_id = conn
+            .get_deployment_id_by_digest(&digest)
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?
+            .ok_or_else(|| HttpResponse::not_found(accept, Some("deployment")))?;
+        Ok(pretty_json_response(
+            StatusCode::OK,
+            &DeploymentByDigestResponse { deployment_id },
+        ))
+    }
+
     impl From<&server::SubmitFileIssue> for FileIssue {
         fn from(issue: &server::SubmitFileIssue) -> Self {
             FileIssue {
@@ -4402,7 +4449,10 @@ pub(crate) mod deployment {
         })
     }
 
-    /// Submit a new deployment.
+    /// Submit a new deployment under a server-generated ID. Deprecated: retries create duplicates.
+    ///
+    /// Content already stored is not duplicated: its deployment is refreshed and returned with
+    /// `200`.
     ///
     /// Accepts either an `application/json` body (no attached file blobs; referenced
     /// files must already exist in the CAS) or a `multipart/form-data` package whose
@@ -4416,10 +4466,13 @@ pub(crate) mod deployment {
         request_body = DeploymentSubmitPayload,
         responses(
             (status = 201, description = "Deployment submitted", body = DeploymentSubmitResponse),
+            (status = 200, description = "Content already stored; its deployment was refreshed", body = DeploymentSubmitResponse),
             (status = 400, description = "Invalid config or unregistered secrets", body = DeploymentSubmitErrorBody),
             (status = 409, description = "Incomplete or invalid package", body = SubmitPackageErrorBody)
         )
     )]
+    // backcompat: 0.43, delete this endpoint after 0.43 in favor of `PUT /v1/deployments/{deployment_id}`.
+    #[deprecated(note = "use `PUT /v1/deployments/{deployment_id}` with a client-generated ID")]
     #[instrument(skip_all)]
     pub(crate) async fn submit_post(
         state: State<Arc<WebApiState>>,
@@ -4431,6 +4484,11 @@ pub(crate) mod deployment {
     }
 
     /// Submit a deployment with a client-supplied ID.
+    ///
+    /// Resubmitting the same content under an existing ID bumps `updated_at`, which deployment
+    /// retention orders by, and updates its description when one is given (empty clears it). Different content under that ID, or
+    /// content already stored under another ID, returns `409`; see
+    /// `GET /v1/deployment-digests/{digest}`.
     #[utoipa::path(
         put,
         path = "/v1/deployments/{deployment_id}",
@@ -4455,7 +4513,7 @@ pub(crate) mod deployment {
 
     async fn submit(
         deployment_id: DeploymentId,
-        return_id: bool,
+        id_generated: bool,
         state: State<Arc<WebApiState>>,
         accept: AcceptHeader,
         request: axum::extract::Request,
@@ -4506,6 +4564,7 @@ pub(crate) mod deployment {
                     Some("web-api".to_string()),
                     inputs.description,
                     deployment_id,
+                    id_generated,
                     &state.prepared_dirs,
                     inputs.files,
                     state.db_pool.clone(),
@@ -4523,8 +4582,8 @@ pub(crate) mod deployment {
                 accept,
             })?;
 
-        match result {
-            Ok(_) => {}
+        let stored_id = match result {
+            Ok(stored_id) => stored_id,
             Err(server::SubmitDeploymentError::Busy) => {
                 return Err(HttpResponse {
                     status: StatusCode::SERVICE_UNAVAILABLE,
@@ -4564,17 +4623,23 @@ pub(crate) mod deployment {
                 let body = SubmitPackageErrorBody::from(&pkg);
                 return Ok(pretty_json_response(StatusCode::CONFLICT, &body));
             }
-        }
-        if return_id {
+        };
+        if id_generated {
+            // The same content resolves to the deployment already storing it.
+            let status = if stored_id == deployment_id {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
             let mut response = pretty_json_response(
-                StatusCode::CREATED,
+                status,
                 &DeploymentSubmitResponse {
-                    deployment_id: deployment_id.to_string(),
+                    deployment_id: stored_id.to_string(),
                 },
             );
             response.headers_mut().insert(
                 header::LOCATION,
-                format!("/v1/deployments/{deployment_id}")
+                format!("/v1/deployments/{stored_id}")
                     .parse()
                     .expect("deployment location must be a valid header value"),
             );

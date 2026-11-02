@@ -24,7 +24,7 @@ fn deployment_record(
     DeploymentRecord {
         deployment_id,
         description: None,
-        digest: DeploymentRecord::compute_digest("{}"),
+        digest: DeploymentRecord::compute_digest(&deployment_id.to_string()),
         created_at,
         updated_at: created_at,
         last_active_at: None,
@@ -472,23 +472,34 @@ async fn create_execution(
         .await
         .unwrap();
     if finished {
-        connection
-            .append(
-                execution_id.clone(),
-                concepts::storage::Version::new(1),
-                AppendRequest {
-                    created_at: clock.now(),
-                    event: ExecutionRequest::Finished {
-                        retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                        http_client_traces: None,
-                        http_response: None,
-                    },
-                },
-            )
-            .await
-            .unwrap();
+        finish_execution(db_pool, clock, &execution_id).await;
     }
     execution_id
+}
+
+async fn finish_execution(
+    db_pool: &dyn concepts::storage::DbPool,
+    clock: &SimClock,
+    execution_id: &ExecutionId,
+) {
+    db_pool
+        .connection()
+        .await
+        .unwrap()
+        .append(
+            execution_id.clone(),
+            concepts::storage::Version::new(1),
+            AppendRequest {
+                created_at: clock.now(),
+                event: ExecutionRequest::Finished {
+                    retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    http_client_traces: None,
+                    http_response: None,
+                },
+            },
+        )
+        .await
+        .unwrap();
 }
 
 async fn insert_deployment(
@@ -681,10 +692,12 @@ async fn execution_gc_skips_locked_tree(database: Database) {
     let deployment_id = DeploymentId::generate();
     let mut roots = vec![
         create_execution(db_pool.as_ref(), &clock, deployment_id, false).await,
-        create_execution(db_pool.as_ref(), &clock, deployment_id, true).await,
+        create_execution(db_pool.as_ref(), &clock, deployment_id, false).await,
     ];
+    // GC walks roots in ID order; lock the first one, finish the other.
     roots.sort_by_key(ToString::to_string);
     let [locked, unlocked] = roots.try_into().unwrap();
+    finish_execution(db_pool.as_ref(), &clock, &unlocked).await;
     db_pool
         .connection()
         .await

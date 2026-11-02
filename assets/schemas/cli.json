@@ -113,7 +113,7 @@
               "subcommands": [
                 {
                   "name": "submit",
-                  "about": "Submit a deployment TOML; print the deployment ID. Reuses matching active content and description unless a deployment ID is supplied",
+                  "about": "Submit a deployment TOML; print the deployment ID. Content already stored is resubmitted under its deployment ID unless one is supplied",
                   "options": [
                     {
                       "name": "--empty",
@@ -125,7 +125,7 @@
                     },
                     {
                       "name": "--description",
-                      "help": "Optional human-readable description"
+                      "help": "Human-readable description. For already stored content, omitting it keeps the current one and an empty string clears it"
                     },
                     {
                       "name": "--deployment-id",
@@ -148,7 +148,7 @@
                 },
                 {
                   "name": "enqueue",
-                  "about": "Submit and stage for cloud app apply, or enqueue for a standalone server restart. Reuses matching active content and description unless a deployment ID is supplied",
+                  "about": "Submit and stage for cloud app apply, or enqueue for a standalone server restart. Content already stored is resubmitted under its deployment ID unless one is supplied",
                   "options": [
                     {
                       "name": "--empty",
@@ -160,7 +160,7 @@
                     },
                     {
                       "name": "--description",
-                      "help": "Optional human-readable description for a newly submitted deployment"
+                      "help": "Human-readable description. For already stored content, omitting it keeps the current one and an empty string clears it"
                     },
                     {
                       "name": "--deployment-id",
@@ -180,7 +180,7 @@
                 },
                 {
                   "name": "apply",
-                  "about": "Submit (if a file is given) and apply immediately. Fails if not possible. Reuses matching active content and description unless a deployment ID is supplied",
+                  "about": "Submit (if a file is given) and apply immediately. Fails if not possible. Content already stored is resubmitted under its deployment ID unless one is supplied",
                   "options": [
                     {
                       "name": "--empty",
@@ -188,7 +188,7 @@
                     },
                     {
                       "name": "--description",
-                      "help": "Optional human-readable description for a newly submitted deployment"
+                      "help": "Human-readable description. For already stored content, omitting it keeps the current one and an empty string clears it"
                     },
                     {
                       "name": "--deployment-id",
@@ -1127,6 +1127,10 @@
                 {
                   "name": "--fill-non-interactive",
                   "help": "Run `fill --non-interactive` first"
+                },
+                {
+                  "name": "--description",
+                  "help": "Human-readable description. For already stored content, omitting it keeps the current one and an empty string clears it"
                 }
               ]
             },
@@ -1365,7 +1369,7 @@
             },
             {
               "name": "--description",
-              "help": "Optional human-readable description for the deployment created by --deployment or --empty"
+              "help": "Human-readable description for the --deployment or --empty deployment. For already stored content, omitting it keeps the current one and an empty string clears it"
             },
             {
               "name": "--suppress-type-checking-errors",
@@ -2047,7 +2051,7 @@
       "subcommands": [
         {
           "name": "submit",
-          "about": "Submit a deployment TOML; print the deployment ID. Reuses matching active content and description unless a deployment ID is supplied",
+          "about": "Submit a deployment TOML; print the deployment ID. Content already stored is resubmitted under its deployment ID unless one is supplied",
           "options": [
             {
               "name": "--empty",
@@ -2059,7 +2063,7 @@
             },
             {
               "name": "--description",
-              "help": "Optional human-readable description"
+              "help": "Human-readable description. For already stored content, omitting it keeps the current one and an empty string clears it"
             },
             {
               "name": "--deployment-id",
@@ -2082,7 +2086,7 @@
         },
         {
           "name": "enqueue",
-          "about": "Submit and stage for cloud app apply, or enqueue for a standalone server restart. Reuses matching active content and description unless a deployment ID is supplied",
+          "about": "Submit and stage for cloud app apply, or enqueue for a standalone server restart. Content already stored is resubmitted under its deployment ID unless one is supplied",
           "options": [
             {
               "name": "--empty",
@@ -2094,7 +2098,7 @@
             },
             {
               "name": "--description",
-              "help": "Optional human-readable description for a newly submitted deployment"
+              "help": "Human-readable description. For already stored content, omitting it keeps the current one and an empty string clears it"
             },
             {
               "name": "--deployment-id",
@@ -2114,7 +2118,7 @@
         },
         {
           "name": "apply",
-          "about": "Submit (if a file is given) and apply immediately. Fails if not possible. Reuses matching active content and description unless a deployment ID is supplied",
+          "about": "Submit (if a file is given) and apply immediately. Fails if not possible. Content already stored is resubmitted under its deployment ID unless one is supplied",
           "options": [
             {
               "name": "--empty",
@@ -2122,7 +2126,7 @@
             },
             {
               "name": "--description",
-              "help": "Optional human-readable description for a newly submitted deployment"
+              "help": "Human-readable description. For already stored content, omitting it keeps the current one and an empty string clears it"
             },
             {
               "name": "--deployment-id",

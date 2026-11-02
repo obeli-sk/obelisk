@@ -8,9 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** *(db)* A deployment's content digest is unique. Submitting content already stored
+  under another ID returns `409`, and the server reuses the stored deployment when started with
+  the same deployment file. The database migration fails if two deployments store the same
+  content: before upgrading, find them with
+  `SELECT digest, deployment_id FROM t_deployment WHERE digest IN (SELECT digest FROM t_deployment GROUP BY digest HAVING COUNT(*) > 1)`
+  and remove the extra inactive ones with `obelisk admin deployments delete` on the previous version.
+- *(api)* Resubmitting matching content under an existing deployment ID bumps `updated_at` and
+  sets the description when one is given; an empty description clears it, an omitted one is kept. `GET /v1/deployment-digests/{digest}` returns the deployment storing a
+  content digest.
+- *(cli)* `obelisk deployment submit` and `enqueue` without `--deployment-id` resubmit stored
+  content under its existing deployment ID.
+- *(cli)* `obelisk cloud app deploy --description` describes the deployment.
+- *(gc)* Deployment retention orders by `updated_at` for both age and count, so a resubmitted
+  deployment is kept as recent.
+- *(api)* `GET /v1/deployments` lists the most recently updated deployments first.
 - *(cli)* The default `obelisk generate new` template probes one site on a cron schedule and shows
   its uptime and latency history. The dashboard reads probe runs through the Obelisk API using
   internal secrets and URLs supplied by the server, so it needs no configuration.
+
+### Deprecated
+
+- *(api)* `POST /v1/deployments`, as its retries create duplicate deployments. Use
+  `PUT /v1/deployments/{deployment_id}` with a client-generated ID.
 
 ### Fixed
 

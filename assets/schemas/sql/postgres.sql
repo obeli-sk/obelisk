@@ -111,7 +111,6 @@ CREATE TABLE public.t_deployment (
     created_by text,
     description character varying(1024),
     digest character varying(71) DEFAULT 'sha256:0000000000000000000000000000000000000000000000000000000000000000'::text NOT NULL,
-    inactive_at timestamp with time zone,
     last_active_app_config_digest text,
     updated_at timestamp with time zone NOT NULL
 );
@@ -560,10 +559,10 @@ CREATE INDEX idx_t_deployment_component_file_path ON public.t_deployment_compone
 
 
 --
--- Name: idx_t_deployment_created_at; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_t_deployment_digest; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_t_deployment_created_at ON public.t_deployment USING btree (created_at, deployment_id);
+CREATE UNIQUE INDEX idx_t_deployment_digest ON public.t_deployment USING btree (digest);
 
 
 --
@@ -571,13 +570,6 @@ CREATE INDEX idx_t_deployment_created_at ON public.t_deployment USING btree (cre
 --
 
 CREATE INDEX idx_t_deployment_file_digest ON public.t_deployment_file USING btree (digest);
-
-
---
--- Name: idx_t_deployment_inactive_at; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_t_deployment_inactive_at ON public.t_deployment USING btree (inactive_at, deployment_id) WHERE ((status)::text = 'inactive'::text);
 
 
 --
@@ -599,6 +591,13 @@ CREATE UNIQUE INDEX idx_t_deployment_single_enqueued ON public.t_deployment USIN
 --
 
 CREATE INDEX idx_t_deployment_status ON public.t_deployment USING btree (status);
+
+
+--
+-- Name: idx_t_deployment_updated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_t_deployment_updated_at ON public.t_deployment USING btree (updated_at, deployment_id);
 
 
 --

@@ -357,7 +357,7 @@ fn parse_retention_age(value: &str) -> Result<std::time::Duration, String> {
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Deployment {
     /// Submit a deployment TOML; print the deployment ID.
-    /// Reuses matching active content and description unless a deployment ID is supplied.
+    /// Content already stored is resubmitted under its deployment ID unless one is supplied.
     Submit {
         /// Path to the deployment TOML file.
         #[arg(
@@ -374,13 +374,14 @@ pub(crate) enum Deployment {
         /// Allows unavailable values and approvals; activation still checks strictly.
         #[arg(long)]
         allow_unavailable_runtime_config: bool,
-        /// Optional human-readable description.
+        /// Human-readable description. For already stored content, omitting it keeps the current
+        /// one and an empty string clears it.
         #[arg(long)]
         description: Option<String>,
         /// Optional client-supplied deployment ID for idempotent submission.
         ///
         /// If a deployment with this ID already exists and its content digest
-        /// matches, the submission is a no-op; a digest mismatch is an error.
+        /// matches, the submission only refreshes it; a digest mismatch is an error.
         /// Generate one with `obelisk generate deployment-id`.
         #[arg(long)]
         deployment_id: Option<DeploymentId>,
@@ -389,7 +390,7 @@ pub(crate) enum Deployment {
         json: bool,
     },
     /// Submit and stage for cloud app apply, or enqueue for a standalone server restart.
-    /// Reuses matching active content and description unless a deployment ID is supplied.
+    /// Content already stored is resubmitted under its deployment ID unless one is supplied.
     Enqueue {
         /// Path to a deployment TOML file, or an existing deployment ID.
         #[arg(
@@ -406,7 +407,8 @@ pub(crate) enum Deployment {
         /// Activation still checks strictly.
         #[arg(long)]
         allow_unavailable_runtime_config: bool,
-        /// Optional human-readable description for a newly submitted deployment.
+        /// Human-readable description. For already stored content, omitting it keeps the current
+        /// one and an empty string clears it.
         #[arg(long)]
         description: Option<String>,
         /// Optional client-supplied deployment ID for idempotent submission.
@@ -421,7 +423,7 @@ pub(crate) enum Deployment {
         json: bool,
     },
     /// Submit (if a file is given) and apply immediately. Fails if not possible.
-    /// Reuses matching active content and description unless a deployment ID is supplied.
+    /// Content already stored is resubmitted under its deployment ID unless one is supplied.
     Apply {
         /// Path to a deployment TOML file, or an existing deployment ID.
         #[arg(
@@ -434,7 +436,8 @@ pub(crate) enum Deployment {
         /// Apply an empty deployment with no components.
         #[arg(long)]
         empty: bool,
-        /// Optional human-readable description for a newly submitted deployment.
+        /// Human-readable description. For already stored content, omitting it keeps the current
+        /// one and an empty string clears it.
         #[arg(long)]
         description: Option<String>,
         /// Optional client-supplied deployment ID for idempotent submission.
@@ -699,7 +702,8 @@ pub(crate) enum Server {
         /// Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via the API.
         #[arg(long)]
         empty: bool,
-        /// Optional human-readable description for the deployment created by --deployment or --empty.
+        /// Human-readable description for the --deployment or --empty deployment. For already
+        /// stored content, omitting it keeps the current one and an empty string clears it.
         #[arg(long)]
         description: Option<String>,
         /// Do not fail startup when a component's imports/exports fail type checking against the current deployment.
@@ -1822,6 +1826,10 @@ pub(crate) enum CloudApp {
         /// Run `fill --non-interactive` first.
         #[arg(long, conflicts_with = "fill")]
         fill_non_interactive: bool,
+        /// Human-readable description. For already stored content, omitting it keeps the current
+        /// one and an empty string clears it.
+        #[arg(long)]
+        description: Option<String>,
     },
     /// Apply the staged configuration and the enqueued (or active) deployment.
     Apply {
