@@ -4485,8 +4485,8 @@ pub(crate) mod deployment {
 
     /// Submit a deployment with a client-supplied ID.
     ///
-    /// Resubmitting the same content under an existing ID replaces its description and bumps
-    /// `updated_at`, which deployment retention orders by. Different content under that ID, or
+    /// Resubmitting the same content under an existing ID bumps `updated_at`, which deployment
+    /// retention orders by, and updates its description when one is given (empty clears it). Different content under that ID, or
     /// content already stored under another ID, returns `409`; see
     /// `GET /v1/deployment-digests/{digest}`.
     #[utoipa::path(

@@ -2529,7 +2529,8 @@ pub trait DbExternalApi: DbConnection {
         now: DateTime<Utc>,
     ) -> Result<EnqueueOutcome, DbErrorWrite>;
 
-    /// Replace the description and bump `updated_at`, which deployment retention orders by.
+    /// Bump `updated_at`, which deployment retention orders by. A `None` description keeps the
+    /// current one, an empty one clears it.
     async fn refresh_deployment(
         &self,
         deployment_id: DeploymentId,

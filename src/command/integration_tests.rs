@@ -2485,7 +2485,7 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
     );
     assert_eq!(resp2.status(), reqwest::StatusCode::NO_CONTENT);
 
-    // A matching resubmit replaces the description and bumps `updated_at`.
+    // A matching resubmit bumps `updated_at`; an omitted description is kept, an empty one clears it.
     let get_record = || async {
         server
             .client
@@ -2501,22 +2501,32 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
             .await
             .unwrap()
     };
+    let resubmit = |description: serde_json::Value| {
+        let (server, get_record, deployment_toml) = (&server, &get_record, deployment_toml.clone());
+        async move {
+            let resp = server
+                .client
+                .put(format!(
+                    "{}/v1/deployments/{deployment_id}",
+                    server.base_url
+                ))
+                .header("Accept", "application/json")
+                .json(&json!({ "deployment_toml": deployment_toml, "description": description }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), reqwest::StatusCode::NO_CONTENT);
+            get_record().await
+        }
+    };
     let before = get_record().await;
-    let resp = server
-        .client
-        .put(format!(
-            "{}/v1/deployments/{deployment_id}",
-            server.base_url
-        ))
-        .header("Accept", "application/json")
-        .json(&json!({ "deployment_toml": deployment_toml, "description": "refreshed" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::NO_CONTENT);
-    let after = get_record().await;
+    let after = resubmit(json!("refreshed")).await;
     assert_eq!(after.description.as_deref(), Some("refreshed"));
     assert!(after.updated_at > before.updated_at);
+    let kept = resubmit(serde_json::Value::Null).await;
+    assert_eq!(kept.description.as_deref(), Some("refreshed"));
+    assert!(kept.updated_at > after.updated_at);
+    assert_eq!(resubmit(json!("")).await.description, None);
 
     let by_digest: rest_types::deployment::DeploymentByDigestResponse = server
         .client

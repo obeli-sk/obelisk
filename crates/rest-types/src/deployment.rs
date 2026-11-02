@@ -158,7 +158,8 @@ pub struct DeploymentSubmitPayload {
     /// Processed deployment manifest (`deployment.toml`). Referenced file blobs must
     /// be uploaded separately after the server returns `missing_digests`.
     pub deployment_toml: String,
-    /// Optional human-readable deployment description
+    /// Human-readable description. When resubmitting stored content, omitting it keeps the
+    /// current one and an empty string clears it.
     pub description: Option<String>,
     /// Store the deployment while app or platform approval is pending. Tolerates
     /// unavailable values and approvals; activation still checks strictly.

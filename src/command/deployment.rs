@@ -361,9 +361,10 @@ async fn submit_deployment(
 pub(super) async fn enqueue_prepared(
     client_startup: &ClientStartup,
     prepared: PreparedDeploymentManifest,
+    description: Option<String>,
 ) -> anyhow::Result<DeploymentId> {
     let api_url = client_startup.api_url();
-    let id = submit_prepared(client_startup, api_url, prepared, true, None, None).await?;
+    let id = submit_prepared(client_startup, api_url, prepared, true, description, None).await?;
     switch_deployment(client_startup, api_url, id, true, SwitchCommand::Enqueue).await?;
     Ok(id)
 }

@@ -5793,7 +5793,7 @@ impl DbExternalApi for PostgresConnection {
         let client_guard = self.client.lock().await;
         let rows = client_guard
             .execute(
-                "UPDATE t_deployment SET description = $1, updated_at = $2 WHERE deployment_id = $3",
+                "UPDATE t_deployment SET description = NULLIF(COALESCE($1, description), ''), updated_at = $2 WHERE deployment_id = $3",
                 &[&description, &now, &deployment_id.to_string()],
             )
             .await?;

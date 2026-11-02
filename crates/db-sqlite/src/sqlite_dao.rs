@@ -5644,7 +5644,7 @@ impl DbExternalApi for SqlitePool {
             move |tx| {
                 let rows = tx
                     .execute(
-                        "UPDATE t_deployment SET description = :description, updated_at = :now WHERE deployment_id = :deployment_id",
+                        "UPDATE t_deployment SET description = NULLIF(COALESCE(:description, description), ''), updated_at = :now WHERE deployment_id = :deployment_id",
                         rusqlite::named_params! {
                             ":description": description,
                             ":now": now,

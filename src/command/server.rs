@@ -2050,7 +2050,7 @@ async fn write_to_cas_prepare_deployment_record(
     Ok((
         DeploymentRecord {
             deployment_id,
-            description,
+            description: description.filter(|description| !description.is_empty()),
             digest,
             created_at: now,
             updated_at: now,
@@ -3674,6 +3674,7 @@ async fn submit_deployment_manifest(
             .map_err(anyhow::Error::from)?;
         return Ok(stored_id);
     }
+    let description = description.filter(|description| !description.is_empty());
 
     // A referenced digest already in the CAS need not be attached to the request.
     let cas = db_pool.cas_conn().await.map_err(anyhow::Error::from)?;

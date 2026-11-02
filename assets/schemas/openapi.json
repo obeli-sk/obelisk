@@ -982,7 +982,7 @@
           "deployments"
         ],
         "summary": "Submit a deployment with a client-supplied ID.",
-        "description": "Resubmitting the same content under an existing ID replaces its description and bumps\n`updated_at`, which deployment retention orders by. Different content under that ID, or\ncontent already stored under another ID, returns `409`; see\n`GET /v1/deployment-digests/{digest}`.",
+        "description": "Resubmitting the same content under an existing ID bumps `updated_at`, which deployment\nretention orders by, and updates its description when one is given (empty clears it). Different content under that ID, or\ncontent already stored under another ID, returns `409`; see\n`GET /v1/deployment-digests/{digest}`.",
         "operationId": "submit_put",
         "parameters": [
           {
@@ -3850,7 +3850,7 @@
               "string",
               "null"
             ],
-            "description": "Optional human-readable deployment description"
+            "description": "Human-readable description. When resubmitting stored content, omitting it keeps the\ncurrent one and an empty string clears it."
           }
         }
       },

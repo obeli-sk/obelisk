@@ -23,6 +23,7 @@ impl CloudArgs {
                     deployment,
                     fill: interactive,
                     fill_non_interactive,
+                    description,
                     ..
                 },
         }) = self.command
@@ -121,7 +122,7 @@ impl CloudArgs {
             self.verbose,
         );
         step("deployment enqueue");
-        let id = crate::command::deployment::enqueue_prepared(&startup, prepared).await
+        let id = crate::command::deployment::enqueue_prepared(&startup, prepared, description).await
             .with_context(|| format!("Deployment staging failed; inspect `obelisk cloud app --app {name} status` and retry deploy"))?;
         let filled = if is_new {
             json!({"declarations":[]})
