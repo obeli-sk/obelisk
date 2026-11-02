@@ -1305,27 +1305,11 @@ impl TestServer {
 
     /// Submit a new deployment via the Web API and return its deployment ID.
     async fn webapi_submit_deployment(&self, deployment_toml: &str) -> DeploymentId {
+        let deployment_id = DeploymentId::generate();
         let resp = self
-            .client
-            .post(format!("{}/v1/deployments", self.base_url))
-            .header("Accept", "application/json")
-            .json(&json!({
-                "deployment_toml": deployment_toml,
-            }))
-            .send()
-            .await
-            .expect("webapi submit deployment request failed");
-        assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
-        let location = resp
-            .headers()
-            .get(reqwest::header::LOCATION)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-        let body: Value = resp.json().await.unwrap();
-        let deployment_id = body["deployment_id"].as_str().unwrap().parse().unwrap();
-        assert_eq!(location, format!("/v1/deployments/{deployment_id}"));
+            .webapi_submit_deployment_with_id(deployment_toml, deployment_id)
+            .await;
+        assert_eq!(resp.status(), reqwest::StatusCode::NO_CONTENT);
         deployment_id
     }
 
@@ -2412,7 +2396,23 @@ async fn submit_deployment_with_generated_id_webapi() {
     let server = TestServer::start(test_addr!(40_105)).await;
 
     let deployment_toml = server.active_deployment_toml().await;
-    let deployment_id = server.webapi_submit_deployment(&deployment_toml).await;
+    // backcompat: 0.43, the deprecated `POST /v1/deployments`.
+    let resp = server
+        .client
+        .post(format!("{}/v1/deployments", server.base_url))
+        .header("Accept", "application/json")
+        .json(&json!({ "deployment_toml": deployment_toml }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
+    let location = resp.headers()[reqwest::header::LOCATION]
+        .to_str()
+        .unwrap()
+        .to_string();
+    let body: Value = resp.json().await.unwrap();
+    let deployment_id: DeploymentId = body["deployment_id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(location, format!("/v1/deployments/{deployment_id}"));
 
     let resp = server
         .client

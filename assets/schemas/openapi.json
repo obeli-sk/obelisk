@@ -840,7 +840,7 @@
         "tags": [
           "deployments"
         ],
-        "summary": "Submit a new deployment.",
+        "summary": "Submit a new deployment under a server-generated ID. Deprecated: retries create duplicates.",
         "description": "Accepts either an `application/json` body (no attached file blobs; referenced\nfiles must already exist in the CAS) or a `multipart/form-data` package whose\nparts carry the manifest and the deployment-owned file blobs. On an incomplete\npackage the server stores nothing and returns a `409` `SubmitPackageErrorBody`\nlisting the missing files to attach and retry.",
         "operationId": "submit_post",
         "requestBody": {
@@ -884,7 +884,8 @@
               }
             }
           }
-        }
+        },
+        "deprecated": true
       }
     },
     "/v1/deployments/{deployment_id}": {

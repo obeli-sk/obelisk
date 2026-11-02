@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its uptime and latency history. The dashboard reads probe runs through the Obelisk API using
   internal secrets and URLs supplied by the server, so it needs no configuration.
 
+### Deprecated
+
+- *(api)* `POST /v1/deployments`, as its retries create duplicate deployments. Use
+  `PUT /v1/deployments/{deployment_id}` with a client-generated ID.
+
 ### Fixed
 
 - *(gc)* Successful periodic garbage collection system events use DEBUG severity.

@@ -4402,7 +4402,7 @@ pub(crate) mod deployment {
         })
     }
 
-    /// Submit a new deployment.
+    /// Submit a new deployment under a server-generated ID. Deprecated: retries create duplicates.
     ///
     /// Accepts either an `application/json` body (no attached file blobs; referenced
     /// files must already exist in the CAS) or a `multipart/form-data` package whose
@@ -4420,6 +4420,8 @@ pub(crate) mod deployment {
             (status = 409, description = "Incomplete or invalid package", body = SubmitPackageErrorBody)
         )
     )]
+    // backcompat: 0.43, delete this endpoint after 0.43 in favor of `PUT /v1/deployments/{deployment_id}`.
+    #[deprecated(note = "use `PUT /v1/deployments/{deployment_id}` with a client-generated ID")]
     #[instrument(skip_all)]
     pub(crate) async fn submit_post(
         state: State<Arc<WebApiState>>,
