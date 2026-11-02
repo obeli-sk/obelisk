@@ -5833,12 +5833,9 @@ impl DbExternalApi for PostgresConnection {
         digest: &ContentDigest,
     ) -> Result<Option<DeploymentId>, DbErrorRead> {
         let client_guard = self.client.lock().await;
-        // A superseded row answers only after its unique row was deleted.
         let row = client_guard
             .query_opt(
-                "SELECT deployment_id FROM t_deployment WHERE digest = $1 AND superseded_by IS NULL \
-                 UNION ALL (SELECT deployment_id FROM t_deployment WHERE digest = $1 \
-                 ORDER BY updated_at DESC, deployment_id DESC LIMIT 1) LIMIT 1",
+                "SELECT deployment_id FROM t_deployment WHERE digest = $1 AND superseded_by IS NULL",
                 &[&digest.to_string()],
             )
             .await?;

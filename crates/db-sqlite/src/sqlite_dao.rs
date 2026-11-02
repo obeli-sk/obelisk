@@ -5684,11 +5684,8 @@ impl DbExternalApi for SqlitePool {
         let digest = digest.to_string();
         self.transaction(
             move |tx| {
-                // A superseded row answers only after its unique row was deleted.
                 tx.query_row(
-                    "SELECT deployment_id FROM t_deployment WHERE digest = :digest AND superseded_by IS NULL \
-                     UNION ALL SELECT * FROM (SELECT deployment_id FROM t_deployment WHERE digest = :digest \
-                     ORDER BY updated_at DESC, deployment_id DESC LIMIT 1) LIMIT 1",
+                    "SELECT deployment_id FROM t_deployment WHERE digest = :digest AND superseded_by IS NULL",
                     rusqlite::named_params! { ":digest": digest },
                     |row| row.get(0),
                 )
@@ -7973,7 +7970,7 @@ mod tests {
             Some("Dep_00000000000000000000000001".to_string()),
             lookup().await
         );
-        // Once the unique row is gone, the most recently updated superseded row answers.
+        // Once the unique row is gone, the content may be stored again.
         pool.transaction(
             |tx| {
                 Ok::<_, super::RusqliteError>(tx.execute_batch(
@@ -7985,10 +7982,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(
-            Some("Dep_00000000000000000000000002".to_string()),
-            lookup().await
-        );
+        assert_eq!(None, lookup().await);
         pool.close().await;
     }
 }
