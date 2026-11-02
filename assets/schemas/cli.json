@@ -419,6 +419,17 @@
                       "help": "Number of events to return"
                     },
                     {
+                      "name": "--backtraces",
+                      "value_name": "BACKTRACES",
+                      "help": "Show persisted backtraces: with source snippets by default, or `frames` only",
+                      "accepts": {
+                        "one_of": [
+                          "source",
+                          "frames"
+                        ]
+                      }
+                    },
+                    {
                       "name": "--json",
                       "short": "j",
                       "help": "Output as JSON instead of human-readable text"
@@ -1606,6 +1617,17 @@
             {
               "name": "--limit",
               "help": "Number of events to return"
+            },
+            {
+              "name": "--backtraces",
+              "value_name": "BACKTRACES",
+              "help": "Show persisted backtraces: with source snippets by default, or `frames` only",
+              "accepts": {
+                "one_of": [
+                  "source",
+                  "frames"
+                ]
+              }
             },
             {
               "name": "--json",

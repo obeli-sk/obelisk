@@ -934,6 +934,13 @@ impl FromStr for FunctionFqnOrShort {
     }
 }
 
+/// Backtrace detail for `execution events --backtraces`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum BacktracesArg {
+    Source,
+    Frames,
+}
+
 /// Minimum log level for `execution logs`.
 /// One of: `trace`, `debug`, `info`, `warn`, `error`, `off`.
 #[derive(Debug, Clone, Copy, strum::EnumString)]
@@ -1029,6 +1036,9 @@ pub(crate) enum Execution {
         /// Number of events to return.
         #[arg(long, default_value = "20")]
         limit: u16,
+        /// Show persisted backtraces: with source snippets by default, or `frames` only.
+        #[arg(long, value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "source")]
+        backtraces: Option<BacktracesArg>,
         /// Output as JSON instead of human-readable text.
         #[arg(short, long)]
         json: bool,

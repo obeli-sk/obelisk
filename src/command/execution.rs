@@ -11,6 +11,7 @@ use base64::Engine as _;
 use concepts::ExecutionId;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use http::header::ACCEPT;
+use rest_types::backtrace::BacktraceInfoSer;
 use rest_types::components::ComponentConfig;
 use rest_types::executions::{
     ExecutionEventsResponse, ExecutionResponsesResponse, ExecutionSubmitPayload,
@@ -22,6 +23,7 @@ use rest_types::replay::{
     ReplayResponseSer,
 };
 use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::time::Duration;
 use tracing::instrument;
@@ -74,10 +76,19 @@ impl args::Execution {
                 execution_id,
                 from,
                 limit,
+                backtraces,
                 json,
             } => {
-                execution_events_cmd(&client_startup, api_url, execution_id, from, limit, json)
-                    .await
+                execution_events_cmd(
+                    &client_startup,
+                    api_url,
+                    execution_id,
+                    from,
+                    limit,
+                    backtraces,
+                    json,
+                )
+                .await
             }
             args::Execution::Responses {
                 execution_id,
@@ -1360,13 +1371,15 @@ async fn execution_events_cmd(
     execution_id: ExecutionId,
     from: Option<u32>,
     limit: u16,
+    backtraces: Option<args::BacktracesArg>,
     json: bool,
 ) -> anyhow::Result<()> {
     let client = client_startup.web_api_client()?;
     let mut req = client
         .get(format!("{api_url}/v1/executions/{execution_id}/events"))
         .header(ACCEPT, "application/json")
-        .query(&[("length", limit.to_string())]);
+        .query(&[("length", limit.to_string())])
+        .query(&[("include_backtrace_id", backtraces.is_some())]);
     if let Some(from) = from {
         req = req
             .query(&[("version", from.to_string())])
@@ -1376,13 +1389,179 @@ async fn execution_events_cmd(
         req = req.query(&[("direction", "older")]);
     }
     let response: ExecutionEventsResponse = send_json(req).await?;
-    if json {
-        print_json(&response)
-    } else {
+    let Some(detail) = backtraces else {
+        if json {
+            return print_json(&response);
+        }
         for event in response.events {
             eprintln!("{} `{}` {}", event.version, event.created_at, event.event);
         }
-        Ok(())
+        return Ok(());
+    };
+    // A backtrace spans a version range; show it once, at the first listed event of its range.
+    let mut shown = HashSet::new();
+    let mut sources = SourceCache::default();
+    let mut events = Vec::with_capacity(response.events.len());
+    for event in response.events {
+        let backtrace = match event.backtrace_id.as_ref().map(|id| id.0) {
+            Some(id) if shown.insert(id) => {
+                let backtrace: BacktraceInfoSer = send_json(
+                    client
+                        .get(format!("{api_url}/v1/executions/{execution_id}/backtrace"))
+                        .header(ACCEPT, "application/json")
+                        .query(&[("version", id)]),
+                )
+                .await?;
+                let snippets = if detail == args::BacktracesArg::Source {
+                    sources.snippets(&client, api_url, &backtrace).await?
+                } else {
+                    Vec::new()
+                };
+                Some((backtrace, snippets))
+            }
+            _ => None,
+        };
+        events.push((event, backtrace));
+    }
+    if json {
+        let events =
+            events
+                .into_iter()
+                .map(|(event, backtrace)| {
+                    let mut value = serde_json::to_value(event)?;
+                    if let Some((backtrace, snippets)) = backtrace {
+                        let mut backtrace = serde_json::to_value(backtrace)?;
+                        for (frame_idx, symbol_idx, snippet) in snippets {
+                            backtrace["wasm_backtrace"]["frames"][frame_idx]["symbols"]
+                                [symbol_idx]["source"] = serde_json::to_value(snippet)?;
+                        }
+                        value["backtrace"] = backtrace;
+                    }
+                    Ok(value)
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+        return print_json(&serde_json::json!({
+            "events": events,
+            "max_version": response.max_version,
+        }));
+    }
+    let mut any_backtrace = false;
+    for (event, backtrace) in events {
+        eprintln!("{} `{}` {}", event.version, event.created_at, event.event);
+        if let Some((backtrace, snippets)) = backtrace {
+            any_backtrace = true;
+            print_backtrace(&backtrace, &snippets);
+        }
+    }
+    if !any_backtrace {
+        eprintln!(
+            "No persisted backtraces for these events, see `obelisk execution persist-backtraces {execution_id}`"
+        );
+    }
+    Ok(())
+}
+
+const SOURCE_CONTEXT_LINES: usize = 2;
+
+#[derive(Debug, serde::Serialize)]
+struct SourceSnippet {
+    start_line: usize,
+    lines: Vec<String>,
+}
+
+/// Source file lines by component digest and file; `None` when the server has no such source.
+#[derive(Default)]
+struct SourceCache(HashMap<(String, String), Option<Vec<String>>>);
+
+impl SourceCache {
+    /// Snippets keyed by frame and symbol index, for symbols whose source is registered.
+    async fn snippets(
+        &mut self,
+        client: &crate::client::HttpClient,
+        api_url: &str,
+        backtrace: &BacktraceInfoSer,
+    ) -> anyhow::Result<Vec<(usize, usize, SourceSnippet)>> {
+        let digest = backtrace.component_id.component_digest.to_string();
+        let mut snippets = Vec::new();
+        for (frame_idx, frame) in backtrace.wasm_backtrace.frames.iter().enumerate() {
+            for (symbol_idx, symbol) in frame.symbols.iter().enumerate() {
+                if let (Some(file), Some(line)) = (&symbol.file, symbol.line)
+                    && let Some(lines) = self.get(client, api_url, &digest, file).await?
+                    && let Some(snippet) = snippet(lines, line as usize)
+                {
+                    snippets.push((frame_idx, symbol_idx, snippet));
+                }
+            }
+        }
+        Ok(snippets)
+    }
+
+    async fn get(
+        &mut self,
+        client: &crate::client::HttpClient,
+        api_url: &str,
+        digest: &str,
+        file: &str,
+    ) -> anyhow::Result<Option<&Vec<String>>> {
+        let key = (digest.to_string(), file.to_string());
+        if !self.0.contains_key(&key) {
+            let response = client
+                .get(format!("{api_url}/v1/components/{digest}/source"))
+                .header(ACCEPT, "text/plain")
+                .query(&[("file", file)])
+                .send()
+                .await?;
+            let lines = if response.status() == reqwest::StatusCode::NOT_FOUND {
+                None
+            } else {
+                let response = response
+                    .error_for_status()
+                    .with_context(|| format!("cannot fetch source `{file}`"))?;
+                Some(response.text().await?.lines().map(str::to_owned).collect())
+            };
+            self.0.insert(key.clone(), lines);
+        }
+        Ok(self.0[&key].as_ref())
+    }
+}
+
+fn snippet(lines: &[String], line: usize) -> Option<SourceSnippet> {
+    let idx = line.checked_sub(1).filter(|idx| *idx < lines.len())?;
+    let start = idx.saturating_sub(SOURCE_CONTEXT_LINES);
+    let end = (idx + SOURCE_CONTEXT_LINES + 1).min(lines.len());
+    Some(SourceSnippet {
+        start_line: start + 1,
+        lines: lines[start..end].to_vec(),
+    })
+}
+
+fn print_backtrace(backtrace: &BacktraceInfoSer, snippets: &[(usize, usize, SourceSnippet)]) {
+    for (frame_idx, frame) in backtrace.wasm_backtrace.frames.iter().enumerate() {
+        if frame.symbols.is_empty() {
+            eprintln!("    at {} ({})", frame.func_name, frame.module);
+        }
+        for (symbol_idx, symbol) in frame.symbols.iter().enumerate() {
+            let func_name = symbol.func_name.as_deref().unwrap_or(&frame.func_name);
+            let location = match (&symbol.file, symbol.line, symbol.col) {
+                (Some(file), Some(line), Some(col)) => format!("{file}:{line}:{col}"),
+                (Some(file), Some(line), None) => format!("{file}:{line}"),
+                (Some(file), None, _) => file.clone(),
+                (None, _, _) => frame.module.clone(),
+            };
+            eprintln!("    at {func_name} ({location})");
+            let snippet = snippets
+                .iter()
+                .find(|(f, s, _)| *f == frame_idx && *s == symbol_idx)
+                .map(|(_, _, snippet)| snippet);
+            if let (Some(snippet), Some(line)) = (snippet, symbol.line) {
+                let width = (snippet.start_line + snippet.lines.len()).to_string().len();
+                for (offset, text) in snippet.lines.iter().enumerate() {
+                    let number = snippet.start_line + offset;
+                    let marker = if number == line as usize { '>' } else { ' ' };
+                    eprintln!("      {marker} {number:>width$} | {text}");
+                }
+            }
+        }
     }
 }
 
