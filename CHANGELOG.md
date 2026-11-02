@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(api)* Resubmitting matching content under an existing deployment ID replaces its description
   and bumps `updated_at`. `GET /v1/deployment-digests/{digest}` returns the deployment storing a
   content digest.
+- *(cli)* `obelisk deployment submit` and `enqueue` without `--deployment-id` resubmit stored
+  content under its existing deployment ID.
 - *(gc)* Deployment retention orders by `updated_at` for both age and count, so a resubmitted
   deployment is kept as recent.
 - *(cli)* The default `obelisk generate new` template probes one site on a cron schedule and shows

@@ -9,8 +9,9 @@ use anyhow::{Context as _, bail};
 use concepts::prefixed_ulid::DeploymentId;
 use http::header::{ACCEPT, CONTENT_TYPE};
 use rest_types::deployment::{
-    DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitPayload,
-    DeploymentSwitchPayload, MissingRuntimeConfigErrorBody, SubmitPackageErrorBody,
+    DeploymentByDigestResponse, DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer,
+    DeploymentSubmitPayload, DeploymentSwitchPayload, MissingRuntimeConfigErrorBody,
+    SubmitPackageErrorBody,
 };
 use rest_types::server::ServerInfoResponse;
 use serde::Deserialize;
@@ -375,31 +376,10 @@ async fn submit_prepared(
     description: Option<String>,
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
-    if deployment_id.is_none() {
-        let client = client_startup.web_api_client()?;
-        let response = client
-            .get(format!("{api_url}/v1/info"))
-            .header(ACCEPT, "application/json")
-            .send()
-            .await?;
-        if response.status() != http::StatusCode::NOT_FOUND {
-            let info: ServerInfoResponse = response.error_for_status()?.json().await?;
-            let active_id: DeploymentId = info.deployment_id.parse()?;
-            let active: DeploymentRecordSer = send_json(
-                client
-                    .get(format!("{api_url}/v1/deployments/{active_id}"))
-                    .header(ACCEPT, "application/json"),
-            )
-            .await?;
-            if active.description == description
-                && toml::from_str::<toml::Value>(&active.deployment_toml)?
-                    == toml::from_str::<toml::Value>(&prepared.deployment_toml)?
-            {
-                eprintln!("Deployment content unchanged; using {active_id}");
-                return Ok(active_id);
-            }
-        }
-    }
+    let deployment_id = match deployment_id {
+        Some(id) => Some(id),
+        None => find_deployment_by_digest(client_startup, api_url, &prepared).await?,
+    };
     let id = upload_and_submit_manifest(
         client_startup,
         api_url,
@@ -411,6 +391,31 @@ async fn submit_prepared(
     .await?;
     eprintln!("Submitted as {id}");
     Ok(id)
+}
+
+/// Find the deployment storing the prepared content, so that resubmitting it refreshes that
+/// deployment instead of conflicting on the unique digest.
+async fn find_deployment_by_digest(
+    client_startup: &ClientStartup,
+    api_url: &str,
+    prepared: &PreparedDeploymentManifest,
+) -> anyhow::Result<Option<DeploymentId>> {
+    // backcompat: 0.43.0-rc.15 servers lack this endpoint and answer 404 too.
+    let response = client_startup
+        .web_api_client()?
+        .get(format!(
+            "{api_url}/v1/deployment-digests/{}",
+            prepared.digest
+        ))
+        .header(ACCEPT, "application/json")
+        .send()
+        .await?;
+    if response.status() == http::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let found: DeploymentByDigestResponse = response.error_for_status()?.json().await?;
+    eprintln!("Deployment content matches {}", found.deployment_id);
+    Ok(Some(found.deployment_id))
 }
 
 /// Submit the enriched manifest without file blobs, upload each file the server reports

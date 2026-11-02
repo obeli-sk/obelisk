@@ -332,10 +332,9 @@ mod tests {
                 gc: None,
                 started_at: chrono::Utc::now(),
             }),
-            (Method::GET, _) if path.starts_with("/tenant/v1/deployments/") => json!({
-                "deployment_id":state.active,"digest":"sha256:old","status":"active",
-                "created_at":chrono::Utc::now(),"deployment_toml":"[defaults]", "files":[]
-            }),
+            (Method::GET, _) if path.starts_with("/tenant/v1/deployment-digests/") => {
+                return StatusCode::NOT_FOUND.into_response();
+            }
             (Method::PUT, _)
                 if path.starts_with("/tenant/v1/deployments/") && !path.ends_with("/switch") =>
             {
