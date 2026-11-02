@@ -6,7 +6,7 @@ use crate::args::{
     DeploymentArgs, ExecutionArgs, Subcommand,
 };
 use crate::client::ClientStartup;
-use crate::config::app::AppConfigToml;
+use crate::config::app::{AppConfigToml, generate_app_name_hint, with_app_name};
 use anyhow::{Context as _, bail, ensure};
 use concepts::prefixed_ulid::ExecutionIdTopLevel;
 use reqwest::{Method, Url, header};
@@ -349,16 +349,10 @@ async fn policy(path: &Path) -> anyhow::Result<LocalConfig> {
     let text = tokio::fs::read_to_string(path)
         .await
         .with_context(|| format!("Cannot read app config {}", path.display()))?;
-    LocalConfig::parse(text).with_context(|| format!("Invalid app config {}", path.display()))
-}
-/// Returns `app_toml` with `app_name` set to `name`, keeping the rest of the document.
-fn with_app_name(app_toml: &str, name: &str) -> anyhow::Result<String> {
-    let mut document = app_toml.parse::<toml_edit::DocumentMut>()?;
-    if document.get("app_name").and_then(|item| item.as_str()) == Some(name) {
-        return Ok(app_toml.to_owned());
-    }
-    document["app_name"] = toml_edit::value(name);
-    Ok(document.to_string())
+    let config = LocalConfig::parse(text)
+        .with_context(|| format!("Invalid app config {}", path.display()))?;
+    validate_cloud_app_name(&config.app_name).with_context(|| generate_app_name_hint(path))?;
+    Ok(config)
 }
 /// App config path of commands that read one, with whether `-a` was given.
 fn app_config_path(command: &CloudApp) -> anyhow::Result<Option<(PathBuf, bool)>> {

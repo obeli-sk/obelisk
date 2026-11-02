@@ -628,6 +628,17 @@ pub(crate) enum Generate {
         #[arg(long, short)]
         force: bool,
     },
+    /// Generate a random app name and print it to stdout.
+    ///
+    /// Also sets `app_name` in the app config: `--app-config`, or `./app.toml` if present.
+    AppName {
+        /// App config whose `app_name` to update, defaults to `./app.toml` if present.
+        #[arg(short, long)]
+        app_config: Option<PathBuf>,
+        /// Only print the name, leaving any app config untouched.
+        #[arg(long, conflicts_with = "app_config")]
+        print_only: bool,
+    },
     /// Generate a fresh random execution ID and print it to stdout.
     ExecutionId {
         /// Output as JSON instead of plain text.

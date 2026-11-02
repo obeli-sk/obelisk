@@ -93,6 +93,29 @@ pub(crate) fn validate_app_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Error context for an invalid `app_name` read from `path`.
+pub(crate) fn generate_app_name_hint(path: &std::path::Path) -> String {
+    let command = if path == std::path::Path::new("app.toml") {
+        "obelisk generate app-name".to_owned()
+    } else {
+        format!("obelisk generate app-name -a {}", path.display())
+    };
+    format!(
+        "invalid `app_name` in {}; set a random one with `{command}`",
+        path.display()
+    )
+}
+
+/// Returns `app_toml` with `app_name` set to `name`, keeping the rest of the document.
+pub(crate) fn with_app_name(app_toml: &str, name: &str) -> anyhow::Result<String> {
+    let mut document = app_toml.parse::<toml_edit::DocumentMut>()?;
+    if document.get("app_name").and_then(|item| item.as_str()) == Some(name) {
+        return Ok(app_toml.to_owned());
+    }
+    document["app_name"] = toml_edit::value(name);
+    Ok(document.to_string())
+}
+
 #[derive(Debug, Clone, JsonSchema, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 enum AppPolicySecretV1 {

@@ -203,6 +203,8 @@ impl ConfigHolder {
             let app: AppConfigToml = toml::from_str(&contents)
                 .with_context(|| format!("cannot parse app config {path:?}"))?;
             app.validate_cloud_integrations()?;
+            crate::config::app::validate_app_name(&app.app_name)
+                .with_context(|| crate::config::app::generate_app_name_hint(path))?;
             app.verify_app_name()?;
             Ok((app, contents))
         } else {
