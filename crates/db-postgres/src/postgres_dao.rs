@@ -5248,6 +5248,35 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip_all)]
+    async fn list_source_mappings(
+        &self,
+        component_digest: &ComponentDigest,
+    ) -> Result<Vec<SourceMapping>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let rows = tx
+            .query(
+                "SELECT frame_key, is_suffix, digest \
+                 FROM t_component_source \
+                 WHERE component_digest = $1 \
+                 ORDER BY frame_key COLLATE \"C\", is_suffix",
+                &[&component_digest.as_slice()],
+            )
+            .await?;
+        tx.commit().await?;
+        rows.iter()
+            .map(|row| -> Result<_, DbErrorRead> {
+                Ok(SourceMapping {
+                    component_digest: component_digest.clone(),
+                    frame_key: get(row, "frame_key")?,
+                    is_suffix: get(row, "is_suffix")?,
+                    digest: get::<ContentDigest, _>(row, "digest")?,
+                })
+            })
+            .collect()
+    }
+
+    #[instrument(skip_all)]
     async fn resolve_source_digest(
         &self,
         component_digest: &ComponentDigest,

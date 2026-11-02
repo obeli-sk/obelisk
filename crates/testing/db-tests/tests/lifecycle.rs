@@ -4319,6 +4319,21 @@ async fn source_file_upsert_replaces_existing_mapping(database: Database) {
         resolve("/workspace/src/suffix.rs").await
     );
 
+    let listed: Vec<_> = api_conn
+        .list_source_mappings(&component_digest)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|mapping| (mapping.frame_key, mapping.is_suffix))
+        .collect();
+    assert_eq!(
+        vec![
+            ("/src/suffix.rs".to_string(), true),
+            ("exact.rs".to_string(), false)
+        ],
+        listed
+    );
+
     drop(cas);
     drop(api_conn);
     db_close.close().await;

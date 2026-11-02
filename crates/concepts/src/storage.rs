@@ -2359,6 +2359,12 @@ pub trait DbExternalApi: DbConnection {
         file: &str,
     ) -> Result<Option<ContentDigest>, DbErrorRead>;
 
+    /// List source mappings of a component, ordered by frame key.
+    async fn list_source_mappings(
+        &self,
+        component_digest: &ComponentDigest,
+    ) -> Result<Vec<SourceMapping>, DbErrorRead>;
+
     /// Insert normalized component metadata rows, reusing existing ones but replacing their imports:
     /// JS components resolve imports against the other components of the deployment.
     async fn upsert_component_metadata(
