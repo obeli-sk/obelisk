@@ -37,7 +37,7 @@ use concepts::{
         STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, SourceMapping, StorageStatus,
         SubscribeToResponsesError, SystemEvent, SystemEventFilter, SystemEventLevel,
         SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version, VersionType,
-        deployment_cursor_fallback_created_at,
+        deployment_cursor_fallback_updated_at,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -3834,11 +3834,11 @@ impl SqlitePool {
             params.push((":cursor", Box::new(*cursor)));
             params.push((
                 ":cursor_fallback",
-                Box::new(deployment_cursor_fallback_created_at(*cursor)),
+                Box::new(deployment_cursor_fallback_updated_at(*cursor)),
             ));
             write!(
                 sql,
-                " WHERE (d.created_at, d.deployment_id) {rel} (COALESCE((SELECT created_at FROM t_deployment WHERE deployment_id = :cursor), :cursor_fallback), :cursor)",
+                " WHERE (d.updated_at, d.deployment_id) {rel} (COALESCE((SELECT updated_at FROM t_deployment WHERE deployment_id = :cursor), :cursor_fallback), :cursor)",
                 rel = pagination.rel()
             )
             .expect("writing to string");
@@ -3862,7 +3862,7 @@ impl SqlitePool {
         }
         write!(
             sql,
-            " ORDER BY d.created_at {inner_order}, d.deployment_id {inner_order} LIMIT {limit}",
+            " ORDER BY d.updated_at {inner_order}, d.deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -3871,7 +3871,7 @@ impl SqlitePool {
             sql
         } else {
             format!(
-                "SELECT * FROM ({sql}) AS sub ORDER BY created_at {outer_order}, deployment_id {outer_order}"
+                "SELECT * FROM ({sql}) AS sub ORDER BY updated_at {outer_order}, deployment_id {outer_order}"
             )
         };
 
@@ -4274,11 +4274,11 @@ impl SqlitePool {
             params.push((":cursor", Box::new(*cursor)));
             params.push((
                 ":cursor_fallback",
-                Box::new(deployment_cursor_fallback_created_at(*cursor)),
+                Box::new(deployment_cursor_fallback_updated_at(*cursor)),
             ));
             write!(
                 sql,
-                " WHERE (created_at, deployment_id) {rel} (COALESCE((SELECT created_at FROM t_deployment WHERE deployment_id = :cursor), :cursor_fallback), :cursor)",
+                " WHERE (updated_at, deployment_id) {rel} (COALESCE((SELECT updated_at FROM t_deployment WHERE deployment_id = :cursor), :cursor_fallback), :cursor)",
                 rel = pagination.rel()
             )
             .expect("writing to string");
@@ -4292,7 +4292,7 @@ impl SqlitePool {
 
         write!(
             sql,
-            " ORDER BY created_at {inner_order}, deployment_id {inner_order} LIMIT {limit}",
+            " ORDER BY updated_at {inner_order}, deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -4301,7 +4301,7 @@ impl SqlitePool {
             sql
         } else {
             format!(
-                "SELECT * FROM ({sql}) AS sub ORDER BY created_at {outer_order}, deployment_id {outer_order}"
+                "SELECT * FROM ({sql}) AS sub ORDER BY updated_at {outer_order}, deployment_id {outer_order}"
             )
         };
 

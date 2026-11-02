@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content under its existing deployment ID.
 - *(gc)* Deployment retention orders by `updated_at` for both age and count, so a resubmitted
   deployment is kept as recent.
+- *(api)* `GET /v1/deployments` lists the most recently updated deployments first.
 - *(cli)* The default `obelisk generate new` template probes one site on a cron schedule and shows
   its uptime and latency history. The dashboard reads probe runs through the Obelisk API using
   internal secrets and URLs supplied by the server, so it needs no configuration.

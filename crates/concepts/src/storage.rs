@@ -2467,6 +2467,7 @@ pub trait DbExternalApi: DbConnection {
         pagination: Pagination<LogCursor>,
     ) -> Result<ListLogsResponse, DbErrorRead>;
 
+    /// Ordered by `(updated_at, deployment_id)`, most recently updated first.
     async fn list_deployment_states(
         &self,
         current_time: DateTime<Utc>,
@@ -2557,6 +2558,7 @@ pub trait DbExternalApi: DbConnection {
     /// Returned [`DeploymentRecord`] must contain `deployment_toml`.
     async fn get_current_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead>;
 
+    /// Ordered by `(updated_at, deployment_id)`, most recently updated first.
     async fn list_deployments(
         &self,
         pagination: Pagination<Option<DeploymentId>>,
@@ -3565,9 +3567,10 @@ pub enum Pagination<T> {
         including_cursor: bool,
     },
 }
-/// Fallback `created_at` for a deployment cursor whose row no longer exists (e.g. garbage collected).
+/// Fallback `updated_at` for a deployment cursor whose row no longer exists (e.g. garbage collected):
+/// its ULID timestamp, the earliest it could have been.
 #[must_use]
-pub fn deployment_cursor_fallback_created_at(cursor: DeploymentId) -> DateTime<Utc> {
+pub fn deployment_cursor_fallback_updated_at(cursor: DeploymentId) -> DateTime<Utc> {
     DateTime::from_timestamp_millis(
         i64::try_from(cursor.timestamp_part()).expect("ULID timestamp is 48 bits"),
     )

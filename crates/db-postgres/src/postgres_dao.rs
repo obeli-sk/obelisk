@@ -37,7 +37,7 @@ use concepts::{
         STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, SourceMapping, StorageStatus,
         SubscribeToResponsesError, SystemEvent, SystemEventFilter, SystemEventLevel,
         SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
-        deployment_cursor_fallback_created_at,
+        deployment_cursor_fallback_updated_at,
     },
 };
 use db_common::{
@@ -2165,10 +2165,10 @@ async fn list_deployment_states(
     // Pagination
     if let Some(cursor) = pagination.cursor() {
         let p_cursor = add_param(Box::new(cursor.to_string()));
-        let p_fallback = add_param(Box::new(deployment_cursor_fallback_created_at(*cursor)));
+        let p_fallback = add_param(Box::new(deployment_cursor_fallback_updated_at(*cursor)));
         write!(
             sql,
-            " WHERE (d.created_at, d.deployment_id) {rel} (COALESCE((SELECT created_at FROM t_deployment WHERE deployment_id = {p_cursor}), {p_fallback}), {p_cursor})",
+            " WHERE (d.updated_at, d.deployment_id) {rel} (COALESCE((SELECT updated_at FROM t_deployment WHERE deployment_id = {p_cursor}), {p_fallback}), {p_cursor})",
             rel = pagination.rel()
         )
         .expect("writing to string");
@@ -2193,7 +2193,7 @@ async fn list_deployment_states(
     }
     write!(
         sql,
-        " ORDER BY d.created_at {inner_order}, d.deployment_id {inner_order} LIMIT {}",
+        " ORDER BY d.updated_at {inner_order}, d.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");
@@ -2202,7 +2202,7 @@ async fn list_deployment_states(
         sql
     } else {
         format!(
-            "SELECT * FROM ({sql}) AS sub ORDER BY created_at {outer_order}, deployment_id {outer_order}"
+            "SELECT * FROM ({sql}) AS sub ORDER BY updated_at {outer_order}, deployment_id {outer_order}"
         )
     };
 
@@ -5911,10 +5911,10 @@ impl DbExternalApi for PostgresConnection {
 
         if let Some(cursor) = pagination.cursor() {
             let p_cursor = add_param(Box::new(cursor.to_string()));
-            let p_fallback = add_param(Box::new(deployment_cursor_fallback_created_at(*cursor)));
+            let p_fallback = add_param(Box::new(deployment_cursor_fallback_updated_at(*cursor)));
             write!(
                 sql,
-                " WHERE (created_at, deployment_id) {rel} (COALESCE((SELECT created_at FROM t_deployment WHERE deployment_id = {p_cursor}), {p_fallback}), {p_cursor})",
+                " WHERE (updated_at, deployment_id) {rel} (COALESCE((SELECT updated_at FROM t_deployment WHERE deployment_id = {p_cursor}), {p_fallback}), {p_cursor})",
                 rel = pagination.rel()
             )
             .expect("writing to string");
@@ -5928,7 +5928,7 @@ impl DbExternalApi for PostgresConnection {
 
         write!(
             sql,
-            " ORDER BY created_at {inner_order}, deployment_id {inner_order} LIMIT {limit}",
+            " ORDER BY updated_at {inner_order}, deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -5937,7 +5937,7 @@ impl DbExternalApi for PostgresConnection {
             sql
         } else {
             format!(
-                "SELECT * FROM ({sql}) AS sub ORDER BY created_at {outer_order}, deployment_id {outer_order}"
+                "SELECT * FROM ({sql}) AS sub ORDER BY updated_at {outer_order}, deployment_id {outer_order}"
             )
         };
 

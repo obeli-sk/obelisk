@@ -4153,7 +4153,7 @@ pub(crate) mod deployment {
         true
     }
 
-    /// List deployments
+    /// List deployments, most recently updated first
     #[utoipa::path(
         get,
         path = "/v1/deployments",

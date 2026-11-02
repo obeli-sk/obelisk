@@ -559,13 +559,6 @@ CREATE INDEX idx_t_deployment_component_file_path ON public.t_deployment_compone
 
 
 --
--- Name: idx_t_deployment_created_at; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_t_deployment_created_at ON public.t_deployment USING btree (created_at, deployment_id);
-
-
---
 -- Name: idx_t_deployment_digest; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -577,13 +570,6 @@ CREATE UNIQUE INDEX idx_t_deployment_digest ON public.t_deployment USING btree (
 --
 
 CREATE INDEX idx_t_deployment_file_digest ON public.t_deployment_file USING btree (digest);
-
-
---
--- Name: idx_t_deployment_retention_updated_at; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_t_deployment_retention_updated_at ON public.t_deployment USING btree (updated_at, deployment_id) WHERE ((status)::text = 'inactive'::text);
 
 
 --
@@ -605,6 +591,13 @@ CREATE UNIQUE INDEX idx_t_deployment_single_enqueued ON public.t_deployment USIN
 --
 
 CREATE INDEX idx_t_deployment_status ON public.t_deployment USING btree (status);
+
+
+--
+-- Name: idx_t_deployment_updated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_t_deployment_updated_at ON public.t_deployment USING btree (updated_at, deployment_id);
 
 
 --
