@@ -860,6 +860,16 @@ pub(crate) enum Component {
         #[arg(short, long)]
         extensions: bool,
     },
+    /// List the source files registered for a component, or print one of them.
+    Source {
+        /// Component digest, as shown by `component list`.
+        digest: String,
+        /// Source file to print. Suffix keys like `.../src/lib.rs` match any path ending with them.
+        file: Option<String>,
+        /// Output as JSON instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Push a WASM component to an OCI registry with deployment metadata.
     Push {
         /// Component name in the input deployment TOML
@@ -922,6 +932,13 @@ impl FromStr for FunctionFqnOrShort {
             Ok(FunctionFqnOrShort::Ffqn(FunctionFqn::from_str(input)?))
         }
     }
+}
+
+/// Backtrace detail for `execution events --backtraces`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum BacktracesArg {
+    Source,
+    Frames,
 }
 
 /// Minimum log level for `execution logs`.
@@ -1019,6 +1036,9 @@ pub(crate) enum Execution {
         /// Number of events to return.
         #[arg(long, default_value = "20")]
         limit: u16,
+        /// Show persisted backtraces: with source snippets by default, or `frames` only.
+        #[arg(long, value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "source")]
+        backtraces: Option<BacktracesArg>,
         /// Output as JSON instead of human-readable text.
         #[arg(short, long)]
         json: bool,

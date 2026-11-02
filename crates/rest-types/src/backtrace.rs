@@ -1,6 +1,6 @@
 use concepts::{
     ExecutionId,
-    storage::{BacktraceInfo, Version, VersionType, WasmBacktrace},
+    storage::{BacktraceInfo, SourceMapping, Version, VersionType, WasmBacktrace},
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -43,5 +43,27 @@ impl TryFrom<BacktraceInfoSer> for BacktraceInfo {
             version_max_excluding: Version::new(value.version_max_excluding),
             wasm_backtrace: value.wasm_backtrace,
         })
+    }
+}
+
+/// A source file registered for a component.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ComponentSourceSer {
+    /// File key accepted by the source endpoints. Suffix keys keep their `.../` prefix.
+    pub file: String,
+    pub digest: String,
+}
+
+impl From<SourceMapping> for ComponentSourceSer {
+    fn from(value: SourceMapping) -> Self {
+        let file = if value.is_suffix {
+            format!("...{}", value.frame_key)
+        } else {
+            value.frame_key
+        };
+        Self {
+            file,
+            digest: value.digest.to_string(),
+        }
     }
 }

@@ -582,6 +582,39 @@
         }
       }
     },
+    "/v1/components/{digest}/sources": {
+      "get": {
+        "tags": [
+          "components"
+        ],
+        "summary": "List source files registered for a component",
+        "operationId": "component_sources_list",
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ComponentSourceSer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/components/{digest}/wit": {
       "get": {
         "tags": [
@@ -3419,6 +3452,23 @@
           },
           "role": {
             "type": "string"
+          }
+        }
+      },
+      "ComponentSourceSer": {
+        "type": "object",
+        "description": "A source file registered for a component.",
+        "required": [
+          "file",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string",
+            "description": "File key accepted by the source endpoints. Suffix keys keep their `.../` prefix."
           }
         }
       },

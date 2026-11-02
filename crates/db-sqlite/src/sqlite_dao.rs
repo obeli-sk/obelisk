@@ -5073,6 +5073,40 @@ impl DbExternalApi for SqlitePool {
     }
 
     #[instrument(skip_all)]
+    async fn list_source_mappings(
+        &self,
+        component_digest: &ComponentDigest,
+    ) -> Result<Vec<SourceMapping>, DbErrorRead> {
+        let component_digest = component_digest.clone();
+        self.transaction(
+            move |tx| {
+                let mut stmt = tx.prepare(
+                    "SELECT frame_key, is_suffix, digest \
+                     FROM t_component_source \
+                     WHERE component_digest = :component_digest \
+                     ORDER BY frame_key, is_suffix",
+                )?;
+                stmt.query_map(
+                    named_params! { ":component_digest": component_digest },
+                    |row| {
+                        Ok(SourceMapping {
+                            component_digest: component_digest.clone(),
+                            frame_key: row.get("frame_key")?,
+                            is_suffix: row.get("is_suffix")?,
+                            digest: row.get("digest")?,
+                        })
+                    },
+                )?
+                .collect::<Result<_, _>>()
+                .map_err(DbErrorRead::from)
+            },
+            TxType::Other,
+            "list_source_mappings",
+        )
+        .await
+    }
+
+    #[instrument(skip_all)]
     async fn resolve_source_digest(
         &self,
         component_digest: &ComponentDigest,

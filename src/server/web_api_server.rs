@@ -39,7 +39,7 @@ use concepts::{
 use http::HeaderMap;
 use http::{StatusCode, header};
 use rest_types::{
-    backtrace::BacktraceInfoSer,
+    backtrace::{BacktraceInfoSer, ComponentSourceSer},
     executions::{
         ExecutionEventsAndResponsesResponse, ExecutionEventsResponse, ExecutionListItemSer,
         ExecutionResponsesResponse, ExecutionSubmitPayload, ExecutionUpgradePayload,
@@ -144,6 +144,7 @@ async fn until_terminated<T>(
         backtrace::execution_backtrace,
         backtrace::execution_backtrace_source,
         backtrace::component_source,
+        backtrace::component_sources_list,
         components::component_wit,
         components::components_list,
         functions::functions_list,
@@ -221,6 +222,7 @@ async fn until_terminated<T>(
         rest_types::deployment::FileIssue,
         rest_types::deployment::DigestMismatch,
         BacktraceInfoSer,
+        ComponentSourceSer,
     ))
 )]
 pub(crate) struct ApiDoc;
@@ -311,6 +313,10 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
         .route(
             "/components/{digest}/source",
             routing::get(backtrace::component_source),
+        )
+        .route(
+            "/components/{digest}/sources",
+            routing::get(backtrace::component_sources_list),
         )
         .route("/functions", routing::get(functions_list))
         .route("/functions/wit", routing::get(function_wit))
@@ -4911,6 +4917,34 @@ mod backtrace {
     #[into_params(parameter_in = Query)]
     pub(crate) struct ComponentSourceParams {
         file: String,
+    }
+
+    /// List source files registered for a component
+    #[utoipa::path(
+        get,
+        path = "/v1/components/{digest}/sources",
+        tag = "components",
+        params(("digest" = String, Path)),
+        responses((status = 200, body = Vec<ComponentSourceSer>))
+    )]
+    pub(crate) async fn component_sources_list(
+        Path(digest): Path<ComponentDigest>,
+        state: State<Arc<WebApiState>>,
+        accept: AcceptHeader,
+    ) -> Result<Response, HttpResponse> {
+        let conn = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+        let sources: Vec<ComponentSourceSer> = conn
+            .list_source_mappings(&digest)
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?
+            .into_iter()
+            .map(ComponentSourceSer::from)
+            .collect();
+        Ok(pretty_json_response(StatusCode::OK, &sources))
     }
 
     #[utoipa::path(
