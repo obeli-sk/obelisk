@@ -10,10 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking:** *(db)* A deployment's content digest is unique. Submitting content already stored
   under another ID returns `409`, and the server reuses the stored deployment when started with
-  the same deployment file. The database migration fails if two deployments store the same
-  content: before upgrading, find them with
-  `SELECT digest, deployment_id FROM t_deployment WHERE digest IN (SELECT digest FROM t_deployment GROUP BY digest HAVING COUNT(*) > 1)`
-  and remove the extra inactive ones with `obelisk admin deployments delete` on the previous version.
+  the same deployment file. The database migration keeps existing deployments storing the same
+  content and marks all but one as superseded: the active or enqueued one, otherwise the most
+  recently updated. Content of a deleted unique deployment resolves to its newest superseded copy.
 - *(api)* Resubmitting matching content under an existing deployment ID bumps `updated_at` and
   sets the description when one is given; an empty description clears it, an omitted one is kept. `GET /v1/deployment-digests/{digest}` returns the deployment storing a
   content digest.

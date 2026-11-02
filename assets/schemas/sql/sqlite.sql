@@ -113,7 +113,7 @@ CREATE TABLE t_deployment (
     deployment_toml      TEXT NOT NULL,
     obelisk_version  TEXT NOT NULL,
     created_by       TEXT
-, description TEXT, digest TEXT NOT NULL DEFAULT 'sha256:0000000000000000000000000000000000000000000000000000000000000000', last_active_app_config_digest TEXT, updated_at TEXT NOT NULL DEFAULT '') STRICT;
+, description TEXT, digest TEXT NOT NULL DEFAULT 'sha256:0000000000000000000000000000000000000000000000000000000000000000', last_active_app_config_digest TEXT, updated_at TEXT NOT NULL DEFAULT '', superseded_by TEXT CHECK (length(superseded_by) <= 30)) STRICT;
 CREATE INDEX idx_t_deployment_status ON t_deployment (status);
 CREATE UNIQUE INDEX idx_t_deployment_single_active ON t_deployment ((1)) WHERE status = 'active';
 CREATE UNIQUE INDEX idx_t_deployment_single_enqueued ON t_deployment ((1)) WHERE status = 'enqueued';
@@ -394,4 +394,4 @@ CREATE INDEX t_system_event_node_run_idx ON t_system_event (node_run_id, created
 CREATE INDEX idx_t_file_upload_uploaded_at ON t_file_upload (uploaded_at);
 CREATE INDEX idx_t_state_created_at ON t_state (created_at, execution_id);
 CREATE INDEX idx_t_deployment_updated_at ON t_deployment (updated_at, deployment_id);
-CREATE UNIQUE INDEX idx_t_deployment_digest ON t_deployment (digest);
+CREATE UNIQUE INDEX idx_t_deployment_digest ON t_deployment (digest) WHERE superseded_by IS NULL;
