@@ -1722,7 +1722,7 @@ pub(crate) struct CloudArgs {
     #[arg(long, global = true)]
     pub(crate) verbose: bool,
     /// Cloud control plane URL.
-    #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", default_value = "https://cloud.obeli.sk", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
+    #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", default_value = "https://cloud.obeli.sk/api", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
     pub(crate) api_url: Option<String>,
     /// Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>` and `webui--<app>.<domain>`.
     #[arg(
