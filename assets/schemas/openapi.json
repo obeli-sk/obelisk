@@ -2941,6 +2941,32 @@
                   "required": [
                     "name",
                     "type",
+                    "source"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "webui-url"
+                      ]
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "type",
                     "source",
                     "http_server"
                   ],

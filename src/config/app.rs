@@ -475,7 +475,7 @@ mod tests {
                 TRACE_ID = {{ optional = true }}
                 TYPED = {{ type = "env", optional = false }}
                 API_URL = {{ type = "internal", source = "api-url" }}
-                WEBUI_URL = {{ type = "internal", source = "http-server-url", http_server = "webui" }}
+                WEBUI_URL = {{ type = "internal", source = "webui-url" }}
                 LLM_URL = {{}}
                 [secrets]
                 TOKEN = {{ exposed_to = {{ worker = ["{upper}", "{lower}"] }} }}

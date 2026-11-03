@@ -36,7 +36,7 @@ trap cleanup EXIT
 
 cat >"$WORK/sqlite.toml" <<TOML
 api.enabled = false
-http_server.webui.enabled = false
+webui.enabled = false
 database.sqlite.directory = "$WORK/sqlite-db"
 TOML
 OBELISK_APP_NAME=schema-dump "$OBELISK" server verify -s "$WORK/sqlite.toml" -d "$WORK/empty-deploy.toml"
@@ -52,7 +52,7 @@ initdb -U postgres -A trust "$PG_DATA" >/dev/null
 pg_ctl -D "$PG_DATA" -o "-c listen_addresses= -k $PG_SOCK" -l "$WORK/pg.log" -w start >/dev/null
 cat >"$WORK/postgres.toml" <<TOML
 api.enabled = false
-http_server.webui.enabled = false
+webui.enabled = false
 [database.postgres]
 host = "$PG_SOCK"
 user = "postgres"

@@ -37,7 +37,7 @@ export default function handle() {
         std::fs::write(
             &server_path,
             format!(
-                r#"http_server.webui.enabled = false
+                r#"webui.enabled = false
 http_server.external.enabled = {external_enabled}
 http_server.external.listening_addr = "127.0.0.1:19090"
 http_server.internal.enabled = false
@@ -118,7 +118,7 @@ impl RepairFixture {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("server.toml"),
-            "allowed_exec_activities = false\nhttp_server.webui.enabled = false\n",
+            "allowed_exec_activities = false\nwebui.enabled = false\n",
         )
         .unwrap();
         std::fs::write(
@@ -249,7 +249,7 @@ fn app_and_platform_repairs_verify_and_are_idempotent() {
     std::fs::write(
         fixture.dir.path().join("server.toml"),
         format!(
-            "allowed_exec_activities = {{ unrelated = '{old_digest}' }}\nhttp_server.webui.enabled = false\n"
+            "allowed_exec_activities = {{ unrelated = '{old_digest}' }}\nwebui.enabled = false\n"
         ),
     )
     .unwrap();

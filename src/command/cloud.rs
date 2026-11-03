@@ -1952,7 +1952,7 @@ mod tests {
         state.lock().unwrap().existing_config = true;
         let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
         let policy = json!({
-            "public_env":["PATH", "ALREADY_SET", {"name":"HOME", "optional":true}, {"name":"OBELISK_CLOUD_TEST_EMPTY", "optional":true}, {"name":"SELF_API", "type":"internal", "source":"api-url"}, {"name":"BROWSER_UI", "type":"internal", "source":"http-server-url", "http_server":"webui"}],
+            "public_env":["PATH", "ALREADY_SET", {"name":"HOME", "optional":true}, {"name":"OBELISK_CLOUD_TEST_EMPTY", "optional":true}, {"name":"SELF_API", "type":"internal", "source":"api-url"}, {"name":"BROWSER_UI", "type":"internal", "source":"webui-url"}],
             "secrets":{"OBELISK_CLOUD_TEST_PROMPT_SECRET":{},"ALREADY_SET":{},"HOME":{"optional":true},"OBELISK_API_TOKEN":{"type":"internal"}}
         });
         let path_value = std::env::var("PATH").unwrap();

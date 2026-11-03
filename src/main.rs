@@ -486,7 +486,7 @@ app_name = 'example'
 public_http_servers = ['hooks']
 [public_env]
 PATH = { type = 'internal', source = 'api-url' }
-UI = { type = 'internal', source = 'http-server-url', http_server = 'webui' }
+UI = { type = 'internal', source = 'webui-url' }
 HOOKS = { type = 'internal', source = 'http-server-url', http_server = 'hooks' }
 [[outbound_http.allowed_host]]
 pattern = '${PATH}'
@@ -500,7 +500,7 @@ methods = ['GET']
             ("127.0.0.2:23456", "http://127.0.0.2:23456"),
         ] {
             for prefix in ["", "OBELISK_APP_ENV_"] {
-                std::fs::write(&server, format!("app_env_prefix = '{prefix}'\napi.listening_addr = '{bind}'\nhttp_server.webui.listening_addr = '0.0.0.0:18080'\nhttp_server.hooks.listening_addr = '[::]:19000'\n")).unwrap();
+                std::fs::write(&server, format!("app_env_prefix = '{prefix}'\napi.listening_addr = '{bind}'\nwebui.listening_addr = '0.0.0.0:18080'\nhttp_server.hooks.listening_addr = '[::]:19000'\n")).unwrap();
                 let startup = prepare_server_startup(
                     Some(server.clone()),
                     Some(app.clone()),
@@ -545,7 +545,7 @@ methods = ['GET']
                     serde_json::json!([
                         {"name":"HOOKS", "type":"internal", "source":"http-server-url", "http_server":"hooks"},
                         {"name":"PATH", "type":"internal", "source":"api-url"},
-                        {"name":"UI", "type":"internal", "source":"http-server-url", "http_server":"webui"},
+                        {"name":"UI", "type":"internal", "source":"webui-url"},
                     ])
                 );
                 let _: rest_types::lifecycle::AppPolicyV1 = serde_json::from_value(policy).unwrap();
@@ -553,7 +553,7 @@ methods = ['GET']
         }
         std::fs::write(
             &server,
-            "api.public_url = 'https://api--example.obelisk.works'\nhttp_server.webui.public_url = 'https://webui--example.obelisk.works/'\n[http_server.hooks]\nlistening_addr = '[::]:19000'\npublic_url = 'https://example.obelisk.works'\n",
+            "api.public_url = 'https://api--example.obelisk.works'\nwebui.public_url = 'https://webui--example.obelisk.works/'\n[http_server.hooks]\nlistening_addr = '[::]:19000'\npublic_url = 'https://example.obelisk.works'\n",
         )
         .unwrap();
         let startup = prepare_server_startup(
@@ -591,7 +591,6 @@ methods = ['GET']
         let dir = tempfile::tempdir().unwrap();
         let server = dir.path().join("server.toml");
         let app = dir.path().join("app.toml");
-        let webui = "source='http-server-url', http_server='webui'";
         for (source, settings, expected) in [
             (
                 "source='api-url'",
@@ -604,14 +603,19 @@ methods = ['GET']
                 "fixed listener port",
             ),
             (
-                webui,
-                "http_server.webui.enabled = false",
-                "enabled `webui` http_server",
+                "source='webui-url'",
+                "webui.enabled = false",
+                "enabled Web UI listener",
             ),
             (
-                webui,
-                "http_server.webui.public_url = 'file:///tmp/ui'",
+                "source='webui-url'",
+                "webui.public_url = 'file:///tmp/ui'",
                 "HTTP(S) URL",
+            ),
+            (
+                "source='http-server-url', http_server='webui'",
+                "",
+                "use `source = \"webui-url\"`",
             ),
         ] {
             std::fs::write(&server, settings).unwrap();
@@ -635,7 +639,7 @@ methods = ['GET']
             "{type='internal',source='unknown'}",
             "{type='internal',source='http-server-url'}",
             "{type='internal',source='api-url',http_server='webui'}",
-            "{type='internal',source='webui-url'}",
+            "{type='internal',source='webui-url',http_server='webui'}",
             "{source='api-url'}",
         ] {
             assert!(

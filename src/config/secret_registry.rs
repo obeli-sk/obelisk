@@ -205,6 +205,12 @@ enum InternalPublicEnvConfigSchema {
         kind: InternalSecretType,
         source: ApiUrlSource,
     },
+    /// `webui.public_url`, otherwise the Web UI listener URL.
+    WebuiUrl {
+        #[serde(rename = "type")]
+        kind: InternalSecretType,
+        source: WebuiUrlSource,
+    },
     /// `http_server.<name>.public_url`, otherwise the listener URL.
     HttpServerUrl {
         #[serde(rename = "type")]
@@ -224,6 +230,13 @@ enum ApiUrlSource {
 #[derive(JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[expect(dead_code, reason = "schema only")]
+enum WebuiUrlSource {
+    WebuiUrl,
+}
+
+#[derive(JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+#[expect(dead_code, reason = "schema only")]
 enum HttpServerUrlSource {
     HttpServerUrl,
 }
@@ -235,6 +248,8 @@ enum HttpServerUrlSource {
 pub(crate) enum InternalPublicEnvSource {
     /// `api.public_url`, otherwise the API listener URL.
     ApiUrl {},
+    /// `webui.public_url`, otherwise the Web UI listener URL.
+    WebuiUrl {},
     /// `http_server.<name>.public_url`, otherwise the listener URL.
     HttpServerUrl { http_server: String },
 }

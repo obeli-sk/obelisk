@@ -7655,7 +7655,7 @@ mod tests {
         "##,
         )?;
         let (deployment, cas) = resolve_deployment_offline(&deployment_path).await?;
-        let config = toml::from_str("http_server.webui.enabled = false")?;
+        let config = toml::from_str("webui.enabled = false")?;
         let server = ServerVerified::new(
             wasm_workers::engines::Engines::new(
                 wasm_workers::engines::EngineConfig::on_demand_testing(),

@@ -213,6 +213,23 @@
           ]
         },
         {
+          "description": "`webui.public_url`, otherwise the Web UI listener URL.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "$ref": "#/$defs/InternalSecretType"
+            },
+            "source": {
+              "$ref": "#/$defs/WebuiUrlSource"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "source"
+          ]
+        },
+        {
           "description": "`http_server.<name>.public_url`, otherwise the listener URL.",
           "type": "object",
           "properties": {
@@ -239,6 +256,12 @@
       "type": "string",
       "enum": [
         "api-url"
+      ]
+    },
+    "WebuiUrlSource": {
+      "type": "string",
+      "enum": [
+        "webui-url"
       ]
     },
     "HttpServerUrlSource": {

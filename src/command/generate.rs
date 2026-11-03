@@ -1518,7 +1518,7 @@ mod tests {
     fn add_token_hash_should_create_and_append() {
         let hash = crate::api::token_hash("some-token");
         // Missing `api` table is created.
-        let contents = add_token_hash("[http_server.webui]\nenabled = false\n", &hash).unwrap();
+        let contents = add_token_hash("[webui]\nenabled = false\n", &hash).unwrap();
         insta::assert_snapshot!("created", contents);
         // Existing entries, including dotted-key style, are kept.
         let contents = add_token_hash(

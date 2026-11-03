@@ -25,6 +25,9 @@
     "api": {
       "$ref": "#/$defs/ApiConfig"
     },
+    "webui": {
+      "$ref": "#/$defs/WebUIConfig"
+    },
     "idle_report": {
       "$ref": "#/$defs/IdleReportConfig"
     },
@@ -72,7 +75,7 @@
       "$ref": "#/$defs/LoggingConfig"
     },
     "http_server": {
-      "description": "Webhook listeners by name. `webui`, `external` and `internal` are built in and enabled by default.",
+      "description": "Webhook listeners by name. `external` and `internal` are built in and enabled by default;\n`webui` is reserved for the `[webui]` listener.",
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/HttpServerToml"
@@ -469,6 +472,29 @@
         "audience",
         "claims"
       ]
+    },
+    "WebUIConfig": {
+      "description": "The Web UI listener. It needs no credentials: every action goes through the API's own\nauthentication.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "listening_addr": {
+          "type": "string",
+          "default": "127.0.0.1:8080"
+        },
+        "public_url": {
+          "description": "Public URL of the Web UI, exposed to apps through the `webui-url` `public_env` source.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
     },
     "IdleReportConfig": {
       "type": "object",

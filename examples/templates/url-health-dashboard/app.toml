@@ -9,7 +9,7 @@ INTERNAL_TOKEN = { type = "internal" }
 
 [public_env]
 OBELISK_API_URL = { type = "internal", source = "api-url" }
-OBELISK_UI_URL = { type = "internal", source = "http-server-url", http_server = "webui" }
+OBELISK_UI_URL = { type = "internal", source = "webui-url" }
 
 # The app admin reviews which external requests a deployment may make.
 # The monitored site, also set in deployment.toml.

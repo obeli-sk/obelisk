@@ -157,6 +157,19 @@
               ]
             },
             {
+              "description": "`webui.public_url`, otherwise the Web UI listener URL.",
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "webui-url"
+                }
+              },
+              "required": [
+                "source"
+              ]
+            },
+            {
               "description": "`http_server.<name>.public_url`, otherwise the listener URL.",
               "type": "object",
               "properties": {

@@ -42,7 +42,7 @@ impl Fixture {
             format!(
                 r#"app_env_prefix = "{app_env_prefix}"
 api.listening_addr = "127.0.0.1:{port}"
-http_server.webui.enabled = false
+webui.enabled = false
 http_server.external.enabled = false
 http_server.internal.enabled = false
 database.sqlite.directory = "{db}"

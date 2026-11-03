@@ -1,4 +1,4 @@
 api.listening_addr = "[::]:5005"
-http_server.webui.listening_addr = "[::]:8080"
+webui.listening_addr = "[::]:8080"
 http_server.external.listening_addr = "[::]:9090"
 http_server.internal.listening_addr = "[::]:9091"
