@@ -267,7 +267,7 @@ impl AppConfigToml {
                         PublicEnvConfigToml::Internal(config) => PublicEnvRef::Internal {
                             name: name.to_owned(),
                             kind: config.kind,
-                            source: config.source,
+                            source: config.source.clone(),
                         },
                         PublicEnvConfigToml::Env(config) if config.optional => {
                             PublicEnvRef::Config {
@@ -467,7 +467,7 @@ mod tests {
                 TRACE_ID = {{ optional = true }}
                 TYPED = {{ type = "env", optional = false }}
                 API_URL = {{ type = "internal", source = "api-url" }}
-                WEBUI_URL = {{ type = "internal", source = "webui-url" }}
+                WEBUI_URL = {{ type = "internal", source = "http-server-url", http_server = "webui" }}
                 LLM_URL = {{}}
                 [secrets]
                 TOKEN = {{ exposed_to = {{ worker = ["{upper}", "{lower}"] }} }}

@@ -69,12 +69,12 @@ use crate::config::server::CancelWatcherTomlConfig;
 use crate::config::server::ComponentCells;
 use crate::config::server::DatabaseConfigToml;
 use crate::config::server::GarbageCollectionTomlConfig;
-use crate::config::server::HttpServer;
 use crate::config::server::SQLITE_FILE_NAME;
 use crate::config::server::ServerConfigToml;
 use crate::config::server::TimersWatcherTomlConfig;
 use crate::config::server::WasmtimeAllocatorConfig;
 use crate::config::server::audit_exec_activities;
+use crate::config::server::{HTTP_SERVER_NAME_WEBUI, HttpServer};
 use crate::config::wasm_cache_metadata_dir;
 use crate::init;
 use crate::init::Guard;
@@ -528,8 +528,6 @@ pub(crate) const WORKFLOW_JS_LOCATION: &str = embedded_assets::WORKFLOW_JS_RUNTI
 #[cfg(all(not(feature = "webhook-js-local"), not(feature = "embed-js-runtimes")))]
 pub(crate) const WEBHOOK_JS_LOCATION: &str = embedded_assets::WEBHOOK_JS_RUNTIME_LOCATION;
 
-const HTTP_SERVER_NAME_WEBUI: &str = "webui";
-const HTTP_SERVER_NAME_EXTERNAL: &str = "external";
 /// Component name of the operator-owned web UI webhook injected when the web UI is enabled.
 const COMPONENT_NAME_WEBUI: &str = "obelisk_webui";
 
@@ -850,9 +848,8 @@ pub(crate) async fn verify_deployment(path: PathBuf, params: VerifyParams) -> an
     let mut config_holder = ConfigHolder::new(crate::project_dirs(), BaseDirs::new(), None)?;
     config_holder.path_prefixes.app_name = "deployment-verify".to_string();
     let mut config = ServerConfigToml::default();
-    config.webui.enabled = false;
+    config.disable_built_in_http_servers();
     config.api.enabled = false;
-    config.external.enabled = false;
     let _guard = init::init(&config)?;
     let (deployment, cas) = resolve_deployment_offline(&path).await?;
     let names: BTreeSet<_> = deployment
@@ -866,13 +863,18 @@ pub(crate) async fn verify_deployment(path: PathBuf, params: VerifyParams) -> an
                 .map(|webhook| webhook.http_server.to_string()),
         )
         .collect();
-    config.http_servers = names
-        .into_iter()
-        .map(|name| HttpServer {
-            name: ConfigName::new(name.into()).unwrap(),
-            listening_addr: "127.0.0.1:0".parse().unwrap(),
-        })
-        .collect();
+    // Referenced servers replace the disabled built-in entries.
+    config.http_servers.extend(names.into_iter().map(|name| {
+        (
+            name,
+            crate::config::server::HttpServerToml {
+                enabled: true,
+                listening_addr: Some("127.0.0.1:0".parse().unwrap()),
+                public_url: None,
+                oidc: Vec::new(),
+            },
+        )
+    }));
     let registry = Arc::new(SecretRegistry::resolve(
         crate::config::secret_registry::SecretsToml::default(),
         crate::config::secret_registry::PublicEnvToml::default(),
@@ -2829,26 +2831,14 @@ impl ServerVerified {
             "`v8.thread_stack_size` must be greater than zero"
         );
         let v8_executor = V8Executor::new(concurrency_cells.v8_executor_config(thread_stack_size)?);
-        let mut http_servers = config.http_servers;
-        if config.webui.enabled {
-            let webui_listening_addr = config.webui.listening_addr;
-            http_servers.push(HttpServer {
-                name: ConfigName::new(HTTP_SERVER_NAME_WEBUI.into()).unwrap(),
-                listening_addr: webui_listening_addr
-                    .parse()
-                    .context("error converting `webui.listening_addr` to a socket address")?,
-            });
-            if !config.api.enabled {
-                anyhow::bail!(
-                    "cannot expose webui without enabling the API (`api.enabled = false` is set)"
-                );
-            }
-        }
-        if config.external.enabled {
-            http_servers.push(HttpServer {
-                name: ConfigName::new(HTTP_SERVER_NAME_EXTERNAL.into()).unwrap(),
-                listening_addr: config.external.listening_addr,
-            });
+        let http_servers = config.enabled_http_servers()?;
+        let webui_enabled = http_servers
+            .iter()
+            .any(|server| &**server.name == HTTP_SERVER_NAME_WEBUI);
+        if webui_enabled && !config.api.enabled {
+            anyhow::bail!(
+                "cannot expose webui without enabling the API (`api.enabled = false` is set)"
+            );
         }
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
         let workflows_max_replay_captured_writes =
@@ -2904,7 +2894,7 @@ impl ServerVerified {
             .with_client(OutboundHttpClient::new(config.outbound_http_pool.into()));
         let (server_policy_hash, server_policy) =
             wasm_workers::http_request_policy::audit_http_policy(global_http_config.entries());
-        let webui_server_policy = if config.webui.enabled {
+        let webui_server_policy = if webui_enabled {
             let target_url = format!("http://{}", config.api.listening_addr);
             let (hosts, _advisories) = resolve_allowed_hosts(
                 vec![AllowedHostToml {
@@ -2965,7 +2955,7 @@ impl ServerVerified {
             database_subscription_interruption,
             workflows_max_events_per_run,
             workflows_response_refresh_interval,
-            api_addr_if_webui_enabled: if config.webui.enabled {
+            api_addr_if_webui_enabled: if webui_enabled {
                 Some(config.api.listening_addr.to_string()) // `config.api.enabled` checked above
             } else {
                 None
@@ -4905,9 +4895,18 @@ async fn start_http_servers(
                 )
             })?;
         let server_addr = tcp_listener.local_addr()?;
+        let server_auth = crate::server::auth::oidc::OidcVerifier::new(&http_server.oidc)?;
+        if let Some(verifier) = &server_auth {
+            verifier.spawn_prefetch();
+        }
         info!(
-            "HTTP server `{}` is listening on http://{server_addr}",
+            "HTTP server `{}` is listening on http://{server_addr}{}",
             http_server.name,
+            if server_auth.is_some() {
+                ", OIDC required"
+            } else {
+                ""
+            },
         );
         let server = AbortOnDropHandle::new(
             utils::spawn::spawn_named(
@@ -4924,6 +4923,7 @@ async fn start_http_servers(
                     webhooks_wasm_cell.clone(),
                     termination_watcher.clone(),
                     http_activity.clone(),
+                    server_auth.map(|auth| auth as Arc<dyn webhook_trigger::WebhookRequestAuth>),
                 ),
             )
             .abort_handle(),
@@ -5412,6 +5412,40 @@ impl DeploymentVerified {
         Ok(())
     }
 
+    /// A request carries one bearer token, consumed by the server-wide check.
+    fn verify_no_oidc_on_oidc_servers(
+        deployment: &DeploymentResolved,
+        http_servers: &[HttpServer],
+    ) -> Result<(), anyhow::Error> {
+        let protected: hashbrown::HashSet<_> = http_servers
+            .iter()
+            .filter(|server| !server.oidc.is_empty())
+            .map(|server| &server.name)
+            .collect();
+        let offending_webhooks: Vec<_> = deployment
+            .webhooks_wasm
+            .iter()
+            .filter(|webhook| !webhook.oidc.is_empty() && protected.contains(&webhook.http_server))
+            .map(|webhook| &webhook.common.name)
+            .chain(
+                deployment
+                    .webhooks_js
+                    .iter()
+                    .filter(|webhook| {
+                        !webhook.oidc.is_empty() && protected.contains(&webhook.http_server)
+                    })
+                    .map(|webhook| &webhook.name),
+            )
+            .collect();
+        if !offending_webhooks.is_empty() {
+            bail!(
+                "webhook(s) {offending_webhooks:?} configure `oidc` on an `http_server` that already \
+                 requires OIDC in server.toml; remove one of them"
+            );
+        }
+        Ok(())
+    }
+
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
@@ -5448,17 +5482,8 @@ impl DeploymentVerified {
         // The outbound-HTTP allowlist pre-pass (unregistered secrets, uncovered hosts,
         // unauthorized secret replacements) runs in `config_prepass::preflight` before this
         // point; the authoritative per-request enforcement lives in `http_request_policy`.
-        // Check uniqueness of http_server names.
-        if http_servers.len()
-            > http_servers
-                .iter()
-                .map(|it| &it.name)
-                .collect::<hashbrown::HashSet<_>>()
-                .len()
-        {
-            bail!("Each `http_server` must have a unique name");
-        }
         Self::verify_no_webui_server_bindings(&deployment)?;
+        Self::verify_no_oidc_on_oidc_servers(&deployment, &http_servers)?;
 
         if let Some(api_listening_addr) = api_addr_if_webui_enabled {
             let target_url = format!("http://{api_listening_addr}");
@@ -7628,7 +7653,7 @@ mod tests {
         "##,
         )?;
         let (deployment, cas) = resolve_deployment_offline(&deployment_path).await?;
-        let config = toml::from_str("webui.enabled = false")?;
+        let config = toml::from_str("http_server.webui.enabled = false")?;
         let server = ServerVerified::new(
             wasm_workers::engines::Engines::new(
                 wasm_workers::engines::EngineConfig::on_demand_testing(),

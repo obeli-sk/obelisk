@@ -88,10 +88,6 @@ pub(crate) struct ServerConfigToml {
     pub(crate) health: HealthConfig,
     #[serde(default)]
     pub(crate) database: DatabaseConfigToml,
-    #[serde(default)]
-    pub(crate) webui: WebUIConfig,
-    #[serde(default)]
-    pub(crate) external: ExternalServerConfig,
     #[serde(default, rename = "wasm")]
     pub(crate) wasm_global_config: WasmGlobalConfigToml,
     #[serde(default)]
@@ -113,8 +109,9 @@ pub(crate) struct ServerConfigToml {
     pub(crate) otlp: Option<otlp::OtlpConfig>,
     #[serde(default)]
     pub(crate) log: LoggingConfig,
+    /// Webhook listeners by name. `webui`, `external` and `internal` are built in and enabled by default.
     #[serde(default, rename = "http_server")]
-    pub(crate) http_servers: Vec<HttpServer>,
+    pub(crate) http_servers: BTreeMap<String, HttpServerToml>,
 }
 
 /// Unauthenticated health probe listener, not counted as activity by the idle detector.
@@ -228,35 +225,28 @@ const fn default_v8_thread_stack_size() -> ByteSizeConfig {
 impl ServerConfigToml {
     pub(crate) fn internal_public_env(
         &self,
-        source: crate::config::secret_registry::InternalPublicEnvSource,
+        source: &crate::config::secret_registry::InternalPublicEnvSource,
     ) -> anyhow::Result<String> {
         use crate::config::secret_registry::InternalPublicEnvSource;
-        let address = match source {
-            InternalPublicEnvSource::ApiUrl => {
+        let (public_url, address) = match source {
+            InternalPublicEnvSource::ApiUrl {} => {
                 anyhow::ensure!(self.api.enabled, "api-url requires an enabled API listener");
-                self.api.listening_addr
+                (self.api.public_url.clone(), self.api.listening_addr)
             }
-            InternalPublicEnvSource::WebuiUrl => {
-                anyhow::ensure!(
-                    self.webui.enabled,
-                    "webui-url requires an enabled Web UI listener"
-                );
-                if let Some(url) = &self.webui.public_url {
-                    let parsed = reqwest::Url::parse(url)?;
-                    anyhow::ensure!(
-                        matches!(parsed.scheme(), "http" | "https")
-                            && parsed.host_str().is_some()
-                            && parsed.username().is_empty()
-                            && parsed.password().is_none()
-                            && parsed.query().is_none()
-                            && parsed.fragment().is_none(),
-                        "webui.public_url must be an HTTP(S) URL without credentials, query or fragment"
-                    );
-                    return Ok(parsed.as_str().trim_end_matches('/').to_owned());
-                }
-                self.webui.listening_addr.parse::<SocketAddr>()?
+            InternalPublicEnvSource::HttpServerUrl { http_server } => {
+                let server = self
+                    .enabled_http_servers()?
+                    .into_iter()
+                    .find(|server| &**server.name == http_server)
+                    .with_context(|| {
+                        format!("http-server-url requires an enabled `{http_server}` http_server")
+                    })?;
+                (server.public_url, server.listening_addr)
             }
         };
+        if let Some(url) = public_url {
+            return Ok(url);
+        }
         anyhow::ensure!(
             address.port() != 0,
             "internal URLs require a fixed listener port"
@@ -786,6 +776,9 @@ pub(crate) struct ApiConfig {
     pub(crate) enabled: bool,
     #[serde(default = "default_api_listening_addr")]
     pub(crate) listening_addr: SocketAddr,
+    /// Public URL of the API, exposed to apps through the `api-url` `public_env` source.
+    #[serde(default, deserialize_with = "deserialize_public_url")]
+    pub(crate) public_url: Option<String>,
     /// Accepted API bearer tokens as `sha256:<hex>` digests of the token text.
     /// Only hashes of high-entropy random tokens are safe to commit: SHA-256 is fast and unsalted,
     /// so hashes of passwords or other guessable tokens are vulnerable to offline guessing.
@@ -861,10 +854,34 @@ impl Default for ApiConfig {
             max_stream_duration: default_max_stream_duration(),
             enabled: true,
             listening_addr: default_api_listening_addr(),
+            public_url: None,
             token_hashes: Vec::new(),
             oidc: Vec::new(),
         }
     }
+}
+
+/// Accepts an HTTP(S) URL without credentials, query or fragment; stores it without a trailing slash.
+fn deserialize_public_url<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(url) = Option::<String>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let parsed = reqwest::Url::parse(&url).map_err(serde::de::Error::custom)?;
+    if !(matches!(parsed.scheme(), "http" | "https")
+        && parsed.host_str().is_some()
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.query().is_none()
+        && parsed.fragment().is_none())
+    {
+        return Err(serde::de::Error::custom(
+            "public_url must be an HTTP(S) URL without credentials, query or fragment",
+        ));
+    }
+    Ok(Some(parsed.as_str().trim_end_matches('/').to_owned()))
 }
 
 fn default_api_listening_addr() -> SocketAddr {
@@ -986,53 +1003,6 @@ impl SqliteConfigToml {
             metrics_threshold: self.metrics_threshold.map(Duration::from),
         }
     }
-}
-
-#[derive(Debug, Deserialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct WebUIConfig {
-    #[serde(default = "default_true")]
-    pub(crate) enabled: bool,
-    #[serde(default = "default_webui_listening_addr")]
-    pub(crate) listening_addr: String,
-    #[serde(default)]
-    pub(crate) public_url: Option<String>,
-}
-
-impl Default for WebUIConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            listening_addr: default_webui_listening_addr(),
-            public_url: None,
-        }
-    }
-}
-
-fn default_webui_listening_addr() -> String {
-    "127.0.0.1:8080".to_string()
-}
-
-#[derive(Debug, Deserialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ExternalServerConfig {
-    #[serde(default = "default_true")]
-    pub(crate) enabled: bool,
-    #[serde(default = "default_external_listening_addr")]
-    pub(crate) listening_addr: SocketAddr,
-}
-
-impl Default for ExternalServerConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            listening_addr: default_external_listening_addr(),
-        }
-    }
-}
-
-fn default_external_listening_addr() -> SocketAddr {
-    "127.0.0.1:9090".parse().expect("valid default address")
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -1713,13 +1683,96 @@ const fn default_deployment_retention_max_count() -> u32 {
     100
 }
 
-// HTTP server declaration (referenced by ServerConfigToml)
+// HTTP server declarations (referenced by ServerConfigToml)
+
+pub(crate) const HTTP_SERVER_NAME_WEBUI: &str = "webui";
+pub(crate) const HTTP_SERVER_NAME_EXTERNAL: &str = "external";
+pub(crate) const HTTP_SERVER_NAME_INTERNAL: &str = "internal";
+
+/// Built-in listeners and their default addresses.
+const BUILT_IN_HTTP_SERVERS: [(&str, &str); 3] = [
+    (HTTP_SERVER_NAME_WEBUI, "127.0.0.1:8080"),
+    (HTTP_SERVER_NAME_EXTERNAL, "127.0.0.1:9090"),
+    (HTTP_SERVER_NAME_INTERNAL, "127.0.0.1:9091"),
+];
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct HttpServerToml {
+    #[serde(default = "default_true")]
+    pub(crate) enabled: bool,
+    /// Required for user-defined servers; built-in servers have a localhost default.
+    #[serde(default)]
+    pub(crate) listening_addr: Option<SocketAddr>,
+    /// Public URL of this server, exposed to apps through the `http-server-url` `public_env` source.
+    #[serde(default, deserialize_with = "deserialize_public_url")]
+    pub(crate) public_url: Option<String>,
+    /// Trusted OIDC issuers; when set, every request on this listener needs a matching bearer JWT.
+    #[serde(default, deserialize_with = "deserialize_oidc_providers")]
+    pub(crate) oidc: Vec<OidcProviderConfig>,
+}
+
+/// An enabled listener with its defaults applied.
+#[derive(Debug, Clone)]
 pub(crate) struct HttpServer {
     pub(crate) name: ConfigName,
     pub(crate) listening_addr: SocketAddr,
+    pub(crate) public_url: Option<String>,
+    pub(crate) oidc: Vec<OidcProviderConfig>,
+}
+
+impl ServerConfigToml {
+    /// Enabled listeners, built-in ones first.
+    pub(crate) fn enabled_http_servers(&self) -> anyhow::Result<Vec<HttpServer>> {
+        let mut servers = Vec::new();
+        for (name, default_addr) in BUILT_IN_HTTP_SERVERS {
+            let toml = self.http_servers.get(name);
+            if toml.is_none_or(|toml| toml.enabled) {
+                let toml = toml.cloned();
+                servers.push(HttpServer {
+                    name: ConfigName::new(name.into()).expect("valid built-in name"),
+                    listening_addr: toml
+                        .as_ref()
+                        .and_then(|toml| toml.listening_addr)
+                        .unwrap_or_else(|| default_addr.parse().expect("valid default address")),
+                    public_url: toml.as_ref().and_then(|toml| toml.public_url.clone()),
+                    oidc: toml.map(|toml| toml.oidc).unwrap_or_default(),
+                });
+            }
+        }
+        for (name, toml) in &self.http_servers {
+            let built_in = BUILT_IN_HTTP_SERVERS
+                .iter()
+                .any(|(built_in, _)| built_in == name);
+            if !built_in && toml.enabled {
+                servers.push(HttpServer {
+                    name: ConfigName::new(name.clone().into())
+                        .with_context(|| format!("invalid `http_server` name {name:?}"))?,
+                    listening_addr: toml.listening_addr.with_context(|| {
+                        format!("`http_server.{name}.listening_addr` is required")
+                    })?,
+                    public_url: toml.public_url.clone(),
+                    oidc: toml.oidc.clone(),
+                });
+            }
+        }
+        Ok(servers)
+    }
+
+    /// Disables every built-in listener, for commands that only inspect configuration.
+    pub(crate) fn disable_built_in_http_servers(&mut self) {
+        for (name, _) in BUILT_IN_HTTP_SERVERS {
+            self.http_servers
+                .entry(name.to_string())
+                .or_insert_with(|| HttpServerToml {
+                    enabled: false,
+                    listening_addr: None,
+                    public_url: None,
+                    oidc: Vec::new(),
+                })
+                .enabled = false;
+        }
+    }
 }
 
 // Default on-disk locations and size limits for the server's data/cache directories.
@@ -1912,6 +1965,102 @@ mod tests {
                 .is_err(),
                 "a bare integer must not be accepted as a byte size"
             );
+        }
+    }
+
+    mod http_servers {
+        use super::*;
+
+        fn servers(toml: &str) -> anyhow::Result<Vec<(String, SocketAddr, usize)>> {
+            Ok(toml::from_str::<ServerConfigToml>(toml)?
+                .enabled_http_servers()?
+                .into_iter()
+                .map(|server| {
+                    (
+                        server.name.to_string(),
+                        server.listening_addr,
+                        server.oidc.len(),
+                    )
+                })
+                .collect())
+        }
+
+        #[test]
+        fn built_ins_merge_with_partial_entries() {
+            let servers = servers(
+                r#"
+                http_server.external.enabled = false
+                http_server.webui.listening_addr = "0.0.0.0:18080"
+                [http_server.custom]
+                listening_addr = "127.0.0.1:9000"
+                [[http_server.internal.oidc]]
+                issuer = "https://oidc.example"
+                audience = "internal"
+                claims = { app_name = "proxy" }
+                "#,
+            )
+            .unwrap();
+            assert_eq!(
+                servers,
+                [
+                    ("webui".to_string(), "0.0.0.0:18080".parse().unwrap(), 0),
+                    ("internal".to_string(), "127.0.0.1:9091".parse().unwrap(), 1),
+                    ("custom".to_string(), "127.0.0.1:9000".parse().unwrap(), 0),
+                ]
+            );
+        }
+
+        #[test]
+        fn public_url_resolves_for_any_server_and_api() {
+            use crate::config::secret_registry::InternalPublicEnvSource;
+            let config: ServerConfigToml = toml::from_str(
+                r#"
+                api.listening_addr = "[::]:5005"
+                api.public_url = "https://api.example.test/"
+                http_server.external.public_url = "https://hooks.example.test"
+                [http_server.custom]
+                listening_addr = "0.0.0.0:9000"
+                "#,
+            )
+            .unwrap();
+            let url = |http_server: &str| {
+                config.internal_public_env(&InternalPublicEnvSource::HttpServerUrl {
+                    http_server: http_server.to_string(),
+                })
+            };
+            assert_eq!(
+                config
+                    .internal_public_env(&InternalPublicEnvSource::ApiUrl {})
+                    .unwrap(),
+                "https://api.example.test"
+            );
+            assert_eq!(url("external").unwrap(), "https://hooks.example.test");
+            assert_eq!(url("custom").unwrap(), "http://127.0.0.1:9000");
+            assert_eq!(url("internal").unwrap(), "http://127.0.0.1:9091");
+            assert!(
+                format!("{:#}", url("missing").unwrap_err())
+                    .contains("requires an enabled `missing` http_server")
+            );
+        }
+
+        #[test]
+        fn invalid_entries_must_be_rejected() {
+            for (toml, expected) in [
+                (
+                    "[http_server.custom]\nenabled = true",
+                    "listening_addr` is required",
+                ),
+                (
+                    "http_server.external.public_url = 'https://user@x.test'",
+                    "without credentials",
+                ),
+                ("api.public_url = 'file:///tmp/api'", "HTTP(S) URL"),
+                ("webui.enabled = false", "unknown field"),
+                ("external.enabled = false", "unknown field"),
+            ] {
+                let err = servers(toml).unwrap_err();
+                assert!(format!("{err:#}").contains(expected), "{toml}: {err:#}");
+            }
         }
     }
 

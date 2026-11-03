@@ -405,8 +405,8 @@
 # logs_store_min_level = "debug"             # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 
 ### Webhook Endpoint section
-## The built-in "external" HTTP server (127.0.0.1:9090) is available by default.
-## Additional named HTTP servers are defined in server.toml via `[[http_server]]`.
+## The built-in "external" (127.0.0.1:9090) and "internal" (127.0.0.1:9091) HTTP servers are available by default.
+## Additional named HTTP servers are defined in server.toml via `[http_server.<name>]`.
 # [[webhook_endpoint_wasm]]
 # name = "name" # Required. Each component must be named.
 # location = "path/to/wasm"

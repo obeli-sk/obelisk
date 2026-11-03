@@ -34,12 +34,6 @@
     "database": {
       "$ref": "#/$defs/DatabaseConfigToml"
     },
-    "webui": {
-      "$ref": "#/$defs/WebUIConfig"
-    },
-    "external": {
-      "$ref": "#/$defs/ExternalServerConfig"
-    },
     "wasm": {
       "$ref": "#/$defs/WasmGlobalConfigToml"
     },
@@ -78,9 +72,10 @@
       "$ref": "#/$defs/LoggingConfig"
     },
     "http_server": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/HttpServer"
+      "description": "Webhook listeners by name. `webui`, `external` and `internal` are built in and enabled by default.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/HttpServerToml"
       }
     }
   },
@@ -360,6 +355,14 @@
         "listening_addr": {
           "type": "string",
           "default": "127.0.0.1:5005"
+        },
+        "public_url": {
+          "description": "Public URL of the API, exposed to apps through the `api-url` `public_env` source.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "token_hashes": {
           "description": "Accepted API bearer tokens as `sha256:<hex>` digests of the token text.\nOnly hashes of high-entropy random tokens are safe to commit: SHA-256 is fast and unsalted,\nso hashes of passwords or other guessable tokens are vulnerable to offline guessing.\nTokens should contain at least 32 characters. Always generate an entry with\n`obelisk generate token`.",
@@ -725,41 +728,6 @@
           "const": "auto"
         }
       ]
-    },
-    "WebUIConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "listening_addr": {
-          "type": "string",
-          "default": "127.0.0.1:8080"
-        },
-        "public_url": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        }
-      },
-      "additionalProperties": false
-    },
-    "ExternalServerConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "listening_addr": {
-          "type": "string",
-          "default": "127.0.0.1:9090"
-        }
-      },
-      "additionalProperties": false
     },
     "WasmGlobalConfigToml": {
       "type": "object",
@@ -1433,25 +1401,39 @@
         "Stdout"
       ]
     },
-    "HttpServer": {
+    "HttpServerToml": {
       "type": "object",
       "properties": {
-        "name": {
-          "$ref": "#/$defs/ConfigName"
+        "enabled": {
+          "type": "boolean",
+          "default": true
         },
         "listening_addr": {
-          "type": "string"
+          "description": "Required for user-defined servers; built-in servers have a localhost default.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "public_url": {
+          "description": "Public URL of this server, exposed to apps through the `http-server-url` `public_env` source.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "oidc": {
+          "description": "Trusted OIDC issuers; when set, every request on this listener needs a matching bearer JWT.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OidcProviderConfig"
+          },
+          "default": []
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "listening_addr"
-      ]
-    },
-    "ConfigName": {
-      "description": "Activity, Webhook, Workflow or a Http server",
-      "type": "string"
+      "additionalProperties": false
     }
   }
 }

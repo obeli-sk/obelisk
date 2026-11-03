@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   completion messages on stderr. Human-readable logs from `execution submit --follow-logs`
   now go to stderr. With `--json`, submission, logs, and final results remain NDJSON on stdout
   when following.
+- **Breaking:** *(server)* Webhook listeners are configured in one `http_server` table keyed by
+  name. `webui.*` becomes `http_server.webui.*`, `external.*` becomes `http_server.external.*`,
+  and `[[http_server]] name = "x"` becomes `[http_server.x]`. The old keys fail to load.
+- *(server)* New built-in `internal` HTTP server on `127.0.0.1:9091`, enabled by default, for
+  webhooks meant to sit behind authentication.
+- **Breaking:** *(app)* The `webui-url` public env source becomes `source = "http-server-url"`
+  with `http_server = "<name>"`, which reads any HTTP server. Every `http_server` and the API
+  accept `public_url`, validated when server.toml loads; `api-url` uses `api.public_url`.
+- *(server)* `[[http_server.<name>.oidc]]` requires a matching OIDC ID token on every request of
+  a listener, checked before routing. Webhook endpoints on such a server cannot set their own `oidc`.
 - **Breaking:** *(db)* A deployment's content digest is unique. Submitting content already stored
   under another ID returns `409`, and the server reuses the stored deployment when started with
   the same deployment file. The database migration keeps existing deployments storing the same

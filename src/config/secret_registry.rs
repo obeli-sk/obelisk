@@ -184,19 +184,59 @@ pub(crate) struct EnvPublicEnvConfigToml {
     pub(crate) optional: bool,
 }
 
+/// A public env value supplied by the server instead of the process environment.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[schemars(with = "InternalPublicEnvConfigSchema")]
 pub(crate) struct InternalPublicEnvConfigToml {
     #[serde(rename = "type")]
     pub(crate) kind: InternalSecretType,
+    #[serde(flatten)]
     pub(crate) source: InternalPublicEnvSource,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+/// Closed per-source objects, which code generators handle better than the flattened tag.
+#[derive(JsonSchema)]
+#[serde(untagged, deny_unknown_fields)]
+#[expect(dead_code, reason = "schema only")]
+enum InternalPublicEnvConfigSchema {
+    /// `api.public_url`, otherwise the API listener URL.
+    ApiUrl {
+        #[serde(rename = "type")]
+        kind: InternalSecretType,
+        source: ApiUrlSource,
+    },
+    /// `http_server.<name>.public_url`, otherwise the listener URL.
+    HttpServerUrl {
+        #[serde(rename = "type")]
+        kind: InternalSecretType,
+        source: HttpServerUrlSource,
+        http_server: String,
+    },
+}
+
+#[derive(JsonSchema)]
 #[serde(rename_all = "kebab-case")]
-pub(crate) enum InternalPublicEnvSource {
+#[expect(dead_code, reason = "schema only")]
+enum ApiUrlSource {
     ApiUrl,
-    WebuiUrl,
+}
+
+#[derive(JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+#[expect(dead_code, reason = "schema only")]
+enum HttpServerUrlSource {
+    HttpServerUrl,
+}
+
+/// Server value an internal `public_env` entry resolves to.
+// Struct variants keep `deny_unknown_fields` effective under `flatten`.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "source", rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) enum InternalPublicEnvSource {
+    /// `api.public_url`, otherwise the API listener URL.
+    ApiUrl {},
+    /// `http_server.<name>.public_url`, otherwise the listener URL.
+    HttpServerUrl { http_server: String },
 }
 
 /// Public environment variables that deployments may read.
@@ -215,6 +255,7 @@ pub(crate) enum PublicEnvRef {
         name: String,
         #[serde(rename = "type")]
         kind: InternalSecretType,
+        #[serde(flatten)]
         source: InternalPublicEnvSource,
     },
 }
