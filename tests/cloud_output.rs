@@ -1,4 +1,4 @@
-use axum::{Json, Router, routing::get};
+use axum::{Json, Router, extract::Query, routing::get};
 use serde_json::{Value, json};
 
 #[tokio::test]
@@ -107,6 +107,15 @@ async fn cloud_output_and_endpoint_selection() {
                 }))
             }),
         )
+        .route(
+            "/v1/apps/demo/events",
+            get(|Query(query): Query<std::collections::HashMap<String, String>>| async move {
+                Json(json!({"events":[{
+                    "event_id":1, "created_at":0, "level":"warn", "code":"machine.health.critical",
+                    "message":format!("limit {}", query["limit"]), "details":null
+                }]}))
+            }),
+        )
         .route("/v1/tokens", get(|| async { Json(json!({"tokens":[]})) }).post(|Json(body): Json<Value>| async move {
             assert!(body.get("hash").is_none());
             assert!(body["global"] == true || !body["apps"].as_array().unwrap().is_empty());
@@ -187,6 +196,12 @@ async fn cloud_output_and_endpoint_selection() {
         ),
         "{status}"
     );
+    let events = run(&["app", "events", "-n", "7"]).await.1;
+    assert_eq!(
+        events,
+        "1970-01-01 00:00:00 UTC  warn   limit 7  (machine.health.critical)\n"
+    );
+    assert!(run(&["app", "events"]).await.1.contains("limit 5"));
     for command in [
         vec!["app", "get"],
         vec!["apps", "list"],

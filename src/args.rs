@@ -1835,6 +1835,12 @@ pub(crate) enum CloudApp {
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
     },
+    /// List recent lifecycle and Machine events, newest first.
+    Events {
+        /// Number of events to show.
+        #[arg(short = 'n', long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=50))]
+        limit: u8,
+    },
     /// Stage app policy and cloud settings without restarting the VM.
     Stage {
         /// App config path; defaults to ./app.toml.

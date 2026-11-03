@@ -7,6 +7,7 @@ pub(super) enum Summary {
     Apps,
     Lifecycle,
     Status,
+    Events,
     Token(Option<&'static str>),
     Tokens,
     Env,
@@ -32,6 +33,7 @@ impl From<&Cloud> for Summary {
                 match command {
                     CloudApp::Get => Self::App(None),
                     CloudApp::Status { .. } => Self::Status,
+                    CloudApp::Events { .. } => Self::Events,
                     CloudApp::New { .. } => Self::App(Some("App created.")),
                     CloudApp::Apply { .. } | CloudApp::Enable { .. } | CloudApp::Disable { .. } => {
                         Self::Lifecycle
@@ -104,6 +106,7 @@ impl Summary {
                 if let Some(memory) = value["memory_mb"].as_u64() {
                     let _ = writeln!(out, "Memory: {memory} MB");
                 }
+                health(&mut out, value);
                 let _ = writeln!(
                     out,
                     "API: {}",
@@ -114,6 +117,25 @@ impl Summary {
                         _ => "unavailable",
                     }
                 );
+            }
+            Self::Events => {
+                if let Some(events) = value["events"]
+                    .as_array()
+                    .filter(|events| !events.is_empty())
+                {
+                    for event in events {
+                        let _ = writeln!(
+                            out,
+                            "{}  {:<5}  {}  ({})",
+                            time(&event["created_at"]),
+                            text(event, "level", ""),
+                            text(event, "message", ""),
+                            text(event, "code", "")
+                        );
+                    }
+                } else {
+                    out.push_str("No events.\n");
+                }
             }
             Self::Token(message) => {
                 if let Some(message) = message {
@@ -227,6 +249,45 @@ pub(super) fn lifecycle_outcome(value: &Value) -> String {
 
 fn text<'a>(value: &'a Value, key: &str, fallback: &'a str) -> &'a str {
     value[key].as_str().unwrap_or(fallback)
+}
+
+/// Unix milliseconds as UTC time.
+fn time(ms: &Value) -> String {
+    ms.as_i64()
+        .and_then(chrono::DateTime::from_timestamp_millis)
+        .map_or_else(
+            || "unknown time".to_owned(),
+            |time| time.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        )
+}
+
+/// Health check of a started Machine and a failing scheduled wake-up.
+fn health(out: &mut String, value: &Value) {
+    let health = &value["health"];
+    if let Some(status) = health["status"].as_str() {
+        if health["critical_since"].is_null() {
+            let _ = writeln!(out, "Health: {status}");
+        } else {
+            let _ = writeln!(
+                out,
+                "Health: {status} since {}",
+                time(&health["critical_since"])
+            );
+        }
+    }
+    let wake = &value["wake_failure"];
+    if wake.is_object() {
+        let _ = writeln!(
+            out,
+            "Wake-up failing: {} attempts since {}, next retry at {}",
+            wake["attempts"],
+            time(&wake["wake_at"]),
+            time(&wake["retry_after"])
+        );
+        if let Some(error) = wake["error"].as_str() {
+            let _ = writeln!(out, "Wake-up error: {error}");
+        }
+    }
 }
 
 fn app(out: &mut String, value: &Value) {
@@ -445,6 +506,56 @@ mod tests {
         let out = status("stopped", "suspended", Value::Null);
         assert!(out.starts_with("demo: stopped\n"), "{out}");
         assert!(out.contains("API: unavailable\n"), "{out}");
+    }
+
+    #[test]
+    fn status_reports_health_and_wake_failure() {
+        let out = Summary::Status.render(&json!({
+            "app":{"app_name":"demo","status":"running"},
+            "machine_state":"started",
+            "api_ready":false,
+            "health":{"status":"critical","critical_since":1_762_180_000_000_u64},
+            "wake_failure":{"wake_at":1_762_180_000_000_u64,"attempts":3,"retry_after":1_762_180_060_000_u64,"error":"host unavailable"},
+        }));
+        assert!(
+            out.contains("Health: critical since 2025-11-03 14:26:40 UTC\n"),
+            "{out}"
+        );
+        assert!(
+            out.contains("Wake-up failing: 3 attempts since 2025-11-03 14:26:40 UTC, next retry at 2025-11-03 14:27:40 UTC\nWake-up error: host unavailable\n"),
+            "{out}"
+        );
+        let out = Summary::Status.render(&json!({
+            "app":{"app_name":"demo","status":"running"},
+            "machine_state":"started",
+            "health":{"status":"passing","critical_since":null},
+            "wake_failure":null,
+        }));
+        assert!(out.contains("Health: passing\n"), "{out}");
+        assert!(!out.contains("Wake-up"), "{out}");
+        let out = Summary::Status.render(&json!({
+            "app":{"app_name":"demo","status":"running"},
+            "machine_state":"suspended",
+            "health":null,
+        }));
+        assert!(!out.contains("Health"), "{out}");
+    }
+
+    #[test]
+    fn events_list_newest_first() {
+        let out = Summary::Events.render(&json!({"events":[
+            {"event_id":2,"created_at":1_762_180_060_000_u64,"level":"info","code":"machine.health.recovered","message":"Health check recovered after 60 s","details":null},
+            {"event_id":1,"created_at":1_762_180_000_000_u64,"level":"warn","code":"machine.health.critical","message":"Health check is critical","details":{}},
+        ]}));
+        assert_eq!(
+            out,
+            "2025-11-03 14:27:40 UTC  info   Health check recovered after 60 s  (machine.health.recovered)\n\
+             2025-11-03 14:26:40 UTC  warn   Health check is critical  (machine.health.critical)\n"
+        );
+        assert_eq!(
+            Summary::Events.render(&json!({"events":[]})),
+            "No events.\n"
+        );
     }
 
     #[test]
