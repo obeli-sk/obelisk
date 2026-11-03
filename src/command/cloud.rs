@@ -277,6 +277,19 @@ impl Client {
         path.extend_from_slice(suffix);
         self.request(method, &path, body, kind).await
     }
+    async fn events(&self, name: &str, limit: u8) -> anyhow::Result<Value> {
+        let mut url = self.url(&["v1", "apps", name, "events"])?;
+        url.query_pairs_mut()
+            .append_pair("limit", &limit.to_string());
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("Cloud request failed")?;
+        self.response(response, Kind::Read, None).await
+    }
     async fn app_toml(
         &self,
         name: &str,
@@ -714,6 +727,7 @@ impl CloudArgs {
                         }
                         Ok(value)
                     }
+                    CloudApp::Events { limit } => client.events(name, limit).await,
                     CloudApp::Stage { command_id, .. } => {
                         let (config, _) = local.expect("stage requires an app config");
                         client

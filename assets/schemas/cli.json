@@ -1115,6 +1115,17 @@
               ]
             },
             {
+              "name": "events",
+              "about": "List recent lifecycle and Machine events, newest first",
+              "options": [
+                {
+                  "name": "--limit",
+                  "short": "n",
+                  "help": "Number of events to show"
+                }
+              ]
+            },
+            {
               "name": "stage",
               "about": "Stage app policy and cloud settings without restarting the VM",
               "options": [
