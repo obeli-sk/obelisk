@@ -185,27 +185,58 @@
       "additionalProperties": false
     },
     "InternalPublicEnvConfigToml": {
-      "type": "object",
-      "properties": {
-        "type": {
-          "$ref": "#/$defs/InternalSecretType"
+      "description": "A public env value supplied by the server instead of the process environment.",
+      "anyOf": [
+        {
+          "description": "`api.public_url`, otherwise the API listener URL.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "$ref": "#/$defs/InternalSecretType"
+            },
+            "source": {
+              "$ref": "#/$defs/ApiUrlSource"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "source"
+          ]
         },
-        "source": {
-          "$ref": "#/$defs/InternalPublicEnvSource"
+        {
+          "description": "`http_server.<name>.public_url`, otherwise the listener URL.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "$ref": "#/$defs/InternalSecretType"
+            },
+            "source": {
+              "$ref": "#/$defs/HttpServerUrlSource"
+            },
+            "http_server": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "source",
+            "http_server"
+          ]
         }
-      },
-      "additionalProperties": false,
-      "required": [
-        "type",
-        "source"
       ]
     },
-    "InternalPublicEnvSource": {
+    "ApiUrlSource": {
       "type": "string",
       "enum": [
-        "api-url",
-        "webui-url",
-        "internal-url"
+        "api-url"
+      ]
+    },
+    "HttpServerUrlSource": {
+      "type": "string",
+      "enum": [
+        "http-server-url"
       ]
     },
     "OutboundHttpToml": {

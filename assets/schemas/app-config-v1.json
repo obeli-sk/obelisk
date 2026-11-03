@@ -120,6 +120,7 @@
           ]
         },
         {
+          "description": "Server value an internal `public_env` entry resolves to.",
           "type": "object",
           "properties": {
             "name": {
@@ -127,16 +128,44 @@
             },
             "type": {
               "$ref": "#/$defs/InternalSecretType"
-            },
-            "source": {
-              "$ref": "#/$defs/InternalPublicEnvSource"
             }
           },
-          "additionalProperties": false,
           "required": [
             "name",
-            "type",
-            "source"
+            "type"
+          ],
+          "unevaluatedProperties": false,
+          "oneOf": [
+            {
+              "description": "`api.public_url`, otherwise the API listener URL.",
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "api-url"
+                }
+              },
+              "required": [
+                "source"
+              ]
+            },
+            {
+              "description": "`http_server.<name>.public_url`, otherwise the listener URL.",
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "http-server-url"
+                },
+                "http_server": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "http_server"
+              ]
+            }
           ]
         }
       ]
@@ -145,14 +174,6 @@
       "type": "string",
       "enum": [
         "internal"
-      ]
-    },
-    "InternalPublicEnvSource": {
-      "type": "string",
-      "enum": [
-        "api-url",
-        "webui-url",
-        "internal-url"
       ]
     },
     "AllowedHostToml": {

@@ -356,6 +356,14 @@
           "type": "string",
           "default": "127.0.0.1:5005"
         },
+        "public_url": {
+          "description": "Public URL of the API, exposed to apps through the `api-url` `public_env` source.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "token_hashes": {
           "description": "Accepted API bearer tokens as `sha256:<hex>` digests of the token text.\nOnly hashes of high-entropy random tokens are safe to commit: SHA-256 is fast and unsalted,\nso hashes of passwords or other guessable tokens are vulnerable to offline guessing.\nTokens should contain at least 32 characters. Always generate an entry with\n`obelisk generate token`.",
           "type": "array",
@@ -1409,7 +1417,7 @@
           "default": null
         },
         "public_url": {
-          "description": "Public browser URL of the `webui` or `internal` server, exposed to apps as `webui-url` or `internal-url`.",
+          "description": "Public URL of this server, exposed to apps through the `http-server-url` `public_env` source.",
           "type": [
             "string",
             "null"

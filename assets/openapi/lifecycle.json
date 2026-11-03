@@ -540,8 +540,37 @@
                     "source": {
                       "type": "string",
                       "enum": [
-                        "api-url",
-                        "webui-url"
+                        "api-url"
+                      ]
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "type",
+                    "source",
+                    "http_server"
+                  ],
+                  "properties": {
+                    "http_server": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "http-server-url"
                       ]
                     },
                     "type": {

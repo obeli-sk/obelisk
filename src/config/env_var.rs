@@ -54,9 +54,11 @@ impl StartupEnvVars {
             if let crate::config::secret_registry::PublicEnvConfigToml::Internal(config) =
                 declaration
             {
-                let value = server.internal_public_env(config.source).map_err(|error| {
-                    anyhow::anyhow!("internal public environment `{name}`: {error}")
-                })?;
+                let value = server
+                    .internal_public_env(&config.source)
+                    .map_err(|error| {
+                        anyhow::anyhow!("internal public environment `{name}`: {error}")
+                    })?;
                 self.values.insert(name.clone(), value.clone());
                 self.internal_values.insert(name.clone(), value);
             }

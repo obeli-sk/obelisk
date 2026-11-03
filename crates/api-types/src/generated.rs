@@ -64,6 +64,53 @@ pub enum AllowedHostToml {
         url_regex_suffix: ::std::option::Option<::std::string::String>,
     },
 }
+///`ApiUrlSource`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ApiUrlSource {
+    #[serde(rename = "api-url")]
+    ApiUrl,
+}
+impl ::std::fmt::Display for ApiUrlSource {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ApiUrl => f.write_str("api-url"),
+        }
+    }
+}
+impl ::std::str::FromStr for ApiUrlSource {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "api-url" => Ok(Self::ApiUrl),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ApiUrlSource {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ApiUrlSource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`AppConfigToml`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -392,6 +439,13 @@ pub enum AppPolicyV1PublicEnvItem {
         #[serde(rename = "type")]
         type_: AppPolicyV1PublicEnvItemVariant2Type,
     },
+    Variant3 {
+        http_server: ::std::string::String,
+        name: ::std::string::String,
+        source: AppPolicyV1PublicEnvItemVariant3Source,
+        #[serde(rename = "type")]
+        type_: AppPolicyV1PublicEnvItemVariant3Type,
+    },
 }
 ///`AppPolicyV1PublicEnvItemVariant2Source`
 #[derive(
@@ -409,14 +463,11 @@ pub enum AppPolicyV1PublicEnvItem {
 pub enum AppPolicyV1PublicEnvItemVariant2Source {
     #[serde(rename = "api-url")]
     ApiUrl,
-    #[serde(rename = "webui-url")]
-    WebuiUrl,
 }
 impl ::std::fmt::Display for AppPolicyV1PublicEnvItemVariant2Source {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::ApiUrl => f.write_str("api-url"),
-            Self::WebuiUrl => f.write_str("webui-url"),
         }
     }
 }
@@ -425,7 +476,6 @@ impl ::std::str::FromStr for AppPolicyV1PublicEnvItemVariant2Source {
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
             "api-url" => Ok(Self::ApiUrl),
-            "webui-url" => Ok(Self::WebuiUrl),
             _ => Err("invalid value".into()),
         }
     }
@@ -484,6 +534,100 @@ impl ::std::convert::TryFrom<&str> for AppPolicyV1PublicEnvItemVariant2Type {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for AppPolicyV1PublicEnvItemVariant2Type {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`AppPolicyV1PublicEnvItemVariant3Source`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AppPolicyV1PublicEnvItemVariant3Source {
+    #[serde(rename = "http-server-url")]
+    HttpServerUrl,
+}
+impl ::std::fmt::Display for AppPolicyV1PublicEnvItemVariant3Source {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::HttpServerUrl => f.write_str("http-server-url"),
+        }
+    }
+}
+impl ::std::str::FromStr for AppPolicyV1PublicEnvItemVariant3Source {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "http-server-url" => Ok(Self::HttpServerUrl),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AppPolicyV1PublicEnvItemVariant3Source {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AppPolicyV1PublicEnvItemVariant3Source {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`AppPolicyV1PublicEnvItemVariant3Type`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AppPolicyV1PublicEnvItemVariant3Type {
+    #[serde(rename = "internal")]
+    Internal,
+}
+impl ::std::fmt::Display for AppPolicyV1PublicEnvItemVariant3Type {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Internal => f.write_str("internal"),
+        }
+    }
+}
+impl ::std::str::FromStr for AppPolicyV1PublicEnvItemVariant3Type {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "internal" => Ok(Self::Internal),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AppPolicyV1PublicEnvItemVariant3Type {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AppPolicyV1PublicEnvItemVariant3Type {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -723,15 +867,7 @@ impl ::std::convert::TryFrom<::std::string::String> for EnvSecretType {
         value.parse()
     }
 }
-///`InternalPublicEnvConfigToml`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct InternalPublicEnvConfigToml {
-    pub source: InternalPublicEnvSource,
-    #[serde(rename = "type")]
-    pub type_: InternalSecretType,
-}
-///`InternalPublicEnvSource`
+///`HttpServerUrlSource`
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -744,43 +880,55 @@ pub struct InternalPublicEnvConfigToml {
     PartialEq,
     PartialOrd,
 )]
-pub enum InternalPublicEnvSource {
-    #[serde(rename = "api-url")]
-    ApiUrl,
-    #[serde(rename = "webui-url")]
-    WebuiUrl,
+pub enum HttpServerUrlSource {
+    #[serde(rename = "http-server-url")]
+    HttpServerUrl,
 }
-impl ::std::fmt::Display for InternalPublicEnvSource {
+impl ::std::fmt::Display for HttpServerUrlSource {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
-            Self::ApiUrl => f.write_str("api-url"),
-            Self::WebuiUrl => f.write_str("webui-url"),
+            Self::HttpServerUrl => f.write_str("http-server-url"),
         }
     }
 }
-impl ::std::str::FromStr for InternalPublicEnvSource {
+impl ::std::str::FromStr for HttpServerUrlSource {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
-            "api-url" => Ok(Self::ApiUrl),
-            "webui-url" => Ok(Self::WebuiUrl),
+            "http-server-url" => Ok(Self::HttpServerUrl),
             _ => Err("invalid value".into()),
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for InternalPublicEnvSource {
+impl ::std::convert::TryFrom<&str> for HttpServerUrlSource {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for InternalPublicEnvSource {
+impl ::std::convert::TryFrom<::std::string::String> for HttpServerUrlSource {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///A public env value supplied by the server instead of the process environment.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum InternalPublicEnvConfigToml {
+    Variant0 {
+        source: ApiUrlSource,
+        #[serde(rename = "type")]
+        type_: InternalSecretType,
+    },
+    Variant1 {
+        http_server: ::std::string::String,
+        source: HttpServerUrlSource,
+        #[serde(rename = "type")]
+        type_: InternalSecretType,
+    },
 }
 ///`InternalSecretConfigToml`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]

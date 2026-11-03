@@ -103,20 +103,21 @@ impl AppConfigToml {
             .public_env
             .iter()
             .map(|(name, config)| match config {
-                PublicEnvConfigToml::InternalPublicEnvConfigToml(config) => {
-                    AppPolicyV1PublicEnvItem::Variant2 {
-                        name: name.clone(),
-                        source: match config.source {
-                            InternalPublicEnvSource::ApiUrl => {
-                                AppPolicyV1PublicEnvItemVariant2Source::ApiUrl
-                            }
-                            InternalPublicEnvSource::WebuiUrl => {
-                                AppPolicyV1PublicEnvItemVariant2Source::WebuiUrl
-                            }
-                        },
-                        type_: AppPolicyV1PublicEnvItemVariant2Type::Internal,
-                    }
-                }
+                PublicEnvConfigToml::InternalPublicEnvConfigToml(
+                    InternalPublicEnvConfigToml::Variant0 { .. },
+                ) => AppPolicyV1PublicEnvItem::Variant2 {
+                    name: name.clone(),
+                    source: AppPolicyV1PublicEnvItemVariant2Source::ApiUrl,
+                    type_: AppPolicyV1PublicEnvItemVariant2Type::Internal,
+                },
+                PublicEnvConfigToml::InternalPublicEnvConfigToml(
+                    InternalPublicEnvConfigToml::Variant1 { http_server, .. },
+                ) => AppPolicyV1PublicEnvItem::Variant3 {
+                    http_server: http_server.clone(),
+                    name: name.clone(),
+                    source: AppPolicyV1PublicEnvItemVariant3Source::HttpServerUrl,
+                    type_: AppPolicyV1PublicEnvItemVariant3Type::Internal,
+                },
                 PublicEnvConfigToml::EnvPublicEnvConfigToml(config) if config.optional => {
                     AppPolicyV1PublicEnvItem::Variant1 {
                         name: name.clone(),

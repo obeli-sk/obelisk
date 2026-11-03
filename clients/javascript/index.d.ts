@@ -121,7 +121,13 @@ export interface AppPolicyV1 {
       }
     | {
         name: string;
-        source: "api-url" | "webui-url";
+        source: "api-url";
+        type: "internal";
+      }
+    | {
+        http_server: string;
+        name: string;
+        source: "http-server-url";
         type: "internal";
       }
   )[];
