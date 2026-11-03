@@ -42,8 +42,9 @@ impl Fixture {
             format!(
                 r#"app_env_prefix = "{app_env_prefix}"
 api.listening_addr = "127.0.0.1:{port}"
-webui.enabled = false
-external.enabled = false
+http_server.webui.enabled = false
+http_server.external.enabled = false
+http_server.internal.enabled = false
 database.sqlite.directory = "{db}"
 wasm.cache_directory = "{wasm}"
 wasm.codegen_cache.directory = "{codegen}"

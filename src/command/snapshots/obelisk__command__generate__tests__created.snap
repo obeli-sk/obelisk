@@ -2,7 +2,7 @@
 source: src/command/generate.rs
 expression: contents
 ---
-[webui]
+[http_server.webui]
 enabled = false
 
 [api]

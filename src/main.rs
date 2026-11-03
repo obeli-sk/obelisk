@@ -494,7 +494,7 @@ methods = ['GET']
             ("127.0.0.2:23456", "http://127.0.0.2:23456"),
         ] {
             for prefix in ["", "OBELISK_APP_ENV_"] {
-                std::fs::write(&server, format!("app_env_prefix = '{prefix}'\napi.listening_addr = '{bind}'\nwebui.listening_addr = '0.0.0.0:18080'\n")).unwrap();
+                std::fs::write(&server, format!("app_env_prefix = '{prefix}'\napi.listening_addr = '{bind}'\nhttp_server.webui.listening_addr = '0.0.0.0:18080'\n")).unwrap();
                 let startup = prepare_server_startup(
                     Some(server.clone()),
                     Some(app.clone()),
@@ -534,7 +534,7 @@ methods = ['GET']
         }
         std::fs::write(
             &server,
-            "webui.public_url = 'https://webui--example.obelisk.works/'\n",
+            "http_server.webui.public_url = 'https://webui--example.obelisk.works/'\n",
         )
         .unwrap();
         let startup = prepare_server_startup(
@@ -568,12 +568,12 @@ methods = ['GET']
             ),
             (
                 "webui-url",
-                "webui.enabled = false",
-                "enabled Web UI listener",
+                "http_server.webui.enabled = false",
+                "enabled `webui` http_server",
             ),
             (
                 "webui-url",
-                "webui.public_url = 'file:///tmp/ui'",
+                "http_server.webui.public_url = 'file:///tmp/ui'",
                 "HTTP(S) URL",
             ),
         ] {

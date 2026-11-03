@@ -632,6 +632,7 @@ pub async fn server(
     webhooks_wasm_cell: Option<Arc<tokio::sync::Semaphore>>,
     mut server_termination_watcher: watch::Receiver<()>,
     http_activity: utils::http_activity::HttpActivity,
+    server_auth: Option<Arc<dyn WebhookRequestAuth>>,
 ) -> Result<(), WebhookServerError> {
     loop {
         let (stream, _) = select! {
@@ -663,6 +664,7 @@ pub async fn server(
                 let mut connection_termination_watcher = server_termination_watcher.clone();
                 let log_forwarder_sender = log_forwarder_sender.clone();
                 let http_activity = http_activity.clone();
+                let server_auth = server_auth.clone();
                 async move {
                     let (connection_drop_sender, connection_drop_watcher) = watch::channel(());
                     let deployment_id = state.deployment_id;
@@ -692,6 +694,7 @@ pub async fn server(
                                         request_timeout: state.request_timeout,
                                         max_stream_duration: state.max_stream_duration,
                                         persist_on_outbound_http: state.persist_on_outbound_http,
+                                        server_auth: server_auth.clone(),
                                     };
                                     let cell = webhooks_wasm_cell.clone();
                                     async move {
@@ -2466,6 +2469,7 @@ struct RequestHandler {
     request_timeout: Duration,
     max_stream_duration: Duration,
     persist_on_outbound_http: bool,
+    server_auth: Option<Arc<dyn WebhookRequestAuth>>,
 }
 
 /// Response body whose drop (after the last frame or on client disconnect) is
@@ -2492,6 +2496,30 @@ impl hyper::body::Body for NotifyOnDropBody {
 
     fn size_hint(&self) -> hyper::body::SizeHint {
         self.body.size_hint()
+    }
+}
+
+/// Replaces a verified `Authorization` header with the claims header, or returns the rejection.
+async fn authenticate_request(
+    auth: &dyn WebhookRequestAuth,
+    req: &mut hyper::Request<hyper::body::Incoming>,
+) -> Option<hyper::Response<HyperOutgoingBody>> {
+    match auth.authenticate(req.headers()).await {
+        Ok(claims) => {
+            req.headers_mut().remove(hyper::header::AUTHORIZATION);
+            req.headers_mut().insert(OIDC_CLAIMS_HEADER, claims);
+            None
+        }
+        Err(status) => {
+            let mut response = respond("missing, invalid or unauthorized OIDC token", status);
+            if status == StatusCode::UNAUTHORIZED {
+                response.headers_mut().insert(
+                    hyper::header::WWW_AUTHENTICATE,
+                    hyper::header::HeaderValue::from_static("Bearer"),
+                );
+            }
+            Some(response)
+        }
     }
 }
 
@@ -2582,27 +2610,19 @@ impl RequestHandler {
         request_deadline: tokio::time::Instant,
         mut stream_expired: watch::Receiver<()>,
     ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
+        req.headers_mut().remove(OIDC_CLAIMS_HEADER);
+        // Server-wide authentication runs before routing so unauthenticated callers cannot probe routes.
+        if let Some(auth) = &self.server_auth
+            && let Some(response) = authenticate_request(auth.as_ref(), &mut req).await
+        {
+            return Ok(response);
+        }
         if let Some(instance_match) = self.router.find(req.method(), req.uri()) {
             let found_instance = instance_match.handler();
-            req.headers_mut().remove(OIDC_CLAIMS_HEADER);
-            if let Some(auth) = &found_instance.config.request_auth {
-                match auth.authenticate(req.headers()).await {
-                    Ok(claims) => {
-                        req.headers_mut().remove(hyper::header::AUTHORIZATION);
-                        req.headers_mut().insert(OIDC_CLAIMS_HEADER, claims);
-                    }
-                    Err(status) => {
-                        let mut response =
-                            respond("missing, invalid or unauthorized OIDC token", status);
-                        if status == StatusCode::UNAUTHORIZED {
-                            response.headers_mut().insert(
-                                hyper::header::WWW_AUTHENTICATE,
-                                hyper::header::HeaderValue::from_static("Bearer"),
-                            );
-                        }
-                        return Ok(response);
-                    }
-                }
+            if let Some(auth) = &found_instance.config.request_auth
+                && let Some(response) = authenticate_request(auth.as_ref(), &mut req).await
+            {
+                return Ok(response);
             }
             // One permit for the matched endpoint's runtime, before the body is read. An
             // unroutable request takes none, so a flood of 404s cannot shed real traffic.
@@ -3331,6 +3351,7 @@ pub(crate) mod tests {
             None,
             server_termination_watcher,
             utils::http_activity::HttpActivity::default(),
+            None,
         ));
 
         let mut stream = TcpStream::connect(server_addr).await.unwrap();
@@ -3536,6 +3557,7 @@ pub(crate) mod tests {
                     wasm_cell,
                     server_termination_watcher,
                     utils::http_activity::HttpActivity::default(),
+                    None,
                 ));
                 SetUpFiboWebhook {
                     set,
@@ -4063,6 +4085,7 @@ pub(crate) mod tests {
                 None,
                 server_termination_watcher,
                 utils::http_activity::HttpActivity::default(),
+                None,
             ));
 
             // Send request to webhook with mock server port as route param
@@ -4258,6 +4281,7 @@ pub(crate) mod tests {
                 None,
                 server_termination_watcher,
                 utils::http_activity::HttpActivity::default(),
+                None,
             ));
 
             // Send request to webhook
@@ -4448,6 +4472,7 @@ pub(crate) mod tests {
                 None,
                 server_termination_watcher,
                 utils::http_activity::HttpActivity::default(),
+                None,
             ));
             (
                 set,
@@ -4792,6 +4817,7 @@ pub(crate) mod tests {
                 None,
                 server_termination_watcher,
                 utils::http_activity::HttpActivity::default(),
+                None,
             ));
             (
                 set,
@@ -6212,6 +6238,7 @@ pub(crate) mod tests {
                     None,
                     server_termination_watcher,
                     utils::http_activity::HttpActivity::default(),
+                    None,
                 ));
 
                 Self {

@@ -393,3 +393,74 @@ routes = ["/public"]
         server.shutdown().await;
     }
 }
+
+#[tokio::test]
+async fn http_server_oidc_protects_every_route() {
+    let ip = test_addr!(253);
+    let signer = Signer::Rsa(
+        ring_sig::RsaKeyPair::from_der(include_bytes!("oidc_rsa_test_key.der")).unwrap(),
+    );
+    let issuer = spawn_issuer(
+        &ip,
+        Arc::new(Mutex::new(json!({"keys": [signer.jwk("key")]}))),
+        Arc::new(JwksPause::default()),
+    )
+    .await;
+    let server_toml = format!(
+        r#"
+[[http_server.external.oidc]]
+issuer = "{issuer}"
+audience = "{AUDIENCE}"
+claims = {{ app_name = "proxy" }}
+"#
+    );
+    let deployment = r#"
+[[webhook_endpoint_js]]
+name = "echo"
+content = 'export default (request) => Response.json({ authorization: request.headers.get("authorization"), claims: JSON.parse(request.headers.get("obelisk-oidc-claims")) });'
+routes = ["/echo"]
+"#;
+    let server = TestServer::start_inline_deployment(ip, &server_toml, deployment, &[]).await;
+    let client = reqwest::Client::new();
+    let base = &server.webhook_base_url;
+    let now = jsonwebtoken::get_current_timestamp();
+    let claims = json!({
+        "iss": issuer, "aud": AUDIENCE, "sub": "machine", "app_name": "proxy", "exp": now + 600,
+    });
+    // Unauthenticated callers cannot tell routed paths from unknown ones.
+    for path in ["/echo", "/unknown"] {
+        let response = client.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        assert_eq!(response.headers()["www-authenticate"], "Bearer");
+    }
+    let mut other_app = claims.clone();
+    other_app["app_name"] = json!("other");
+    let response = client
+        .get(format!("{base}/unknown"))
+        .bearer_auth(signer.token("key", &other_app))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+    let token = signer.token("key", &claims);
+    let response = client
+        .get(format!("{base}/unknown"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+    let response = client
+        .get(format!("{base}/echo"))
+        .bearer_auth(&token)
+        .header("obelisk-oidc-claims", "spoofed")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({"authorization": null, "claims": claims})
+    );
+    server.shutdown().await;
+}

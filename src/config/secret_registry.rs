@@ -194,9 +194,14 @@ pub(crate) struct InternalPublicEnvConfigToml {
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "variants are the kebab-case source names"
+)]
 pub(crate) enum InternalPublicEnvSource {
     ApiUrl,
     WebuiUrl,
+    InternalUrl,
 }
 
 /// Public environment variables that deployments may read.

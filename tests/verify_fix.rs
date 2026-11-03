@@ -36,9 +36,11 @@ export default function handle() {
         std::fs::write(
             &server_path,
             format!(
-                r#"webui.enabled = false
-external.enabled = {external_enabled}
-external.listening_addr = "127.0.0.1:19090"
+                r#"http_server.webui.enabled = false
+http_server.external.enabled = {external_enabled}
+http_server.external.listening_addr = "127.0.0.1:19090"
+http_server.internal.enabled = false
+http_server.api.listening_addr = "127.0.0.1:19091"
 
 [database.sqlite]
 directory = "db"
@@ -48,10 +50,6 @@ cache_directory = "wasm-cache"
 
 [wasm.codegen_cache]
 directory = "codegen-cache"
-
-[[http_server]]
-name = "api"
-listening_addr = "127.0.0.1:19091"
 "#
             ),
         )
@@ -85,7 +83,7 @@ listening_addr = "127.0.0.1:19091"
                 let output = cli.output().unwrap();
                 assert!(
                     output.status.success(),
-                    "{command} verify (fix={fix}, external.enabled={external_enabled}) failed:\n{}\n{}",
+                    "{command} verify (fix={fix}, http_server.external.enabled={external_enabled}) failed:\n{}\n{}",
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr),
                 );
@@ -119,7 +117,7 @@ impl RepairFixture {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("server.toml"),
-            "allowed_exec_activities = false\nwebui.enabled = false\n",
+            "allowed_exec_activities = false\nhttp_server.webui.enabled = false\n",
         )
         .unwrap();
         std::fs::write(
@@ -250,7 +248,7 @@ fn app_and_platform_repairs_verify_and_are_idempotent() {
     std::fs::write(
         fixture.dir.path().join("server.toml"),
         format!(
-            "allowed_exec_activities = {{ unrelated = '{old_digest}' }}\nwebui.enabled = false\n"
+            "allowed_exec_activities = {{ unrelated = '{old_digest}' }}\nhttp_server.webui.enabled = false\n"
         ),
     )
     .unwrap();

@@ -204,7 +204,8 @@
       "type": "string",
       "enum": [
         "api-url",
-        "webui-url"
+        "webui-url",
+        "internal-url"
       ]
     },
     "OutboundHttpToml": {

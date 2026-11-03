@@ -11,8 +11,9 @@ pub(super) fn write_server_config(
     let server_contents = format!(
         r#"api.listening_addr = "{ip}:{API_PORT}"
 {server_toml_api_lines}
-webui.enabled = false
-external.listening_addr = "{ip}:{WEBHOOK_PORT}"
+http_server.webui.enabled = false
+http_server.external.listening_addr = "{ip}:{WEBHOOK_PORT}"
+http_server.internal.enabled = false
 
 [wasm]
 cache_directory = "{wasm_cache}"

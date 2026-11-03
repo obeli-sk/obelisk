@@ -34,12 +34,6 @@
     "database": {
       "$ref": "#/$defs/DatabaseConfigToml"
     },
-    "webui": {
-      "$ref": "#/$defs/WebUIConfig"
-    },
-    "external": {
-      "$ref": "#/$defs/ExternalServerConfig"
-    },
     "wasm": {
       "$ref": "#/$defs/WasmGlobalConfigToml"
     },
@@ -78,9 +72,10 @@
       "$ref": "#/$defs/LoggingConfig"
     },
     "http_server": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/HttpServer"
+      "description": "Webhook listeners by name. `webui`, `external` and `internal` are built in and enabled by default.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/HttpServerToml"
       }
     }
   },
@@ -725,41 +720,6 @@
           "const": "auto"
         }
       ]
-    },
-    "WebUIConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "listening_addr": {
-          "type": "string",
-          "default": "127.0.0.1:8080"
-        },
-        "public_url": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        }
-      },
-      "additionalProperties": false
-    },
-    "ExternalServerConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "listening_addr": {
-          "type": "string",
-          "default": "127.0.0.1:9090"
-        }
-      },
-      "additionalProperties": false
     },
     "WasmGlobalConfigToml": {
       "type": "object",
@@ -1433,25 +1393,39 @@
         "Stdout"
       ]
     },
-    "HttpServer": {
+    "HttpServerToml": {
       "type": "object",
       "properties": {
-        "name": {
-          "$ref": "#/$defs/ConfigName"
+        "enabled": {
+          "type": "boolean",
+          "default": true
         },
         "listening_addr": {
-          "type": "string"
+          "description": "Required for user-defined servers; built-in servers have a localhost default.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "public_url": {
+          "description": "Public browser URL of the `webui` or `internal` server, exposed to apps as `webui-url` or `internal-url`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "oidc": {
+          "description": "Trusted OIDC issuers; when set, every request on this listener needs a matching bearer JWT.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OidcProviderConfig"
+          },
+          "default": []
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "listening_addr"
-      ]
-    },
-    "ConfigName": {
-      "description": "Activity, Webhook, Workflow or a Http server",
-      "type": "string"
+      "additionalProperties": false
     }
   }
 }
