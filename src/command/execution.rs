@@ -66,7 +66,20 @@ impl args::Execution {
                 let opts =
                     LogsOpts::from_args(level, stream_type, show_derived, show_run_id, limit)?;
                 if follow {
-                    follow_logs(&client_startup, api_url, &execution_id, &opts, after, json).await
+                    let output = if json {
+                        LogOutput::Json
+                    } else {
+                        LogOutput::Stdout
+                    };
+                    follow_logs(
+                        &client_startup,
+                        api_url,
+                        &execution_id,
+                        &opts,
+                        after,
+                        output,
+                    )
+                    .await
                 } else {
                     execution_logs_cmd(&client_startup, api_url, execution_id, &opts, after, json)
                         .await
@@ -351,7 +364,11 @@ pub(crate) async fn submit(
                         &execution_id,
                         &logs_opts,
                         None,
-                        json,
+                        if json {
+                            LogOutput::Json
+                        } else {
+                            LogOutput::Stderr
+                        },
                     )
                     .await?;
                     let result =
@@ -622,22 +639,13 @@ fn print_retval(result: &RetValWire, json: bool, streaming: bool) -> anyhow::Res
             print_json(result)?;
         }
     } else {
+        print_json(result)?;
         match result {
-            RetValWire::Ok(value) => eprintln!(
-                "Execution finished: OK: {}",
-                value.as_ref().map_or_else(
-                    || "(no return value)".to_string(),
-                    |value| serde_json::to_string(value).expect("return value is serializable"),
-                )
-            ),
-            RetValWire::Err(value) => {
-                eprintln!(
-                    "Execution finished: Error: {}",
-                    value.as_ref().map_or_else(
-                        || "(no return value)".to_string(),
-                        |value| serde_json::to_string(value).expect("return value is serializable"),
-                    )
-                );
+            RetValWire::Ok(_) => {
+                eprintln!("Execution finished: OK");
+            }
+            RetValWire::Err(_) => {
+                eprintln!("Execution finished: Error");
                 return Err(AlreadyPrintedError.into());
             }
             RetValWire::ExecutionFailed(failure) => {
@@ -1218,18 +1226,24 @@ impl LogsOpts {
     }
 }
 
-/// Parse a JSON log response into items, print them (as JSONL when `json` is true,
-/// as human-readable text otherwise), and return the cursor of the last item.
+#[derive(Clone, Copy)]
+enum LogOutput {
+    Stdout,
+    Stderr,
+    Json,
+}
+
+/// Print logs and return the cursor of the last item.
 fn print_log_items(
     items: &[LogEntryRowSer],
-    json: bool,
+    output_destination: LogOutput,
     show_run_id: bool,
     show_derived: bool,
 ) -> anyhow::Result<Option<String>> {
     if items.is_empty() {
         return Ok(None);
     }
-    if json {
+    if matches!(output_destination, LogOutput::Json) {
         for item in items {
             print_ndjson(item)?;
         }
@@ -1269,7 +1283,11 @@ fn print_log_items(
                 }
             }
         }
-        print!("{output}");
+        match output_destination {
+            LogOutput::Stdout => print!("{output}"),
+            LogOutput::Stderr => eprint!("{output}"),
+            LogOutput::Json => unreachable!(),
+        }
     }
     let cursor = items.last().map(|item| item.cursor.clone());
     Ok(cursor)
@@ -1313,7 +1331,12 @@ async fn execution_logs_cmd(
     let client = client_startup.web_api_client()?;
     let logs_url = format!("{api_url}/v1/executions/{execution_id}/logs");
     let items = fetch_logs(&client, &logs_url, opts, None, after.as_deref(), "newer").await?;
-    print_log_items(&items, json, opts.show_run_id, opts.show_derived)?;
+    let output = if json {
+        LogOutput::Json
+    } else {
+        LogOutput::Stdout
+    };
+    print_log_items(&items, output, opts.show_run_id, opts.show_derived)?;
     Ok(())
 }
 
@@ -1323,7 +1346,7 @@ async fn follow_logs(
     execution_id: &ExecutionId,
     opts: &LogsOpts,
     initial_after: Option<String>,
-    json: bool,
+    output: LogOutput,
 ) -> anyhow::Result<()> {
     let client = client_startup.web_api_client()?;
     let logs_url = format!("{api_url}/v1/executions/{execution_id}/logs");
@@ -1340,7 +1363,7 @@ async fn follow_logs(
             "newer",
         )
         .await?;
-        let new_cursor = print_log_items(&items, json, opts.show_run_id, opts.show_derived)?;
+        let new_cursor = print_log_items(&items, output, opts.show_run_id, opts.show_derived)?;
         let has_items = new_cursor.is_some();
         if let Some(c) = new_cursor {
             cursor = Some(c);

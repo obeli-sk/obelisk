@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(cli)* Execution results in default mode are pretty-printed as JSON on stdout, with
+  completion messages on stderr. Human-readable logs from `execution submit --follow-logs`
+  now go to stderr. With `--json`, submission, logs, and final results remain NDJSON on stdout
+  when following.
 - **Breaking:** *(db)* A deployment's content digest is unique. Submitting content already stored
   under another ID returns `409`, and the server reuses the stored deployment when started with
   the same deployment file. The database migration keeps existing deployments storing the same
