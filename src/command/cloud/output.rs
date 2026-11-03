@@ -84,11 +84,14 @@ impl Summary {
                 }
             }
             Self::Status => {
-                app(&mut out, &value["app"]);
                 let status = &value["app"]["status"];
                 let machine = text(value, "machine_state", "");
                 let up = machine == "started";
-                if matches!(machine, "started" | "stopped" | "suspended")
+                // An idle running app is suspended by design and resumes on the next request.
+                let idle = status == "running" && matches!(machine, "suspended" | "suspending");
+                app_with_note(&mut out, &value["app"], idle.then_some("suspended"));
+                if !idle
+                    && matches!(machine, "started" | "stopped" | "suspended")
                     && ((status == "running" && !up) || (status == "stopped" && up))
                 {
                     let _ = writeln!(
@@ -104,10 +107,11 @@ impl Summary {
                 let _ = writeln!(
                     out,
                     "API: {}",
-                    if value["api_ready"] == true {
-                        "ready"
-                    } else {
-                        "unavailable"
+                    match &value["api_ready"] {
+                        Value::Bool(true) => "ready",
+                        // Not checked: probing would wake the suspended Machine.
+                        Value::Null if idle => "resumes on request",
+                        _ => "unavailable",
                     }
                 );
             }
@@ -226,12 +230,20 @@ fn text<'a>(value: &'a Value, key: &str, fallback: &'a str) -> &'a str {
 }
 
 fn app(out: &mut String, value: &Value) {
-    let _ = writeln!(
+    app_with_note(out, value, None);
+}
+
+fn app_with_note(out: &mut String, value: &Value, note: Option<&str>) {
+    let _ = write!(
         out,
         "{}: {}",
         text(value, "app_name", "App"),
         text(value, "status", "unknown")
     );
+    let _ = match note {
+        Some(note) => writeln!(out, " ({note})"),
+        None => writeln!(out),
+    };
     if let Some(desired) = value["desired_state"].as_str()
         && value["status"] != desired
     {
@@ -407,6 +419,32 @@ mod tests {
         let out = status(Value::Null, Value::Null);
         assert!(out.contains("not applied yet"), "{out}");
         assert!(!out.contains("app.toml"), "{out}");
+    }
+
+    #[test]
+    fn status_reports_idle_suspension() {
+        let status = |app_status: &str, machine: &str, api_ready: Value| {
+            Summary::Status.render(&json!({
+                "app":{"app_name":"demo","status":app_status},
+                "machine_state":machine,
+                "api_ready":api_ready,
+            }))
+        };
+        let out = status("running", "suspended", Value::Null);
+        assert!(out.starts_with("demo: running (suspended)\n"), "{out}");
+        assert!(out.contains("API: resumes on request\n"), "{out}");
+        assert!(!out.contains("reconcile"), "{out}");
+        let out = status("running", "started", json!(true));
+        assert!(out.starts_with("demo: running\n"), "{out}");
+        assert!(out.contains("API: ready\n"), "{out}");
+        let out = status("running", "stopped", json!(false));
+        assert!(
+            out.contains("VM is stopped although the app is running."),
+            "{out}"
+        );
+        let out = status("stopped", "suspended", Value::Null);
+        assert!(out.starts_with("demo: stopped\n"), "{out}");
+        assert!(out.contains("API: unavailable\n"), "{out}");
     }
 
     #[test]
