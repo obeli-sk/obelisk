@@ -1103,7 +1103,6 @@ pub(crate) enum Execution {
     /// unblocking any parent workflow that is awaiting it.
     Stub(Stub),
     /// Get the current state of an execution, optionally following status changes.
-    #[command(alias = "get")]
     Status {
         /// Follow the status stream until the execution finishes.
         #[arg(short, long)]

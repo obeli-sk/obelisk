@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(server)* `health.listening_addr` enables an unauthenticated `GET /health` listener that reads
   the database. Its requests do not count as activity for `idle_report`.
 
+### Removed
+
+- **Breaking:** *(cli)* Removed `obelisk execution get`, the alias for `execution status`.
+  Use `execution status` for the current state or `execution result` for the final result.
+
 ### Deprecated
 
 - *(api)* `POST /v1/deployments`, as its retries create duplicate deployments. Use
