@@ -21,16 +21,22 @@
 # http_server.internal.enabled = true            # Webhooks meant to sit behind authentication, e.g. a protecting proxy.
 # http_server.internal.listening_addr = "127.0.0.1:9091"
 # http_server.internal.public_url = "https://internal--my-app.obelisk.works"
-## Note: HTTP servers have no auth unless `oidc` is configured; listening on all interfaces using [::]:port is not advised.
+## A server without `oidc` or `api_auth` accepts requests without credentials, so it starts only when
+## app.toml lists it in `public_http_servers`. `webui` is the exception and always starts.
+## Listening on all interfaces using [::]:port is not advised for servers without credentials.
 
 ## Additional HTTP servers need a `listening_addr`.
 # [http_server.my_server]
 # listening_addr = "0.0.0.0:9000"
 
-## Require an OIDC ID token (JWT) on every request of an HTTP server, checked before routing.
-## Issuer, audience and claim matching work like `[[api.oidc]]`. Any entry can authorize a request.
-## The verified `Authorization` header is replaced by the `obelisk-oidc-claims` JSON header.
-## Webhook endpoints on such a server must not configure their own `oidc`.
+## Require a bearer token on every request of an HTTP server, checked before routing.
+## Missing or invalid tokens return 401; a verified JWT matching no entry returns 403.
+## `api_auth = true` accepts every token the API accepts: the startup token, `--api-token`,
+## `api.token_hashes` and `api.oidc`. It requires an enabled API; with `--no-auth` it accepts all requests.
+# http_server.internal.api_auth = true
+## OIDC ID tokens (JWT) matching any entry are accepted as well; matching works like `[[api.oidc]]`.
+## A verified `Authorization` header is removed. After an OIDC token, the `obelisk-oidc-claims`
+## JSON header carries its claims; a client-supplied header of that name is always removed.
 ## On `webui`, the web UI's `/api` forwarding then reaches the API without the caller's `Authorization`.
 # [[http_server.internal.oidc]]
 # issuer = "https://oidc.fly.io/my-org"

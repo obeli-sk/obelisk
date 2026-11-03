@@ -131,6 +131,10 @@ pub struct AppConfigToml {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub public_env: ::std::collections::BTreeMap<::std::string::String, PublicEnvConfigToml>,
+    /**`http_server` names that may serve webhooks without credentials. Servers that server.toml
+    protects with `oidc` or `api_auth` need no entry; the built-in Web UI never does.*/
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub public_http_servers: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
@@ -199,6 +203,9 @@ pub struct AppPolicyV1 {
     pub format: AppPolicyV1Format,
     pub outbound_http: ::std::vec::Vec<AppPolicyV1OutboundHttpItem>,
     pub public_env: ::std::vec::Vec<AppPolicyV1PublicEnvItem>,
+    ///`http_server` names that may serve webhooks without credentials. Omitted when empty.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub public_http_servers: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     pub secrets: ::std::collections::BTreeMap<::std::string::String, AppPolicyV1SecretsValue>,
 }
 ///`AppPolicyV1Format`

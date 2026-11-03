@@ -131,6 +131,10 @@ export interface AppPolicyV1 {
         type: "internal";
       }
   )[];
+  /**
+   * `http_server` names that may serve webhooks without credentials. Omitted when empty.
+   */
+  public_http_servers?: string[];
   secrets: {
     [k: string]:
       | {

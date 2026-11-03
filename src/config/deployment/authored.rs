@@ -145,6 +145,24 @@ impl DeploymentToml {
             }
         }
 
+        let webhooks_with_oidc: Vec<_> = self
+            .webhooks_wasm
+            .iter()
+            .filter(|c| c.oidc.is_some())
+            .map(|c| c.common.name.as_str())
+            .chain(
+                self.webhooks_js
+                    .iter()
+                    .filter(|c| c.oidc.is_some())
+                    .map(|c| c.name.as_str()),
+            )
+            .collect();
+        ensure!(
+            webhooks_with_oidc.is_empty(),
+            "webhook endpoint `oidc` was removed; require OIDC for the whole listener with \
+             `[[http_server.<name>.oidc]]` in server.toml instead (webhooks: {webhooks_with_oidc:?})"
+        );
+
         // Build the name→type index and check for duplicates.
         let mut component_names_to_types = hashbrown::HashMap::new();
         // Add components with mandatory names
@@ -930,9 +948,10 @@ impl ComponentBacktraceConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WebhookWasmComponentConfigToml {
-    /// Accepted OIDC bearer tokens; issuer, audience and claim values support public environment interpolation.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) oidc: Vec<crate::config::server::OidcProviderConfig>,
+    /// Removed; kept so that deployments still setting it fail instead of losing authentication.
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub(crate) oidc: Option<toml::Value>,
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     /// Generated content digest, only accepted in processed manifests.
@@ -970,9 +989,10 @@ pub(crate) struct WebhookWasmComponentConfigToml {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WebhookJsComponentConfigToml {
-    /// Accepted OIDC bearer tokens; issuer, audience and claim values support public environment interpolation.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) oidc: Vec<crate::config::server::OidcProviderConfig>,
+    /// Removed; kept so that deployments still setting it fail instead of losing authentication.
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub(crate) oidc: Option<toml::Value>,
     pub(crate) name: ConfigName,
     /// Location of the JavaScript source file.
     /// Supports local file paths and OCI registry references (`oci://...`).

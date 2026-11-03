@@ -720,7 +720,8 @@ pub(crate) enum Server {
         /// Do not fail startup when a component's imports/exports fail type checking against the current deployment.
         #[arg(long)]
         suppress_type_checking_errors: bool,
-        /// Accept unauthenticated requests on the API port. Dev/recovery override.
+        /// Accept unauthenticated requests on the API port and on `http_server` entries with
+        /// `api_auth`. Dev/recovery override.
         #[arg(long, conflicts_with = "api_token")]
         no_auth: bool,
 

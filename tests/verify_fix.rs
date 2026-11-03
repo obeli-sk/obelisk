@@ -6,7 +6,8 @@ fn verify_fix_uses_http_servers_from_server_config() {
     let server_path = tmp.path().join("server.toml");
     let app_path = tmp.path().join("app.toml");
     let deployment_path = tmp.path().join("deployment.toml");
-    let app = "app_name = \"verify-fix-http-servers\"\n";
+    let app =
+        "app_name = \"verify-fix-http-servers\"\npublic_http_servers = [\"api\", \"external\"]\n";
     let declared_app = format!("{app}\n[public_env]\nOBELISK_VERIFY_FIX_TEST_ENV = {{}}\n");
     let named_webhook = r#"
 [[webhook_endpoint_js]]

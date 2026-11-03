@@ -6,6 +6,11 @@
 ## Names use 4-25 lowercase ASCII letters, digits, or interior hyphens.
 app_name = "my-app"
 
+## `http_server` names from server.toml that may serve webhooks without credentials.
+## A server without `oidc` or `api_auth` does not start unless listed; `webui` is always public.
+## Listing a server that requires credentials, or one that is disabled, records a warning event.
+# public_http_servers = ["external"]
+
 ## Optional hosted VM settings; omitted memory uses the cloud default.
 # [cloud]
 # memory_mb = 512

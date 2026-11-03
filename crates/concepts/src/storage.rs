@@ -1604,6 +1604,7 @@ pub enum SystemEventCode {
     ServerIdleReported,
     ServerIdleResumed,
     ServerConfigurationResolved,
+    ServerPublicHttpServerIgnored,
     ServerStartupCompleted,
     ServerStartupFailed,
     ServerShutdownRequested,
@@ -1639,6 +1640,7 @@ impl SystemEventCode {
             Self::ServerIdleReported => "server.idle.reported",
             Self::ServerIdleResumed => "server.idle.resumed",
             Self::ServerConfigurationResolved => "server.configuration.resolved",
+            Self::ServerPublicHttpServerIgnored => "server.public_http_server.ignored",
             Self::ServerStartupCompleted => "server.startup.completed",
             Self::ServerStartupFailed => "server.startup.failed",
             Self::ServerShutdownRequested => "server.shutdown.requested",
@@ -1675,6 +1677,7 @@ impl SystemEventCode {
             Self::DeploymentSubmitFailed
             | Self::DeploymentSwitchFailed
             | Self::OutboundHttpDenied
+            | Self::ServerPublicHttpServerIgnored
             | Self::WorkflowReplayLockExpired
             | Self::MaintenanceGcDeploymentsInUse
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
@@ -1692,6 +1695,7 @@ impl SystemEventCode {
             Self::ServerIdleReported => "Server idle reported",
             Self::ServerIdleResumed => "Server resumed after a suspension",
             Self::ServerConfigurationResolved => "Server configuration resolved",
+            Self::ServerPublicHttpServerIgnored => "Public HTTP server entry ignored",
             Self::ServerStartupCompleted => "Server startup completed",
             Self::ServerStartupFailed => "Server startup failed",
             Self::ServerShutdownRequested => "Server shutdown requested",
@@ -1806,6 +1810,9 @@ impl SystemEvent {
         match self.code.as_str() {
             "server.configuration.resolved" => {
                 SystemEventCode::ServerConfigurationResolved.message()
+            }
+            "server.public_http_server.ignored" => {
+                SystemEventCode::ServerPublicHttpServerIgnored.message()
             }
             "server.idle.reported" => SystemEventCode::ServerIdleReported.message(),
             "server.idle.resumed" => SystemEventCode::ServerIdleResumed.message(),
@@ -4123,6 +4130,7 @@ mod tests {
             SystemEventCode::ServerIdleReported,
             SystemEventCode::ServerIdleResumed,
             SystemEventCode::ServerConfigurationResolved,
+            SystemEventCode::ServerPublicHttpServerIgnored,
             SystemEventCode::ServerStartupCompleted,
             SystemEventCode::ServerStartupFailed,
             SystemEventCode::ServerShutdownRequested,

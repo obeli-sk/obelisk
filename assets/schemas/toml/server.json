@@ -1425,12 +1425,17 @@
           "default": null
         },
         "oidc": {
-          "description": "Trusted OIDC issuers; when set, every request on this listener needs a matching bearer JWT.",
+          "description": "Trusted OIDC issuers whose bearer JWTs this listener accepts.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/OidcProviderConfig"
           },
           "default": []
+        },
+        "api_auth": {
+          "description": "Accept every bearer token the API accepts: its `token_hashes`, `oidc`, the startup token\nand the `--api-token`. Requires an enabled API.",
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false

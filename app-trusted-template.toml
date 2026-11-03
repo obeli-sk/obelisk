@@ -1,6 +1,8 @@
 # TRUSTED: single-party app policy. Review before using with untrusted deployments.
 # Required app name; `OBELISK_APP_NAME`, when set, must match.
 app_name = "my-app"
+# Webhooks on `external` accept requests without credentials.
+public_http_servers = ["external"]
 
 [[outbound_http.allowed_host]]
 pattern = "*://*:*"

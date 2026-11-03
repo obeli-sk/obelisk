@@ -1291,7 +1291,7 @@ function validate36(data, { instancePath = "", parentData, parentDataProperty, r
 }
 validate36.evaluated = { "props": { "enabled": true, "max_age_ms": true }, "dynamicProps": false, "dynamicItems": false };
 var validateAppPolicyV1 = validate37;
-var schema51 = { "type": "object", "title": "AppPolicyV1", "required": ["format", "secrets", "public_env", "allowed_exec_activities", "outbound_http"], "properties": { "allowed_exec_activities": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "format": { "type": "string", "enum": ["obelisk-app-config-v1"] }, "outbound_http": { "type": "array", "items": { "type": "object", "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.", "properties": { "methods": { "anyOf": [{ "anyOf": [{ "type": "string", "description": 'All methods allowed (from `methods = "*"`).', "enum": ["*"] }, { "type": "array", "items": { "type": "string" }, "description": 'Specific methods list (from `methods = ["GET", "POST"]`).' }], "description": 'Input for method restrictions in TOML configuration.\nSupports both `methods = "*"` and `methods = ["GET", "POST"]` syntax.' }, { "type": "null" }], "description": 'Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = "*"` or `methods = ["*"]` to allow all methods.\n- `methods = ["GET", "POST"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).' }, "pattern": { "type": ["string", "null"], "description": 'Host pattern (e.g. `"api.example.com"`, `"*.example.com"`, `"http://localhost:8080"`).' }, "replace_in": { "type": "array", "items": { "type": "string", "description": "Where in the outgoing request placeholders are replaced.", "enum": ["headers", "body", "params"] }, "description": "Where in the request to perform placeholder replacement:\n- `headers` searches textual header values, including placeholders within larger values.\n- `params` searches URL query parameter values.\n- `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.\n\nDefault: empty (no replacement, deny by default).", "default": [] }, "request_url_regex": { "type": ["string", "null"], "description": "Optional regex restriction checked against `METHOD URL` with query params removed.\nFor example, `GET https://api.example.com/v1/items`.\nSupports `${VAR}` and `${VAR:-default}` env var interpolation.\nEnv var values are interpreted as regex syntax; use regex-escaped values when precision matters.\nOmit to allow all paths accepted by the host and method restrictions." }, "secrets": { "type": "array", "items": { "anyOf": [{ "type": "string" }, { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "optional": { "type": "boolean", "default": false } }, "additionalProperties": false }], "description": 'A reference to a secret registered in app.toml `[secrets]`.\nEither `"NAME"` (required) or `{ name = "NAME", optional = true }`.' }, "description": "Registered secret names (from the app-owned `app.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.", "default": [] }, "url_prefix": { "type": ["string", "null"], "description": "HTTP(S) URL prefix, mutually exclusive with pattern and `request_url_regex`." }, "url_regex_suffix": { "type": ["string", "null"], "description": "Regex fragment appended to the escaped URL prefix; leading ^ is forbidden." } }, "additionalProperties": false, "required": ["methods", "request_url_regex", "secrets", "replace_in"] } }, "public_env": { "type": "array", "items": { "anyOf": [{ "type": "string" }, { "type": "object", "required": ["name", "optional"], "properties": { "name": { "type": "string" }, "optional": { "type": "boolean" } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source"], "properties": { "name": { "type": "string" }, "source": { "type": "string", "enum": ["api-url"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source", "http_server"], "properties": { "http_server": { "type": "string" }, "name": { "type": "string" }, "source": { "type": "string", "enum": ["http-server-url"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }] } }, "secrets": { "type": "object", "additionalProperties": { "anyOf": [{ "type": "object", "required": ["type", "exposed_to"], "properties": { "exposed_to": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["optional", "exposed_to"], "properties": { "exposed_to": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "optional": { "type": "boolean" } }, "additionalProperties": false }] } } }, "additionalProperties": false };
+var schema51 = { "type": "object", "title": "AppPolicyV1", "required": ["format", "secrets", "public_env", "allowed_exec_activities", "outbound_http"], "properties": { "allowed_exec_activities": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "format": { "type": "string", "enum": ["obelisk-app-config-v1"] }, "outbound_http": { "type": "array", "items": { "type": "object", "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.", "properties": { "methods": { "anyOf": [{ "anyOf": [{ "type": "string", "description": 'All methods allowed (from `methods = "*"`).', "enum": ["*"] }, { "type": "array", "items": { "type": "string" }, "description": 'Specific methods list (from `methods = ["GET", "POST"]`).' }], "description": 'Input for method restrictions in TOML configuration.\nSupports both `methods = "*"` and `methods = ["GET", "POST"]` syntax.' }, { "type": "null" }], "description": 'Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = "*"` or `methods = ["*"]` to allow all methods.\n- `methods = ["GET", "POST"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).' }, "pattern": { "type": ["string", "null"], "description": 'Host pattern (e.g. `"api.example.com"`, `"*.example.com"`, `"http://localhost:8080"`).' }, "replace_in": { "type": "array", "items": { "type": "string", "description": "Where in the outgoing request placeholders are replaced.", "enum": ["headers", "body", "params"] }, "description": "Where in the request to perform placeholder replacement:\n- `headers` searches textual header values, including placeholders within larger values.\n- `params` searches URL query parameter values.\n- `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.\n\nDefault: empty (no replacement, deny by default).", "default": [] }, "request_url_regex": { "type": ["string", "null"], "description": "Optional regex restriction checked against `METHOD URL` with query params removed.\nFor example, `GET https://api.example.com/v1/items`.\nSupports `${VAR}` and `${VAR:-default}` env var interpolation.\nEnv var values are interpreted as regex syntax; use regex-escaped values when precision matters.\nOmit to allow all paths accepted by the host and method restrictions." }, "secrets": { "type": "array", "items": { "anyOf": [{ "type": "string" }, { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "optional": { "type": "boolean", "default": false } }, "additionalProperties": false }], "description": 'A reference to a secret registered in app.toml `[secrets]`.\nEither `"NAME"` (required) or `{ name = "NAME", optional = true }`.' }, "description": "Registered secret names (from the app-owned `app.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.", "default": [] }, "url_prefix": { "type": ["string", "null"], "description": "HTTP(S) URL prefix, mutually exclusive with pattern and `request_url_regex`." }, "url_regex_suffix": { "type": ["string", "null"], "description": "Regex fragment appended to the escaped URL prefix; leading ^ is forbidden." } }, "additionalProperties": false, "required": ["methods", "request_url_regex", "secrets", "replace_in"] } }, "public_env": { "type": "array", "items": { "anyOf": [{ "type": "string" }, { "type": "object", "required": ["name", "optional"], "properties": { "name": { "type": "string" }, "optional": { "type": "boolean" } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source"], "properties": { "name": { "type": "string" }, "source": { "type": "string", "enum": ["api-url"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source", "http_server"], "properties": { "http_server": { "type": "string" }, "name": { "type": "string" }, "source": { "type": "string", "enum": ["http-server-url"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }] } }, "public_http_servers": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "description": "`http_server` names that may serve webhooks without credentials. Omitted when empty." }, "secrets": { "type": "object", "additionalProperties": { "anyOf": [{ "type": "object", "required": ["type", "exposed_to"], "properties": { "exposed_to": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["optional", "exposed_to"], "properties": { "exposed_to": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "optional": { "type": "boolean" } }, "additionalProperties": false }] } } }, "additionalProperties": false };
 function validate37(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
@@ -1313,7 +1313,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
       } else {
         const _errs2 = errors;
         for (const key0 in data) {
-          if (!(key0 === "allowed_exec_activities" || key0 === "format" || key0 === "outbound_http" || key0 === "public_env" || key0 === "secrets")) {
+          if (!(key0 === "allowed_exec_activities" || key0 === "format" || key0 === "outbound_http" || key0 === "public_env" || key0 === "public_http_servers" || key0 === "secrets")) {
             validate37.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" }];
             return false;
             break;
@@ -2146,297 +2146,346 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                   var valid1 = true;
                 }
                 if (valid1) {
-                  if (data.secrets !== void 0) {
-                    let data29 = data.secrets;
+                  if (data.public_http_servers !== void 0) {
+                    let data29 = data.public_http_servers;
                     const _errs87 = errors;
                     if (errors === _errs87) {
-                      if (data29 && typeof data29 == "object" && !Array.isArray(data29)) {
-                        for (const key7 in data29) {
-                          let data30 = data29[key7];
-                          const _errs90 = errors;
-                          const _errs91 = errors;
-                          let valid19 = false;
-                          const _errs92 = errors;
-                          if (errors === _errs92) {
-                            if (data30 && typeof data30 == "object" && !Array.isArray(data30)) {
-                              let missing6;
-                              if (data30.type === void 0 && (missing6 = "type") || data30.exposed_to === void 0 && (missing6 = "exposed_to")) {
-                                const err38 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/required", keyword: "required", params: { missingProperty: missing6 }, message: "must have required property '" + missing6 + "'" };
-                                if (vErrors === null) {
-                                  vErrors = [err38];
-                                } else {
-                                  vErrors.push(err38);
-                                }
-                                errors++;
-                              } else {
-                                const _errs94 = errors;
-                                for (const key8 in data30) {
-                                  if (!(key8 === "exposed_to" || key8 === "type")) {
-                                    const err39 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key8 }, message: "must NOT have additional properties" };
-                                    if (vErrors === null) {
-                                      vErrors = [err39];
-                                    } else {
-                                      vErrors.push(err39);
-                                    }
-                                    errors++;
-                                    break;
-                                  }
-                                }
-                                if (_errs94 === errors) {
-                                  if (data30.exposed_to !== void 0) {
-                                    let data31 = data30.exposed_to;
-                                    const _errs95 = errors;
-                                    if (errors === _errs95) {
-                                      if (data31 && typeof data31 == "object" && !Array.isArray(data31)) {
-                                        for (const key9 in data31) {
-                                          let data32 = data31[key9];
-                                          const _errs98 = errors;
-                                          if (errors === _errs98) {
-                                            if (Array.isArray(data32)) {
-                                              var valid22 = true;
-                                              const len6 = data32.length;
-                                              for (let i6 = 0; i6 < len6; i6++) {
-                                                const _errs100 = errors;
-                                                if (typeof data32[i6] !== "string") {
-                                                  const err40 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to/" + key9.replace(/~/g, "~0").replace(/\//g, "~1") + "/" + i6, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/exposed_to/additionalProperties/items/type", keyword: "type", params: { type: "string" }, message: "must be string" };
-                                                  if (vErrors === null) {
-                                                    vErrors = [err40];
-                                                  } else {
-                                                    vErrors.push(err40);
-                                                  }
-                                                  errors++;
-                                                }
-                                                var valid22 = _errs100 === errors;
-                                                if (!valid22) {
-                                                  break;
-                                                }
-                                              }
-                                            } else {
-                                              const err41 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to/" + key9.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/exposed_to/additionalProperties/type", keyword: "type", params: { type: "array" }, message: "must be array" };
-                                              if (vErrors === null) {
-                                                vErrors = [err41];
-                                              } else {
-                                                vErrors.push(err41);
-                                              }
-                                              errors++;
-                                            }
-                                          }
-                                          var valid21 = _errs98 === errors;
-                                          if (!valid21) {
-                                            break;
-                                          }
-                                        }
-                                      } else {
-                                        const err42 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/exposed_to/type", keyword: "type", params: { type: "object" }, message: "must be object" };
-                                        if (vErrors === null) {
-                                          vErrors = [err42];
-                                        } else {
-                                          vErrors.push(err42);
-                                        }
-                                        errors++;
-                                      }
-                                    }
-                                    var valid20 = _errs95 === errors;
-                                  } else {
-                                    var valid20 = true;
-                                  }
-                                  if (valid20) {
-                                    if (data30.type !== void 0) {
-                                      let data34 = data30.type;
-                                      const _errs102 = errors;
-                                      if (typeof data34 !== "string") {
-                                        const err43 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/type/type", keyword: "type", params: { type: "string" }, message: "must be string" };
-                                        if (vErrors === null) {
-                                          vErrors = [err43];
-                                        } else {
-                                          vErrors.push(err43);
-                                        }
-                                        errors++;
-                                      }
-                                      if (!(data34 === "internal")) {
-                                        const err44 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/type/enum", keyword: "enum", params: { allowedValues: schema51.properties.secrets.additionalProperties.anyOf[0].properties.type.enum }, message: "must be equal to one of the allowed values" };
-                                        if (vErrors === null) {
-                                          vErrors = [err44];
-                                        } else {
-                                          vErrors.push(err44);
-                                        }
-                                        errors++;
-                                      }
-                                      var valid20 = _errs102 === errors;
-                                    } else {
-                                      var valid20 = true;
-                                    }
-                                  }
-                                }
-                              }
-                            } else {
-                              const err45 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/type", keyword: "type", params: { type: "object" }, message: "must be object" };
-                              if (vErrors === null) {
-                                vErrors = [err45];
-                              } else {
-                                vErrors.push(err45);
-                              }
-                              errors++;
-                            }
-                          }
-                          var _valid4 = _errs92 === errors;
-                          valid19 = valid19 || _valid4;
-                          if (_valid4) {
-                            var props2 = true;
-                          }
-                          const _errs104 = errors;
-                          if (errors === _errs104) {
-                            if (data30 && typeof data30 == "object" && !Array.isArray(data30)) {
-                              let missing7;
-                              if (data30.optional === void 0 && (missing7 = "optional") || data30.exposed_to === void 0 && (missing7 = "exposed_to")) {
-                                const err46 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/required", keyword: "required", params: { missingProperty: missing7 }, message: "must have required property '" + missing7 + "'" };
-                                if (vErrors === null) {
-                                  vErrors = [err46];
-                                } else {
-                                  vErrors.push(err46);
-                                }
-                                errors++;
-                              } else {
-                                const _errs106 = errors;
-                                for (const key10 in data30) {
-                                  if (!(key10 === "exposed_to" || key10 === "optional")) {
-                                    const err47 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key10 }, message: "must NOT have additional properties" };
-                                    if (vErrors === null) {
-                                      vErrors = [err47];
-                                    } else {
-                                      vErrors.push(err47);
-                                    }
-                                    errors++;
-                                    break;
-                                  }
-                                }
-                                if (_errs106 === errors) {
-                                  if (data30.exposed_to !== void 0) {
-                                    let data35 = data30.exposed_to;
-                                    const _errs107 = errors;
-                                    if (errors === _errs107) {
-                                      if (data35 && typeof data35 == "object" && !Array.isArray(data35)) {
-                                        for (const key11 in data35) {
-                                          let data36 = data35[key11];
-                                          const _errs110 = errors;
-                                          if (errors === _errs110) {
-                                            if (Array.isArray(data36)) {
-                                              var valid25 = true;
-                                              const len7 = data36.length;
-                                              for (let i7 = 0; i7 < len7; i7++) {
-                                                const _errs112 = errors;
-                                                if (typeof data36[i7] !== "string") {
-                                                  const err48 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to/" + key11.replace(/~/g, "~0").replace(/\//g, "~1") + "/" + i7, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/properties/exposed_to/additionalProperties/items/type", keyword: "type", params: { type: "string" }, message: "must be string" };
-                                                  if (vErrors === null) {
-                                                    vErrors = [err48];
-                                                  } else {
-                                                    vErrors.push(err48);
-                                                  }
-                                                  errors++;
-                                                }
-                                                var valid25 = _errs112 === errors;
-                                                if (!valid25) {
-                                                  break;
-                                                }
-                                              }
-                                            } else {
-                                              const err49 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to/" + key11.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/properties/exposed_to/additionalProperties/type", keyword: "type", params: { type: "array" }, message: "must be array" };
-                                              if (vErrors === null) {
-                                                vErrors = [err49];
-                                              } else {
-                                                vErrors.push(err49);
-                                              }
-                                              errors++;
-                                            }
-                                          }
-                                          var valid24 = _errs110 === errors;
-                                          if (!valid24) {
-                                            break;
-                                          }
-                                        }
-                                      } else {
-                                        const err50 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/properties/exposed_to/type", keyword: "type", params: { type: "object" }, message: "must be object" };
-                                        if (vErrors === null) {
-                                          vErrors = [err50];
-                                        } else {
-                                          vErrors.push(err50);
-                                        }
-                                        errors++;
-                                      }
-                                    }
-                                    var valid23 = _errs107 === errors;
-                                  } else {
-                                    var valid23 = true;
-                                  }
-                                  if (valid23) {
-                                    if (data30.optional !== void 0) {
-                                      const _errs114 = errors;
-                                      if (typeof data30.optional !== "boolean") {
-                                        const err51 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/optional", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/properties/optional/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" };
-                                        if (vErrors === null) {
-                                          vErrors = [err51];
-                                        } else {
-                                          vErrors.push(err51);
-                                        }
-                                        errors++;
-                                      }
-                                      var valid23 = _errs114 === errors;
-                                    } else {
-                                      var valid23 = true;
-                                    }
-                                  }
-                                }
-                              }
-                            } else {
-                              const err52 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/type", keyword: "type", params: { type: "object" }, message: "must be object" };
-                              if (vErrors === null) {
-                                vErrors = [err52];
-                              } else {
-                                vErrors.push(err52);
-                              }
-                              errors++;
-                            }
-                          }
-                          var _valid4 = _errs104 === errors;
-                          valid19 = valid19 || _valid4;
-                          if (_valid4) {
-                            if (props2 !== true) {
-                              props2 = true;
-                            }
-                          }
-                          if (!valid19) {
-                            const err53 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf", keyword: "anyOf", params: {}, message: "must match a schema in anyOf" };
-                            if (vErrors === null) {
-                              vErrors = [err53];
-                            } else {
-                              vErrors.push(err53);
-                            }
-                            errors++;
-                            validate37.errors = vErrors;
+                      if (Array.isArray(data29)) {
+                        var valid18 = true;
+                        const len6 = data29.length;
+                        for (let i6 = 0; i6 < len6; i6++) {
+                          const _errs89 = errors;
+                          if (typeof data29[i6] !== "string") {
+                            validate37.errors = [{ instancePath: instancePath + "/public_http_servers/" + i6, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_http_servers/items/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
                             return false;
-                          } else {
-                            errors = _errs91;
-                            if (vErrors !== null) {
-                              if (_errs91) {
-                                vErrors.length = _errs91;
-                              } else {
-                                vErrors = null;
-                              }
-                            }
                           }
-                          var valid18 = _errs90 === errors;
+                          var valid18 = _errs89 === errors;
                           if (!valid18) {
                             break;
                           }
                         }
+                        if (valid18) {
+                          let i7 = data29.length;
+                          let j0;
+                          if (i7 > 1) {
+                            const indices0 = {};
+                            for (; i7--; ) {
+                              let item0 = data29[i7];
+                              if (typeof item0 !== "string") {
+                                continue;
+                              }
+                              if (typeof indices0[item0] == "number") {
+                                j0 = indices0[item0];
+                                validate37.errors = [{ instancePath: instancePath + "/public_http_servers", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_http_servers/uniqueItems", keyword: "uniqueItems", params: { i: i7, j: j0 }, message: "must NOT have duplicate items (items ## " + j0 + " and " + i7 + " are identical)" }];
+                                return false;
+                                break;
+                              }
+                              indices0[item0] = i7;
+                            }
+                          }
+                        }
                       } else {
-                        validate37.errors = [{ instancePath: instancePath + "/secrets", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+                        validate37.errors = [{ instancePath: instancePath + "/public_http_servers", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_http_servers/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
                         return false;
                       }
                     }
                     var valid1 = _errs87 === errors;
                   } else {
                     var valid1 = true;
+                  }
+                  if (valid1) {
+                    if (data.secrets !== void 0) {
+                      let data31 = data.secrets;
+                      const _errs91 = errors;
+                      if (errors === _errs91) {
+                        if (data31 && typeof data31 == "object" && !Array.isArray(data31)) {
+                          for (const key7 in data31) {
+                            let data32 = data31[key7];
+                            const _errs94 = errors;
+                            const _errs95 = errors;
+                            let valid21 = false;
+                            const _errs96 = errors;
+                            if (errors === _errs96) {
+                              if (data32 && typeof data32 == "object" && !Array.isArray(data32)) {
+                                let missing6;
+                                if (data32.type === void 0 && (missing6 = "type") || data32.exposed_to === void 0 && (missing6 = "exposed_to")) {
+                                  const err38 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/required", keyword: "required", params: { missingProperty: missing6 }, message: "must have required property '" + missing6 + "'" };
+                                  if (vErrors === null) {
+                                    vErrors = [err38];
+                                  } else {
+                                    vErrors.push(err38);
+                                  }
+                                  errors++;
+                                } else {
+                                  const _errs98 = errors;
+                                  for (const key8 in data32) {
+                                    if (!(key8 === "exposed_to" || key8 === "type")) {
+                                      const err39 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key8 }, message: "must NOT have additional properties" };
+                                      if (vErrors === null) {
+                                        vErrors = [err39];
+                                      } else {
+                                        vErrors.push(err39);
+                                      }
+                                      errors++;
+                                      break;
+                                    }
+                                  }
+                                  if (_errs98 === errors) {
+                                    if (data32.exposed_to !== void 0) {
+                                      let data33 = data32.exposed_to;
+                                      const _errs99 = errors;
+                                      if (errors === _errs99) {
+                                        if (data33 && typeof data33 == "object" && !Array.isArray(data33)) {
+                                          for (const key9 in data33) {
+                                            let data34 = data33[key9];
+                                            const _errs102 = errors;
+                                            if (errors === _errs102) {
+                                              if (Array.isArray(data34)) {
+                                                var valid24 = true;
+                                                const len7 = data34.length;
+                                                for (let i8 = 0; i8 < len7; i8++) {
+                                                  const _errs104 = errors;
+                                                  if (typeof data34[i8] !== "string") {
+                                                    const err40 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to/" + key9.replace(/~/g, "~0").replace(/\//g, "~1") + "/" + i8, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/exposed_to/additionalProperties/items/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+                                                    if (vErrors === null) {
+                                                      vErrors = [err40];
+                                                    } else {
+                                                      vErrors.push(err40);
+                                                    }
+                                                    errors++;
+                                                  }
+                                                  var valid24 = _errs104 === errors;
+                                                  if (!valid24) {
+                                                    break;
+                                                  }
+                                                }
+                                              } else {
+                                                const err41 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to/" + key9.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/exposed_to/additionalProperties/type", keyword: "type", params: { type: "array" }, message: "must be array" };
+                                                if (vErrors === null) {
+                                                  vErrors = [err41];
+                                                } else {
+                                                  vErrors.push(err41);
+                                                }
+                                                errors++;
+                                              }
+                                            }
+                                            var valid23 = _errs102 === errors;
+                                            if (!valid23) {
+                                              break;
+                                            }
+                                          }
+                                        } else {
+                                          const err42 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/exposed_to/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+                                          if (vErrors === null) {
+                                            vErrors = [err42];
+                                          } else {
+                                            vErrors.push(err42);
+                                          }
+                                          errors++;
+                                        }
+                                      }
+                                      var valid22 = _errs99 === errors;
+                                    } else {
+                                      var valid22 = true;
+                                    }
+                                    if (valid22) {
+                                      if (data32.type !== void 0) {
+                                        let data36 = data32.type;
+                                        const _errs106 = errors;
+                                        if (typeof data36 !== "string") {
+                                          const err43 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/type/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+                                          if (vErrors === null) {
+                                            vErrors = [err43];
+                                          } else {
+                                            vErrors.push(err43);
+                                          }
+                                          errors++;
+                                        }
+                                        if (!(data36 === "internal")) {
+                                          const err44 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/type/enum", keyword: "enum", params: { allowedValues: schema51.properties.secrets.additionalProperties.anyOf[0].properties.type.enum }, message: "must be equal to one of the allowed values" };
+                                          if (vErrors === null) {
+                                            vErrors = [err44];
+                                          } else {
+                                            vErrors.push(err44);
+                                          }
+                                          errors++;
+                                        }
+                                        var valid22 = _errs106 === errors;
+                                      } else {
+                                        var valid22 = true;
+                                      }
+                                    }
+                                  }
+                                }
+                              } else {
+                                const err45 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+                                if (vErrors === null) {
+                                  vErrors = [err45];
+                                } else {
+                                  vErrors.push(err45);
+                                }
+                                errors++;
+                              }
+                            }
+                            var _valid4 = _errs96 === errors;
+                            valid21 = valid21 || _valid4;
+                            if (_valid4) {
+                              var props2 = true;
+                            }
+                            const _errs108 = errors;
+                            if (errors === _errs108) {
+                              if (data32 && typeof data32 == "object" && !Array.isArray(data32)) {
+                                let missing7;
+                                if (data32.optional === void 0 && (missing7 = "optional") || data32.exposed_to === void 0 && (missing7 = "exposed_to")) {
+                                  const err46 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/required", keyword: "required", params: { missingProperty: missing7 }, message: "must have required property '" + missing7 + "'" };
+                                  if (vErrors === null) {
+                                    vErrors = [err46];
+                                  } else {
+                                    vErrors.push(err46);
+                                  }
+                                  errors++;
+                                } else {
+                                  const _errs110 = errors;
+                                  for (const key10 in data32) {
+                                    if (!(key10 === "exposed_to" || key10 === "optional")) {
+                                      const err47 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key10 }, message: "must NOT have additional properties" };
+                                      if (vErrors === null) {
+                                        vErrors = [err47];
+                                      } else {
+                                        vErrors.push(err47);
+                                      }
+                                      errors++;
+                                      break;
+                                    }
+                                  }
+                                  if (_errs110 === errors) {
+                                    if (data32.exposed_to !== void 0) {
+                                      let data37 = data32.exposed_to;
+                                      const _errs111 = errors;
+                                      if (errors === _errs111) {
+                                        if (data37 && typeof data37 == "object" && !Array.isArray(data37)) {
+                                          for (const key11 in data37) {
+                                            let data38 = data37[key11];
+                                            const _errs114 = errors;
+                                            if (errors === _errs114) {
+                                              if (Array.isArray(data38)) {
+                                                var valid27 = true;
+                                                const len8 = data38.length;
+                                                for (let i9 = 0; i9 < len8; i9++) {
+                                                  const _errs116 = errors;
+                                                  if (typeof data38[i9] !== "string") {
+                                                    const err48 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to/" + key11.replace(/~/g, "~0").replace(/\//g, "~1") + "/" + i9, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/properties/exposed_to/additionalProperties/items/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+                                                    if (vErrors === null) {
+                                                      vErrors = [err48];
+                                                    } else {
+                                                      vErrors.push(err48);
+                                                    }
+                                                    errors++;
+                                                  }
+                                                  var valid27 = _errs116 === errors;
+                                                  if (!valid27) {
+                                                    break;
+                                                  }
+                                                }
+                                              } else {
+                                                const err49 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to/" + key11.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/properties/exposed_to/additionalProperties/type", keyword: "type", params: { type: "array" }, message: "must be array" };
+                                                if (vErrors === null) {
+                                                  vErrors = [err49];
+                                                } else {
+                                                  vErrors.push(err49);
+                                                }
+                                                errors++;
+                                              }
+                                            }
+                                            var valid26 = _errs114 === errors;
+                                            if (!valid26) {
+                                              break;
+                                            }
+                                          }
+                                        } else {
+                                          const err50 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/exposed_to", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/properties/exposed_to/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+                                          if (vErrors === null) {
+                                            vErrors = [err50];
+                                          } else {
+                                            vErrors.push(err50);
+                                          }
+                                          errors++;
+                                        }
+                                      }
+                                      var valid25 = _errs111 === errors;
+                                    } else {
+                                      var valid25 = true;
+                                    }
+                                    if (valid25) {
+                                      if (data32.optional !== void 0) {
+                                        const _errs118 = errors;
+                                        if (typeof data32.optional !== "boolean") {
+                                          const err51 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1") + "/optional", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/properties/optional/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" };
+                                          if (vErrors === null) {
+                                            vErrors = [err51];
+                                          } else {
+                                            vErrors.push(err51);
+                                          }
+                                          errors++;
+                                        }
+                                        var valid25 = _errs118 === errors;
+                                      } else {
+                                        var valid25 = true;
+                                      }
+                                    }
+                                  }
+                                }
+                              } else {
+                                const err52 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/1/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+                                if (vErrors === null) {
+                                  vErrors = [err52];
+                                } else {
+                                  vErrors.push(err52);
+                                }
+                                errors++;
+                              }
+                            }
+                            var _valid4 = _errs108 === errors;
+                            valid21 = valid21 || _valid4;
+                            if (_valid4) {
+                              if (props2 !== true) {
+                                props2 = true;
+                              }
+                            }
+                            if (!valid21) {
+                              const err53 = { instancePath: instancePath + "/secrets/" + key7.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf", keyword: "anyOf", params: {}, message: "must match a schema in anyOf" };
+                              if (vErrors === null) {
+                                vErrors = [err53];
+                              } else {
+                                vErrors.push(err53);
+                              }
+                              errors++;
+                              validate37.errors = vErrors;
+                              return false;
+                            } else {
+                              errors = _errs95;
+                              if (vErrors !== null) {
+                                if (_errs95) {
+                                  vErrors.length = _errs95;
+                                } else {
+                                  vErrors = null;
+                                }
+                              }
+                            }
+                            var valid20 = _errs94 === errors;
+                            if (!valid20) {
+                              break;
+                            }
+                          }
+                        } else {
+                          validate37.errors = [{ instancePath: instancePath + "/secrets", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+                          return false;
+                        }
+                      }
+                      var valid1 = _errs91 === errors;
+                    } else {
+                      var valid1 = true;
+                    }
                   }
                 }
               }

@@ -144,6 +144,19 @@ impl AppConfigToml {
                 .map(outbound_http_item)
                 .collect(),
             public_env,
+            // Sorted and deduplicated like the server's set; empty is omitted.
+            public_http_servers: self
+                .public_http_servers
+                .as_ref()
+                .map(|names| {
+                    names
+                        .iter()
+                        .cloned()
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                })
+                .filter(|names| !names.is_empty()),
             secrets,
         })
     }

@@ -1,5 +1,8 @@
 app_name = "__APP_NAME__"
 
+# Webhooks listen on `external`, which accepts requests without credentials.
+public_http_servers = ["external"]
+
 # Obelisk supplies its own API token and URLs; nothing needs to be exported.
 [secrets]
 INTERNAL_TOKEN = { type = "internal" }

@@ -32,6 +32,13 @@
       "items": {
         "$ref": "#/$defs/AllowedHostToml"
       }
+    },
+    "public_http_servers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
     }
   },
   "additionalProperties": false,

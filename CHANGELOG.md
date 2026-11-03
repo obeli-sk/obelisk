@@ -21,7 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `http_server = "<name>"`, which reads any HTTP server. Every `http_server` and the API
   accept `public_url`, validated when server.toml loads; `api-url` uses `api.public_url`.
 - *(server)* `[[http_server.<name>.oidc]]` requires a matching OIDC ID token on every request of
-  a listener, checked before routing. Webhook endpoints on such a server cannot set their own `oidc`.
+  a listener, checked before routing.
+- *(server)* `http_server.<name>.api_auth = true` accepts every token the API accepts (startup
+  token, `--api-token`, `api.token_hashes`, `api.oidc`) on a listener, alongside its own `oidc`.
+  It requires an enabled API; `--no-auth` opens such listeners like the API.
+- **Breaking:** *(app)* An `http_server` without `oidc` or `api_auth` starts only when app.toml
+  lists it in `public_http_servers`, so `external` and `internal` stay closed by default. `webui`
+  always starts. Listing a server that requires credentials, or a disabled or unknown one, records
+  a `server.public_http_server.ignored` warning event.
+- **Breaking:** *(deployment)* Webhook endpoint `oidc` is removed and fails verification; require
+  OIDC for the whole listener with `[[http_server.<name>.oidc]]` instead.
 - **Breaking:** *(db)* A deployment's content digest is unique. Submitting content already stored
   under another ID returns `409`, and the server reuses the stored deployment when started with
   the same deployment file. The database migration keeps existing deployments storing the same

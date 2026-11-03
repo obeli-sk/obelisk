@@ -585,6 +585,14 @@
               ]
             }
           },
+          "public_http_servers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true,
+            "description": "`http_server` names that may serve webhooks without credentials. Omitted when empty."
+          },
           "secrets": {
             "type": "object",
             "additionalProperties": {

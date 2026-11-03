@@ -770,6 +770,31 @@ impl TestServer {
         .await
     }
 
+    /// Like `start_inline_deployment`, adding top-level `server.toml` lines. Without `api_token`
+    /// the server runs with `--no-auth`.
+    async fn start_inline_deployment_with_auth(
+        ip: String,
+        server_toml_api_lines: &str,
+        deployment_toml: &str,
+        api_token: Option<&str>,
+    ) -> Self {
+        let (tmp_dir, server_path, deployment_path) =
+            util::write_server_config(&ip, server_toml_api_lines, "");
+        std::fs::write(&deployment_path, deployment_toml).unwrap();
+        authorize_test_deployment(&server_path, &deployment_path).await;
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(
+            ip,
+            tmp_dir,
+            server_path,
+            deployment,
+            api_token.is_none(),
+            api_token.map(secrecy::SecretString::from),
+            JsRuntimeMode::BoaWasm,
+        )
+        .await
+    }
+
     async fn start_with_server_lines_and_component(
         ip: String,
         server_toml_lines: &str,
@@ -896,6 +921,7 @@ impl TestServer {
         config.secrets = app.secrets;
         config.public_env = app.public_env;
         config.allowed_exec_activities = app.allowed_exec_activities;
+        config.public_http_servers = app.public_http_servers;
         config.outbound_http = app.outbound_http;
         let secret_registry = std::sync::Arc::new(
             crate::config::secret_registry::SecretRegistry::from_test_values([

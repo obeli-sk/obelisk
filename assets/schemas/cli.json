@@ -1420,7 +1420,7 @@
             },
             {
               "name": "--no-auth",
-              "help": "Accept unauthenticated requests on the API port. Dev/recovery override"
+              "help": "Accept unauthenticated requests on the API port and on `http_server` entries with `api_auth`. Dev/recovery override"
             },
             {
               "name": "--api-token",
