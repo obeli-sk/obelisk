@@ -62,6 +62,7 @@ return_type = "result<string, string>"
         r#"
 [[webhook_endpoint_js]]
 name = "heap_webhook"
+http_server = "external"
 routes = ["/heap"]
 content = '''
 function exhaust() {

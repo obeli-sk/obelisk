@@ -18,6 +18,7 @@ backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/fibo/work
 
 [[webhook_endpoint_wasm]]
 name = "test_programs_fibo_webhook"
+http_server = "external"
 location = "target/wasm-cache/test_programs_fibo_webhook.wasm"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/fibo/webhook/src/lib.rs" }
@@ -56,6 +57,7 @@ backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/sleep/wor
 
 [[webhook_endpoint_wasm]]
 name = "test_programs_sleep_webhook"
+http_server = "external"
 location = "target/wasm-cache/test_programs_sleep_webhook.wasm"
 routes = [{ methods = ["GET"], route = "/sleep/:SECONDS" }]
 backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/sleep/webhook/src/lib.rs" }

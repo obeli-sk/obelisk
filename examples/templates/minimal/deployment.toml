@@ -18,5 +18,6 @@ return_type = "result<u32, string>"
 
 [[webhook_endpoint_js]]
 name = "webhook"
+http_server = "external"
 location = "webhook/handle.js"
 routes = [{ methods = ["GET"], route = "/run" }]

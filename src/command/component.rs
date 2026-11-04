@@ -671,8 +671,9 @@ fn build_component_table(
         t.insert("allowed_host", Item::ArrayOfTables(host_array));
     }
 
-    // Webhook requires a `routes` field; write an empty array as a placeholder
+    // Webhook requires `http_server` and `routes`; write placeholders to be edited.
     if is_webhook {
+        t["http_server"] = value("external");
         t["routes"] = Item::Value(toml_edit::Value::Array(toml_edit::Array::new()));
     }
 
@@ -931,6 +932,7 @@ mod tests {
         assert_eq!(parsed.webhooks_wasm.len(), 1);
         let wh = &parsed.webhooks_wasm[0];
         assert_eq!(wh.common.name.to_string(), "my_webhook");
+        assert_eq!(wh.http_server.to_string(), "external");
         assert_eq!(wh.env_vars.len(), 1);
         assert_eq!(wh.allowed_hosts.len(), 0);
     }

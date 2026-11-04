@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   UI is not an `http_server` and always starts. Listing a server that requires credentials, or a
   disabled or unknown one, records
   a `server.public_http_server.ignored` warning event.
+- **Breaking:** *(deployment)* Webhook endpoints must set `http_server`; it no longer defaults to
+  `external`.
 - **Breaking:** *(deployment)* Webhook endpoint `oidc` is removed and fails verification; require
   OIDC for the whole listener with `[[http_server.<name>.oidc]]` instead.
 - **Breaking:** *(db)* A deployment's content digest is unique. Submitting content already stored

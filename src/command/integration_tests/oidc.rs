@@ -276,6 +276,7 @@ claims = {{ app_name = "integrations", role = "gateway" }}
         let deployment = r#"
 [[webhook_endpoint_js]]
 name = "echo"
+http_server = "external"
 content = 'export default (request) => Response.json({ authorization: request.headers.get("authorization"), claims: JSON.parse(request.headers.get("obelisk-oidc-claims")) });'
 routes = ["/echo"]
 "#;
@@ -402,6 +403,7 @@ http_server.external.api_auth = true"#
     let deployment = r#"
 [[webhook_endpoint_js]]
 name = "echo"
+http_server = "external"
 content = 'export default (request) => Response.json({ authorization: request.headers.get("authorization"), claims: JSON.parse(request.headers.get("obelisk-oidc-claims")) });'
 routes = ["/echo"]
 "#;

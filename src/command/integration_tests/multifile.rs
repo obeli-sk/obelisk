@@ -34,6 +34,7 @@ return_type = "result<u32, string>"
 
 [[webhook_endpoint_js]]
 name = "test_multifile_webhook"
+http_server = "external"
 location = "./multifile-webhook/index.js"
 routes = [{ methods = ["GET"], route = "/multifile" }]
 "#;

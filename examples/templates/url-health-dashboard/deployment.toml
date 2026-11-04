@@ -39,6 +39,7 @@ return_type = """result<record {
 
 [[webhook_endpoint_js]]
 name = "dashboard"
+http_server = "external"
 location = "webhook/dashboard.js"
 env_vars = [
   { key = "TARGET_URL", value = "https://example.com/" },

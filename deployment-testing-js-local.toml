@@ -70,6 +70,7 @@ return_type = "result<string, string>"
 
 [[webhook_endpoint_js]]
 name = "webhook_hello"
+http_server = "external"
 routes = [{ methods = ["GET"], route = "/hello" }]
 content = '''
 import * as obelisk from 'obelisk:webhook@1.0.0';
@@ -84,6 +85,7 @@ export default function handle(request) {
 # Route parameters arrive as environment variables.
 [[webhook_endpoint_js]]
 name = "webhook_add"
+http_server = "external"
 routes = [{ methods = ["GET"], route = "/add/:a/:b" }]
 content = '''
 import { addViaActivity } from 'testing:demo/workflow';
