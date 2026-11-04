@@ -325,19 +325,24 @@ async fn generate_new(
     template: StarterTemplate,
 ) -> anyhow::Result<()> {
     let files = template.files();
-    let app_name = if let Some(name) = name {
-        name.to_owned()
-    } else {
-        let directory_name = directory
+    let requested_app_name = match name {
+        Some(name) => name,
+        None => directory
             .file_name()
             .and_then(|name| name.to_str())
-            .context("cannot derive app name from the current directory")?;
-        slugify_app_name(directory_name)
+            .context("cannot derive app name from the current directory")?,
     };
-    validate_app_name(&app_name)?;
+    let app_name = match validate_app_name(requested_app_name) {
+        Ok(()) => requested_app_name.to_owned(),
+        Err(err) => {
+            let name = app_name::random();
+            eprintln!("{err}; using generated app name `{name}`");
+            name
+        }
+    };
 
-    let output_directory = if name.is_some() {
-        let path = directory.join(&app_name);
+    let output_directory = if let Some(name) = name {
+        let path = directory.join(name);
         tokio::fs::create_dir(&path)
             .await
             .with_context(|| format!("cannot create new app directory {path:?}"))?;
@@ -383,21 +388,6 @@ async fn generate_new(
     }
     print_generated_path_statuses(&generated, false)?;
     Ok(())
-}
-
-fn slugify_app_name(name: &str) -> String {
-    let mut slug = String::new();
-    for character in name.chars() {
-        if slug.len() == 25 {
-            break;
-        }
-        if character.is_ascii_alphanumeric() {
-            slug.push(character.to_ascii_lowercase());
-        } else if !slug.is_empty() && !slug.ends_with('-') {
-            slug.push('-');
-        }
-    }
-    slug.trim_end_matches('-').to_owned()
 }
 
 async fn split_config(server_path: &Path, app_path: Option<&Path>) -> anyhow::Result<()> {
@@ -1327,9 +1317,9 @@ mod tests {
     use std::path::PathBuf;
 
     #[tokio::test]
-    async fn generate_new_uses_directory_slug_and_preserves_existing_files() {
+    async fn generate_new_uses_directory_name_and_preserves_existing_files() {
         let root = tempfile::tempdir().unwrap();
-        let directory = root.path().join("My Cool_App");
+        let directory = root.path().join("my-cool-app");
         std::fs::create_dir(&directory).unwrap();
         generate_new(&directory, None, StarterTemplate::default())
             .await
@@ -1373,13 +1363,6 @@ mod tests {
 
         let invalid = root.path().join("invalid");
         std::fs::create_dir(&invalid).unwrap();
-        assert!(
-            generate_new(&invalid, Some("Invalid Name"), StarterTemplate::default())
-                .await
-                .is_err()
-        );
-        assert!(!invalid.join("app.toml").exists());
-
         std::fs::write(invalid.join("README.md"), "keep me").unwrap();
         assert!(
             generate_new(&invalid, None, StarterTemplate::default())
@@ -1391,6 +1374,41 @@ mod tests {
             std::fs::read_to_string(invalid.join("README.md")).unwrap(),
             "keep me"
         );
+    }
+
+    #[tokio::test]
+    async fn generate_new_replaces_invalid_app_names_and_keeps_directory_names() {
+        let root = tempfile::tempdir().unwrap();
+        for name in [
+            "My Cool_App",
+            "abc",
+            "-invalid",
+            "invalid-",
+            "a".repeat(26).as_str(),
+            "日本語",
+        ] {
+            for explicit_name in [false, true] {
+                let parent = tempfile::tempdir_in(root.path()).unwrap();
+                let directory = parent.path().join(name);
+                if explicit_name {
+                    generate_new(parent.path(), Some(name), StarterTemplate::default())
+                        .await
+                        .unwrap();
+                } else {
+                    std::fs::create_dir(&directory).unwrap();
+                    generate_new(&directory, None, StarterTemplate::default())
+                        .await
+                        .unwrap();
+                }
+                let app = std::fs::read_to_string(directory.join("app.toml")).unwrap();
+                let parsed: crate::config::app::AppConfigToml = toml::from_str(&app).unwrap();
+                crate::config::app::validate_app_name(&parsed.app_name).unwrap();
+                assert_ne!(parsed.app_name, name);
+                assert!(parsed.app_name.contains('-'));
+                assert!(directory.join("deployment.toml").exists());
+                assert!(directory.join("webhook/dashboard.js").exists());
+            }
+        }
     }
 
     #[tokio::test]
