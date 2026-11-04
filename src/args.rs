@@ -1724,7 +1724,7 @@ pub(crate) struct CloudArgs {
     /// Cloud control plane URL.
     #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", default_value = "https://cloud.obeli.sk/api", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
     pub(crate) api_url: Option<String>,
-    /// Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>` and `webui--<app>.<domain>`.
+    /// Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>`, `webui--<app>.<domain>` and `internal--<app>.<domain>`.
     #[arg(
         long,
         global = true,
@@ -1916,7 +1916,7 @@ pub(crate) enum CloudApp {
     Env(CloudEnv),
     #[command(subcommand)]
     Secrets(CloudSecrets),
-    /// Show all endpoints, or select the API, webhook or Web UI URL.
+    /// Show all endpoints, or select the API, webhook, Web UI or internal webhook URL.
     Endpoint {
         #[command(subcommand)]
         command: Option<CloudEndpoint>,
@@ -1928,6 +1928,7 @@ pub(crate) enum CloudEndpoint {
     Api,
     Webhook,
     Webui,
+    Internal,
 }
 
 #[derive(Debug, clap::Subcommand)]
