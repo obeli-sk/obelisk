@@ -2,7 +2,7 @@ use super::output::{print_json, print_value};
 use crate::args::CloudToken;
 use crate::args::{
     AdminArgs, App, AppArgs, ClientConnection, Cloud, CloudApp, CloudAppTarget, CloudApps,
-    CloudArgs, CloudCommandId, CloudEndpoint, CloudEnv, CloudSecrets, ComponentArgs,
+    CloudArgs, CloudCommandId, CloudEndpoint, CloudEnv, CloudSecrets, ComponentArgs, Deployment,
     DeploymentArgs, ExecutionArgs, Subcommand,
 };
 use crate::client::ClientStartup;
@@ -550,6 +550,19 @@ impl CloudArgs {
         crate::command_future(command, Some(startup))?.await
     }
     pub(crate) async fn run(mut self) -> anyhow::Result<()> {
+        if matches!(
+            &self.command,
+            Cloud::App(CloudAppTarget {
+                command: CloudApp::Deployment(
+                    Deployment::Enqueue { .. } | Deployment::Apply { .. }
+                ),
+                ..
+            })
+        ) {
+            bail!(
+                "Cloud deployment enqueue/apply is unsupported; use `obelisk cloud app deploy` to upload and activate a deployment, or `obelisk cloud app apply` to apply configuration with the active deployment"
+            );
+        }
         if self.verbose {
             crate::client::enable_trace();
         }
@@ -1700,6 +1713,22 @@ mod tests {
             args.apps_domain = domain.to_owned();
             assert!(args.endpoints().await.is_err(), "{domain}");
         }
+    }
+
+    #[tokio::test]
+    async fn cloud_deployment_activation_requires_provisioner_apply() {
+        let (origin, state, task) = server().await;
+        for command in ["enqueue", "apply"] {
+            let error = args(&origin, &["app", "deployment", command, "--empty"])
+                .run()
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("use `obelisk cloud app deploy`"), "{error}");
+            assert!(error.contains("`obelisk cloud app apply`"), "{error}");
+        }
+        assert!(state.lock().unwrap().received.is_empty());
+        task.abort();
     }
 
     #[tokio::test]

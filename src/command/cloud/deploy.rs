@@ -121,8 +121,15 @@ impl CloudArgs {
             self.api_token,
             self.verbose,
         );
-        step("deployment enqueue");
-        let id = crate::command::deployment::enqueue_prepared(&startup, prepared, description).await
+        step("deployment submit");
+        let id = crate::command::deployment::submit_prepared(
+            &startup,
+            startup.api_url(),
+            prepared,
+            true,
+            description,
+            None,
+        ).await
             .with_context(|| format!("Deployment staging failed; inspect `obelisk cloud app --app {name} status` and retry deploy"))?;
         let filled = if is_new {
             json!({"declarations":[]})
@@ -339,6 +346,7 @@ mod tests {
             (Method::PUT, _)
                 if path.starts_with("/tenant/v1/deployments/") && !path.ends_with("/switch") =>
             {
+                assert_eq!(body["allow_unavailable_runtime_config"], true);
                 if state.reject_deployment {
                     return (StatusCode::UNPROCESSABLE_ENTITY, "invalid deployment")
                         .into_response();
@@ -349,11 +357,6 @@ mod tests {
                         .to_owned(),
                 );
                 json!({"ok":true})
-            }
-            (Method::PUT, _) if path.ends_with("/switch") => {
-                assert_eq!(body["apply"], false);
-                assert_eq!(body["allow_unavailable_runtime_config"], true);
-                json!({"ok":"restart_required"})
             }
             _ => panic!("unexpected request: {}", state.calls.last().unwrap()),
         };
@@ -484,6 +487,7 @@ mod tests {
                     .await
             };
             let state = state.lock().unwrap();
+            assert!(!state.calls.iter().any(|call| call.ends_with("/switch")));
             if scenario == "new-missing" {
                 let error = result.unwrap_err().to_string();
                 assert!(error.contains("Missing required configuration"));
@@ -520,7 +524,7 @@ mod tests {
                 if scenario == "invalid" {
                     assert!(state.calls.is_empty());
                 } else {
-                    assert!(state.calls.iter().any(|call| call.ends_with("/switch")));
+                    assert!(state.submitted.is_some());
                     assert!(!state.calls.contains(&"POST /v1/apps/demo/apply".to_owned()));
                 }
             } else if scenario == "deployment-error" {
@@ -560,17 +564,17 @@ mod tests {
                         .any(|call| call.starts_with("PUT /tenant/v1/deployments/")
                             && !call.ends_with("/switch"))
                 );
-                let enqueue = state
+                let submit = state
                     .calls
                     .iter()
-                    .position(|call| call.ends_with("/switch"))
+                    .position(|call| call.starts_with("PUT /tenant/v1/deployments/"))
                     .unwrap();
                 let apply = state
                     .calls
                     .iter()
                     .position(|call| call == "POST /v1/apps/demo/apply")
                     .unwrap();
-                assert!(enqueue < apply);
+                assert!(submit < apply);
                 assert!(state.calls.last().unwrap().ends_with("/apply"));
             }
             task.abort();
