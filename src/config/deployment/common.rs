@@ -597,11 +597,6 @@ pub const fn default_max_output_bytes() -> u64 {
 
 // Webhook route serde shapes, shared by the authored webhook configs and their resolved forms.
 
-#[must_use]
-pub fn default_external_server_name() -> ConfigName {
-    ConfigName::new(StrVariant::Static("external")).expect("valid name")
-}
-
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
 pub enum WebhookRoute {

@@ -12,12 +12,14 @@ backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/fibo/work
 
 [[webhook_endpoint_wasm]]
 name = "test_programs_fibo_webhook"
+http_server = "external"
 location = "oci://docker.io/getobelisk/test_programs_fibo_webhook:2026-09-12@sha256:7c376a6caaf8fc904a6e47ea891fad8fedc2a3b3b9a3e454571db1b01c8513cd"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/fibo/webhook/src/lib.rs" }
 
 [[webhook_endpoint_wasm]]
 name = "test_programs_wasip3_webhook"
+http_server = "external"
 location = "oci://docker.io/getobelisk/test_programs_wasip3_webhook:2026-09-12@sha256:cba631ff2e365eb84b60debc8066403d295b89285eebf9d1a85c5e82e87e2da7"
 routes = []
 

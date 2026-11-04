@@ -517,16 +517,19 @@ return_type = "result<string, string>"
 
 [[webhook_endpoint_js]]
 name = "test_hello_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/hello.js"
 routes = [{{ methods = ["GET"], route = "/hello" }}]
 
 [[webhook_endpoint_js]]
 name = "test_headers_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/headers.js"
 routes = [{{ methods = ["GET"], route = "/headers" }}]
 
 [[webhook_endpoint_js]]
 name = "test_fetch_allowed_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/fetch_components.js"
 routes = [{{ methods = ["GET"], route = "/fetch-allowed" }}]
 [[webhook_endpoint_js.allowed_host]]
@@ -535,47 +538,56 @@ methods = ["GET"]
 
 [[webhook_endpoint_js]]
 name = "test_fetch_denied_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/fetch_components.js"
 routes = [{{ methods = ["GET"], route = "/fetch-denied" }}]
 
 [[webhook_endpoint_js]]
 name = "test_call_activity_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/call_activity.js"
 routes = [{{ methods = ["GET"], route = "/call-activity/:a/:b" }}]
 
 [[webhook_endpoint_js]]
 name = "test_read_env_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/read_env.js"
 routes = [{{ methods = ["GET"], route = "/read-env" }}]
 env_vars = [{{key = "WEBHOOK_TEST_ENV_VAR", value = "hello_from_webhook_env"}}]
 
 [[webhook_endpoint_js]]
 name = "test_generate_execution_id_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/generate_execution_id.js"
 routes = [{{ methods = ["GET"], route = "/generate-execution-id" }}]
 
 [[webhook_endpoint_js]]
 name = "test_import_call_activity_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/import_call_activity.js"
 routes = [{{ methods = ["GET"], route = "/import-call-activity" }}]
 
 [[webhook_endpoint_js]]
 name = "test_import_schedule_activity_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/import_schedule_activity.js"
 routes = [{{ methods = ["GET"], route = "/import-schedule-activity" }}]
 
 [[webhook_endpoint_js]]
 name = "test_body_text_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/body_text.js"
 routes = [{{ methods = ["POST"], route = "/body-text" }}]
 
 [[webhook_endpoint_js]]
 name = "test_body_json_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/body_json.js"
 routes = [{{ methods = ["POST"], route = "/body-json" }}]
 
 [[webhook_endpoint_js]]
 name = "test_body_form_data_webhook"
+http_server = "external"
 location = "{ws}/crates/testing/test-programs/js/webhook/body_form_data.js"
 routes = [{{ methods = ["POST"], route = "/body-form-data" }}]
 "#,
@@ -1545,6 +1557,7 @@ location = "target/wasm-cache/test_programs_fibo_workflow_component.wasm"
 
 [[webhook_endpoint_wasm]]
 name = "test_programs_fibo_webhook"
+http_server = "external"
 location = "target/wasm-cache/test_programs_fibo_webhook.wasm"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 "#,
@@ -1921,16 +1934,19 @@ return_type = "result<string, string>"
 
 [[webhook_endpoint_js]]
 name = "typed_webhook"
+http_server = "external"
 content = "export {run as target} from 'app:target/api'; export default () => new Response('ok');"
 routes = [{ methods = ["GET"], route = "/typed" }]
 
 [[webhook_endpoint_js]]
 name = "dynamic_webhook"
+http_server = "external"
 location = "webhook.js"
 routes = [{ methods = ["GET"], route = "/dynamic" }]
 
 [[webhook_endpoint_js]]
 name = "mixed_webhook"
+http_server = "external"
 content = "import 'app:target/api'; export * from 'obelisk:webhook-dynamic@1.0.0'; export default () => new Response('ok');"
 routes = [{ methods = ["GET"], route = "/mixed" }]
 "#;
@@ -2643,6 +2659,7 @@ async fn submit_broken_js_import_fails_regardless_of_runtime_config_check_webapi
     let deployment_toml = r#"
 [[webhook_endpoint_js]]
 name = "broken_import"
+http_server = "external"
 content = """
 import { add } from 'testing:integration/nonexistent';
 export default function handle(request) {
@@ -2719,6 +2736,7 @@ async fn submit_webhook_missing_js_import_file_is_rejected_webapi() {
         r#"
 [[webhook_endpoint_js]]
 name = "broken_import"
+http_server = "external"
 location = "webhook/ui-api.js"
 routes = [{ methods = ["GET"], route = "/" }]
 "#,
@@ -2812,6 +2830,7 @@ async fn submit_rejects_stray_declared_component_file_webapi() {
         r#"
 [[webhook_endpoint_js]]
 name = "stray"
+http_server = "external"
 location = "webhook/ui-api.js"
 routes = [{ methods = ["GET"], route = "/" }]
 "#,
@@ -2907,6 +2926,7 @@ async fn rejected_submit_reclaims_orphan_blobs_webapi() {
         r#"
 [[webhook_endpoint_js]]
 name = "orphan_probe"
+http_server = "external"
 location = "webhook.js"
 routes = [{ methods = ["GET"], route = "/" }]
 "#,

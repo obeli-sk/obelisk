@@ -4,9 +4,9 @@ use super::{
     AllowedHostToml, BlockingStrategyConfigToml, ByteSizeConfig, ComponentCommon,
     ComponentLocationToml, ComponentStdOutputToml, ConfigName, DeploymentResolved, DurationConfig,
     ExecConfigToml, JsParamToml, LogLevelToml, OCI_SCHEMA_PREFIX, SecretRef, WebhookRoute,
-    default_external_server_name, default_lock_extension, default_max_output_bytes,
-    default_max_retries, default_retry_exp_backoff, resolve_local_refs,
-    sanitize_deployment_relative_path, validate_secret_optionality,
+    default_lock_extension, default_max_output_bytes, default_max_retries,
+    default_retry_exp_backoff, resolve_local_refs, sanitize_deployment_relative_path,
+    validate_secret_optionality,
 };
 use crate::args::TomlComponentType;
 use crate::config::env_var::EnvVarConfig;
@@ -962,7 +962,7 @@ pub(crate) struct WebhookWasmComponentConfigToml {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
     pub(crate) component_files: BTreeMap<String, ContentDigest>,
-    #[serde(default = "default_external_server_name")]
+    /// The HTTP server to bind this webhook to, such as `external`.
     pub(crate) http_server: ConfigName,
     pub(crate) routes: Vec<WebhookRoute>,
     #[serde(default)]
@@ -1010,8 +1010,7 @@ pub(crate) struct WebhookJsComponentConfigToml {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
     pub(crate) component_files: BTreeMap<String, ContentDigest>,
-    /// The HTTP server to bind this webhook to.
-    #[serde(default = "default_external_server_name")]
+    /// The HTTP server to bind this webhook to, such as `external`.
     pub(crate) http_server: ConfigName,
     /// Routes that this webhook responds to.
     pub(crate) routes: Vec<WebhookRoute>,

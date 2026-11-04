@@ -1322,8 +1322,8 @@
           "$ref": "#/$defs/ComponentLocationToml"
         },
         "http_server": {
-          "$ref": "#/$defs/ConfigName",
-          "default": "external"
+          "description": "The HTTP server to bind this webhook to, such as `external`.",
+          "$ref": "#/$defs/ConfigName"
         },
         "routes": {
           "type": "array",
@@ -1382,6 +1382,7 @@
       "required": [
         "name",
         "location",
+        "http_server",
         "routes"
       ]
     },
@@ -1441,9 +1442,8 @@
           "default": null
         },
         "http_server": {
-          "description": "The HTTP server to bind this webhook to.",
-          "$ref": "#/$defs/ConfigName",
-          "default": "external"
+          "description": "The HTTP server to bind this webhook to, such as `external`.",
+          "$ref": "#/$defs/ConfigName"
         },
         "routes": {
           "description": "Routes that this webhook responds to.",
@@ -1496,6 +1496,7 @@
       "additionalProperties": false,
       "required": [
         "name",
+        "http_server",
         "routes"
       ]
     },

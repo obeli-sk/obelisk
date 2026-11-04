@@ -2,6 +2,7 @@ use super::*;
 
 const DEPLOYMENT: &str = r#"[[webhook_endpoint_js]]
 name = "test_get_status_webhook"
+http_server = "external"
 content = '''
 export default function handle(request) {
     const execId = request.headers.get("x-execution-id");

@@ -411,7 +411,7 @@
 # name = "name" # Required. Each component must be named.
 # location = "path/to/wasm"
 # location = "oci://docker.io/repo/image:tag"
-# http_server = "external" # link to a `http_server`'s name (built-in default, or one defined in server.toml)
+# http_server = "external" # Required. Name of a built-in or server.toml `http_server`.
 ### Routes section
 ## An array of routes that will be matched against incoming requests.
 ## Only the path portion of a URL is taken into consideration, the query part
@@ -465,7 +465,7 @@
 ## Supports local file paths and `oci://...` references.
 # location = "path/to/webhook.js"
 # location = "oci://docker.io/repo/image:tag"
-# http_server = "external"                   # link to a `http_server`'s name (built-in default, or one defined in server.toml)
+# http_server = "external"                   # Required. Name of a built-in or server.toml `http_server`.
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]  # Required. See Routes section above.
 ## Guest std stream forwarding to host: one of "none","stdout","stderr","db". Default is "none".
 # forward_stdout="stderr"
