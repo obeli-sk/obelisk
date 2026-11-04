@@ -11,7 +11,7 @@ pub(super) fn write_server_config(
     let server_contents = format!(
         r#"api.listening_addr = "{ip}:{API_PORT}"
 {server_toml_api_lines}
-http_server.webui.enabled = false
+webui.enabled = false
 http_server.external.listening_addr = "{ip}:{WEBHOOK_PORT}"
 http_server.internal.enabled = false
 
@@ -51,6 +51,7 @@ methods = "*"
     let mut server_doc = server_contents.parse::<toml_edit::DocumentMut>().unwrap();
     let mut app_doc = toml_edit::DocumentMut::new();
     app_doc["app_name"] = toml_edit::value("integration-test");
+    app_doc["public_http_servers"] = toml_edit::value(toml_edit::Array::from_iter(["external"]));
     for key in ["public_env", "secrets", "outbound_http"] {
         if let Some(item) = server_doc.as_table_mut().remove(key) {
             app_doc.as_table_mut().insert(key, item);

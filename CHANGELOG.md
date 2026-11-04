@@ -13,15 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now go to stderr. With `--json`, submission, logs, and final results remain NDJSON on stdout
   when following.
 - **Breaking:** *(server)* Webhook listeners are configured in one `http_server` table keyed by
-  name. `webui.*` becomes `http_server.webui.*`, `external.*` becomes `http_server.external.*`,
-  and `[[http_server]] name = "x"` becomes `[http_server.x]`. The old keys fail to load.
+  name. `external.*` becomes `http_server.external.*`, and `[[http_server]] name = "x"` becomes
+  `[http_server.x]`. The old keys fail to load. The Web UI stays in `[webui]`; the name
+  `http_server.webui` is reserved.
 - *(server)* New built-in `internal` HTTP server on `127.0.0.1:9091`, enabled by default, for
   webhooks meant to sit behind authentication.
-- **Breaking:** *(app)* The `webui-url` public env source becomes `source = "http-server-url"`
-  with `http_server = "<name>"`, which reads any HTTP server. Every `http_server` and the API
-  accept `public_url`, validated when server.toml loads; `api-url` uses `api.public_url`.
+- *(app)* New public env source `source = "http-server-url"` with `http_server = "<name>"` reads
+  any HTTP server except the Web UI, which keeps `webui-url`. Every `http_server` and the API
+  accept `public_url`, validated when server.toml loads like `webui.public_url`; `api-url` uses
+  `api.public_url`.
 - *(server)* `[[http_server.<name>.oidc]]` requires a matching OIDC ID token on every request of
-  a listener, checked before routing. Webhook endpoints on such a server cannot set their own `oidc`.
+  a listener, checked before routing.
+- *(server)* `http_server.<name>.api_auth = true` accepts every token the API accepts (startup
+  token, `--api-token`, `api.token_hashes`, `api.oidc`) on a listener, alongside its own `oidc`.
+  It requires an enabled API; `--no-auth` opens such listeners like the API.
+- **Breaking:** *(app)* An `http_server` without `oidc` or `api_auth` starts only when app.toml
+  lists it in `public_http_servers`, so `external` and `internal` stay closed by default. The Web
+  UI is not an `http_server` and always starts. Listing a server that requires credentials, or a
+  disabled or unknown one, records
+  a `server.public_http_server.ignored` warning event.
+- **Breaking:** *(deployment)* Webhook endpoint `oidc` is removed and fails verification; require
+  OIDC for the whole listener with `[[http_server.<name>.oidc]]` instead.
 - **Breaking:** *(db)* A deployment's content digest is unique. Submitting content already stored
   under another ID returns `409`, and the server reuses the stored deployment when started with
   the same deployment file. The database migration keeps existing deployments storing the same

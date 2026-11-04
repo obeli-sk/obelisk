@@ -111,12 +111,19 @@ impl AppConfigToml {
                     type_: AppPolicyV1PublicEnvItemVariant2Type::Internal,
                 },
                 PublicEnvConfigToml::InternalPublicEnvConfigToml(
-                    InternalPublicEnvConfigToml::Variant1 { http_server, .. },
+                    InternalPublicEnvConfigToml::Variant1 { .. },
                 ) => AppPolicyV1PublicEnvItem::Variant3 {
+                    name: name.clone(),
+                    source: AppPolicyV1PublicEnvItemVariant3Source::WebuiUrl,
+                    type_: AppPolicyV1PublicEnvItemVariant3Type::Internal,
+                },
+                PublicEnvConfigToml::InternalPublicEnvConfigToml(
+                    InternalPublicEnvConfigToml::Variant2 { http_server, .. },
+                ) => AppPolicyV1PublicEnvItem::Variant4 {
                     http_server: http_server.clone(),
                     name: name.clone(),
-                    source: AppPolicyV1PublicEnvItemVariant3Source::HttpServerUrl,
-                    type_: AppPolicyV1PublicEnvItemVariant3Type::Internal,
+                    source: AppPolicyV1PublicEnvItemVariant4Source::HttpServerUrl,
+                    type_: AppPolicyV1PublicEnvItemVariant4Type::Internal,
                 },
                 PublicEnvConfigToml::EnvPublicEnvConfigToml(config) if config.optional => {
                     AppPolicyV1PublicEnvItem::Variant1 {
@@ -144,6 +151,19 @@ impl AppConfigToml {
                 .map(outbound_http_item)
                 .collect(),
             public_env,
+            // Sorted and deduplicated like the server's set; empty is omitted.
+            public_http_servers: self
+                .public_http_servers
+                .as_ref()
+                .map(|names| {
+                    names
+                        .iter()
+                        .cloned()
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                })
+                .filter(|names| !names.is_empty()),
             secrets,
         })
     }

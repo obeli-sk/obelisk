@@ -1,4 +1,6 @@
 app_name = "testing-wasm"
+# Webhooks of the test deployments listen on `external`, which has no credentials.
+public_http_servers = ["external"]
 
 [[outbound_http.allowed_host]]
 pattern = "*"

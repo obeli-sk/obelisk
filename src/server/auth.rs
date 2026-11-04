@@ -113,15 +113,8 @@ impl ApiAuth {
         if !scheme.eq_ignore_ascii_case("bearer") {
             return Err("unsupported `authorization` scheme, expected `Bearer`".into());
         }
-        // Hash-then-compare: digests of the secret are matched, so the comparison
-        // cannot leak anything useful about accepted tokens.
         let token = token.trim();
-        let digest = crate::api::token_digest(token);
-        let identity = self
-            .accepted
-            .iter()
-            .find_map(|accepted| accepted.check(&digest, token.len()));
-        if let Some(identity) = identity {
+        if let Some(identity) = self.check_static(token) {
             Ok(identity)
         } else {
             match &self.oidc {
@@ -130,6 +123,111 @@ impl ApiAuth {
             }
         }
     }
+
+    /// Match the startup token, `--api-token` and `token_hashes`, returning the audit identity.
+    fn check_static(&self, token: &str) -> Option<String> {
+        // Hash-then-compare: digests of the secret are matched, so the comparison
+        // cannot leak anything useful about accepted tokens.
+        let digest = crate::api::token_digest(token);
+        self.accepted
+            .iter()
+            .find_map(|accepted| accepted.check(&digest, token.len()))
+    }
+}
+
+/// Bearer tokens accepted by an `http_server`: its own `oidc` entries, and with `api_auth`
+/// every token the API accepts. Any single match grants access.
+pub(crate) struct HttpServerAuth {
+    oidc: Option<Arc<oidc::OidcVerifier>>,
+    api: Option<ApiCredentials>,
+}
+
+enum ApiCredentials {
+    Checked(Arc<ApiAuth>),
+    /// `--no-auth`: the API accepts every request, and so does an `api_auth` server.
+    Open,
+}
+
+impl std::fmt::Debug for HttpServerAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpServerAuth")
+            .field("oidc", &self.oidc.is_some())
+            .field(
+                "api",
+                &match &self.api {
+                    None => "off",
+                    Some(ApiCredentials::Checked(_)) => "checked",
+                    Some(ApiCredentials::Open) => "open",
+                },
+            )
+            .finish()
+    }
+}
+
+impl HttpServerAuth {
+    /// `api_auth` without `api` means the API runs with `--no-auth`.
+    pub(crate) fn new(
+        server: &crate::config::server::HttpServer,
+        api: Option<&Arc<ApiAuth>>,
+    ) -> Result<Option<Arc<Self>>, anyhow::Error> {
+        let oidc = oidc::OidcVerifier::new(&server.oidc)?;
+        if let Some(oidc) = &oidc {
+            oidc.spawn_prefetch();
+        }
+        let api = server.api_auth.then(|| match api {
+            Some(api) => ApiCredentials::Checked(api.clone()),
+            None => ApiCredentials::Open,
+        });
+        Ok((oidc.is_some() || api.is_some()).then(|| Arc::new(Self { oidc, api })))
+    }
+}
+
+#[async_trait::async_trait]
+impl wasm_workers::webhook::webhook_trigger::WebhookRequestAuth for HttpServerAuth {
+    async fn authenticate(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<Option<header::HeaderValue>, StatusCode> {
+        let token = bearer_token(headers);
+        if let Some(ApiCredentials::Open) = &self.api {
+            // Still surface verified claims, so handlers behave as with authentication on.
+            if let (Some(token), Some(oidc)) = (token, &self.oidc) {
+                return Ok(oidc.claims_header(token).await.ok());
+            }
+            return Ok(None);
+        }
+        let token = token.ok_or(StatusCode::UNAUTHORIZED)?;
+        let mut status = StatusCode::UNAUTHORIZED;
+        if let Some(ApiCredentials::Checked(api)) = &self.api
+            && api.check_static(token).is_some()
+        {
+            return Ok(None);
+        }
+        let api_oidc = match &self.api {
+            Some(ApiCredentials::Checked(api)) => api.oidc.as_ref(),
+            _ => None,
+        };
+        for oidc in self.oidc.iter().chain(api_oidc) {
+            match oidc.claims_header(token).await {
+                Ok(claims) => return Ok(Some(claims)),
+                Err(StatusCode::FORBIDDEN) => status = StatusCode::FORBIDDEN,
+                Err(_) => {}
+            }
+        }
+        Err(status)
+    }
+}
+
+/// The token of a single `Authorization: Bearer` header.
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let mut authorization = headers.get_all(header::AUTHORIZATION).iter();
+    let presented = authorization.next()?.to_str().ok()?;
+    if authorization.next().is_some() {
+        return None;
+    }
+    let (scheme, token) = presented.split_once(' ')?;
+    let token = token.trim();
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
 }
 
 pub(crate) async fn auth_middleware(

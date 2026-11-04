@@ -39,6 +39,14 @@
       "default": {
         "allowed_host": []
       }
+    },
+    "public_http_servers": {
+      "description": "`http_server` names that may serve webhooks without credentials. Servers that server.toml\nprotects with `oidc` or `api_auth` need no entry; the built-in Web UI never does.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
     }
   },
   "additionalProperties": false,
@@ -205,6 +213,23 @@
           ]
         },
         {
+          "description": "`webui.public_url`, otherwise the Web UI listener URL.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "$ref": "#/$defs/InternalSecretType"
+            },
+            "source": {
+              "$ref": "#/$defs/WebuiUrlSource"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "source"
+          ]
+        },
+        {
           "description": "`http_server.<name>.public_url`, otherwise the listener URL.",
           "type": "object",
           "properties": {
@@ -231,6 +256,12 @@
       "type": "string",
       "enum": [
         "api-url"
+      ]
+    },
+    "WebuiUrlSource": {
+      "type": "string",
+      "enum": [
+        "webui-url"
       ]
     },
     "HttpServerUrlSource": {

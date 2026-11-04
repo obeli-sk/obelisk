@@ -32,6 +32,13 @@
       "items": {
         "$ref": "#/$defs/AllowedHostToml"
       }
+    },
+    "public_http_servers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
     }
   },
   "additionalProperties": false,
@@ -143,6 +150,19 @@
                 "source": {
                   "type": "string",
                   "const": "api-url"
+                }
+              },
+              "required": [
+                "source"
+              ]
+            },
+            {
+              "description": "`webui.public_url`, otherwise the Web UI listener URL.",
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "webui-url"
                 }
               },
               "required": [

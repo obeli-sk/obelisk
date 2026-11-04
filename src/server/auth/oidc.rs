@@ -83,46 +83,6 @@ impl From<Cow<'static, str>> for VerificationError {
     }
 }
 
-#[async_trait::async_trait]
-impl wasm_workers::webhook::webhook_trigger::WebhookRequestAuth for OidcVerifier {
-    async fn authenticate(
-        &self,
-        headers: &http::HeaderMap,
-    ) -> Result<http::header::HeaderValue, http::StatusCode> {
-        let unauthorized = http::StatusCode::UNAUTHORIZED;
-        let mut authorization = headers.get_all(http::header::AUTHORIZATION).iter();
-        let presented = authorization
-            .next()
-            .ok_or(unauthorized)?
-            .to_str()
-            .map_err(|_| unauthorized)?;
-        if authorization.next().is_some() {
-            return Err(unauthorized);
-        }
-        let (scheme, token) = presented.split_once(' ').ok_or(unauthorized)?;
-        if !scheme.eq_ignore_ascii_case("bearer") || token.trim().is_empty() {
-            return Err(unauthorized);
-        }
-        let claims = self
-            .verify_claims(token.trim())
-            .await
-            .map_err(|err| match err {
-                VerificationError::Invalid(_) => unauthorized,
-                VerificationError::Forbidden(_) => http::StatusCode::FORBIDDEN,
-            })?;
-        let json = serde_json::to_string(&claims).expect("JWT claims serialize");
-        let mut header = String::with_capacity(json.len());
-        // ASCII JSON also survives WASI and JS header string decoding for Unicode claims.
-        for unit in json.encode_utf16() {
-            match u8::try_from(unit).ok().filter(u8::is_ascii) {
-                Some(ascii) => header.push(char::from(ascii)),
-                None => write!(header, "\\u{unit:04x}").expect("writing to a String"),
-            }
-        }
-        Ok(header.parse().expect("ASCII JSON is a valid header value"))
-    }
-}
-
 impl OidcVerifier {
     pub(crate) fn new(configs: &[OidcProviderConfig]) -> anyhow::Result<Option<Arc<Self>>> {
         if configs.is_empty() {
@@ -162,6 +122,27 @@ impl OidcVerifier {
                 issuer.refresh(&this.http, refresh).await;
             }
         });
+    }
+
+    /// Verify a bearer token, returning its claims as the ASCII JSON `obelisk-oidc-claims` value.
+    pub(crate) async fn claims_header(
+        &self,
+        token: &str,
+    ) -> Result<http::header::HeaderValue, http::StatusCode> {
+        let claims = self.verify_claims(token).await.map_err(|err| match err {
+            VerificationError::Invalid(_) => http::StatusCode::UNAUTHORIZED,
+            VerificationError::Forbidden(_) => http::StatusCode::FORBIDDEN,
+        })?;
+        let json = serde_json::to_string(&claims).expect("JWT claims serialize");
+        let mut header = String::with_capacity(json.len());
+        // ASCII JSON also survives WASI and JS header string decoding for Unicode claims.
+        for unit in json.encode_utf16() {
+            match u8::try_from(unit).ok().filter(u8::is_ascii) {
+                Some(ascii) => header.push(char::from(ascii)),
+                None => write!(header, "\\u{unit:04x}").expect("writing to a String"),
+            }
+        }
+        Ok(header.parse().expect("ASCII JSON is a valid header value"))
     }
 
     /// Verify a bearer token, returning the audit identity `oidc:<iss>#<sub>`.

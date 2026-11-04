@@ -1,7 +1,7 @@
 ## Server configuration, owned by the Obelisk platform admin.
 ## It controls listeners, storage, resource limits, and the platform exec gate.
 ## Exec activities need approval in both server.toml and app.toml.
-## The API and the built-in `webui`, `external` and `internal` HTTP servers are all enabled by default on localhost.
+## The API, the webui, and the built-in `external` and `internal` HTTP servers are all enabled by default on localhost.
 ## To disable any of them, set `enabled = false`. To change the address, override `listening_addr`.
 # api.enabled = true                             # Disable the API server (enabled by default).
 # api.listening_addr = "127.0.0.1:5005"          # Address and port on which the API server will listen.
@@ -9,29 +9,37 @@
 # api.public_url = "https://api--my-app.obelisk.works"
 ## Follow/SSE responses end cleanly after this wall-clock duration, including silent streams.
 # api.max_stream_duration.minutes = 10
+## The webui needs no credentials: every action goes through the API's own authentication.
+# webui.enabled = true                           # Disable the webui (enabled by default).
+# webui.listening_addr = "127.0.0.1:8080"        # Address and port on which the webui will listen.
+## Public browser URL used by the app's internal webui-url source; defaults to the local listener URL.
+# webui.public_url = "https://webui--my-app.obelisk.works"
 
 ## HTTP servers, keyed by name. Webhook endpoints (in deployment.toml) attach to one via `http_server = "name"`.
 ## Override with env vars such as `OBELISK__HTTP_SERVER__EXTERNAL__ENABLED=false`.
-# http_server.webui.enabled = true               # Serves the web UI; webhooks cannot attach to it.
-# http_server.webui.listening_addr = "127.0.0.1:8080"
-## Public URL of any HTTP server, for the app's `http-server-url` public_env source; defaults to the local listener URL.
-# http_server.webui.public_url = "https://webui--my-app.obelisk.works"
+## The name `webui` is reserved.
 # http_server.external.enabled = true            # Default server for webhooks, meant to be reachable by third parties.
 # http_server.external.listening_addr = "127.0.0.1:9090"
 # http_server.internal.enabled = true            # Webhooks meant to sit behind authentication, e.g. a protecting proxy.
 # http_server.internal.listening_addr = "127.0.0.1:9091"
+## Public URL of any HTTP server, for the app's `http-server-url` public_env source; defaults to the local listener URL.
 # http_server.internal.public_url = "https://internal--my-app.obelisk.works"
-## Note: HTTP servers have no auth unless `oidc` is configured; listening on all interfaces using [::]:port is not advised.
+## A server without `oidc` or `api_auth` accepts requests without credentials, so it starts only when
+## app.toml lists it in `public_http_servers`.
+## Listening on all interfaces using [::]:port is not advised for servers without credentials.
 
 ## Additional HTTP servers need a `listening_addr`.
 # [http_server.my_server]
 # listening_addr = "0.0.0.0:9000"
 
-## Require an OIDC ID token (JWT) on every request of an HTTP server, checked before routing.
-## Issuer, audience and claim matching work like `[[api.oidc]]`. Any entry can authorize a request.
-## The verified `Authorization` header is replaced by the `obelisk-oidc-claims` JSON header.
-## Webhook endpoints on such a server must not configure their own `oidc`.
-## On `webui`, the web UI's `/api` forwarding then reaches the API without the caller's `Authorization`.
+## Require a bearer token on every request of an HTTP server, checked before routing.
+## Missing or invalid tokens return 401; a verified JWT matching no entry returns 403.
+## `api_auth = true` accepts every token the API accepts: the startup token, `--api-token`,
+## `api.token_hashes` and `api.oidc`. It requires an enabled API; with `--no-auth` it accepts all requests.
+# http_server.internal.api_auth = true
+## OIDC ID tokens (JWT) matching any entry are accepted as well; matching works like `[[api.oidc]]`.
+## A verified `Authorization` header is removed. After an OIDC token, the `obelisk-oidc-claims`
+## JSON header carries its claims; a client-supplied header of that name is always removed.
 # [[http_server.internal.oidc]]
 # issuer = "https://oidc.fly.io/my-org"
 # audience = "https://internal--my-app.obelisk.works"

@@ -741,15 +741,16 @@ pub const OIDC_CLAIMS_HEADER: &str = "obelisk-oidc-claims";
 
 #[async_trait::async_trait]
 pub trait WebhookRequestAuth: Debug + Send + Sync {
+    /// Accepts the request, returning the `obelisk-oidc-claims` value when an OIDC token
+    /// verified, or rejects it with 401 or 403.
     async fn authenticate(
         &self,
         headers: &hyper::HeaderMap,
-    ) -> Result<hyper::header::HeaderValue, StatusCode>;
+    ) -> Result<Option<hyper::header::HeaderValue>, StatusCode>;
 }
 
 #[derive(Debug, Clone)]
 pub struct WebhookEndpointConfig {
-    pub request_auth: Option<Arc<dyn WebhookRequestAuth>>,
     pub component_id: ComponentId,
     pub forward_stdout: Option<StdOutputConfig>,
     pub forward_stderr: Option<StdOutputConfig>,
@@ -2507,11 +2508,13 @@ async fn authenticate_request(
     match auth.authenticate(req.headers()).await {
         Ok(claims) => {
             req.headers_mut().remove(hyper::header::AUTHORIZATION);
-            req.headers_mut().insert(OIDC_CLAIMS_HEADER, claims);
+            if let Some(claims) = claims {
+                req.headers_mut().insert(OIDC_CLAIMS_HEADER, claims);
+            }
             None
         }
         Err(status) => {
-            let mut response = respond("missing, invalid or unauthorized OIDC token", status);
+            let mut response = respond("missing, invalid or unauthorized bearer token", status);
             if status == StatusCode::UNAUTHORIZED {
                 response.headers_mut().insert(
                     hyper::header::WWW_AUTHENTICATE,
@@ -2619,11 +2622,6 @@ impl RequestHandler {
         }
         if let Some(instance_match) = self.router.find(req.method(), req.uri()) {
             let found_instance = instance_match.handler();
-            if let Some(auth) = &found_instance.config.request_auth
-                && let Some(response) = authenticate_request(auth.as_ref(), &mut req).await
-            {
-                return Ok(response);
-            }
             // One permit for the matched endpoint's runtime, before the body is read. An
             // unroutable request takes none, so a flood of 404s cannot shed real traffic.
             let (v8_admission, wasm_guard) = if found_instance.js_runtime == WebhookJsRuntime::V8 {
@@ -3195,7 +3193,6 @@ pub(crate) mod tests {
         .unwrap();
         let linked = WebhookEndpointCompiled::new(
             WebhookEndpointConfig {
-                request_auth: None,
                 memory: None,
                 component_id,
                 forward_stdout: None,
@@ -3286,7 +3283,6 @@ pub(crate) mod tests {
         let fn_registry = TestingFnRegistry::new_from_components(vec![]);
         let instance = WebhookEndpointCompiled::new(
             WebhookEndpointConfig {
-                request_auth: None,
                 memory: None,
                 component_id: ComponentId::new(
                     ComponentType::WebhookEndpoint,
@@ -3496,7 +3492,6 @@ pub(crate) mod tests {
                             .unwrap();
                     let instance = WebhookEndpointCompiled::new(
                         WebhookEndpointConfig {
-                            request_auth: None,
                             memory: None,
                             component_id: ComponentId::new(
                                 ComponentType::WebhookEndpoint,
@@ -4001,7 +3996,6 @@ pub(crate) mod tests {
                         .unwrap();
                 let instance = WebhookEndpointCompiled::new(
                     WebhookEndpointConfig {
-                        request_auth: None,
                         memory: None,
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
@@ -4216,7 +4210,6 @@ pub(crate) mod tests {
                         .unwrap();
                 let instance = WebhookEndpointCompiled::new(
                     WebhookEndpointConfig {
-                        request_auth: None,
                         memory: None,
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
@@ -4403,7 +4396,6 @@ pub(crate) mod tests {
                         .unwrap();
                 let instance = WebhookEndpointCompiled::new(
                     WebhookEndpointConfig {
-                        request_auth: None,
                         memory: None,
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
@@ -4732,7 +4724,6 @@ pub(crate) mod tests {
                         .unwrap();
                 let mut compiled = WebhookEndpointCompiled::new(
                     WebhookEndpointConfig {
-                        request_auth: None,
                         memory: None,
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
@@ -6164,7 +6155,6 @@ pub(crate) mod tests {
                             .unwrap();
                     let instance = WebhookEndpointCompiled::new(
                         WebhookEndpointConfig {
-                            request_auth: None,
                             memory: None,
                             component_id: ComponentId::new(
                                 ComponentType::WebhookEndpoint,

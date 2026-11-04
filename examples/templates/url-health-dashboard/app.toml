@@ -1,12 +1,15 @@
 app_name = "__APP_NAME__"
 
+# Webhooks listen on `external`, which accepts requests without credentials.
+public_http_servers = ["external"]
+
 # Obelisk supplies its own API token and URLs; nothing needs to be exported.
 [secrets]
 INTERNAL_TOKEN = { type = "internal" }
 
 [public_env]
 OBELISK_API_URL = { type = "internal", source = "api-url" }
-OBELISK_UI_URL = { type = "internal", source = "http-server-url", http_server = "webui" }
+OBELISK_UI_URL = { type = "internal", source = "webui-url" }
 
 # The app admin reviews which external requests a deployment may make.
 # The monitored site, also set in deployment.toml.

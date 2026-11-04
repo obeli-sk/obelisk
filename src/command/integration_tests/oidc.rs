@@ -246,7 +246,7 @@ async fn api_auth_should_accept_oidc_tokens() {
 }
 
 #[tokio::test]
-async fn webhook_oidc_authenticates_and_passes_only_verified_claims() {
+async fn http_server_oidc_authenticates_and_passes_only_verified_claims() {
     for runtime in [JsRuntime::BoaWasm, JsRuntime::V8] {
         let ip = match runtime {
             JsRuntime::BoaWasm => test_addr!(250),
@@ -261,30 +261,28 @@ async fn webhook_oidc_authenticates_and_passes_only_verified_claims() {
             Arc::new(JwksPause::default()),
         )
         .await;
-        let deployment = format!(
+        let server_toml = format!(
             r#"
-[[webhook_endpoint_js]]
-name = "protected"
-content = 'export default (request) => Response.json({{ authorization: request.headers.get("authorization"), claims: JSON.parse(request.headers.get("obelisk-oidc-claims")) }});'
-routes = ["/protected"]
-[[webhook_endpoint_js.oidc]]
+[[http_server.external.oidc]]
 issuer = "{issuer}"
 audience = "other-audience"
 claims = {{ app_name = "first" }}
-[[webhook_endpoint_js.oidc]]
-issuer = "${{OBELISK_PHASE5_DEFINITELY_MISSING_VAR:-{issuer}}}"
-audience = "${{OBELISK_PHASE5_DEFINITELY_MISSING_VAR:-{AUDIENCE}}}"
-claims = {{ app_name = "${{OBELISK_PHASE5_DEFINITELY_MISSING_VAR:-integrations}}", role = "gateway" }}
-[[webhook_endpoint_js]]
-name = "public"
-content = 'export default (request) => Response.json({{ authorization: request.headers.get("authorization"), claims: request.headers.get("obelisk-oidc-claims") }});'
-routes = ["/public"]
+[[http_server.external.oidc]]
+issuer = "{issuer}"
+audience = "{AUDIENCE}"
+claims = {{ app_name = "integrations", role = "gateway" }}
 "#
         );
+        let deployment = r#"
+[[webhook_endpoint_js]]
+name = "echo"
+content = 'export default (request) => Response.json({ authorization: request.headers.get("authorization"), claims: JSON.parse(request.headers.get("obelisk-oidc-claims")) });'
+routes = ["/echo"]
+"#;
         let server = TestServer::start_inline_deployment_with_js_runtime(
             ip,
-            "",
-            &deployment,
+            &server_toml,
+            deployment,
             &[],
             runtime.mode(),
         )
@@ -302,16 +300,20 @@ routes = ["/public"]
                 .extend(overrides.as_object().unwrap().clone());
             claims
         };
-        let url = format!("{}/protected", server.webhook_base_url);
+        let base = &server.webhook_base_url;
+        let url = format!("{base}/echo");
         let client = reqwest::Client::new();
-        let missing = client
-            .get(&url)
-            .header("obelisk-oidc-claims", "spoofed")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(missing.status(), reqwest::StatusCode::UNAUTHORIZED);
-        assert_eq!(missing.headers()["www-authenticate"], "Bearer");
+        // Unauthenticated callers cannot tell routed paths from unknown ones.
+        for path in ["/echo", "/unknown"] {
+            let response = client
+                .get(format!("{base}{path}"))
+                .header("obelisk-oidc-claims", "spoofed")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+            assert_eq!(response.headers()["www-authenticate"], "Bearer");
+        }
         for (overrides, expected) in [
             (json!({"aud": "wrong"}), reqwest::StatusCode::FORBIDDEN),
             (json!({"app_name": "first"}), reqwest::StatusCode::FORBIDDEN),
@@ -333,9 +335,12 @@ routes = ["/public"]
                 .unwrap();
             assert_eq!(response.status(), expected);
         }
+        let mut bad_signature = signer.token("key", &claims(json!({})));
+        bad_signature.push('x');
         for token in [
             "invalid".to_string(),
             signer.token("unknown", &claims(json!({}))),
+            bad_signature,
         ] {
             assert_eq!(
                 client
@@ -348,18 +353,13 @@ routes = ["/public"]
                 reqwest::StatusCode::UNAUTHORIZED
             );
         }
-        let mut bad_signature = signer.token("key", &claims(json!({})));
-        bad_signature.push('x');
-        assert_eq!(
-            client
-                .get(&url)
-                .bearer_auth(bad_signature)
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            reqwest::StatusCode::UNAUTHORIZED
-        );
+        let response = client
+            .get(format!("{base}/unknown"))
+            .bearer_auth(signer.token("key", &claims(json!({}))))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
         for overrides in [
             json!({}),
             json!({"aud": "other-audience", "app_name": "first"}),
@@ -379,23 +379,12 @@ routes = ["/public"]
                 json!({"authorization": null, "claims": expected_claims})
             );
         }
-        let response = client
-            .get(format!("{}/public", server.webhook_base_url))
-            .bearer_auth("application-token")
-            .header("obelisk-oidc-claims", "spoofed")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(
-            response.json::<Value>().await.unwrap(),
-            json!({"authorization": "Bearer application-token", "claims": null})
-        );
         server.shutdown().await;
     }
 }
 
 #[tokio::test]
-async fn http_server_oidc_protects_every_route() {
+async fn http_server_api_auth_accepts_api_credentials() {
     let ip = test_addr!(253);
     let signer = Signer::Rsa(
         ring_sig::RsaKeyPair::from_der(include_bytes!("oidc_rsa_test_key.der")).unwrap(),
@@ -406,13 +395,9 @@ async fn http_server_oidc_protects_every_route() {
         Arc::new(JwksPause::default()),
     )
     .await;
-    let server_toml = format!(
-        r#"
-[[http_server.external.oidc]]
-issuer = "{issuer}"
-audience = "{AUDIENCE}"
-claims = {{ app_name = "proxy" }}
-"#
+    let api_lines = format!(
+        r#"api.oidc = [{{ issuer = "{issuer}", audience = "{AUDIENCE}", claims = {{ app_name = "deployer" }} }}]
+http_server.external.api_auth = true"#
     );
     let deployment = r#"
 [[webhook_endpoint_js]]
@@ -420,47 +405,65 @@ name = "echo"
 content = 'export default (request) => Response.json({ authorization: request.headers.get("authorization"), claims: JSON.parse(request.headers.get("obelisk-oidc-claims")) });'
 routes = ["/echo"]
 "#;
-    let server = TestServer::start_inline_deployment(ip, &server_toml, deployment, &[]).await;
-    let client = reqwest::Client::new();
-    let base = &server.webhook_base_url;
     let now = jsonwebtoken::get_current_timestamp();
-    let claims = json!({
-        "iss": issuer, "aud": AUDIENCE, "sub": "machine", "app_name": "proxy", "exp": now + 600,
-    });
-    // Unauthenticated callers cannot tell routed paths from unknown ones.
-    for path in ["/echo", "/unknown"] {
-        let response = client.get(format!("{base}{path}")).send().await.unwrap();
+    let claims = |app_name: &str| {
+        json!({
+            "iss": issuer, "aud": AUDIENCE, "sub": "machine", "app_name": app_name, "exp": now + 600,
+        })
+    };
+    let server = TestServer::start_inline_deployment_with_auth(
+        ip.clone(),
+        &api_lines,
+        deployment,
+        Some("api-token"),
+    )
+    .await;
+    // After the server installs the TLS crypto provider.
+    let client = reqwest::Client::new();
+    let url = format!("{}/echo", server.webhook_base_url);
+    for token in [None, Some("wrong".to_string())] {
+        let mut request = client.get(&url);
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().await.unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
         assert_eq!(response.headers()["www-authenticate"], "Bearer");
     }
-    let mut other_app = claims.clone();
-    other_app["app_name"] = json!("other");
     let response = client
-        .get(format!("{base}/unknown"))
-        .bearer_auth(signer.token("key", &other_app))
+        .get(&url)
+        .bearer_auth(signer.token("key", &claims("other")))
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
-    let token = signer.token("key", &claims);
+    for (token, expected_claims) in [
+        ("api-token".to_string(), Value::Null),
+        (signer.token("key", &claims("deployer")), claims("deployer")),
+    ] {
+        let response = client
+            .get(&url)
+            .bearer_auth(token)
+            .header("obelisk-oidc-claims", "spoofed")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            response.json::<Value>().await.unwrap(),
+            json!({"authorization": null, "claims": expected_claims})
+        );
+    }
+    server.shutdown().await;
+
+    // `--no-auth` opens `api_auth` servers like the API.
+    let server =
+        TestServer::start_inline_deployment_with_auth(ip, &api_lines, deployment, None).await;
     let response = client
-        .get(format!("{base}/unknown"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
-    let response = client
-        .get(format!("{base}/echo"))
-        .bearer_auth(&token)
-        .header("obelisk-oidc-claims", "spoofed")
+        .get(format!("{}/echo", server.webhook_base_url))
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
-    assert_eq!(
-        response.json::<Value>().await.unwrap(),
-        json!({"authorization": null, "claims": claims})
-    );
     server.shutdown().await;
 }

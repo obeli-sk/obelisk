@@ -125,12 +125,21 @@ export interface AppPolicyV1 {
         type: "internal";
       }
     | {
+        name: string;
+        source: "webui-url";
+        type: "internal";
+      }
+    | {
         http_server: string;
         name: string;
         source: "http-server-url";
         type: "internal";
       }
   )[];
+  /**
+   * `http_server` names that may serve webhooks without credentials. Omitted when empty.
+   */
+  public_http_servers?: string[];
   secrets: {
     [k: string]:
       | {

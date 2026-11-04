@@ -2941,6 +2941,32 @@
                   "required": [
                     "name",
                     "type",
+                    "source"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "webui-url"
+                      ]
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "type",
                     "source",
                     "http_server"
                   ],
@@ -2968,6 +2994,14 @@
                 }
               ]
             }
+          },
+          "public_http_servers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`http_server` names that may serve webhooks without credentials. Omitted when empty.",
+            "uniqueItems": true
           },
           "secrets": {
             "type": "object",

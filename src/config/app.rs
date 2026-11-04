@@ -43,6 +43,10 @@ pub(crate) struct AppConfigToml {
     pub(crate) allowed_exec_activities: AllowExecActivities,
     #[serde(default)]
     pub(crate) outbound_http: OutboundHttpToml,
+    /// `http_server` names that may serve webhooks without credentials. Servers that server.toml
+    /// protects with `oidc` or `api_auth` need no entry; the built-in Web UI never does.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub(crate) public_http_servers: std::collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
@@ -71,6 +75,8 @@ pub(crate) struct AppPolicyV1 {
     public_env: Vec<PublicEnvRef>,
     allowed_exec_activities: std::collections::BTreeMap<String, Vec<String>>,
     outbound_http: Vec<crate::config::deployment::AllowedHostToml>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    public_http_servers: std::collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Default, Clone, JsonSchema, Serialize)]
@@ -147,6 +153,7 @@ impl AppConfigToml {
             public_env: PublicEnvToml::default(),
             allowed_exec_activities: AllowExecActivities::default(),
             outbound_http: OutboundHttpToml::default(),
+            public_http_servers: std::collections::BTreeSet::new(),
         }
     }
 
@@ -291,6 +298,7 @@ impl AppConfigToml {
                 })
                 .collect(),
             outbound_http: self.outbound_http.allowed_hosts.clone(),
+            public_http_servers: self.public_http_servers.clone(),
         }
     }
 }
@@ -467,7 +475,7 @@ mod tests {
                 TRACE_ID = {{ optional = true }}
                 TYPED = {{ type = "env", optional = false }}
                 API_URL = {{ type = "internal", source = "api-url" }}
-                WEBUI_URL = {{ type = "internal", source = "http-server-url", http_server = "webui" }}
+                WEBUI_URL = {{ type = "internal", source = "webui-url" }}
                 LLM_URL = {{}}
                 [secrets]
                 TOKEN = {{ exposed_to = {{ worker = ["{upper}", "{lower}"] }} }}

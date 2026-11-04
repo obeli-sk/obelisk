@@ -844,15 +844,8 @@ pub(crate) struct VerifyParams {
     pub(crate) activity_vm_runtime: ActivityVmRuntimeMode,
 }
 
-pub(crate) async fn verify_deployment(path: PathBuf, params: VerifyParams) -> anyhow::Result<()> {
-    let mut config_holder = ConfigHolder::new(crate::project_dirs(), BaseDirs::new(), None)?;
-    config_holder.path_prefixes.app_name = "deployment-verify".to_string();
-    let mut config = ServerConfigToml::default();
-    config.disable_built_in_http_servers();
-    config.api.enabled = false;
-    let _guard = init::init(&config)?;
-    let (deployment, cas) = resolve_deployment_offline(&path).await?;
-    let names: BTreeSet<_> = deployment
+fn webhook_http_server_names(deployment: &DeploymentResolved) -> BTreeSet<String> {
+    deployment
         .webhooks_wasm
         .iter()
         .map(|webhook| webhook.http_server.to_string())
@@ -862,8 +855,21 @@ pub(crate) async fn verify_deployment(path: PathBuf, params: VerifyParams) -> an
                 .iter()
                 .map(|webhook| webhook.http_server.to_string()),
         )
-        .collect();
-    // Referenced servers replace the disabled built-in entries.
+        .collect()
+}
+
+pub(crate) async fn verify_deployment(path: PathBuf, params: VerifyParams) -> anyhow::Result<()> {
+    let mut config_holder = ConfigHolder::new(crate::project_dirs(), BaseDirs::new(), None)?;
+    config_holder.path_prefixes.app_name = "deployment-verify".to_string();
+    let mut config = ServerConfigToml::default();
+    config.disable_built_in_http_servers();
+    config.api.enabled = false;
+    let _guard = init::init(&config)?;
+    let (deployment, cas) = resolve_deployment_offline(&path).await?;
+    let names = webhook_http_server_names(&deployment);
+    // Referenced servers replace the disabled built-in entries. Without app.toml and server.toml
+    // only the deployment is checked, so every referenced server counts as public.
+    config.public_http_servers.clone_from(&names);
     config.http_servers.extend(names.into_iter().map(|name| {
         (
             name,
@@ -872,6 +878,7 @@ pub(crate) async fn verify_deployment(path: PathBuf, params: VerifyParams) -> an
                 listening_addr: Some("127.0.0.1:0".parse().unwrap()),
                 public_url: None,
                 oidc: Vec::new(),
+                api_auth: false,
             },
         )
     }));
@@ -2543,6 +2550,7 @@ pub(crate) async fn run_internal(
             &cancel_registry,
             &termination_watcher,
             prepared_dirs.clone(),
+            api_auth.as_ref(),
             #[cfg(test)]
             params.test_hooks,
         )
@@ -2752,6 +2760,7 @@ pub(crate) struct ServerVerified {
     launch: ServerVerifiedLaunch,
     allowed_exec_activities: AllowExecActivities,
     http_servers: Vec<HttpServer>,
+    ignored_public_http_servers: Vec<(String, crate::config::server::PublicHttpServerIgnored)>,
     fuel: Option<u64>,
     component_cells: ComponentCells,
     database_subscription_interruption: Option<Duration>,
@@ -2832,6 +2841,20 @@ impl ServerVerified {
         );
         let v8_executor = V8Executor::new(concurrency_cells.v8_executor_config(thread_stack_size)?);
         let http_servers = config.enabled_http_servers()?;
+        if let Some(server) = http_servers.iter().find(|server| server.api_auth) {
+            ensure!(
+                config.api.enabled,
+                "`http_server.{}.api_auth` requires an enabled API",
+                server.name
+            );
+        }
+        for name in config.closed_http_servers() {
+            info!(
+                "HTTP server `{name}` does not start: it has no `oidc` or `api_auth`, and app.toml \
+                 `public_http_servers` does not list it"
+            );
+        }
+        let ignored_public_http_servers = config.ignored_public_http_servers();
         let webui_enabled = http_servers
             .iter()
             .any(|server| &**server.name == HTTP_SERVER_NAME_WEBUI);
@@ -2950,6 +2973,7 @@ impl ServerVerified {
             },
             allowed_exec_activities: config.allowed_exec_activities,
             http_servers,
+            ignored_public_http_servers,
             fuel,
             component_cells,
             database_subscription_interruption,
@@ -4538,6 +4562,7 @@ async fn spawn_tasks_and_threads(
     cancel_registry: &CancelRegistry,
     termination_watcher: &watch::Receiver<()>,
     prepared_dirs: PreparedDirs,
+    api_auth: Option<&Arc<crate::server::auth::ApiAuth>>,
     #[cfg(test)] test_hooks: RuntimeTestHooks,
 ) -> Result<ServerInit, anyhow::Error> {
     server_compiled_linked
@@ -4558,6 +4583,16 @@ async fn spawn_tasks_and_threads(
     .await
     .ok_or_else(|| anyhow::anyhow!("cannot persist server configuration audit"))?;
     server_verified.server_configuration_event_id = Some(server_configuration_event_id);
+    for (http_server, reason) in &server_verified.ignored_public_http_servers {
+        crate::server::system_event_writer::record(
+            db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerPublicHttpServerIgnored,
+            None,
+            None,
+            serde_json::json!({ "http_server": http_server, "reason": reason }),
+        )
+        .await;
+    }
     record_policy_audit(
         db_pool.as_ref(),
         deployment_id,
@@ -4646,6 +4681,7 @@ async fn spawn_tasks_and_threads(
         termination_watcher,
         &log_forwarder_sender,
         &server_verified.http_activity,
+        api_auth,
     )
     .await?;
     let deployment_ctx: DeploymentContextHandle =
@@ -4879,6 +4915,7 @@ async fn start_http_servers(
     termination_watcher: &watch::Receiver<()>,
     log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
     http_activity: &utils::http_activity::HttpActivity,
+    api_auth: Option<&Arc<crate::server::auth::ApiAuth>>,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
     let mut abort_handles = Vec::new();
     let engine = &engines.webhook_engine;
@@ -4895,15 +4932,12 @@ async fn start_http_servers(
                 )
             })?;
         let server_addr = tcp_listener.local_addr()?;
-        let server_auth = crate::server::auth::oidc::OidcVerifier::new(&http_server.oidc)?;
-        if let Some(verifier) = &server_auth {
-            verifier.spawn_prefetch();
-        }
+        let server_auth = crate::server::auth::HttpServerAuth::new(http_server, api_auth)?;
         info!(
             "HTTP server `{}` is listening on http://{server_addr}{}",
             http_server.name,
             if server_auth.is_some() {
-                ", OIDC required"
+                ", credentials required"
             } else {
                 ""
             },
@@ -5124,11 +5158,15 @@ async fn generate_secret_config_digests_with_server_config(
     component_name: Option<&str>,
     secret_registry: Arc<SecretRegistry>,
     config_holder: &ConfigHolder,
-    config: ServerConfigToml,
+    mut config: ServerConfigToml,
     js_runtime: JsRuntimeMode,
     activity_vm_runtime: ActivityVmRuntimeMode,
 ) -> anyhow::Result<Vec<SecretConfigDigestOutput>> {
     let (deployment, cas) = resolve_deployment_offline(deployment_path).await?;
+    // Digests depend on the deployment only; app.toml is not loaded, so let referenced servers start.
+    config
+        .public_http_servers
+        .extend(webhook_http_server_names(&deployment));
     let mut undeclared_public_env = BTreeSet::new();
     config_prepass::collect_deployment_unregistered_public_env(
         &deployment,
@@ -5412,40 +5450,6 @@ impl DeploymentVerified {
         Ok(())
     }
 
-    /// A request carries one bearer token, consumed by the server-wide check.
-    fn verify_no_oidc_on_oidc_servers(
-        deployment: &DeploymentResolved,
-        http_servers: &[HttpServer],
-    ) -> Result<(), anyhow::Error> {
-        let protected: hashbrown::HashSet<_> = http_servers
-            .iter()
-            .filter(|server| !server.oidc.is_empty())
-            .map(|server| &server.name)
-            .collect();
-        let offending_webhooks: Vec<_> = deployment
-            .webhooks_wasm
-            .iter()
-            .filter(|webhook| !webhook.oidc.is_empty() && protected.contains(&webhook.http_server))
-            .map(|webhook| &webhook.common.name)
-            .chain(
-                deployment
-                    .webhooks_js
-                    .iter()
-                    .filter(|webhook| {
-                        !webhook.oidc.is_empty() && protected.contains(&webhook.http_server)
-                    })
-                    .map(|webhook| &webhook.name),
-            )
-            .collect();
-        if !offending_webhooks.is_empty() {
-            bail!(
-                "webhook(s) {offending_webhooks:?} configure `oidc` on an `http_server` that already \
-                 requires OIDC in server.toml; remove one of them"
-            );
-        }
-        Ok(())
-    }
-
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
@@ -5483,13 +5487,11 @@ impl DeploymentVerified {
         // unauthorized secret replacements) runs in `config_prepass::preflight` before this
         // point; the authoritative per-request enforcement lives in `http_request_policy`.
         Self::verify_no_webui_server_bindings(&deployment)?;
-        Self::verify_no_oidc_on_oidc_servers(&deployment, &http_servers)?;
 
         if let Some(api_listening_addr) = api_addr_if_webui_enabled {
             let target_url = format!("http://{api_listening_addr}");
             deployment.webhooks_wasm.push(
                 crate::config::deployment::WebhookWasmComponentConfigResolved {
-                    oidc: Vec::new(),
                     common: ComponentCommon {
                         name: ConfigName::new(StrVariant::Static(COMPONENT_NAME_WEBUI)).unwrap(),
                         location: webui_location(&wasm_cache_dir).await?,
@@ -5552,7 +5554,9 @@ impl DeploymentVerified {
             // Each webhook must be associated with an `http_server`.
             if !remaining_server_names_to_webhook_names.is_empty() {
                 bail!(
-                    "No matching `http_server` found for some `webhook` configurations: {:?}",
+                    "No started `http_server` found for some `webhook` configurations: {:?}. \
+                     A server without `oidc` or `api_auth` in server.toml starts only when \
+                     app.toml lists it in `public_http_servers`",
                     remaining_server_names_to_webhook_names
                         .keys()
                         .collect::<Vec<_>>()
@@ -6207,7 +6211,6 @@ async fn compile_and_link(
                                 &global_http_config,
                             );
                             let config = WebhookEndpointConfig {
-                                request_auth: webhook.oidc.map(|auth| auth as Arc<dyn webhook_trigger::WebhookRequestAuth>),
                                 component_id,
                                 forward_stdout: webhook.forward_stdout,
                                 forward_stderr: webhook.forward_stderr,
@@ -6255,7 +6258,6 @@ async fn compile_and_link(
                         span.in_scope(|| {
                             let frame_files = webhook_js.as_frame_sources();
                             let config = WebhookEndpointConfig {
-                                request_auth: webhook_js.oidc.map(|auth| auth as Arc<dyn webhook_trigger::WebhookRequestAuth>),
                                 component_id: webhook_js.component_id,
                                 forward_stdout: webhook_js.forward_stdout,
                                 forward_stderr: webhook_js.forward_stderr,
@@ -7653,7 +7655,7 @@ mod tests {
         "##,
         )?;
         let (deployment, cas) = resolve_deployment_offline(&deployment_path).await?;
-        let config = toml::from_str("http_server.webui.enabled = false")?;
+        let config = toml::from_str("webui.enabled = false")?;
         let server = ServerVerified::new(
             wasm_workers::engines::Engines::new(
                 wasm_workers::engines::EngineConfig::on_demand_testing(),
@@ -8214,6 +8216,7 @@ mod tests {
         config.secrets = app.secrets;
         config.public_env = app.public_env;
         config.allowed_exec_activities = app.allowed_exec_activities;
+        config.public_http_servers = app.public_http_servers;
         config.outbound_http = app.outbound_http;
 
         let fixture = crate::command::test_support::target_aware_deployment_fixture(
@@ -8491,6 +8494,7 @@ mod tests {
         let app = config_holder.load_app_config()?;
         config.public_env = app.public_env;
         config.allowed_exec_activities = app.allowed_exec_activities;
+        config.public_http_servers = app.public_http_servers;
         let (deployment, cas) =
             resolve_deployment_offline(&workspace.join("deployment-testing-exec.toml")).await?;
         let digests = deployment
