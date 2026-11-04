@@ -131,8 +131,7 @@ pub struct AppConfigToml {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub public_env: ::std::collections::BTreeMap<::std::string::String, PublicEnvConfigToml>,
-    /**`http_server` names that may serve webhooks without credentials. Servers that server.toml
-    protects with `oidc` or `api_auth` need no entry; the built-in Web UI never does.*/
+    ///HTTP servers allowed without credentials; `internal` and `webui` are reserved and cannot be listed.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub public_http_servers: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     #[serde(

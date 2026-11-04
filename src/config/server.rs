@@ -32,6 +32,9 @@ use std::time::Duration;
 pub(crate) struct ServerConfigToml {
     #[serde(skip)]
     #[schemars(skip)]
+    pub(crate) dev: bool,
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) startup_deployment_id: Option<concepts::prefixed_ulid::DeploymentId>,
     #[serde(skip)]
     #[schemars(skip)]
@@ -1792,8 +1795,7 @@ pub(crate) enum PublicHttpServerIgnored {
 impl ServerConfigToml {
     /// Listeners that start: `webui`, then the built-in ones, then user-defined ones.
     ///
-    /// A server without credentials starts only when app.toml lists it in `public_http_servers`.
-    /// `webui` is configured by `[webui]`, has no credentials and needs no listing.
+    /// Credential-less listeners require app publicity, except `webui` and `internal` with `--dev`.
     pub(crate) fn enabled_http_servers(&self) -> anyhow::Result<Vec<HttpServer>> {
         anyhow::ensure!(
             !self.http_servers.contains_key(HTTP_SERVER_NAME_WEBUI),
@@ -1847,6 +1849,7 @@ impl ServerConfigToml {
 
     fn http_server_may_start(&self, name: &str, toml: Option<&HttpServerToml>) -> bool {
         toml.is_some_and(HttpServerToml::requires_credentials)
+            || (name == "internal" && self.dev)
             || self.public_http_servers.contains(name)
     }
 
@@ -2115,7 +2118,7 @@ mod tests {
         }
 
         fn servers(toml: &str) -> anyhow::Result<Vec<(String, SocketAddr, usize)>> {
-            Ok(config(toml, &["external", "internal", "custom"])?
+            Ok(config(toml, &["external", "custom"])?
                 .enabled_http_servers()?
                 .into_iter()
                 .map(|server| {
@@ -2187,13 +2190,33 @@ mod tests {
         }
 
         #[test]
+        fn dev_opens_only_internal_and_respects_disabled_servers() {
+            let mut settings = config("", &[]).unwrap();
+            assert_eq!(settings.enabled_http_servers().unwrap().len(), 1);
+            settings.dev = true;
+            let names = |config: &ServerConfigToml| {
+                config
+                    .enabled_http_servers()
+                    .unwrap()
+                    .into_iter()
+                    .map(|server| server.name.to_string())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(names(&settings), ["webui", "internal"]);
+            assert_eq!(settings.closed_http_servers(), ["external"]);
+            let mut config = config("http_server.internal.enabled = false", &[]).unwrap();
+            config.dev = true;
+            assert_eq!(names(&config), ["webui"]);
+        }
+
+        #[test]
         fn ineffective_public_entries_are_reported() {
             let config = config(
                 r"
                 http_server.external.enabled = false
                 http_server.internal.api_auth = true
                 ",
-                &["external", "internal", "missing", "webui", "custom"],
+                &["external", "missing", "custom"],
             )
             .unwrap();
             assert_eq!(
@@ -2201,12 +2224,7 @@ mod tests {
                 [
                     ("custom".to_string(), PublicHttpServerIgnored::NotEnabled),
                     ("external".to_string(), PublicHttpServerIgnored::NotEnabled),
-                    (
-                        "internal".to_string(),
-                        PublicHttpServerIgnored::RequiresCredentials
-                    ),
                     ("missing".to_string(), PublicHttpServerIgnored::NotEnabled),
-                    ("webui".to_string(), PublicHttpServerIgnored::NotEnabled),
                 ]
             );
         }
@@ -2214,7 +2232,7 @@ mod tests {
         #[test]
         fn public_url_resolves_for_any_server_and_api() {
             use crate::config::secret_registry::InternalPublicEnvSource;
-            let config = config(
+            let mut config = config(
                 r#"
                 api.listening_addr = "[::]:5005"
                 api.public_url = "https://api.example.test/"
@@ -2222,9 +2240,10 @@ mod tests {
                 [http_server.custom]
                 listening_addr = "0.0.0.0:9000"
                 "#,
-                &["external", "internal", "custom"],
+                &["external", "custom"],
             )
             .unwrap();
+            config.dev = true;
             let url = |http_server: &str| {
                 config.internal_public_env(&InternalPublicEnvSource::HttpServerUrl {
                     http_server: http_server.to_string(),

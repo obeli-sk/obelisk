@@ -13,10 +13,9 @@ mod wit_printer;
 
 use crate::command::server::{
     ActivityVmRuntimeMode, JsRuntimeMode, PrepareDirsParams, RunParams, RuntimeConfigAvailability,
-    ServerAuth, VerifyParams, run, verify,
+    VerifyParams, run, verify,
 };
-use crate::config::secret_registry::{API_TOKEN, EnvVarSecretsCleanup};
-use anyhow::ensure;
+use crate::config::secret_registry::EnvVarSecretsCleanup;
 use args::{
     AdminArgs, AppArgs, Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs,
     ExecutionArgs, Server, Subcommand, VerifyArgs,
@@ -69,7 +68,7 @@ fn command_future(
             empty: deployment_empty,
             description,
             suppress_type_checking_errors,
-            no_auth,
+            dev,
             api_token,
         }) => {
             let ServerStartup {
@@ -83,15 +82,9 @@ fn command_future(
                 app_config,
                 EnvVarSecretsCleanup::Wipe,
                 RuntimeConfigAvailability::Strict,
+                dev,
             )?;
             config.startup_deployment_id = deployment_id;
-            let auth = if no_auth {
-                assert!(api_token.is_none(), "{API_TOKEN} conflicts with --no-auth");
-                ServerAuth::NoAuth
-            } else {
-                ensure!(!no_auth, "guarded by conflicts_with");
-                ServerAuth::Auth { api_token }
-            };
             Box::pin(run(
                 config_holder,
                 config,
@@ -105,7 +98,7 @@ fn command_future(
                     },
                     clean_sqlite_directory,
                     suppress_type_checking_errors,
-                    auth,
+                    api_token,
                     js_runtime,
                     activity_vm_runtime,
                     #[cfg(test)]
@@ -160,6 +153,7 @@ fn command_future(
                     runtime_config_availability
                 },
                 !fixes.any(),
+                false,
             )?;
             config.startup_deployment_id = deployment_id;
             Box::pin(verify(
@@ -282,6 +276,7 @@ fn prepare_server_startup(
     app_config: Option<PathBuf>,
     env_var_cleanup: EnvVarSecretsCleanup,
     runtime_config_availability: RuntimeConfigAvailability,
+    dev: bool,
 ) -> anyhow::Result<ServerStartup> {
     prepare_server_startup_with_exec_policy(
         server_config,
@@ -289,6 +284,7 @@ fn prepare_server_startup(
         env_var_cleanup,
         runtime_config_availability,
         true,
+        dev,
     )
 }
 
@@ -298,6 +294,7 @@ fn prepare_server_startup_with_exec_policy(
     env_var_cleanup: EnvVarSecretsCleanup,
     runtime_config_availability: RuntimeConfigAvailability,
     check_exec_policy: bool,
+    dev: bool,
 ) -> anyhow::Result<ServerStartup> {
     if env_var_cleanup == EnvVarSecretsCleanup::Wipe {
         assert_ne!(
@@ -308,6 +305,7 @@ fn prepare_server_startup_with_exec_policy(
     let mut config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?
         .with_app_source(config::app::resolve_app_config(app_config)?)?;
     let mut config = config_holder.load_config()?;
+    config.dev = dev;
     let (mut app, app_toml) = config_holder.load_app_config_with_text()?;
     config_holder
         .path_prefixes
@@ -436,6 +434,7 @@ mod app_policy_tests {
                 Some(app.clone()),
                 EnvVarSecretsCleanup::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
+                false,
             )
         };
         const ERR_ACTIVITIES_ARE_OFF: &str =
@@ -467,6 +466,7 @@ mod app_policy_tests {
             Some(app.clone()),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::AllowUnavailable,
+            false,
         )
         .unwrap();
         // Server diagnostics retain `source_path`.
@@ -506,6 +506,7 @@ methods = ['GET']
                     Some(app.clone()),
                     EnvVarSecretsCleanup::Noop,
                     RuntimeConfigAvailability::Strict,
+                    false,
                 )
                 .unwrap();
                 assert_eq!(
@@ -561,6 +562,7 @@ methods = ['GET']
             Some(app),
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
+            false,
         )
         .unwrap();
         assert_eq!(
@@ -629,6 +631,7 @@ methods = ['GET']
                 Some(app.clone()),
                 EnvVarSecretsCleanup::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
+                false,
             )
             .unwrap_err();
             assert!(format!("{error:#}").contains(expected), "{error:#}");

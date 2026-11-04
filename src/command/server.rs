@@ -712,7 +712,7 @@ pub(crate) struct RunParams {
     pub(crate) dir_params: PrepareDirsParams,
     pub(crate) clean_sqlite_directory: bool,
     pub(crate) suppress_type_checking_errors: bool,
-    pub(crate) auth: ServerAuth,
+    pub(crate) api_token: Option<SecretString>,
     pub(crate) js_runtime: JsRuntimeMode,
     pub(crate) activity_vm_runtime: ActivityVmRuntimeMode,
     #[cfg(test)]
@@ -741,11 +741,6 @@ pub(crate) enum ActivityVmRuntimeMode {
     QemuTcg,
     QemuKvm,
     Firecracker,
-}
-
-pub(crate) enum ServerAuth {
-    NoAuth,
-    Auth { api_token: Option<SecretString> },
 }
 
 pub(crate) async fn run(
@@ -1015,6 +1010,7 @@ pub(crate) async fn verify(
                 EnvVarSecretsCleanup::Noop,
                 RuntimeConfigAvailability::AllowMissingValues,
                 false,
+                false,
             )?;
             (config_holder, config, secret_registry)
         } else {
@@ -1047,6 +1043,7 @@ pub(crate) async fn verify(
             config_holder.app_source,
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::AllowMissingValues,
+            false,
             false,
         )?;
         (config_holder, config, secret_registry)
@@ -1097,6 +1094,7 @@ pub(crate) async fn verify(
             config_holder.app_source,
             EnvVarSecretsCleanup::Noop,
             verify_params.runtime_config_availability,
+            false,
         )?;
         (
             startup.config_holder,
@@ -2327,12 +2325,11 @@ pub(crate) async fn run_internal(
     let health_listening_addr = config.health.listening_addr;
     let mut idle_db = None;
     let selected_deployment = config.startup_deployment_id;
-    let api_auth = match &params.auth {
-        ServerAuth::Auth { api_token } if api_listening_addr.is_some() => Some(Arc::new(
-            crate::server::auth::ApiAuth::new(&config.api, api_token.clone())?,
-        )),
-        ServerAuth::Auth { .. } | ServerAuth::NoAuth => None,
-    };
+    let dev = config.dev;
+    let api_auth = api_listening_addr
+        .map(|_| crate::server::auth::ApiAuth::new(&config.api, params.api_token.clone()))
+        .transpose()?
+        .map(Arc::new);
 
     let secret_registry = Arc::new(
         secret_registry.with_internal_token(api_auth.as_ref().map(|auth| auth.startup_token()))?,
@@ -2606,31 +2603,24 @@ pub(crate) async fn run_internal(
     });
     if let Some(api_listening_addr) = api_listening_addr {
         let app = app_router;
-        let app_svc = match api_auth {
-            None => {
-                warn!("API authentication is disabled by --no-auth: accepting all API requests");
-                app.layer(axum::middleware::from_fn_with_state(
-                    http_activity.clone(),
-                    crate::server::idle::middleware,
-                ))
-                .into_make_service()
-            }
-            Some(api_auth) => {
-                // Not `tracing`, see `auth_middleware`.
+        let api_auth = api_auth.expect("enabled API has authentication");
+        let app_svc = {
+            if dev {
+                // Keep credentials out of tracing sinks, which may ship logs elsewhere.
                 eprintln!(
                     "API startup token: {}",
                     api_auth.startup_token().expose_secret()
                 );
-                app.layer(axum::middleware::from_fn_with_state(
-                    api_auth,
-                    crate::server::auth::auth_middleware,
-                ))
-                .layer(axum::middleware::from_fn_with_state(
-                    http_activity.clone(),
-                    crate::server::idle::middleware,
-                ))
-                .into_make_service()
             }
+            app.layer(axum::middleware::from_fn_with_state(
+                api_auth,
+                crate::server::auth::auth_middleware,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                http_activity.clone(),
+                crate::server::idle::middleware,
+            ))
+            .into_make_service()
         };
         let listener = match TcpListener::bind(api_listening_addr).await {
             Ok(listener) => listener,
@@ -2849,10 +2839,16 @@ impl ServerVerified {
             );
         }
         for name in config.closed_http_servers() {
-            info!(
-                "HTTP server `{name}` does not start: it has no `oidc` or `api_auth`, and app.toml \
+            if name == "internal" {
+                warn!(
+                    "HTTP server `internal` does not start: configure `oidc` or `api_auth` in server.toml, or use `--dev` for local development"
+                );
+            } else {
+                info!(
+                    "HTTP server `{name}` does not start: it has no `oidc` or `api_auth`, and app.toml \
                  `public_http_servers` does not list it"
-            );
+                );
+            }
         }
         let ignored_public_http_servers = config.ignored_public_http_servers();
         let webui_enabled = http_servers
@@ -5556,7 +5552,8 @@ impl DeploymentVerified {
                 bail!(
                     "No started `http_server` found for some `webhook` configurations: {:?}. \
                      A server without `oidc` or `api_auth` in server.toml starts only when \
-                     app.toml lists it in `public_http_servers`",
+                     app.toml lists it in `public_http_servers`; `internal` instead requires \
+                     credentials or `server run --dev` for local development",
                     remaining_server_names_to_webhook_names
                         .keys()
                         .collect::<Vec<_>>()

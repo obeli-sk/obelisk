@@ -7,7 +7,8 @@
 app_name = "my-app"
 
 ## `http_server` names from server.toml that may serve webhooks without credentials.
-## A server without `oidc` or `api_auth` does not start unless listed. The webui needs no listing.
+## A server without `oidc` or `api_auth` does not start unless listed. The reserved names `internal` and `webui` cannot be listed.
+## Use `server run --dev` to start `internal` without configured credentials locally.
 ## Listing a server that requires credentials, or one that is disabled, records a warning event.
 # public_http_servers = ["external"]
 

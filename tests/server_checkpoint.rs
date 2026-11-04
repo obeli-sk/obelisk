@@ -65,7 +65,10 @@ wasm.codegen_cache.directory = "{codegen}"
             .current_dir(self.dir.path())
             .env("OBELISK_API_URL", &self.api_url)
             .env("OBELISK_JS_RUNTIME", "v8")
-            .env_remove("OBELISK_API_TOKEN")
+            .env(
+                "OBELISK_API_TOKEN",
+                "checkpoint-test-api-token-0000000000000000",
+            )
             .env_remove("OBELISK_APP_NAME")
             .env_remove("OBELISK_UNSTABLE_ACTIVITY_VM");
         command
@@ -80,7 +83,7 @@ wasm.codegen_cache.directory = "{codegen}"
         let mut args = vec![
             "server",
             "run",
-            "--no-auth",
+            "--dev",
             "-s",
             server_toml,
             "-a",
@@ -223,7 +226,7 @@ fn checkpoint_moves_only_on_activation() {
     let failed = fixture.run(&[
         "server",
         "run",
-        "--no-auth",
+        "--dev",
         "-s",
         blocked.to_str().unwrap(),
         "-a",
@@ -243,4 +246,112 @@ fn checkpoint_moves_only_on_activation() {
     assert_eq!(fixture.status(HOT), "active");
     assert_eq!(fixture.status(QUEUED), "enqueued");
     server.stop();
+}
+
+#[tokio::test]
+async fn dev_controls_token_disclosure_and_internal_without_disabling_api_auth() {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .unwrap();
+    for (dev, internal_api_auth) in [(false, false), (true, false), (true, true)] {
+        let fixture = Fixture::new();
+        if dev {
+            std::fs::write(fixture.path("app.toml"), "app_name = 'checkpoint-test'\n[public_env]\nINTERNAL_URL = { type = 'internal', source = 'http-server-url', http_server = 'internal' }\n[secrets]\nINTERNAL_TOKEN = { type = 'internal' }\n").unwrap();
+        }
+        let internal_port = free_port();
+        let config_path = fixture.path("server.toml");
+        let config = std::fs::read_to_string(&config_path).unwrap().replace(
+            "http_server.internal.enabled = false",
+            &format!("http_server.internal.listening_addr = '127.0.0.1:{internal_port}'\nhttp_server.internal.api_auth = {internal_api_auth}"),
+        );
+        std::fs::write(config_path, config).unwrap();
+        let stderr_path = fixture.path("stderr.log");
+        let mut command = fixture.command(&["server", "run", "--empty", "-s", "server.toml"]);
+        if dev {
+            command.arg("--dev");
+        }
+        let mut child = command
+            .stderr(std::fs::File::create(&stderr_path).unwrap())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while std::net::TcpStream::connect(("127.0.0.1", fixture.port)).is_err() {
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "server exited: {}",
+                std::fs::read_to_string(&stderr_path).unwrap()
+            );
+            assert!(Instant::now() < deadline, "server did not start");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let server = Server(child);
+        let client = reqwest::Client::new();
+        let url = format!("{}/v1/functions", fixture.api_url);
+        assert_eq!(
+            client.get(&url).send().await.unwrap().status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            client
+                .get(&url)
+                .bearer_auth("wrong")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        assert!(
+            client
+                .get(&url)
+                .bearer_auth("checkpoint-test-api-token-0000000000000000")
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .is_success()
+        );
+        let stderr = std::fs::read_to_string(&stderr_path).unwrap();
+        let startup_token = stderr
+            .lines()
+            .find_map(|line| line.strip_prefix("API startup token: "));
+        assert_eq!(startup_token.is_some(), dev, "{stderr}");
+        assert!(!stderr.contains("This server's startup token:"));
+        if let Some(token) = startup_token {
+            assert!(
+                client
+                    .get(&url)
+                    .bearer_auth(token)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+                    .is_success()
+            );
+        }
+        if dev {
+            let response = client
+                .get(format!("http://127.0.0.1:{internal_port}/"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if internal_api_auth {
+                    reqwest::StatusCode::UNAUTHORIZED
+                } else {
+                    reqwest::StatusCode::NOT_FOUND
+                }
+            );
+        } else {
+            assert!(std::net::TcpStream::connect(("127.0.0.1", internal_port)).is_err());
+            assert!(stderr.contains("use `--dev`"), "{stderr}");
+        }
+        server.stop();
+    }
+    let fixture = Fixture::new();
+    let output = fixture.run(&["server", "run", "--no-auth"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unexpected argument '--no-auth'"));
 }

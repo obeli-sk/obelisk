@@ -458,7 +458,7 @@ routes = ["/echo"]
     }
     server.shutdown().await;
 
-    // `--no-auth` opens `api_auth` servers like the API.
+    // Without an explicit API token, `api_auth` still rejects unauthenticated requests.
     let server =
         TestServer::start_inline_deployment_with_auth(ip, &api_lines, deployment, None).await;
     let response = client
@@ -466,6 +466,6 @@ routes = ["/echo"]
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
     server.shutdown().await;
 }

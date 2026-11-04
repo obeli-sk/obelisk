@@ -7,7 +7,9 @@
 //! fixed ports, allowing parallel test execution without conflicts.
 //! The `test_addr!` macro ensures unique addresses at link time.
 
-use crate::command::server::{self, JsRuntimeMode, ServerAuth};
+const TEST_API_TOKEN: &str = "integration-test-api-token-0000000000000000";
+
+use crate::command::server::{self, JsRuntimeMode};
 use crate::config::env_var::StartupEnvVars;
 use crate::{
     command::server::{LocalDeployment, PrepareDirsParams, RunParams, prepare_dirs, run_internal},
@@ -783,7 +785,7 @@ impl TestServer {
     }
 
     /// Like `start_inline_deployment`, adding top-level `server.toml` lines. Without `api_token`
-    /// the server runs with `--no-auth`.
+    /// the server uses a shared test API token.
     async fn start_inline_deployment_with_auth(
         ip: String,
         server_toml_api_lines: &str,
@@ -860,7 +862,7 @@ impl TestServer {
         .await
     }
 
-    /// Start an empty server with API auth enabled (`no_auth = false`), accepting the
+    /// Start an empty server with explicit API credentials (`use_default_token = false`), accepting the
     /// given extra top-level `server.toml` lines (e.g. `api.token_hashes = [...]`).
     async fn start_empty_with_auth(
         ip: String,
@@ -886,7 +888,7 @@ impl TestServer {
         tmp_dir: tempfile::TempDir,
         server_path: PathBuf,
         deployment: LocalDeployment,
-        no_auth: bool,
+        use_default_token: bool,
         api_token: Option<secrecy::SecretString>,
         js_runtime: JsRuntimeMode,
     ) -> Self {
@@ -895,7 +897,7 @@ impl TestServer {
             tmp_dir,
             server_path,
             deployment,
-            no_auth,
+            use_default_token,
             api_token,
             js_runtime,
             server::RuntimeTestHooks::default(),
@@ -909,7 +911,7 @@ impl TestServer {
         tmp_dir: tempfile::TempDir,
         server_path: std::path::PathBuf,
         deployment: LocalDeployment,
-        no_auth: bool,
+        use_default_token: bool,
         api_token: Option<secrecy::SecretString>,
         js_runtime: JsRuntimeMode,
         test_hooks: server::RuntimeTestHooks,
@@ -963,10 +965,10 @@ impl TestServer {
             },
             clean_sqlite_directory: false,
             suppress_type_checking_errors: false,
-            auth: if no_auth {
-                ServerAuth::NoAuth
+            api_token: if use_default_token {
+                Some(secrecy::SecretString::from(TEST_API_TOKEN))
             } else {
-                ServerAuth::Auth { api_token }
+                api_token
             },
             js_runtime,
             activity_vm_runtime: crate::parse_activity_vm_runtime_from_env(
@@ -986,7 +988,19 @@ impl TestServer {
         .unwrap();
 
         let base_url = format!("http://{ip}:{API_PORT}");
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .default_headers(if use_default_token {
+                [(
+                    reqwest::header::AUTHORIZATION,
+                    format!("Bearer {TEST_API_TOKEN}").parse().unwrap(),
+                )]
+                .into_iter()
+                .collect()
+            } else {
+                reqwest::header::HeaderMap::new()
+            })
+            .build()
+            .unwrap();
         if client
             .get(format!("{base_url}/v1/functions"))
             .header("Accept", "application/json")
@@ -1440,7 +1454,11 @@ impl TestServer {
                 .await
                 .expect("cannot prepare deployment manifest");
         super::deployment::upload_and_submit_manifest(
-            &crate::client::ClientStartup::new(self.base_url.clone(), None, false),
+            &crate::client::ClientStartup::new(
+                self.base_url.clone(),
+                Some(TEST_API_TOKEN.into()),
+                false,
+            ),
             &self.base_url,
             prepared,
             false,
@@ -2237,7 +2255,7 @@ async fn app_policy_webapi_reports_running_policy() {
     })
     .run(crate::client::ClientStartup::new(
         server.base_url.clone(),
-        None,
+        Some(TEST_API_TOKEN.into()),
         false,
     ))
     .await
@@ -2257,7 +2275,7 @@ async fn app_policy_webapi_reports_running_policy() {
     }
     .run(crate::client::ClientStartup::new(
         server.base_url.clone(),
-        None,
+        Some(TEST_API_TOKEN.into()),
         false,
     ))
     .await

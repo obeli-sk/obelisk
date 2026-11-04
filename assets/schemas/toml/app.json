@@ -41,7 +41,7 @@
       }
     },
     "public_http_servers": {
-      "description": "`http_server` names that may serve webhooks without credentials. Servers that server.toml\nprotects with `oidc` or `api_auth` need no entry; the built-in Web UI never does.",
+      "description": "HTTP servers allowed without credentials; `internal` and `webui` are reserved and cannot be listed.",
       "type": "array",
       "uniqueItems": true,
       "items": {

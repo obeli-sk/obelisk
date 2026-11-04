@@ -25,7 +25,7 @@
 ## Public URL of any HTTP server, for the app's `http-server-url` public_env source; defaults to the local listener URL.
 # http_server.internal.public_url = "https://internal--my-app.obelisk.works"
 ## A server without `oidc` or `api_auth` accepts requests without credentials, so it starts only when
-## app.toml lists it in `public_http_servers`.
+## app.toml lists it in `public_http_servers`. The reserved `internal` server instead requires `--dev`.
 ## Listening on all interfaces using [::]:port is not advised for servers without credentials.
 
 ## Additional HTTP servers need a `listening_addr`.
@@ -35,7 +35,7 @@
 ## Require a bearer token on every request of an HTTP server, checked before routing.
 ## Missing or invalid tokens return 401; a verified JWT matching no entry returns 403.
 ## `api_auth = true` accepts every token the API accepts: the startup token, `--api-token`,
-## `api.token_hashes` and `api.oidc`. It requires an enabled API; with `--no-auth` it accepts all requests.
+## `api.token_hashes` and `api.oidc`. It requires an enabled API, including with `--dev`.
 # http_server.internal.api_auth = true
 ## OIDC ID tokens (JWT) matching any entry are accepted as well; matching works like `[[api.oidc]]`.
 ## A verified `Authorization` header is removed. After an OIDC token, the `obelisk-oidc-claims`
@@ -85,7 +85,7 @@
 # health.listening_addr = "[::]:5006"
 
 ## API authentication. The API port denies requests without a valid `Authorization: Bearer <token>` header.
-## An ephemeral startup token is always generated and printed to the console.
+## An ephemeral startup token is always generated; only `--dev` prints it to the console.
 ## Persistent tokens are configured as sha256 hashes of the token text. Only hashes of high-entropy
 ## random tokens are safe to commit: SHA-256 is fast and unsalted, so passwords and other guessable
 ## tokens are vulnerable to offline guessing. Tokens should contain at least 32 characters; shorter
