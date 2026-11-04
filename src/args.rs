@@ -523,7 +523,7 @@ pub(crate) enum StarterTemplate {
 pub(crate) enum Generate {
     /// Create a JS starter app in a new NAME directory, or in the current directory if unnamed.
     New {
-        /// New directory and app name; defaults to the current directory with a derived slug.
+        /// New directory; defaults to the current directory. Invalid app names get a random replacement.
         name: Option<String>,
         #[arg(long, value_enum, default_value_t)]
         template: StarterTemplate,

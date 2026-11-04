@@ -2584,7 +2584,7 @@
           "positionals": [
             {
               "name": "name",
-              "help": "New directory and app name; defaults to the current directory with a derived slug"
+              "help": "New directory; defaults to the current directory. Invalid app names get a random replacement"
             }
           ]
         },
