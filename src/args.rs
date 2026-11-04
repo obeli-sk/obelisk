@@ -1868,7 +1868,7 @@ pub(crate) enum CloudApp {
         #[arg(long)]
         description: Option<String>,
     },
-    /// Apply the staged configuration and the enqueued (or active) deployment.
+    /// Apply the staged configuration with the currently active deployment.
     Apply {
         /// App config path compared with the staged configuration; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]

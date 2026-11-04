@@ -1179,7 +1179,7 @@
             },
             {
               "name": "apply",
-              "about": "Apply the staged configuration and the enqueued (or active) deployment",
+              "about": "Apply the staged configuration with the currently active deployment",
               "options": [
                 {
                   "name": "--app-config",

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(cloud)* Deploy uploads its deployment and activates it through provisioner Apply,
+  without enqueuing it on the tenant. Cloud `app deployment enqueue` and
+  `app deployment apply` reject direct activation and direct users to `app deploy`
+  or `app apply` instead.
 - *(cli)* Execution results in default mode are pretty-printed as JSON on stdout, with
   completion messages on stderr. Human-readable logs from `execution submit --follow-logs`
   now go to stderr. With `--json`, submission, logs, and final results remain NDJSON on stdout
