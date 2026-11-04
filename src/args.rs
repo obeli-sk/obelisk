@@ -720,10 +720,9 @@ pub(crate) enum Server {
         /// Do not fail startup when a component's imports/exports fail type checking against the current deployment.
         #[arg(long)]
         suppress_type_checking_errors: bool,
-        /// Accept unauthenticated requests on the API port and on `http_server` entries with
-        /// `api_auth`. Dev/recovery override.
-        #[arg(long, conflicts_with = "api_token")]
-        no_auth: bool,
+        /// Print the startup API token and allow the internal HTTP server without configured credentials.
+        #[arg(long)]
+        dev: bool,
 
         /// API token required to access the API server as `Authorization: Bearer <token>`.
         /// Falls back to `$OBELISK_API_TOKEN`.
@@ -732,7 +731,6 @@ pub(crate) enum Server {
             hide_env_values = true,
             value_name = "TOKEN",
             value_parser = parse_secret_string,
-            conflicts_with = "no_auth",
         )]
         api_token: Option<SecretString>,
     },

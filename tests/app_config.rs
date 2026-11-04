@@ -20,6 +20,29 @@ fn assert_success(output: &Output) {
 }
 
 #[test]
+fn reserved_servers_cannot_be_made_public() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("deployment.toml"), "").unwrap();
+    for name in ["internal", "webui"] {
+        std::fs::write(
+            dir.path().join("app.toml"),
+            format!("app_name = 'reserved-test'\npublic_http_servers = ['{name}']\n"),
+        )
+        .unwrap();
+        let output = cli(
+            dir.path(),
+            &["server", "verify", "--skip-db", "-d", "deployment.toml"],
+        );
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("is reserved and cannot be listed"),
+            "{stderr}"
+        );
+    }
+}
+
+#[test]
 fn server_app_discovery_preserves_explicit_paths_and_rejects_invalid_files() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("deployment.toml"), "").unwrap();

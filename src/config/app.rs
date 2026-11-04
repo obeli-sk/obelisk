@@ -43,10 +43,31 @@ pub(crate) struct AppConfigToml {
     pub(crate) allowed_exec_activities: AllowExecActivities,
     #[serde(default)]
     pub(crate) outbound_http: OutboundHttpToml,
-    /// `http_server` names that may serve webhooks without credentials. Servers that server.toml
-    /// protects with `oidc` or `api_auth` need no entry; the built-in Web UI never does.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    /// HTTP servers allowed without credentials; `internal` and `webui` are reserved and cannot be listed.
+    #[serde(
+        default,
+        skip_serializing_if = "std::collections::BTreeSet::is_empty",
+        deserialize_with = "deserialize_public_http_servers"
+    )]
     pub(crate) public_http_servers: std::collections::BTreeSet<String>,
+}
+
+fn validate_public_http_servers(names: &std::collections::BTreeSet<String>) -> anyhow::Result<()> {
+    for name in ["internal", "webui"] {
+        ensure!(
+            !names.contains(name),
+            "`{name}` is reserved and cannot be listed in app.toml `public_http_servers`"
+        );
+    }
+    Ok(())
+}
+
+fn deserialize_public_http_servers<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<std::collections::BTreeSet<String>, D::Error> {
+    let names = std::collections::BTreeSet::<String>::deserialize(deserializer)?;
+    validate_public_http_servers(&names).map_err(serde::de::Error::custom)?;
+    Ok(names)
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]

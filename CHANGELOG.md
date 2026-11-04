@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** *(server)* Removed `--no-auth`. API authentication is always required.
+  New `--dev` prints the startup token and lets `internal` start without configured credentials.
+  App `public_http_servers` rejects the reserved names `internal` and `webui`.
+
 - *(cloud)* Deploy uploads its deployment and activates it through provisioner Apply,
   without enqueuing it on the tenant. Cloud `app deployment enqueue` and
   `app deployment apply` reject direct activation and direct users to `app deploy`
@@ -30,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a listener, checked before routing.
 - *(server)* `http_server.<name>.api_auth = true` accepts every token the API accepts (startup
   token, `--api-token`, `api.token_hashes`, `api.oidc`) on a listener, alongside its own `oidc`.
-  It requires an enabled API; `--no-auth` opens such listeners like the API.
+  It requires an enabled API, including with `--dev`.
 - **Breaking:** *(app)* An `http_server` without `oidc` or `api_auth` starts only when app.toml
   lists it in `public_http_servers`, so `external` and `internal` stay closed by default. The Web
   UI is not an `http_server` and always starts. Listing a server that requires credentials, or a

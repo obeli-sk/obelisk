@@ -1419,8 +1419,8 @@
               "help": "Do not fail startup when a component's imports/exports fail type checking against the current deployment"
             },
             {
-              "name": "--no-auth",
-              "help": "Accept unauthenticated requests on the API port and on `http_server` entries with `api_auth`. Dev/recovery override"
+              "name": "--dev",
+              "help": "Print the startup API token and allow the internal HTTP server without configured credentials"
             },
             {
               "name": "--api-token",

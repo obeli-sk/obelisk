@@ -27,7 +27,7 @@ use tracing::{trace, warn};
 
 pub(crate) struct ApiAuth {
     accepted: Vec<AcceptedToken>,
-    /// Recovery token, printed to the console, valid until shutdown.
+    /// Internal token, printed only with `--dev`, valid until shutdown.
     startup_token: SecretString,
     oidc: Option<Arc<oidc::OidcVerifier>>,
 }
@@ -139,13 +139,7 @@ impl ApiAuth {
 /// every token the API accepts. Any single match grants access.
 pub(crate) struct HttpServerAuth {
     oidc: Option<Arc<oidc::OidcVerifier>>,
-    api: Option<ApiCredentials>,
-}
-
-enum ApiCredentials {
-    Checked(Arc<ApiAuth>),
-    /// `--no-auth`: the API accepts every request, and so does an `api_auth` server.
-    Open,
+    api: Option<Arc<ApiAuth>>,
 }
 
 impl std::fmt::Debug for HttpServerAuth {
@@ -156,8 +150,7 @@ impl std::fmt::Debug for HttpServerAuth {
                 "api",
                 &match &self.api {
                     None => "off",
-                    Some(ApiCredentials::Checked(_)) => "checked",
-                    Some(ApiCredentials::Open) => "open",
+                    Some(_) => "checked",
                 },
             )
             .finish()
@@ -165,7 +158,6 @@ impl std::fmt::Debug for HttpServerAuth {
 }
 
 impl HttpServerAuth {
-    /// `api_auth` without `api` means the API runs with `--no-auth`.
     pub(crate) fn new(
         server: &crate::config::server::HttpServer,
         api: Option<&Arc<ApiAuth>>,
@@ -174,10 +166,14 @@ impl HttpServerAuth {
         if let Some(oidc) = &oidc {
             oidc.spawn_prefetch();
         }
-        let api = server.api_auth.then(|| match api {
-            Some(api) => ApiCredentials::Checked(api.clone()),
-            None => ApiCredentials::Open,
-        });
+        let api = if server.api_auth {
+            Some(
+                api.cloned()
+                    .ok_or_else(|| anyhow::anyhow!("`api_auth` requires an enabled API"))?,
+            )
+        } else {
+            None
+        };
         Ok((oidc.is_some() || api.is_some()).then(|| Arc::new(Self { oidc, api })))
     }
 }
@@ -189,24 +185,14 @@ impl wasm_workers::webhook::webhook_trigger::WebhookRequestAuth for HttpServerAu
         headers: &HeaderMap,
     ) -> Result<Option<header::HeaderValue>, StatusCode> {
         let token = bearer_token(headers);
-        if let Some(ApiCredentials::Open) = &self.api {
-            // Still surface verified claims, so handlers behave as with authentication on.
-            if let (Some(token), Some(oidc)) = (token, &self.oidc) {
-                return Ok(oidc.claims_header(token).await.ok());
-            }
-            return Ok(None);
-        }
         let token = token.ok_or(StatusCode::UNAUTHORIZED)?;
         let mut status = StatusCode::UNAUTHORIZED;
-        if let Some(ApiCredentials::Checked(api)) = &self.api
+        if let Some(api) = &self.api
             && api.check_static(token).is_some()
         {
             return Ok(None);
         }
-        let api_oidc = match &self.api {
-            Some(ApiCredentials::Checked(api)) => api.oidc.as_ref(),
-            _ => None,
-        };
+        let api_oidc = self.api.as_ref().and_then(|api| api.oidc.as_ref());
         for oidc in self.oidc.iter().chain(api_oidc) {
             match oidc.claims_header(token).await {
                 Ok(claims) => return Ok(Some(claims)),
@@ -246,11 +232,6 @@ pub(crate) async fn auth_middleware(
                 (CLI: `--api-token` or OBELISK_API_TOKEN).",
                 req.method(),
                 req.uri().path(),
-            );
-            // Not `tracing`: log sinks (files, OTLP) are shipped and readable by anyone with log access, while the token grants full admin.
-            eprintln!(
-                "This server's startup token: {}",
-                auth.startup_token.expose_secret()
             );
             deny_response()
         }
