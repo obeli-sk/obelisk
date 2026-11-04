@@ -18,7 +18,7 @@
 ## HTTP servers, keyed by name. Webhook endpoints (in deployment.toml) attach to one via `http_server = "name"`.
 ## Override with env vars such as `OBELISK__HTTP_SERVER__EXTERNAL__ENABLED=false`.
 ## The name `webui` is reserved.
-# http_server.external.enabled = true            # Default server for webhooks, meant to be reachable by third parties.
+# http_server.external.enabled = true            # Webhooks meant to be reachable by third parties.
 # http_server.external.listening_addr = "127.0.0.1:9090"
 # http_server.internal.enabled = true            # Webhooks meant to sit behind authentication, e.g. a protecting proxy.
 # http_server.internal.listening_addr = "127.0.0.1:9091"
