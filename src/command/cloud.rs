@@ -10,7 +10,7 @@ use crate::config::app::{AppConfigToml, generate_app_name_hint, with_app_name};
 use anyhow::{Context as _, bail, ensure};
 use concepts::prefixed_ulid::ExecutionIdTopLevel;
 use reqwest::{Method, Url, header};
-use secrecy::ExposeSecret as _;
+use secrecy::{ExposeSecret as _, SecretString};
 use serde_json::{Value, json};
 use std::{
     fmt::Write as _,
@@ -19,9 +19,13 @@ use std::{
     time::Duration,
 };
 
+mod auth;
 mod deploy;
 mod output;
 use output::Summary;
+
+const DEFAULT_API_URL: &str = "https://cloud.obeli.sk/api";
+const DEFAULT_APPS_DOMAIN: &str = "obelisk.works";
 
 fn human_output(value: &Value) -> String {
     fn render(out: &mut String, value: &Value, indent: usize) {
@@ -128,13 +132,16 @@ struct AppNameTaken;
 
 impl Client {
     fn new(args: &CloudArgs) -> anyhow::Result<Self> {
-        let origin = api_origin(
-            args.api_url
-                .as_ref()
-                .context("Set --api-url or OBELISK_CLOUD_API_URL")?,
-        )?;
+        Self::build(
+            args.api_url.as_deref().unwrap_or(DEFAULT_API_URL),
+            args.api_token.as_ref(),
+            args.verbose,
+        )
+    }
+    fn build(api_url: &str, token: Option<&SecretString>, verbose: bool) -> anyhow::Result<Self> {
+        let origin = api_origin(api_url)?;
         let mut headers = header::HeaderMap::new();
-        if let Some(token) = &args.api_token {
+        if let Some(token) = token {
             let mut value =
                 header::HeaderValue::from_str(&format!("Bearer {}", token.expose_secret()))
                     .map_err(|_| {
@@ -151,10 +158,10 @@ impl Client {
                     .redirect(reqwest::redirect::Policy::none())
                     .timeout(Duration::from_secs(360))
                     .build()?,
-                args.verbose,
+                verbose,
             ),
             origin,
-            verbose: args.verbose,
+            verbose,
         })
     }
     fn url(&self, path: &[&str]) -> anyhow::Result<Url> {
@@ -478,12 +485,16 @@ impl CloudArgs {
     fn selected_app(&self) -> Option<&str> {
         match &self.command {
             Cloud::App(args) => args.app.as_deref(),
-            Cloud::Apps(_) | Cloud::Token(_) => None,
+            Cloud::Auth(_) | Cloud::Apps(_) | Cloud::Token(_) => None,
         }
     }
     async fn endpoints(&self) -> anyhow::Result<Value> {
         let name = app_name(self.selected_app()).await?;
-        let domain = self.apps_domain.to_ascii_lowercase();
+        let domain = self
+            .apps_domain
+            .as_deref()
+            .unwrap_or(DEFAULT_APPS_DOMAIN)
+            .to_ascii_lowercase();
         ensure!(
             domain.len() <= 253
                 && domain.split('.').all(|label| {
@@ -567,6 +578,18 @@ impl CloudArgs {
         if self.verbose {
             crate::client::enable_trace();
         }
+        if let Cloud::Auth(command) = &self.command {
+            return auth::run(&self, command).await;
+        }
+        // Printing endpoints is offline and needs no login.
+        let token_required = !matches!(
+            &self.command,
+            Cloud::App(CloudAppTarget {
+                command: CloudApp::Endpoint { .. },
+                ..
+            })
+        );
+        auth::resolve(&mut self, token_required)?;
         if matches!(
             &self.command,
             Cloud::App(CloudAppTarget {
@@ -649,6 +672,7 @@ impl CloudArgs {
     async fn execute(self) -> anyhow::Result<Value> {
         let client = Client::new(&self)?;
         match self.command {
+            Cloud::Auth(_) => unreachable!("handled in run"),
             Cloud::Token(command) => token_command(&client, command).await,
             Cloud::Apps(CloudApps::List) => {
                 client
@@ -1695,7 +1719,7 @@ mod tests {
             "bad..example",
         ] {
             let mut args = args("http://127.0.0.1:1", &["app", "endpoint"]);
-            args.apps_domain = domain.to_owned();
+            args.apps_domain = Some(domain.to_owned());
             assert!(args.endpoints().await.is_err(), "{domain}");
         }
     }

@@ -135,6 +135,8 @@ async fn cloud_output_and_endpoint_selection() {
                 &origin,
                 "--apps-domain",
                 "example.com",
+                "--api-token",
+                "test-token",
             ])
             .args(args)
             .current_dir(directory.path())

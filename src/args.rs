@@ -1719,18 +1719,13 @@ pub(crate) struct CloudArgs {
     /// Show detailed metadata, HTTP requests, and response statuses on stderr.
     #[arg(long, global = true)]
     pub(crate) verbose: bool,
-    /// Cloud control plane URL.
-    #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", default_value = "https://cloud.obeli.sk/api", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
+    /// Cloud control plane URL; selects that login from `obelisk cloud auth`. Defaults to the default login, then `https://cloud.obeli.sk/api`.
+    #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
     pub(crate) api_url: Option<String>,
-    /// Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>`, `webui--<app>.<domain>` and `internal--<app>.<domain>`.
-    #[arg(
-        long,
-        global = true,
-        env = "OBELISK_CLOUD_APPS_DOMAIN",
-        default_value = "obelisk.works"
-    )]
-    pub(crate) apps_domain: String,
-    /// Cloud API bearer token.
+    /// Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>`, `webui--<app>.<domain>` and `internal--<app>.<domain>`. Selects that login from `obelisk cloud auth`; defaults to the default login, then `obelisk.works`.
+    #[arg(long, global = true, env = "OBELISK_CLOUD_APPS_DOMAIN")]
+    pub(crate) apps_domain: Option<String>,
+    /// Cloud API bearer token; takes precedence over `obelisk cloud auth login`.
     #[arg(long, global = true, env = "OBELISK_CLOUD_API_TOKEN", hide_env_values = true, value_parser = parse_secret_string)]
     pub(crate) api_token: Option<SecretString>,
     #[command(subcommand)]
@@ -1755,6 +1750,9 @@ pub(crate) struct CloudCommandId {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Cloud {
+    /// Log in through a browser and manage the saved logins.
+    #[command(subcommand)]
+    Auth(CloudAuth),
     /// Create, inspect and revoke cloud bearer tokens.
     #[command(subcommand)]
     Token(CloudToken),
@@ -1763,6 +1761,26 @@ pub(crate) enum Cloud {
     Apps(CloudApps),
     /// Manage an app and its deployments, executions and configuration.
     App(CloudAppTarget),
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum CloudAuth {
+    /// Log in through a browser; the first login becomes the default.
+    Login {
+        /// Print a link and read the code it displays, for a browser on another machine.
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// Show the logged-in endpoints.
+    Status,
+    /// Change the default login.
+    Switch {
+        /// API URL or apps domain of a logged-in endpoint.
+        #[arg(value_name = "API_URL_OR_APPS_DOMAIN")]
+        endpoint: String,
+    },
+    /// Revoke the token of the selected login and forget it.
+    Logout,
 }
 
 #[derive(Debug, clap::Subcommand)]

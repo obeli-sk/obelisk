@@ -20,6 +20,7 @@ pub(super) enum Summary {
 impl From<&Cloud> for Summary {
     fn from(command: &Cloud) -> Self {
         match command {
+            Cloud::Auth(_) => unreachable!("command has its own output"),
             Cloud::Apps(_) => Self::Apps,
             Cloud::Token(CloudToken::List) => Self::Tokens,
             Cloud::Token(CloudToken::New { .. }) => Self::Token(Some("Token registered.")),
