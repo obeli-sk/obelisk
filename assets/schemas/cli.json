@@ -27,7 +27,7 @@
         },
         {
           "name": "--apps-domain",
-          "help": "Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>` and `webui--<app>.<domain>`"
+          "help": "Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>`, `webui--<app>.<domain>` and `internal--<app>.<domain>`"
         },
         {
           "name": "--api-token",
@@ -1341,7 +1341,7 @@
             },
             {
               "name": "endpoint",
-              "about": "Show all endpoints, or select the API, webhook or Web UI URL",
+              "about": "Show all endpoints, or select the API, webhook, Web UI or internal webhook URL",
               "subcommands": [
                 {
                   "name": "api"
@@ -1351,6 +1351,9 @@
                 },
                 {
                   "name": "webui"
+                },
+                {
+                  "name": "internal"
                 }
               ]
             }

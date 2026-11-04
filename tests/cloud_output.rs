@@ -62,6 +62,7 @@ async fn cloud_app_endpoints_resolve_project_environment_and_explicit_targets_of
                 "api_url":format!("https://api--{expected_name}.{expected_domain}"),
                 "webhook_url":format!("https://{expected_name}.{expected_domain}"),
                 "webui_url":format!("https://webui--{expected_name}.{expected_domain}"),
+                 "internal_url": format!("https://internal--{expected_name}.{expected_domain}"),
             })
         );
         assert_eq!(
@@ -159,7 +160,13 @@ async fn cloud_output_and_endpoint_selection() {
             String::from_utf8(output.stderr).unwrap(),
         )
     };
-    let endpoints = json!({"api_url":"https://api--demo.example.com", "webhook_url":"https://demo.example.com", "webui_url":"https://webui--demo.example.com"});
+    let endpoints = json!({
+        "api_url": "https://api--demo.example.com",
+        "webhook_url": "https://demo.example.com",
+        "webui_url": "https://webui--demo.example.com",
+        "internal_url": "https://internal--demo.example.com",
+
+    });
     let (stdout, text) = run(&["app", "endpoint"]).await;
     assert!(stdout.is_empty(), "{stdout}");
     for url in endpoints.as_object().unwrap().values() {

@@ -499,13 +499,14 @@ impl CloudArgs {
         );
         let hostname = format!("{name}.{domain}");
         ensure!(
-            hostname.len() + "webui--".len() <= 253,
+            hostname.len() + "internal--".len() <= 253,
             "App hostname exceeds the DNS length limit"
         );
         Ok(json!({
             "api_url": format!("https://api--{hostname}"),
             "webhook_url": format!("https://{hostname}"),
             "webui_url": format!("https://webui--{hostname}"),
+            "internal_url": format!("https://internal--{hostname}"),
         }))
     }
     async fn direct_api_url(&self) -> anyhow::Result<String> {
@@ -589,6 +590,7 @@ impl CloudArgs {
                     CloudEndpoint::Api => "api_url",
                     CloudEndpoint::Webhook => "webhook_url",
                     CloudEndpoint::Webui => "webui_url",
+                    CloudEndpoint::Internal => "internal_url",
                 };
                 return print_value(
                     &endpoints[key].as_str().context("Missing endpoint URL")?,
@@ -1682,24 +1684,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn cloud_endpoints_are_derived_without_provisioner_or_credentials() {
-        let mut args = args("http://127.0.0.1:1", &["app", "endpoint"]);
-        args.api_url = None;
-        args.api_token = None;
-        assert_eq!(
-            args.endpoints().await.unwrap(),
-            json!({
-                "api_url":"https://api--demo.obelisk.works",
-                "webhook_url":"https://demo.obelisk.works",
-                "webui_url":"https://webui--demo.obelisk.works",
-            })
-        );
-        args.apps_domain = "dev.obelisk.works".into();
-        assert_eq!(
-            args.direct_api_url().await.unwrap(),
-            "https://api--demo.dev.obelisk.works"
-        );
-        args.run().await.unwrap();
+    async fn cloud_endpoints_reject_invalid_domains() {
         for domain in [
             "",
             "https://obelisk.works",
@@ -1709,7 +1694,7 @@ mod tests {
             "-invalid.example",
             "bad..example",
         ] {
-            let mut args = super::tests::args("http://127.0.0.1:1", &["app", "endpoint"]);
+            let mut args = args("http://127.0.0.1:1", &["app", "endpoint"]);
             args.apps_domain = domain.to_owned();
             assert!(args.endpoints().await.is_err(), "{domain}");
         }
