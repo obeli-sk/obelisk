@@ -198,6 +198,7 @@ pub(crate) struct InternalPublicEnvConfigToml {
 #[derive(JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
 #[expect(dead_code, reason = "schema only")]
+#[expect(clippy::enum_variant_names)]
 enum InternalPublicEnvConfigSchema {
     /// `api.public_url`, otherwise the API listener URL.
     ApiUrl {
@@ -245,6 +246,7 @@ enum HttpServerUrlSource {
 // Struct variants keep `deny_unknown_fields` effective under `flatten`.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "source", rename_all = "kebab-case", deny_unknown_fields)]
+#[expect(clippy::enum_variant_names)]
 pub(crate) enum InternalPublicEnvSource {
     /// `api.public_url`, otherwise the API listener URL.
     ApiUrl {},
