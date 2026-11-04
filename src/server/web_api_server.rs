@@ -4386,6 +4386,7 @@ pub(crate) mod deployment {
         files: Vec<server::SuppliedFile>,
     }
 
+    // backcompat: 0.43 deprecates multipart deployment PUT requests in favor of separate file uploads and JSON submission.
     async fn parse_multipart_submit(
         mut multipart: axum::extract::Multipart,
         accept: AcceptHeader,

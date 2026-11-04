@@ -65,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(api)* `POST /v1/deployments`, as its retries create duplicate deployments. Use
   `PUT /v1/deployments/{deployment_id}` with a client-generated ID.
+- *(api)* Multipart `PUT /v1/deployments/{deployment_id}` requests. Upload the files
+  referenced by the deployment to `PUT /v1/files/{digest}`, then submit the deployment as JSON.
 
 ### Fixed
 
