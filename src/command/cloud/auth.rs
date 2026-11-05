@@ -1,7 +1,7 @@
 //! `obelisk cloud auth`: browser login and the local credentials file.
 
 use super::{Client, DEFAULT_API_URL, Kind, api_origin, human_output, print_json, terminal};
-use crate::args::{CloudArgs, CloudAuth};
+use crate::args::{CloudArgs, CloudAuth, non_empty_env};
 use anyhow::{Context as _, bail, ensure};
 use reqwest::{Method, Url};
 use secrecy::SecretString;
@@ -560,8 +560,8 @@ async fn token_state(entry: &Account, verbose: bool) -> String {
 
 async fn status(args: &CloudArgs, path: &Path) -> anyhow::Result<Value> {
     let store = Store::load(path)?;
-    if args.api_token.is_some() && !args.json {
-        eprintln!("--api-token or OBELISK_CLOUD_API_TOKEN is set and takes precedence.\n");
+    if non_empty_env("OBELISK_CLOUD_API_TOKEN").is_some() && !args.json {
+        eprintln!("OBELISK_CLOUD_API_TOKEN is set and takes precedence.\n");
     }
     let mut accounts = Vec::new();
     for entry in &store.accounts {
@@ -591,7 +591,8 @@ fn switch(path: &Path, name: &str) -> anyhow::Result<Value> {
 
 async fn logout(args: &CloudArgs, name: Option<&str>, path: &Path) -> anyhow::Result<Value> {
     let mut store = Store::load(path)?;
-    let name = name.or(args.account.as_deref());
+    let selected = non_empty_env("OBELISK_CLOUD_ACCOUNT");
+    let name = name.or(selected.as_deref());
     let entry = store.select(name).cloned().with_context(|| {
         name.map_or_else(
             || "Not logged in".to_owned(),
@@ -646,7 +647,13 @@ mod tests {
             account: account.map(str::to_owned),
             api_url: None,
             apps_domain: None,
-            command: crate::args::Cloud::Apps(crate::args::CloudApps::List),
+            command: crate::args::Cloud::Apps(crate::args::CloudAppsArgs {
+                credentials: crate::args::CloudCredentials {
+                    api_token: None,
+                    account: None,
+                },
+                command: crate::args::CloudApps::List,
+            }),
         }
     }
 

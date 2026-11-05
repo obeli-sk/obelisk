@@ -2,8 +2,8 @@ use super::output::{print_json, print_value};
 use crate::args::CloudToken;
 use crate::args::{
     AdminArgs, App, AppArgs, ClientConnection, Cloud, CloudApp, CloudAppTarget, CloudApps,
-    CloudArgs, CloudCommandId, CloudEndpoint, CloudEnv, CloudSecrets, ComponentArgs, Deployment,
-    DeploymentArgs, ExecutionArgs, Subcommand,
+    CloudAppsArgs, CloudArgs, CloudCommandId, CloudEndpoint, CloudEnv, CloudSecrets, ComponentArgs,
+    Deployment, DeploymentArgs, ExecutionArgs, Subcommand,
 };
 use crate::client::ClientStartup;
 use crate::config::app::{AppConfigToml, generate_app_name_hint, with_app_name};
@@ -581,6 +581,14 @@ impl CloudArgs {
         if let Cloud::Auth(command) = &self.command {
             return auth::run(&self, command).await;
         }
+        let credentials = match &mut self.command {
+            Cloud::Auth(_) => unreachable!("handled above"),
+            Cloud::Token(args) => &mut args.credentials,
+            Cloud::Apps(args) => &mut args.credentials,
+            Cloud::App(args) => &mut args.credentials,
+        };
+        self.api_token = credentials.api_token.take();
+        self.account = credentials.account.take();
         // Printing endpoints is offline and needs no login.
         let token_required = !matches!(
             &self.command,
@@ -641,7 +649,7 @@ impl CloudArgs {
             let api_url = self.direct_api_url().await?;
             return self.run_app_api(api_url).await;
         }
-        if let Cloud::App(CloudAppTarget { app, command }) = &mut self.command
+        if let Cloud::App(CloudAppTarget { app, command, .. }) = &mut self.command
             && app.is_none()
             && matches!(
                 command,
@@ -673,8 +681,11 @@ impl CloudArgs {
         let client = Client::new(&self)?;
         match self.command {
             Cloud::Auth(_) => unreachable!("handled in run"),
-            Cloud::Token(command) => token_command(&client, command).await,
-            Cloud::Apps(CloudApps::List) => {
+            Cloud::Token(args) => token_command(&client, args.command).await,
+            Cloud::Apps(CloudAppsArgs {
+                command: CloudApps::List,
+                ..
+            }) => {
                 client
                     .request(Method::GET, &["v1", "apps"], None, Kind::Read)
                     .await
@@ -688,6 +699,7 @@ impl CloudArgs {
                         fill_non_interactive,
                         command_id,
                     },
+                ..
             }) => {
                 let config_path = discover_app_config(app_config)?;
                 let config = match &config_path {
@@ -725,7 +737,7 @@ impl CloudArgs {
                     )
                     .await
             }
-            Cloud::App(CloudAppTarget { app, command }) => {
+            Cloud::App(CloudAppTarget { app, command, .. }) => {
                 let config_path = app_config_path(&command)?;
                 let config = match &config_path {
                     // Status only reports a readable discovered ./app.toml.
@@ -1669,7 +1681,7 @@ mod tests {
         (origin, state, task)
     }
     pub(super) fn args(origin: &str, command: &[&str]) -> CloudArgs {
-        let mut args = vec!["obelisk", "cloud", "--api-token", "cloud-token"];
+        let mut args = vec!["obelisk", "cloud"];
         let position = command.iter().position(|arg| *arg == "app");
         if let Some(position) = position {
             args.extend_from_slice(&command[..=position]);
@@ -1681,6 +1693,7 @@ mod tests {
         let Subcommand::Cloud(mut args) = Args::try_parse_from(args).unwrap().command else {
             panic!()
         };
+        args.api_token = Some(SecretString::from("cloud-token"));
         args.api_url = Some(origin.to_owned());
         args.apps_domain = Some("example.test".to_owned());
         args

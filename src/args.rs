@@ -1519,6 +1519,32 @@ mod tests {
     }
 
     #[test]
+    fn cloud_credentials_are_rejected_on_auth() {
+        let parse = |command: &[&str]| {
+            Args::try_parse_from(["obelisk", "cloud"].iter().chain(command))
+                .map(|_| ())
+                .map_err(|err| err.kind())
+        };
+        for flag in [["--api-token", "t"], ["--account", "a@b"]] {
+            for command in [["token", "list"], ["apps", "list"]] {
+                assert_eq!(parse(&[command[0], command[1], flag[0], flag[1]]), Ok(()));
+            }
+            assert_eq!(parse(&["app", "status", flag[0], flag[1]]), Ok(()));
+            for command in [
+                &["auth", "login"][..],
+                &["auth", "status"],
+                &["auth", "logout"],
+            ] {
+                let command = [command, &flag[..]].concat();
+                assert_eq!(
+                    parse(&command),
+                    Err(clap::error::ErrorKind::UnknownArgument)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn execution_submit_follow_logs_accepts_no_reconnect() {
         let args = Args::try_parse_from([
             "obelisk",
@@ -1714,7 +1740,7 @@ mod tests {
     }
 }
 
-fn non_empty_env(name: &str) -> Option<String> {
+pub(crate) fn non_empty_env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
@@ -1726,16 +1752,10 @@ pub(crate) struct CloudArgs {
     /// Show detailed metadata, HTTP requests, and response statuses on stderr.
     #[arg(long, global = true)]
     pub(crate) verbose: bool,
-    /// Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`.
-    #[arg(long, global = true, env = "OBELISK_CLOUD_API_TOKEN", hide_env_values = true, value_parser = parse_secret_string)]
+    // Moved here from `CloudCredentials` by `run`, as `auth` does not take them.
+    #[arg(skip)]
     pub(crate) api_token: Option<SecretString>,
-    /// Saved login to use for this command, as `<slug>@<API host>`, instead of the default one.
-    #[arg(
-        long,
-        global = true,
-        env = "OBELISK_CLOUD_ACCOUNT",
-        value_name = "ACCOUNT"
-    )]
+    #[arg(skip)]
     pub(crate) account: Option<String>,
     // Environment only, as they make sense only together with the token.
     #[arg(skip = non_empty_env("OBELISK_CLOUD_API_URL"))]
@@ -1747,7 +1767,40 @@ pub(crate) struct CloudArgs {
 }
 
 #[derive(Debug, clap::Args)]
+pub(crate) struct CloudCredentials {
+    /// Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`.
+    #[arg(long, global = true, env = "OBELISK_CLOUD_API_TOKEN", hide_env_values = true, value_parser = parse_secret_string)]
+    pub(crate) api_token: Option<SecretString>,
+    /// Saved login to use for this command, as `<slug>@<API host>`, instead of the default one.
+    #[arg(
+        long,
+        global = true,
+        env = "OBELISK_CLOUD_ACCOUNT",
+        value_name = "ACCOUNT"
+    )]
+    pub(crate) account: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct CloudTokenArgs {
+    #[command(flatten)]
+    pub(crate) credentials: CloudCredentials,
+    #[command(subcommand)]
+    pub(crate) command: CloudToken,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct CloudAppsArgs {
+    #[command(flatten)]
+    pub(crate) credentials: CloudCredentials,
+    #[command(subcommand)]
+    pub(crate) command: CloudApps,
+}
+
+#[derive(Debug, clap::Args)]
 pub(crate) struct CloudAppTarget {
+    #[command(flatten)]
+    pub(crate) credentials: CloudCredentials,
     /// Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config.
     #[arg(long, global = true, env = "OBELISK_APP_NAME", value_name = "NAME")]
     pub(crate) app: Option<String>,
@@ -1768,11 +1821,9 @@ pub(crate) enum Cloud {
     #[command(subcommand)]
     Auth(CloudAuth),
     /// Create, inspect and revoke cloud bearer tokens.
-    #[command(subcommand)]
-    Token(CloudToken),
+    Token(CloudTokenArgs),
     /// List apps owned by the authenticated user.
-    #[command(subcommand)]
-    Apps(CloudApps),
+    Apps(CloudAppsArgs),
     /// Manage an app and its deployments, executions and configuration.
     App(CloudAppTarget),
 }

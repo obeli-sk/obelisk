@@ -26,6 +26,7 @@ impl CloudArgs {
                     description,
                     ..
                 },
+            ..
         }) = self.command
         else {
             unreachable!()
