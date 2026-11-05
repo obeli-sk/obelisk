@@ -20,14 +20,6 @@
         {
           "name": "--verbose",
           "help": "Show detailed metadata, HTTP requests, and response statuses on stderr"
-        },
-        {
-          "name": "--api-token",
-          "help": "Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`"
-        },
-        {
-          "name": "--account",
-          "help": "Saved login to use for this command, as `<slug>@<API host>`, instead of the default one"
         }
       ],
       "subcommands": [
@@ -41,7 +33,7 @@
               "options": [
                 {
                   "name": "--no-browser",
-                  "help": "Print a link and read the code it displays, for a browser on another machine"
+                  "help": "Only print the link instead of also opening it, for a browser on another machine"
                 }
               ],
               "positionals": [
@@ -81,6 +73,16 @@
         {
           "name": "token",
           "about": "Create, inspect and revoke cloud bearer tokens",
+          "options": [
+            {
+              "name": "--api-token",
+              "help": "Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`"
+            },
+            {
+              "name": "--account",
+              "help": "Saved login to use for this command, as `<slug>@<API host>`, instead of the default one"
+            }
+          ],
           "subcommands": [
             {
               "name": "new",
@@ -134,6 +136,16 @@
         {
           "name": "apps",
           "about": "List apps owned by the authenticated user",
+          "options": [
+            {
+              "name": "--api-token",
+              "help": "Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`"
+            },
+            {
+              "name": "--account",
+              "help": "Saved login to use for this command, as `<slug>@<API host>`, instead of the default one"
+            }
+          ],
           "subcommands": [
             {
               "name": "list"
@@ -144,6 +156,14 @@
           "name": "app",
           "about": "Manage an app and its deployments, executions and configuration",
           "options": [
+            {
+              "name": "--api-token",
+              "help": "Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`"
+            },
+            {
+              "name": "--account",
+              "help": "Saved login to use for this command, as `<slug>@<API host>`, instead of the default one"
+            },
             {
               "name": "--app",
               "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
