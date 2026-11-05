@@ -22,19 +22,62 @@
           "help": "Show detailed metadata, HTTP requests, and response statuses on stderr"
         },
         {
-          "name": "--api-url",
-          "help": "Cloud control plane URL"
-        },
-        {
-          "name": "--apps-domain",
-          "help": "Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>`, `webui--<app>.<domain>` and `internal--<app>.<domain>`"
-        },
-        {
           "name": "--api-token",
-          "help": "Cloud API bearer token"
+          "help": "Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`"
+        },
+        {
+          "name": "--account",
+          "help": "Saved login to use for this command, as `<slug>@<API host>`, instead of the default one"
         }
       ],
       "subcommands": [
+        {
+          "name": "auth",
+          "about": "Log in through a browser and manage the saved logins",
+          "subcommands": [
+            {
+              "name": "login",
+              "about": "Log in through a browser; the first login becomes the default",
+              "options": [
+                {
+                  "name": "--no-browser",
+                  "help": "Print a link and read the code it displays, for a browser on another machine"
+                }
+              ],
+              "positionals": [
+                {
+                  "name": "api_url",
+                  "help": "Cloud API URL of a custom deployment; defaults to `https://cloud.obeli.sk/api`"
+                }
+              ]
+            },
+            {
+              "name": "status",
+              "about": "Show the saved accounts"
+            },
+            {
+              "name": "switch",
+              "about": "Change the default account",
+              "positionals": [
+                {
+                  "name": "account",
+                  "help": "Saved account, as `<slug>@<API host>`",
+                  "required": true
+                }
+              ]
+            },
+            {
+              "name": "logout",
+              "about": "Revoke the token of a saved account and forget it",
+              "positionals": [
+                {
+                  "name": "account",
+                  "help": "Saved account, as `<slug>@<API host>`; defaults to the selected one"
+                }
+              ]
+            }
+          ]
+        },
         {
           "name": "token",
           "about": "Create, inspect and revoke cloud bearer tokens",

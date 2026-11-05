@@ -23,32 +23,31 @@ async fn cloud_app_endpoints_resolve_project_environment_and_explicit_targets_of
         ),
         (
             Some("from-env"),
-            Some("ignored.example"),
-            vec![
-                "endpoint",
-                "--app",
-                "explicit",
-                "--apps-domain",
-                "test.obelisk.works",
-                "--json",
-            ],
+            Some("test.obelisk.works"),
+            vec!["endpoint", "--app", "explicit", "--json"],
             "explicit",
             "test.obelisk.works",
         ),
     ] {
         let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"));
         command
-            .args(["cloud", "--api-url", "http://127.0.0.1:1", "app"])
+            .args(["cloud", "app"])
             .args(arguments)
             .current_dir(directory.path())
+            .env("XDG_CONFIG_HOME", directory.path())
             .env_remove("OBELISK_APP_NAME")
+            .env_remove("OBELISK_CLOUD_ACCOUNT")
+            .env_remove("OBELISK_CLOUD_API_URL")
             .env_remove("OBELISK_CLOUD_APPS_DOMAIN")
             .env_remove("OBELISK_CLOUD_API_TOKEN");
         if let Some(app_env) = app_env {
             command.env("OBELISK_APP_NAME", app_env);
         }
         if let Some(domain_env) = domain_env {
-            command.env("OBELISK_CLOUD_APPS_DOMAIN", domain_env);
+            command
+                .env("OBELISK_CLOUD_API_URL", "http://127.0.0.1:1")
+                .env("OBELISK_CLOUD_APPS_DOMAIN", domain_env)
+                .env("OBELISK_CLOUD_API_TOKEN", "test-token");
         }
         let output = command.output().await.unwrap();
         assert!(
@@ -129,15 +128,11 @@ async fn cloud_output_and_endpoint_selection() {
     std::fs::write(directory.path().join("app.toml"), "invalid TOML [").unwrap();
     let run = async |args: &[&str]| {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"))
-            .args([
-                "cloud",
-                "--api-url",
-                &origin,
-                "--apps-domain",
-                "example.com",
-            ])
+            .args(["cloud", "--api-token", "test-token"])
             .args(args)
             .current_dir(directory.path())
+            .env("OBELISK_CLOUD_API_URL", &origin)
+            .env("OBELISK_CLOUD_APPS_DOMAIN", "example.com")
             .env(
                 "OBELISK_APP_NAME",
                 if args[0] == "token" {

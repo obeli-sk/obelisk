@@ -1434,15 +1434,19 @@ mod tests {
 
     #[test]
     fn deployment_verify_accepts_only_deployment_inputs() {
-        for prefix in [vec!["obelisk"], vec!["obelisk", "cloud", "app"]] {
-            let args = Args::try_parse_from(prefix.into_iter().chain([
-                "deployment",
-                "verify",
-                "-d",
-                "deployment.toml",
-                "--api-url",
-                "https://cloud.example.test",
-            ]))
+        for (prefix, suffix) in [
+            (
+                vec!["obelisk"],
+                vec!["--api-url", "https://cloud.example.test"],
+            ),
+            (vec!["obelisk", "cloud", "app"], vec![]),
+        ] {
+            let args = Args::try_parse_from(
+                prefix
+                    .into_iter()
+                    .chain(["deployment", "verify", "-d", "deployment.toml"])
+                    .chain(suffix),
+            )
             .unwrap();
             let verify = match args.command {
                 Subcommand::Deployment(args) => {
@@ -1453,7 +1457,6 @@ mod tests {
                     verify
                 }
                 Subcommand::Cloud(args) => {
-                    assert_eq!(args.api_url.as_deref(), Some("https://cloud.example.test"));
                     let Cloud::App(CloudAppTarget {
                         command: CloudApp::Deployment(Deployment::Verify(verify)),
                         ..
@@ -1711,6 +1714,10 @@ mod tests {
     }
 }
 
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
 #[derive(Debug, clap::Args)]
 pub(crate) struct CloudArgs {
     /// Print machine-readable JSON instead of human-readable output.
@@ -1719,20 +1726,22 @@ pub(crate) struct CloudArgs {
     /// Show detailed metadata, HTTP requests, and response statuses on stderr.
     #[arg(long, global = true)]
     pub(crate) verbose: bool,
-    /// Cloud control plane URL.
-    #[arg(long, global = true, env = "OBELISK_CLOUD_API_URL", default_value = "https://cloud.obeli.sk/api", value_parser = |value: &str| value.parse::<reqwest::Url>().map(|_| value.to_owned()))]
-    pub(crate) api_url: Option<String>,
-    /// Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>`, `webui--<app>.<domain>` and `internal--<app>.<domain>`.
+    /// Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`.
+    #[arg(long, global = true, env = "OBELISK_CLOUD_API_TOKEN", hide_env_values = true, value_parser = parse_secret_string)]
+    pub(crate) api_token: Option<SecretString>,
+    /// Saved login to use for this command, as `<slug>@<API host>`, instead of the default one.
     #[arg(
         long,
         global = true,
-        env = "OBELISK_CLOUD_APPS_DOMAIN",
-        default_value = "obelisk.works"
+        env = "OBELISK_CLOUD_ACCOUNT",
+        value_name = "ACCOUNT"
     )]
-    pub(crate) apps_domain: String,
-    /// Cloud API bearer token.
-    #[arg(long, global = true, env = "OBELISK_CLOUD_API_TOKEN", hide_env_values = true, value_parser = parse_secret_string)]
-    pub(crate) api_token: Option<SecretString>,
+    pub(crate) account: Option<String>,
+    // Environment only, as they make sense only together with the token.
+    #[arg(skip = non_empty_env("OBELISK_CLOUD_API_URL"))]
+    pub(crate) api_url: Option<String>,
+    #[arg(skip = non_empty_env("OBELISK_CLOUD_APPS_DOMAIN"))]
+    pub(crate) apps_domain: Option<String>,
     #[command(subcommand)]
     pub(crate) command: Cloud,
 }
@@ -1755,6 +1764,9 @@ pub(crate) struct CloudCommandId {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Cloud {
+    /// Log in through a browser and manage the saved logins.
+    #[command(subcommand)]
+    Auth(CloudAuth),
     /// Create, inspect and revoke cloud bearer tokens.
     #[command(subcommand)]
     Token(CloudToken),
@@ -1763,6 +1775,30 @@ pub(crate) enum Cloud {
     Apps(CloudApps),
     /// Manage an app and its deployments, executions and configuration.
     App(CloudAppTarget),
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum CloudAuth {
+    /// Log in through a browser; the first login becomes the default.
+    Login {
+        /// Cloud API URL of a custom deployment; defaults to `https://cloud.obeli.sk/api`.
+        api_url: Option<String>,
+        /// Print a link and read the code it displays, for a browser on another machine.
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// Show the saved accounts.
+    Status,
+    /// Change the default account.
+    Switch {
+        /// Saved account, as `<slug>@<API host>`.
+        account: String,
+    },
+    /// Revoke the token of a saved account and forget it.
+    Logout {
+        /// Saved account, as `<slug>@<API host>`; defaults to the selected one.
+        account: Option<String>,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]
