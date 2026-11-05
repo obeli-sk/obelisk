@@ -266,9 +266,9 @@
 
                     runHook postBuild
                   '';
-                } // pkgs.lib.optionalAttrs (customTarget == "x86_64-unknown-linux-gnu.2.35") {
+                } // pkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.isLinux && customTarget == "${pkgs.stdenv.hostPlatform.rust.rustcTarget}.2.35") {
                 # Native-architecture Zig probes need Nix's loader inside the build sandbox.
-                CFLAGS_x86_64_unknown_linux_gnu = "-Wl,--dynamic-linker=${pkgs.stdenv.cc.bintools.dynamicLinker}";
+                "CFLAGS_${builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.hostPlatform.rust.rustcTarget}" = "-Wl,--dynamic-linker=${pkgs.stdenv.cc.bintools.dynamicLinker}";
               };
               # Feed the pre-fetched assets to the embedding build.rs offline.
               embedAssetsEnv = {

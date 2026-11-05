@@ -73,40 +73,32 @@ jobs:
   upload-assets:
     needs: validate-inputs
     name: ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
           - target: x86_64-unknown-linux-gnu-embedded
-            os: ubuntu-24.04
+            cache: true
 
           - target: x86_64-unknown-linux-musl
-            os: ubuntu-24.04
           - target: x86_64-unknown-linux-musl-embedded
-            os: ubuntu-24.04
+            cache: true
 
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu-embedded
-            os: ubuntu-24.04
+            cache: true
 
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-24.04
           - target: aarch64-unknown-linux-musl-embedded
-            os: ubuntu-24.04
+            cache: true
 
           - target: x86_64-apple-darwin
-            os: ubuntu-24.04
           - target: x86_64-apple-darwin-embedded
-            os: ubuntu-24.04
 
           - target: aarch64-apple-darwin
-            os: ubuntu-24.04
           - target: aarch64-apple-darwin-embedded
-            os: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -151,12 +143,20 @@ jobs:
             echo "asset_exists=false" >> $GITHUB_OUTPUT
           fi
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
-        if: ${{ steps.release-info.outputs.asset_exists == 'false' }}
+        if: ${{ steps.release-info.outputs.asset_exists == 'false' || matrix.cache == true }}
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Enable Cachix push
+        if: ${{ matrix.cache == true }}
+        uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866
+        with:
+          name: ${{ vars.CACHIX_CACHE_NAME || 'obeli-sk' }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          pushFilter: "(-rustc-|-cargo-|-rust-std-|-rust-src-|-clippy-|-rustfmt-|-rust-analyzer-|-llvm-tools-|-rust-docs-|-miri-)"
+
       - name: Build Obelisk with Nix
-        if: ${{ steps.release-info.outputs.asset_exists == 'false' }}
+        if: ${{ steps.release-info.outputs.asset_exists == 'false' || matrix.cache == true }}
         run: nix build '.#obeliskCross-${{ matrix.target }}'
 
       - name: Generate attestation for obelisk binary
