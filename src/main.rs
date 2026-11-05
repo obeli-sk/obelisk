@@ -121,6 +121,7 @@ fn command_future(
             deployment_id,
             suppress_type_checking_errors,
             skip_db,
+            dev,
             fixes,
         })) => {
             let app_config = config::app::resolve_app_config(app_config)?;
@@ -153,7 +154,7 @@ fn command_future(
                     runtime_config_availability
                 },
                 !fixes.any(),
-                false,
+                dev,
             )?;
             config.startup_deployment_id = deployment_id;
             Box::pin(verify(

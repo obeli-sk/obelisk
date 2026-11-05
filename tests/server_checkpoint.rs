@@ -248,6 +248,42 @@ fn checkpoint_moves_only_on_activation() {
     server.stop();
 }
 
+#[test]
+fn verify_dev_resolves_internal_http_server_url() {
+    let fixture = Fixture::new();
+    let config_path = fixture.path("server.toml");
+    let config = std::fs::read_to_string(&config_path).unwrap().replace(
+        "http_server.internal.enabled = false",
+        "http_server.internal.enabled = true",
+    );
+    std::fs::write(config_path, config).unwrap();
+    std::fs::write(
+        fixture.path("app.toml"),
+        "app_name = 'checkpoint-test'\n[public_env]\nINTERNAL_URL = { type = 'internal', source = 'http-server-url', http_server = 'internal' }\n",
+    )
+    .unwrap();
+    std::fs::write(fixture.path("deployment.toml"), "").unwrap();
+    let args = [
+        "server",
+        "verify",
+        "-s",
+        "server.toml",
+        "--deployment",
+        "deployment.toml",
+        "--skip-db",
+    ];
+    let output = fixture.run(&args);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("http-server-url requires an enabled `internal` http_server"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = fixture.command(&args).arg("--dev").output().unwrap();
+    assert_success(&output);
+}
+
 #[tokio::test]
 async fn dev_controls_token_disclosure_and_internal_without_disabling_api_auth() {
     rustls::crypto::ring::default_provider()
