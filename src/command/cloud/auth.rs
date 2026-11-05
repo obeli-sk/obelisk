@@ -447,6 +447,9 @@ async fn token_state(entry: &Account, verbose: bool) -> String {
 }
 
 async fn status(args: &CloudArgs, path: &Path) -> anyhow::Result<Value> {
+    if args.verbose {
+        eprintln!("Credentials file: {}", path.display());
+    }
     let store = Store::load(path)?;
     if non_empty_env("OBELISK_CLOUD_API_TOKEN").is_some() && !args.json {
         eprintln!("OBELISK_CLOUD_API_TOKEN is set and takes precedence.\n");
