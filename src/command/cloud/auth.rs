@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use std::{
+    collections::BTreeMap,
     fmt::Write as _,
     io::{ErrorKind, Write as _},
     path::{Path, PathBuf},
@@ -20,7 +21,7 @@ struct Store {
     #[serde(skip_serializing_if = "Option::is_none")]
     default: Option<String>,
     #[serde(default, rename = "account")]
-    accounts: Vec<Account>,
+    accounts: BTreeMap<String, Account>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -34,11 +35,13 @@ struct Account {
     expires_at: i64,
 }
 impl Account {
-    /// `<slug>@<API host>`, how every command refers to this login.
-    fn name(&self) -> String {
+    fn simple_name(&self) -> String {
         let endpoint = Url::parse(&self.api_url)
             .map_or_else(|_| self.api_url.clone(), |url| url.authority().to_owned());
         format!("{}@{endpoint}", self.user_slug)
+    }
+    fn same_login(&self, other: &Self) -> bool {
+        self.user_slug == other.user_slug && normalized(&self.api_url) == normalized(&other.api_url)
     }
     fn expired(&self) -> bool {
         self.expires_at <= chrono::Utc::now().timestamp()
@@ -49,8 +52,11 @@ impl Account {
     }
 }
 
-fn normalized(api_url: &str) -> &str {
-    api_url.trim_end_matches('/')
+fn normalized(api_url: &str) -> String {
+    Url::parse(api_url)
+        .map_or_else(|_| api_url.to_owned(), |url| url.to_string())
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 fn login_command(api_url: &str) -> String {
@@ -98,37 +104,57 @@ impl Store {
         Ok(())
     }
     fn find(&self, name: &str) -> Option<&Account> {
+        self.accounts.get(name)
+    }
+    fn select(&self, name: Option<&str>) -> Option<(&str, &Account)> {
         self.accounts
-            .iter()
-            .find(|account| account.name().eq_ignore_ascii_case(name))
+            .get_key_value(name.or(self.default.as_deref())?)
+            .map(|(name, account)| (name.as_str(), account))
     }
-    fn select(&self, name: Option<&str>) -> Option<&Account> {
-        self.find(name.or(self.default.as_deref())?)
-    }
-    /// Stores the login, returning the entry of the same account it replaces. The first login becomes the default.
-    fn insert(&mut self, account: Account) -> Option<Account> {
-        let name = account.name();
-        let previous = self
+    fn insert(
+        &mut self,
+        account: Account,
+        alias: Option<&str>,
+        default: bool,
+    ) -> anyhow::Result<(String, Option<Account>)> {
+        let existing = self
             .accounts
             .iter()
-            .position(|old| old.name().eq_ignore_ascii_case(&name))
-            .map(|index| self.accounts.remove(index));
-        if self.accounts.is_empty() && previous.is_none() {
-            self.default = Some(name);
+            .find(|(_, old)| old.same_login(&account))
+            .map(|(name, _)| name.clone());
+        let name = if let Some(alias) = alias {
+            ensure!(!alias.is_empty(), "Account name must not be empty");
+            alias.to_owned()
+        } else if let Some(existing) = &existing {
+            existing.clone()
+        } else {
+            let simple = account.simple_name();
+            if self.accounts.contains_key(&simple) {
+                format!("{}@{}", account.user_slug, normalized(&account.api_url))
+            } else {
+                simple
+            }
+        };
+        if let Some(old) = self.accounts.get(&name) {
+            ensure!(
+                old.same_login(&account),
+                "Account name {name} is already used by another user or backend; choose a different --account"
+            );
         }
-        self.accounts.push(account);
-        previous
+        let previous = existing
+            .as_ref()
+            .and_then(|name| self.accounts.remove(name));
+        if default || self.accounts.is_empty() || self.default.as_ref() == existing.as_ref() {
+            self.default = Some(name.clone());
+        }
+        self.accounts.insert(name.clone(), account);
+        Ok((name, previous))
     }
     /// Drops the login; a removed default passes to the first remaining entry.
     fn remove(&mut self, name: &str) {
-        self.accounts
-            .retain(|account| !account.name().eq_ignore_ascii_case(name));
-        if self
-            .default
-            .as_deref()
-            .is_some_and(|default| default.eq_ignore_ascii_case(name))
-        {
-            self.default = self.accounts.first().map(Account::name);
+        self.accounts.remove(name);
+        if self.default.as_deref() == Some(name) {
+            self.default = self.accounts.keys().next().cloned();
         }
     }
 }
@@ -168,7 +194,7 @@ fn select(args: &mut CloudArgs, path: Option<&Path>, token_required: bool) -> an
         }
     }
     let store = path.map(Store::load).transpose()?.unwrap_or_default();
-    let Some(account) = store.select(args.account.as_deref()) else {
+    let Some((name, account)) = store.select(args.account.as_deref()) else {
         if let Some(name) = &args.account {
             bail!("No login for {name}; `obelisk cloud auth status` lists the saved accounts");
         }
@@ -181,7 +207,7 @@ fn select(args: &mut CloudArgs, path: Option<&Path>, token_required: bool) -> an
     ensure!(
         !token_required || !account.expired(),
         "Login of {} expired on {}; run `{}`",
-        account.name(),
+        name,
         account.expiry(),
         login_command(&account.api_url)
     );
@@ -197,7 +223,19 @@ pub(super) async fn run(args: &CloudArgs, command: &CloudAuth) -> anyhow::Result
         CloudAuth::Login {
             api_url,
             no_browser,
-        } => login(args, api_url.as_deref(), &path, *no_browser).await?,
+            account,
+            default,
+        } => {
+            login(
+                args,
+                api_url.as_deref(),
+                &path,
+                *no_browser,
+                account.as_deref(),
+                *default,
+            )
+            .await?
+        }
         CloudAuth::Status => status(args, &path).await?,
         CloudAuth::Switch { account } => switch(&path, account)?,
         CloudAuth::Logout { account } => logout(args, account.as_deref(), &path).await?,
@@ -334,6 +372,8 @@ async fn login(
     api_url: Option<&str>,
     path: &Path,
     no_browser: bool,
+    account: Option<&str>,
+    default: bool,
 ) -> anyhow::Result<Value> {
     ensure!(
         terminal(),
@@ -349,7 +389,16 @@ async fn login(
         eprintln!("Visit this page in any browser:\n\n{page}\n");
     }
     let code = read_pasted_code().await?;
-    finish_login(api_url, path, &code, &verifier, args.verbose).await
+    finish_login(
+        api_url,
+        path,
+        &code,
+        &verifier,
+        args.verbose,
+        account,
+        default,
+    )
+    .await
 }
 
 async fn finish_login(
@@ -358,6 +407,8 @@ async fn finish_login(
     code: &str,
     verifier: &str,
     verbose: bool,
+    alias: Option<&str>,
+    default: bool,
 ) -> anyhow::Result<Value> {
     let redeemed: Redeemed = serde_json::from_value(
         Client::build(api_url, None, verbose)?
@@ -373,7 +424,7 @@ async fn finish_login(
     .context("Cannot read the issued token")?;
     let account = Account {
         user_slug: redeemed.user_slug,
-        api_url: normalized(api_url).to_owned(),
+        api_url: normalized(api_url),
         apps_domain: redeemed.apps_domain,
         api_token: redeemed.token,
         token_id: redeemed.token_id,
@@ -381,8 +432,13 @@ async fn finish_login(
         expires_at: redeemed.expires_at,
     };
     let mut store = Store::load(path)?;
-    let name = account.name();
-    let previous = store.insert(account.clone());
+    let (name, previous) = match store.insert(account.clone(), alias, default) {
+        Ok(inserted) => inserted,
+        Err(err) => {
+            revoke(&account, verbose).await;
+            return Err(err);
+        }
+    };
     store.save(path)?;
     if let Some(previous) = previous {
         revoke(&previous, verbose).await;
@@ -455,8 +511,7 @@ async fn status(args: &CloudArgs, path: &Path) -> anyhow::Result<Value> {
         eprintln!("OBELISK_CLOUD_API_TOKEN is set and takes precedence.\n");
     }
     let mut accounts = Vec::new();
-    for entry in &store.accounts {
-        let name = entry.name();
+    for (name, entry) in &store.accounts {
         accounts.push(json!({
             "default": store.default.as_deref() == Some(name.as_str()),
             "account": name,
@@ -472,7 +527,7 @@ async fn status(args: &CloudArgs, path: &Path) -> anyhow::Result<Value> {
 
 fn switch(path: &Path, name: &str) -> anyhow::Result<Value> {
     let mut store = Store::load(path)?;
-    let name = store.find(name).map(Account::name).with_context(|| {
+    let name = store.find(name).map(|_| name.to_owned()).with_context(|| {
         format!("No login for {name}; `obelisk cloud auth status` lists the saved accounts")
     })?;
     store.default = Some(name.clone());
@@ -484,14 +539,14 @@ async fn logout(args: &CloudArgs, name: Option<&str>, path: &Path) -> anyhow::Re
     let mut store = Store::load(path)?;
     let selected = non_empty_env("OBELISK_CLOUD_ACCOUNT");
     let name = name.or(selected.as_deref());
-    let entry = store.select(name).cloned().with_context(|| {
+    let (name, entry) = store.select(name).with_context(|| {
         name.map_or_else(
             || "Not logged in".to_owned(),
             |name| format!("No login for {name}"),
         )
     })?;
-    revoke(&entry, args.verbose).await;
-    let name = entry.name();
+    let name = name.to_owned();
+    revoke(entry, args.verbose).await;
     store.remove(&name);
     store.save(path)?;
     Ok(json!({ "logged_out": name, "default": store.default }))
@@ -521,12 +576,20 @@ mod tests {
 
     fn two_logins() -> Store {
         let mut store = Store::default();
-        store.insert(entry(
-            "alice",
-            "https://cloud.obeli.sk/api",
-            "obelisk.works",
-        ));
-        store.insert(entry("alice", "https://cloud.dev.test/api", "dev.test"));
+        store
+            .insert(
+                entry("alice", "https://cloud.obeli.sk/api", "obelisk.works"),
+                None,
+                false,
+            )
+            .unwrap();
+        store
+            .insert(
+                entry("alice", "https://cloud.dev.test/api", "dev.test"),
+                None,
+                false,
+            )
+            .unwrap();
         store
     }
 
@@ -550,7 +613,7 @@ mod tests {
 
     #[test]
     fn account_names_use_the_api_host() {
-        let name = |url| entry("alice", url, "d").name();
+        let name = |url| entry("alice", url, "d").simple_name();
         assert_eq!(name("https://cloud.obeli.sk/api"), ALICE);
         assert_eq!(name("http://127.0.0.1:8080/"), "alice@127.0.0.1:8080");
     }
@@ -571,7 +634,7 @@ mod tests {
         );
         assert!(args.api_token.is_some());
 
-        let mut args = parsed(None, Some("ALICE@cloud.dev.test"));
+        let mut args = parsed(None, Some(DEV));
         run(&mut args).unwrap();
         assert_eq!(args.api_url.as_deref(), Some("https://cloud.dev.test/api"));
         assert_eq!(args.apps_domain.as_deref(), Some("dev.test"));
@@ -638,7 +701,7 @@ mod tests {
         let mut store = Store::default();
         let mut account = entry("alice", "https://cloud.dev.test/api", "dev.test");
         account.expires_at = 1;
-        store.insert(account);
+        store.insert(account, None, false).unwrap();
         store.save(&path).unwrap();
         let error = select(&mut parsed(None, None), Some(&path), true).unwrap_err();
         assert!(
@@ -654,7 +717,13 @@ mod tests {
         let mut store = two_logins();
         store.remove(DEV);
         assert_eq!(store.default.as_deref(), Some(ALICE));
-        store.insert(entry("alice", "https://cloud.dev.test/api", "dev.test"));
+        store
+            .insert(
+                entry("alice", "https://cloud.dev.test/api", "dev.test"),
+                None,
+                false,
+            )
+            .unwrap();
         store.remove(ALICE);
         assert_eq!(store.default.as_deref(), Some(DEV));
         store.remove(DEV);
@@ -664,14 +733,123 @@ mod tests {
     #[test]
     fn relogin_replaces_only_the_same_account() {
         let mut store = two_logins();
-        let previous = store.insert(entry("alice", "https://cloud.dev.test/api/", "dev.test"));
+        let (_, previous) = store
+            .insert(
+                entry("alice", "https://cloud.dev.test/api/", "dev.test"),
+                None,
+                false,
+            )
+            .unwrap();
         assert!(previous.is_some());
         assert_eq!(store.accounts.len(), 2);
         assert_eq!(store.default.as_deref(), Some(ALICE));
-        let other = store.insert(entry("bob", "https://cloud.dev.test/api", "dev.test"));
+        let (_, other) = store
+            .insert(
+                entry("bob", "https://cloud.dev.test/api", "dev.test"),
+                None,
+                false,
+            )
+            .unwrap();
         assert!(other.is_none(), "another account is not replaced");
         assert_eq!(store.accounts.len(), 3);
         assert_eq!(store.default.as_deref(), Some(ALICE));
+    }
+
+    #[test]
+    fn generated_names_preserve_backend_scheme_port_and_path() {
+        let mut store = Store::default();
+        for (url, name) in [
+            ("https://example.test/prod/api", "alice@example.test"),
+            (
+                "https://example.test/staging/api",
+                "alice@https://example.test/staging/api",
+            ),
+            (
+                "http://example.test/prod/api",
+                "alice@http://example.test/prod/api",
+            ),
+            (
+                "https://example.test/Prod/api",
+                "alice@https://example.test/Prod/api",
+            ),
+            (
+                "https://example.test:8443/prod/api",
+                "alice@example.test:8443",
+            ),
+        ] {
+            let (actual, previous) = store
+                .insert(entry("alice", url, "apps.test"), None, false)
+                .unwrap();
+            assert_eq!(actual, name);
+            assert!(previous.is_none());
+            assert_eq!(store.find(name).unwrap().api_url, url);
+        }
+        let (name, previous) = store
+            .insert(
+                entry(
+                    "alice",
+                    "https://EXAMPLE.test:443/staging/api/",
+                    "apps.test",
+                ),
+                None,
+                false,
+            )
+            .unwrap();
+        assert_eq!(name, "alice@https://example.test/staging/api");
+        assert!(previous.is_some());
+        assert_eq!(store.accounts.len(), 5);
+        assert_eq!(store.default.as_deref(), Some("alice@example.test"));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cloud-credentials.toml");
+        store.save(&path).unwrap();
+        let mut args = parsed(None, Some("alice@https://example.test/Prod/api"));
+        select(&mut args, Some(&path), true).unwrap();
+        assert_eq!(
+            args.api_url.as_deref(),
+            Some("https://example.test/Prod/api")
+        );
+    }
+
+    #[test]
+    fn aliases_survive_refresh_and_explicit_rename_updates_the_default() {
+        let mut store = two_logins();
+        let account = entry("alice", "https://staging.test/api", "apps.test");
+        store
+            .insert(account.clone(), Some("staging"), false)
+            .unwrap();
+        assert_eq!(store.default.as_deref(), Some(ALICE));
+        let (name, previous) = store.insert(account.clone(), None, true).unwrap();
+        assert_eq!(name, "staging");
+        assert!(previous.is_some());
+        assert_eq!(store.default.as_deref(), Some("staging"));
+        store.insert(account, Some("preview"), false).unwrap();
+        assert_eq!(store.default.as_deref(), Some("preview"));
+        assert!(!store.accounts.contains_key("staging"));
+        assert_eq!(store.accounts.len(), 3);
+    }
+
+    #[test]
+    fn aliases_cannot_replace_another_user_or_backend() {
+        let mut store = two_logins();
+        for account in [
+            entry("bob", "https://cloud.obeli.sk/api", "obelisk.works"),
+            entry("alice", "https://cloud.obeli.sk/other/api", "obelisk.works"),
+        ] {
+            assert!(
+                store
+                    .insert(account, Some(ALICE), true)
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("already used")
+            );
+            assert_eq!(store.accounts.len(), 2);
+            assert_eq!(store.default.as_deref(), Some(ALICE));
+            assert_eq!(
+                store.find(ALICE).unwrap().api_url,
+                "https://cloud.obeli.sk/api"
+            );
+        }
     }
 
     #[cfg(unix)]
@@ -755,35 +933,107 @@ mod tests {
 
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("cloud-credentials.toml");
-        let result = finish_login(&api_url, &path, "code", "verifier", false)
-            .await
-            .unwrap();
+        two_logins().save(&path).unwrap();
+        let result = finish_login(
+            &api_url,
+            &path,
+            "code",
+            "verifier",
+            false,
+            Some("local"),
+            true,
+        )
+        .await
+        .unwrap();
         assert_eq!(result["default"], true);
         assert_eq!(result["apps_domain"], "apps.test");
         assert!(revoked.lock().unwrap().is_empty());
         let stored = Store::load(&path).unwrap();
-        assert_eq!(stored.accounts[0].api_token, "obk_new");
-        assert_eq!(stored.accounts[0].apps_domain, "apps.test");
-        assert_eq!(stored.default, Some(stored.accounts[0].name()));
-        assert_eq!(result["logged_in"], stored.accounts[0].name());
+        assert_eq!(stored.accounts["local"].api_token, "obk_new");
+        assert_eq!(stored.accounts["local"].apps_domain, "apps.test");
+        assert_eq!(stored.default.as_deref(), Some("local"));
+        assert_eq!(result["logged_in"], "local");
 
         let mut replaced = Store::load(&path).unwrap();
-        replaced.accounts[0].api_token = "obk_old".to_owned();
-        replaced.accounts[0].token_id = "1".repeat(32);
+        replaced.accounts.get_mut("local").unwrap().api_token = "obk_old".to_owned();
+        replaced.accounts.get_mut("local").unwrap().token_id = "1".repeat(32);
         replaced.save(&path).unwrap();
         assert!(
-            finish_login(&api_url, &path, "wrong", "verifier", false)
+            finish_login(&api_url, &path, "wrong", "verifier", false, None, false)
                 .await
                 .is_err()
         );
-        assert_eq!(Store::load(&path).unwrap().accounts[0].api_token, "obk_old");
-        finish_login(&api_url, &path, "code", "verifier", false)
+        assert_eq!(
+            Store::load(&path).unwrap().accounts["local"].api_token,
+            "obk_old"
+        );
+        finish_login(&api_url, &path, "code", "verifier", false, None, false)
             .await
             .unwrap();
-        assert_eq!(Store::load(&path).unwrap().accounts[0].api_token, "obk_new");
+        assert_eq!(
+            Store::load(&path).unwrap().accounts["local"].api_token,
+            "obk_new"
+        );
         assert_eq!(
             *revoked.lock().unwrap(),
             [("1".repeat(32), "Bearer obk_old".to_owned())]
         );
+
+        switch(&path, ALICE).unwrap();
+        let refreshed = finish_login(&api_url, &path, "code", "verifier", false, None, false)
+            .await
+            .unwrap();
+        assert_eq!(refreshed["logged_in"], "local");
+        assert_eq!(refreshed["default"], false);
+        assert_eq!(Store::load(&path).unwrap().default.as_deref(), Some(ALICE));
+        let refreshed = finish_login(&api_url, &path, "code", "verifier", false, None, true)
+            .await
+            .unwrap();
+        assert_eq!(refreshed["default"], true);
+        assert_eq!(
+            Store::load(&path).unwrap().default.as_deref(),
+            Some("local")
+        );
+
+        let before = std::fs::read(&path).unwrap();
+        let error = finish_login(
+            &api_url,
+            &path,
+            "code",
+            "verifier",
+            false,
+            Some(ALICE),
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("already used"));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(
+            revoked.lock().unwrap().last().unwrap(),
+            &("2".repeat(32), "Bearer obk_new".to_owned())
+        );
+
+        let renamed = finish_login(
+            &api_url,
+            &path,
+            "code",
+            "verifier",
+            false,
+            Some("renamed"),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(renamed["logged_in"], "renamed");
+        assert_eq!(renamed["default"], true);
+        let stored = Store::load(&path).unwrap();
+        assert_eq!(stored.accounts.len(), 3);
+        assert!(!stored.accounts.contains_key("local"));
+        let logged_out = logout(&parsed(None, None), Some("renamed"), &path)
+            .await
+            .unwrap();
+        assert_eq!(logged_out["logged_out"], "renamed");
+        assert!(!Store::load(&path).unwrap().accounts.contains_key("renamed"));
     }
 }

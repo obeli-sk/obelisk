@@ -32,6 +32,14 @@
               "about": "Log in through a browser; the first login becomes the default",
               "options": [
                 {
+                  "name": "--account",
+                  "help": "Save the login under this account name or alias"
+                },
+                {
+                  "name": "--default",
+                  "help": "Make this login the default account"
+                },
+                {
                   "name": "--no-browser",
                   "help": "Only print the link instead of also opening it, for a browser on another machine"
                 }
@@ -53,7 +61,7 @@
               "positionals": [
                 {
                   "name": "account",
-                  "help": "Saved account, as `<slug>@<API host>`",
+                  "help": "Saved account name or alias",
                   "required": true
                 }
               ]
@@ -64,7 +72,7 @@
               "positionals": [
                 {
                   "name": "account",
-                  "help": "Saved account, as `<slug>@<API host>`; defaults to the selected one"
+                  "help": "Saved account name or alias; defaults to the selected one"
                 }
               ]
             }
@@ -80,7 +88,7 @@
             },
             {
               "name": "--account",
-              "help": "Saved login to use for this command, as `<slug>@<API host>`, instead of the default one"
+              "help": "Saved account name or alias to use for this command instead of the default one"
             }
           ],
           "subcommands": [
@@ -143,7 +151,7 @@
             },
             {
               "name": "--account",
-              "help": "Saved login to use for this command, as `<slug>@<API host>`, instead of the default one"
+              "help": "Saved account name or alias to use for this command instead of the default one"
             }
           ],
           "subcommands": [
@@ -162,7 +170,7 @@
             },
             {
               "name": "--account",
-              "help": "Saved login to use for this command, as `<slug>@<API host>`, instead of the default one"
+              "help": "Saved account name or alias to use for this command instead of the default one"
             },
             {
               "name": "--app",

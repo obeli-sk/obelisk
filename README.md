@@ -233,7 +233,7 @@ use NDJSON with or without `--follow`.
 Manage apps through the Obelisk cloud control plane using `obelisk cloud`.
 
 ```sh
-obelisk cloud auth login # or export OBELISK_CLOUD_API_TOKEN=...
+obelisk cloud auth login
 obelisk generate new
 obelisk cloud app deploy
 obelisk cloud app status
@@ -242,14 +242,6 @@ obelisk cloud app deployment apply
 obelisk cloud app execution list
 obelisk cloud app component list
 ```
-
-`cloud app deployment`, `cloud app execution`, `cloud app component`, and `cloud app admin`
-share the direct API commands and output formats, with the app selected by
-`--app`, `OBELISK_APP_NAME`, or `app_name` in `./app.toml`, in that order.
-Commands reading an app config refuse one whose `app_name` names a different app.
-The CLI derives the app's API URL from the app name and the apps domain, then connects directly
-with the cloud bearer token. A custom deployment needs `OBELISK_CLOUD_API_URL`,
-`OBELISK_CLOUD_APPS_DOMAIN` and `OBELISK_CLOUD_API_TOKEN` together.
 
 ### Web UI
 Visit [localhost:8080](http://127.0.0.1:8080) to manage components, functions and execution history.

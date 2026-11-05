@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (RC):** *(cloud)* `auth login` accepts `--account` aliases and `--default`, preserves saved names on refresh, and distinguishes backends by full API URL; credentials now use `[account."name"]` tables instead of `[[account]]` (manual conversion required).
+
 ## [0.43.0-rc.16](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.15...v0.43.0-rc.16)
 
 This release candidate closes HTTP servers by default and makes API authentication mandatory:
