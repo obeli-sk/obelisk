@@ -99,7 +99,7 @@ fn server_and_cloud_enforce_the_same_app_names() {
         std::fs::write(dir.path().join("app.toml"), format!("app_name='{name}'\n")).unwrap();
         for args in [
             vec!["server", "verify", "--skip-db", "-d", "deployment.toml"],
-            vec!["cloud", "--api-token", "test", "app", "status"],
+            vec!["cloud", "app", "status", "--api-token", "test"],
         ] {
             let output = cli(dir.path(), &args);
             assert!(!output.status.success(), "{name}");
@@ -167,9 +167,10 @@ async fn cloud_new_and_stage_load_local_policy() {
         let run = |args: &[&str], region: Option<&str>| {
             let mut command = Command::new(env!("CARGO_BIN_EXE_obelisk"));
             command
-                .args(["cloud", "--api-token", "test-token"])
+                .arg("cloud")
                 .args(args)
                 .current_dir(dir.path())
+                .env("OBELISK_CLOUD_API_TOKEN", "test-token")
                 .env("OBELISK_CLOUD_API_URL", &origin)
                 .env("OBELISK_CLOUD_APPS_DOMAIN", "example.test")
                 .env_remove("OBELISK_APP_NAME")

@@ -1,4 +1,6 @@
-use crate::args::{Cloud, CloudApp, CloudAppTarget, CloudEnv, CloudSecrets, CloudToken};
+use crate::args::{
+    Cloud, CloudApp, CloudAppTarget, CloudEnv, CloudSecrets, CloudToken, CloudTokenArgs,
+};
 use serde_json::Value;
 use std::fmt::Write as _;
 
@@ -22,11 +24,23 @@ impl From<&Cloud> for Summary {
         match command {
             Cloud::Auth(_) => unreachable!("command has its own output"),
             Cloud::Apps(_) => Self::Apps,
-            Cloud::Token(CloudToken::List) => Self::Tokens,
-            Cloud::Token(CloudToken::New { .. }) => Self::Token(Some("Token registered.")),
-            Cloud::Token(CloudToken::Revoke { .. }) => Self::Token(Some("Token revoked.")),
-            Cloud::Token(CloudToken::Get { .. }) => Self::Token(None),
-            Cloud::App(CloudAppTarget { app, command }) => {
+            Cloud::Token(CloudTokenArgs {
+                command: CloudToken::List,
+                ..
+            }) => Self::Tokens,
+            Cloud::Token(CloudTokenArgs {
+                command: CloudToken::New { .. },
+                ..
+            }) => Self::Token(Some("Token registered.")),
+            Cloud::Token(CloudTokenArgs {
+                command: CloudToken::Revoke { .. },
+                ..
+            }) => Self::Token(Some("Token revoked.")),
+            Cloud::Token(CloudTokenArgs {
+                command: CloudToken::Get { .. },
+                ..
+            }) => Self::Token(None),
+            Cloud::App(CloudAppTarget { app, command, .. }) => {
                 let apply = app.as_ref().map_or_else(
                     || "obelisk cloud app apply".to_owned(),
                     |app| format!("obelisk cloud app --app {app} apply"),

@@ -1,7 +1,7 @@
 //! `obelisk cloud auth`: browser login and the local credentials file.
 
 use super::{Client, DEFAULT_API_URL, Kind, api_origin, human_output, print_json, terminal};
-use crate::args::{CloudArgs, CloudAuth};
+use crate::args::{CloudArgs, CloudAuth, non_empty_env};
 use anyhow::{Context as _, bail, ensure};
 use reqwest::{Method, Url};
 use secrecy::SecretString;
@@ -14,14 +14,6 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-use tokio::{
-    io::{AsyncReadExt as _, AsyncWriteExt as _},
-    net::{TcpListener, TcpStream},
-    sync::mpsc,
-};
-
-const CALLBACK_TIMEOUT: Duration = Duration::from_secs(600);
-const CALLBACK_PAGE: &str = "<!doctype html><title>Obelisk Cloud</title><p>Login complete. You can close this tab and return to the terminal.</p>";
 
 #[derive(Default, Serialize, Deserialize)]
 struct Store {
@@ -272,31 +264,18 @@ fn sanitize_hostname(raw: &str) -> String {
 }
 
 /// The dashboard shares the host with the API, which lives under `/api`.
-fn login_page(
-    api_url: &str,
-    challenge: &str,
-    state: &str,
-    host: &str,
-    port: Option<u16>,
-) -> anyhow::Result<Url> {
+fn login_page(api_url: &str, challenge: &str, host: &str) -> anyhow::Result<Url> {
     let mut url = api_origin(api_url)?;
     let path = url.path().trim_end_matches('/');
     let path = format!("{}/cli-login", path.strip_suffix("/api").unwrap_or(path));
     url.set_path(&path);
-    {
-        let mut query = url.query_pairs_mut();
-        query
-            .append_pair("challenge", challenge)
-            .append_pair("state", state)
-            .append_pair("host", host);
-        if let Some(port) = port {
-            query.append_pair("port", &port.to_string());
-        }
-    }
+    url.query_pairs_mut()
+        .append_pair("challenge", challenge)
+        .append_pair("host", host);
     Ok(url)
 }
 
-/// Only a graphical session can show the page on this machine; elsewhere the code is pasted back.
+/// Only a graphical session can show the page on this machine.
 fn open_browser(url: &Url) -> bool {
     let (program, prefix): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("open", &[])
@@ -319,76 +298,6 @@ fn open_browser(url: &Url) -> bool {
             std::thread::spawn(move || child.wait());
         })
         .is_ok()
-}
-
-// Serves one connection; browsers may open idle ones, so each runs on its own task.
-async fn callback_connection(
-    mut stream: TcpStream,
-    state: String,
-    codes: mpsc::Sender<String>,
-) -> anyhow::Result<()> {
-    let mut request = Vec::new();
-    let mut buffer = [0; 1024];
-    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
-        let read = stream.read(&mut buffer).await?;
-        ensure!(read > 0 && request.len() < 16 * 1024, "Invalid request");
-        request.extend_from_slice(&buffer[..read]);
-    }
-    let code = callback_code(&String::from_utf8_lossy(&request), &state);
-    let response = if code.is_some() {
-        format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=utf-8\r\nreferrer-policy: no-referrer\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{CALLBACK_PAGE}",
-            CALLBACK_PAGE.len()
-        )
-    } else {
-        "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_owned()
-    };
-    stream.write_all(response.as_bytes()).await?;
-    stream.shutdown().await?;
-    if let Some(code) = code {
-        let _ = codes.send(code).await;
-    }
-    Ok(())
-}
-
-// Anything without the right state is ignored, so a page probing local ports cannot end the login.
-fn callback_code(request: &str, state: &str) -> Option<String> {
-    let target = request.strip_prefix("GET ")?.split(' ').next()?;
-    let url = Url::parse(&format!("http://127.0.0.1{target}")).ok()?;
-    if url.path() != "/callback" {
-        return None;
-    }
-    let value = |name| {
-        url.query_pairs()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.into_owned())
-    };
-    (value("state")? == state)
-        .then(|| value("code"))
-        .flatten()
-        .filter(|code| is_code(code))
-}
-
-async fn wait_for_callback(listener: TcpListener, state: String) -> anyhow::Result<String> {
-    let (codes, mut received) = mpsc::channel(1);
-    let accept = async {
-        loop {
-            let Ok((stream, _)) = listener.accept().await else {
-                continue;
-            };
-            tokio::spawn(callback_connection(stream, state.clone(), codes.clone()));
-        }
-    };
-    tokio::time::timeout(CALLBACK_TIMEOUT, async {
-        tokio::select! {
-            code = received.recv() => code,
-            () = accept => None,
-        }
-    })
-    .await
-    .ok()
-    .flatten()
-    .context("Timed out waiting for the browser; run the login again")
 }
 
 async fn read_pasted_code() -> anyhow::Result<String> {
@@ -432,35 +341,14 @@ async fn login(
     );
     let api_url = api_url.unwrap_or(DEFAULT_API_URL);
     let verifier = random_hex();
-    let state = random_hex();
     let challenge = hex(&Sha256::digest(verifier.as_bytes()));
-    let host = hostname();
-    // The redirect only works when the browser runs on this machine.
-    let listener = if no_browser {
-        None
+    let page = login_page(api_url, &challenge, &hostname())?;
+    if !no_browser && open_browser(&page) {
+        eprintln!("Opening the browser. If it does not open, visit:\n\n{page}\n");
     } else {
-        TcpListener::bind(("127.0.0.1", 0)).await.ok()
-    };
-    let port = listener
-        .as_ref()
-        .map(TcpListener::local_addr)
-        .transpose()?
-        .map(|address| address.port());
-    let page = login_page(api_url, &challenge, &state, &host, port)?;
-    let code = match listener {
-        Some(listener) if open_browser(&page) => {
-            eprintln!("Opening the browser. If it does not open, visit:\n\n{page}\n");
-            eprintln!(
-                "If the browser is on another machine, cancel and use `obelisk cloud auth login --no-browser`."
-            );
-            wait_for_callback(listener, state).await?
-        }
-        _ => {
-            let page = login_page(api_url, &challenge, &state, &host, None)?;
-            eprintln!("Visit this page in any browser:\n\n{page}\n");
-            read_pasted_code().await?
-        }
-    };
+        eprintln!("Visit this page in any browser:\n\n{page}\n");
+    }
+    let code = read_pasted_code().await?;
     finish_login(api_url, path, &code, &verifier, args.verbose).await
 }
 
@@ -560,8 +448,8 @@ async fn token_state(entry: &Account, verbose: bool) -> String {
 
 async fn status(args: &CloudArgs, path: &Path) -> anyhow::Result<Value> {
     let store = Store::load(path)?;
-    if args.api_token.is_some() && !args.json {
-        eprintln!("--api-token or OBELISK_CLOUD_API_TOKEN is set and takes precedence.\n");
+    if non_empty_env("OBELISK_CLOUD_API_TOKEN").is_some() && !args.json {
+        eprintln!("OBELISK_CLOUD_API_TOKEN is set and takes precedence.\n");
     }
     let mut accounts = Vec::new();
     for entry in &store.accounts {
@@ -591,7 +479,8 @@ fn switch(path: &Path, name: &str) -> anyhow::Result<Value> {
 
 async fn logout(args: &CloudArgs, name: Option<&str>, path: &Path) -> anyhow::Result<Value> {
     let mut store = Store::load(path)?;
-    let name = name.or(args.account.as_deref());
+    let selected = non_empty_env("OBELISK_CLOUD_ACCOUNT");
+    let name = name.or(selected.as_deref());
     let entry = store.select(name).cloned().with_context(|| {
         name.map_or_else(
             || "Not logged in".to_owned(),
@@ -646,7 +535,13 @@ mod tests {
             account: account.map(str::to_owned),
             api_url: None,
             apps_domain: None,
-            command: crate::args::Cloud::Apps(crate::args::CloudApps::List),
+            command: crate::args::Cloud::Apps(crate::args::CloudAppsArgs {
+                credentials: crate::args::CloudCredentials {
+                    api_token: None,
+                    account: None,
+                },
+                command: crate::args::CloudApps::List,
+            }),
         }
     }
 
@@ -794,22 +689,15 @@ mod tests {
 
     #[test]
     fn login_page_replaces_the_api_prefix() {
-        let page = login_page(
-            "https://cloud.obeli.sk/api/",
-            "c",
-            "s",
-            "laptop",
-            Some(4567),
-        )
-        .unwrap();
+        let page = login_page("https://cloud.obeli.sk/api/", "c", "laptop").unwrap();
         assert_eq!(
             page.as_str(),
-            "https://cloud.obeli.sk/cli-login?challenge=c&state=s&host=laptop&port=4567"
+            "https://cloud.obeli.sk/cli-login?challenge=c&host=laptop"
         );
-        let page = login_page("http://127.0.0.1:8080/", "c", "s", "laptop", None).unwrap();
+        let page = login_page("http://127.0.0.1:8080/", "c", "laptop").unwrap();
         assert_eq!(
             page.as_str(),
-            "http://127.0.0.1:8080/cli-login?challenge=c&state=s&host=laptop"
+            "http://127.0.0.1:8080/cli-login?challenge=c&host=laptop"
         );
     }
 
@@ -819,36 +707,6 @@ mod tests {
         assert_eq!(sanitize_hostname("--a.b_c"), "a.b_c");
         assert_eq!(sanitize_hostname("čš"), "unknown");
         assert_eq!(sanitize_hostname(&"a".repeat(100)).len(), 64);
-    }
-
-    #[tokio::test]
-    async fn callback_ignores_everything_without_the_state() {
-        test_utils::set_up();
-        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let waiting = tokio::spawn(wait_for_callback(listener, "good".to_owned()));
-        let code = "c".repeat(64);
-        // An idle connection, as browsers preconnect, must not hold up the others.
-        let _idle = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        for target in [
-            format!("/callback?code={code}&state=bad"),
-            format!("/other?code={code}&state=good"),
-            "/callback?code=short&state=good".to_owned(),
-        ] {
-            let response = reqwest::get(format!("http://127.0.0.1:{port}{target}"))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), 404, "{target}");
-        }
-        assert!(!waiting.is_finished());
-        let response = reqwest::get(format!(
-            "http://127.0.0.1:{port}/callback?code={code}&state=good"
-        ))
-        .await
-        .unwrap();
-        assert_eq!(response.status(), 200);
-        assert!(response.text().await.unwrap().contains("Login complete"));
-        assert_eq!(waiting.await.unwrap().unwrap(), code);
     }
 
     #[tokio::test]
@@ -886,7 +744,9 @@ mod tests {
                     },
                 ),
             );
-        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let api_url = format!("http://{}/api", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 

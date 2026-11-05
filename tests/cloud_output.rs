@@ -128,9 +128,10 @@ async fn cloud_output_and_endpoint_selection() {
     std::fs::write(directory.path().join("app.toml"), "invalid TOML [").unwrap();
     let run = async |args: &[&str]| {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"))
-            .args(["cloud", "--api-token", "test-token"])
+            .arg("cloud")
             .args(args)
             .current_dir(directory.path())
+            .env("OBELISK_CLOUD_API_TOKEN", "test-token")
             .env("OBELISK_CLOUD_API_URL", &origin)
             .env("OBELISK_CLOUD_APPS_DOMAIN", "example.com")
             .env(
