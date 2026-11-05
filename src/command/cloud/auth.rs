@@ -703,6 +703,7 @@ mod tests {
 
     #[tokio::test]
     async fn callback_ignores_everything_without_the_state() {
+        test_utils::set_up();
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let waiting = tokio::spawn(wait_for_callback(listener, "good".to_owned()));
@@ -732,6 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn login_saves_the_token_and_revokes_the_previous_one() {
+        test_utils::set_up();
         let revoked = Arc::new(Mutex::new(Vec::new()));
         let recorded = revoked.clone();
         let router = Router::new()
