@@ -6,81 +6,221 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.16](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.15...v0.43.0-rc.16)
+
+This release candidate closes HTTP servers by default and makes API authentication mandatory:
+`--no-auth` is gone, webhook endpoints name their `http_server`, and an `http_server` without
+credentials must be listed in `public_http_servers`. It also adds idle reporting for platforms that
+suspend servers, `obelisk cloud auth` login, unique deployment content, and count-based retention,
+which by default keeps the newest 1000 finished executions.
+
+### Added
+
+- *(server)* New built-in `internal` HTTP server on `127.0.0.1:9091`, enabled by default, for
+  webhooks meant to sit behind authentication. [#1311](https://github.com/obeli-sk/obelisk/pull/1311)
+- *(app)* New public env source `source = "http-server-url"` with `http_server = "<name>"` reads
+  any HTTP server except the Web UI, which keeps `webui-url`. Every `http_server` and the API
+  accept `public_url`, validated when server.toml loads like `webui.public_url`; `api-url` uses
+  `api.public_url`. [#1311](https://github.com/obeli-sk/obelisk/pull/1311)
+  [#1312](https://github.com/obeli-sk/obelisk/pull/1312)
+- *(server)* `[[http_server.<name>.oidc]]` requires a matching OIDC ID token on every request of
+  a listener, checked before routing. [#1311](https://github.com/obeli-sk/obelisk/pull/1311)
+- *(server)* `http_server.<name>.api_auth = true` accepts every token the API accepts (startup
+  token, `--api-token`, `api.token_hashes`, `api.oidc`) on a listener, alongside its own `oidc`.
+  It requires an enabled API, including with `--dev`.
+  [#1312](https://github.com/obeli-sk/obelisk/pull/1312)
+- *(server)* `[idle_report]` (SQLite only) POSTs repeated reports to a URL while no HTTP request is
+  in flight, no execution is active and both quiet periods have elapsed, so a platform can suspend
+  the server. Reports of one idle period share its `period_id` and carry `next_run_at` for
+  scheduling a wake-up. Pending stub executions do not count as active. `server.idle.reported` and
+  `server.idle.resumed` system events record the transitions.
+  [#1281](https://github.com/obeli-sk/obelisk/pull/1281)
+  [#1292](https://github.com/obeli-sk/obelisk/pull/1292)
+  [#1294](https://github.com/obeli-sk/obelisk/pull/1294)
+  [#1295](https://github.com/obeli-sk/obelisk/pull/1295)
+  [#1296](https://github.com/obeli-sk/obelisk/pull/1296)
+- *(server)* `health.listening_addr` enables an unauthenticated `GET /health` listener that reads
+  the database. Its requests do not count as activity for `idle_report`.
+  [#1301](https://github.com/obeli-sk/obelisk/pull/1301)
+- *(server)* `api.max_stream_duration` and `webhooks.max_stream_duration`, both 10 minutes by
+  default, end follow/SSE and streaming webhook responses cleanly. CLI followers reconnect.
+  [#1284](https://github.com/obeli-sk/obelisk/pull/1284)
+- *(cloud)* `obelisk cloud auth` logs in through a browser by pasting a code, and `status`, `switch`
+  and `logout` manage the saved accounts in a private credentials file. `--account` or
+  `OBELISK_CLOUD_ACCOUNT` selects an account written `<slug>@<API host>`.
+  [#1321](https://github.com/obeli-sk/obelisk/pull/1321)
+  [#1323](https://github.com/obeli-sk/obelisk/pull/1323)
+- *(cloud)* `cloud app status` reports health and wake failures and shows an idle-suspended app as
+  `running (suspended)`. New `cloud app events` lists recent lifecycle and Machine events.
+  [#1305](https://github.com/obeli-sk/obelisk/pull/1305)
+  [#1308](https://github.com/obeli-sk/obelisk/pull/1308)
+- *(cloud)* App endpoints include the `internal--` URL.
+  [#1317](https://github.com/obeli-sk/obelisk/pull/1317)
+- *(cli)* `obelisk app pull` and `obelisk cloud app pull` write the running `app.toml`, the active
+  deployment and its source files. `GET /v1/app-toml` serves the verbatim file, and `deployment pull`
+  defaults to the active deployment. [#1283](https://github.com/obeli-sk/obelisk/pull/1283)
+- *(cli)* `obelisk generate app-name` prints a random app name and sets `app_name` in the app
+  config. Invalid `app_name` errors suggest it. [#1299](https://github.com/obeli-sk/obelisk/pull/1299)
+- *(cli)* `obelisk component source` lists or prints a component's source files, backed by
+  `GET /v1/components/{digest}/sources`, which now include exec and VM activity scripts.
+  `execution events --backtraces` shows persisted backtraces.
+  [#1304](https://github.com/obeli-sk/obelisk/pull/1304)
+- *(api)* `GET /v1/info` reports the `[maintenance.gc]` settings in an optional `gc` object.
+  [#1290](https://github.com/obeli-sk/obelisk/pull/1290)
+- *(gc)* `max_count` for `[maintenance.gc.retention.executions]` and
+  `[maintenance.gc.retention.deployments]`; `0` disables the limit.
+  [#1254](https://github.com/obeli-sk/obelisk/pull/1254)
+- *(events)* `deployment.submit.files_missing` records submissions probing for missing files,
+  `maintenance.gc.deferred_by_deployment` records busy GC steps, and `maintenance.gc.completed`
+  records the active deployment. [#1253](https://github.com/obeli-sk/obelisk/pull/1253)
+
 ### Changed
 
 - **Breaking:** *(server)* Removed `--no-auth`. API authentication is always required.
   New `--dev` prints the startup token and lets `internal` start without configured credentials.
   App `public_http_servers` rejects the reserved names `internal` and `webui`.
-
-- *(cloud)* Deploy uploads its deployment and activates it through provisioner Apply,
-  without enqueuing it on the tenant. Cloud `app deployment enqueue` and
-  `app deployment apply` reject direct activation and direct users to `app deploy`
-  or `app apply` instead.
-- *(cli)* Execution results in default mode are pretty-printed as JSON on stdout, with
-  completion messages on stderr. Human-readable logs from `execution submit --follow-logs`
-  now go to stderr. With `--json`, submission, logs, and final results remain NDJSON on stdout
-  when following.
+  [#1318](https://github.com/obeli-sk/obelisk/pull/1318)
 - **Breaking:** *(server)* Webhook listeners are configured in one `http_server` table keyed by
   name. `external.*` becomes `http_server.external.*`, and `[[http_server]] name = "x"` becomes
   `[http_server.x]`. The old keys fail to load. The Web UI stays in `[webui]`; the name
-  `http_server.webui` is reserved.
-- *(server)* New built-in `internal` HTTP server on `127.0.0.1:9091`, enabled by default, for
-  webhooks meant to sit behind authentication.
-- *(app)* New public env source `source = "http-server-url"` with `http_server = "<name>"` reads
-  any HTTP server except the Web UI, which keeps `webui-url`. Every `http_server` and the API
-  accept `public_url`, validated when server.toml loads like `webui.public_url`; `api-url` uses
-  `api.public_url`.
-- *(server)* `[[http_server.<name>.oidc]]` requires a matching OIDC ID token on every request of
-  a listener, checked before routing.
-- *(server)* `http_server.<name>.api_auth = true` accepts every token the API accepts (startup
-  token, `--api-token`, `api.token_hashes`, `api.oidc`) on a listener, alongside its own `oidc`.
-  It requires an enabled API, including with `--dev`.
+  `http_server.webui` is reserved. [#1311](https://github.com/obeli-sk/obelisk/pull/1311)
+  [#1312](https://github.com/obeli-sk/obelisk/pull/1312)
 - **Breaking:** *(app)* An `http_server` without `oidc` or `api_auth` starts only when app.toml
   lists it in `public_http_servers`, so `external` and `internal` stay closed by default. The Web
   UI is not an `http_server` and always starts. Listing a server that requires credentials, or a
-  disabled or unknown one, records
-  a `server.public_http_server.ignored` warning event.
+  disabled or unknown one, records a `server.public_http_server.ignored` warning event.
+  [#1312](https://github.com/obeli-sk/obelisk/pull/1312)
 - **Breaking:** *(deployment)* Webhook endpoints must set `http_server`; it no longer defaults to
-  `external`.
-- **Breaking:** *(deployment)* Webhook endpoint `oidc` is removed and fails verification; require
-  OIDC for the whole listener with `[[http_server.<name>.oidc]]` instead.
+  `external`. [#1313](https://github.com/obeli-sk/obelisk/pull/1313)
+- **Breaking:** *(app)* `app.toml` must set `app_name`. `OBELISK_APP_NAME`, when set, must match it;
+  without an app config file the name comes from `OBELISK_APP_NAME` alone.
+  [#1286](https://github.com/obeli-sk/obelisk/pull/1286)
+- **Breaking:** *(cli)* Cloud app commands refuse an explicit app config whose `app_name` differs
+  from `--app`/`OBELISK_APP_NAME`. `-a` only means `--app-config`, `cloud app stage` and `deploy`
+  discover `./app.toml`, `status` accepts `-a`, and `cloud app new` drops the positional name in
+  favor of `--app`. [#1256](https://github.com/obeli-sk/obelisk/pull/1256)
+- **Breaking:** *(cloud)* `obelisk cloud` drops `--api-url` and `--apps-domain`. A token alone
+  targets `https://cloud.obeli.sk/api`; a custom deployment sets the token with
+  `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`, and a partial set is an error. Commands
+  without a token or saved login fail locally with a hint.
+  [#1306](https://github.com/obeli-sk/obelisk/pull/1306)
+  [#1321](https://github.com/obeli-sk/obelisk/pull/1321)
+  [#1323](https://github.com/obeli-sk/obelisk/pull/1323)
 - **Breaking:** *(db)* A deployment's content digest is unique. Submitting content already stored
   under another ID returns `409`, and the server reuses the stored deployment when started with
   the same deployment file. The database migration keeps existing deployments storing the same
   content and marks all but one as superseded: the active or enqueued one, otherwise the most
-  recently updated.
+  recently updated. [#1298](https://github.com/obeli-sk/obelisk/pull/1298)
+  [#1302](https://github.com/obeli-sk/obelisk/pull/1302)
+  [#1303](https://github.com/obeli-sk/obelisk/pull/1303)
+- **Breaking:** *(gc)* Retention keeps the newest 1000 finished top-level executions and 100 inactive
+  deployments by default, and system events, executions and deployments default to a maximum age of
+  31 days instead of 30. Upgrading deletes finished executions beyond the limit; set `max_count = 0`
+  to keep the age limit only. [#1253](https://github.com/obeli-sk/obelisk/pull/1253)
+  [#1254](https://github.com/obeli-sk/obelisk/pull/1254)
+  [#1270](https://github.com/obeli-sk/obelisk/pull/1270)
+- **Breaking:** *(events)* One `deployment.policy.applied` event, whose document lists each
+  component's HTTP policy and secret exposure, replaces the per-component
+  `component.http_policy.applied` and `component.secret_exposure.authorized` events. Failing to
+  record it fails the startup or switch. `maintenance.gc.blocked` becomes
+  `maintenance.gc.deployments_in_use`. [#1253](https://github.com/obeli-sk/obelisk/pull/1253)
+  [#1266](https://github.com/obeli-sk/obelisk/pull/1266)
+- **Breaking:** *(build)* Where jemalloc also serves C and C++ allocations, which excludes Apple
+  targets, its options are read from `MALLOC_CONF` instead of `_RJEM_MALLOC_CONF`. SQLite and V8 no
+  longer leave freed memory in glibc arenas, lowering retained and peak memory around deployment
+  submissions. [#1322](https://github.com/obeli-sk/obelisk/pull/1322)
+- *(cloud)* Deploy uploads its deployment and activates it through provisioner Apply,
+  without enqueuing it on the tenant. Cloud `app deployment enqueue` and
+  `app deployment apply` reject direct activation and direct users to `app deploy`
+  or `app apply` instead. [#1315](https://github.com/obeli-sk/obelisk/pull/1315)
+- *(cloud)* `stage`, `apply` and `deploy` send the verbatim `app.toml` to the provisioner.
+  [#1288](https://github.com/obeli-sk/obelisk/pull/1288)
+- *(cli)* Execution results in default mode are pretty-printed as JSON on stdout, with
+  completion messages on stderr. Human-readable logs from `execution submit --follow-logs`
+  now go to stderr. With `--json`, submission, logs, and final results remain NDJSON on stdout
+  when following. [#1310](https://github.com/obeli-sk/obelisk/pull/1310)
 - *(api)* Resubmitting matching content under an existing deployment ID bumps `updated_at` and
-  sets the description when one is given; an empty description clears it, an omitted one is kept. `GET /v1/deployment-digests/{digest}` returns the deployment storing a
-  content digest.
+  sets the description when one is given; an empty description clears it, an omitted one is kept.
+  `GET /v1/deployment-digests/{digest}` returns the deployment storing a content digest.
+  [#1298](https://github.com/obeli-sk/obelisk/pull/1298)
 - *(cli)* `obelisk deployment submit` and `enqueue` without `--deployment-id` resubmit stored
-  content under its existing deployment ID.
+  content under its existing deployment ID. [#1298](https://github.com/obeli-sk/obelisk/pull/1298)
 - *(cli)* `obelisk cloud app deploy --description` describes the deployment.
+  [#1298](https://github.com/obeli-sk/obelisk/pull/1298)
 - *(gc)* Deployment retention orders by `updated_at` for both age and count, so a resubmitted
-  deployment is kept as recent.
-- *(api)* `GET /v1/deployments` lists the most recently updated deployments first.
+  deployment is kept as recent. [#1298](https://github.com/obeli-sk/obelisk/pull/1298)
+- *(api)* `GET /v1/deployments` lists the most recently updated deployments first, and deployment
+  responses expose optional `updated_at`. [#1260](https://github.com/obeli-sk/obelisk/pull/1260)
+  [#1262](https://github.com/obeli-sk/obelisk/pull/1262)
+  [#1298](https://github.com/obeli-sk/obelisk/pull/1298)
 - *(cli)* The default `obelisk generate new` template probes one site on a cron schedule and shows
   its uptime and latency history. The dashboard reads probe runs through the Obelisk API using
-  internal secrets and URLs supplied by the server, so it needs no configuration.
-- *(server)* `health.listening_addr` enables an unauthenticated `GET /health` listener that reads
-  the database. Its requests do not count as activity for `idle_report`.
+  internal secrets and URLs supplied by the server, so it needs no configuration. A directory name
+  that fails app name validation is replaced by a random one.
+  [#1277](https://github.com/obeli-sk/obelisk/pull/1277)
+  [#1320](https://github.com/obeli-sk/obelisk/pull/1320)
+- *(events)* The system event `code` filter matches by prefix, so `maintenance.gc` finds
+  `maintenance.gc.failed`. [#1274](https://github.com/obeli-sk/obelisk/pull/1274)
+- *(events)* System events are logged through tracing at their own level; DEBUG events stay hidden
+  at the default INFO. Retention never deletes events of the current node run.
+  [#1266](https://github.com/obeli-sk/obelisk/pull/1266)
+  [#1293](https://github.com/obeli-sk/obelisk/pull/1293)
+- *(server)* The configuration snapshot records the full app policy, as version 3.
+  [#1266](https://github.com/obeli-sk/obelisk/pull/1266)
+- *(cli)* `obelisk --version` of Nix builds includes the short git commit.
+  [#1252](https://github.com/obeli-sk/obelisk/pull/1252)
+- *(webui)* App config page, GC settings on the Info page, system event scope toggles and a single
+  search form, retention forms prefilled with the new defaults, webhook details on executions, and
+  follow streams that reconnect. [#1257](https://github.com/obeli-sk/obelisk/pull/1257)
+  [#1263](https://github.com/obeli-sk/obelisk/pull/1263)
+  [#1267](https://github.com/obeli-sk/obelisk/pull/1267)
+  [#1271](https://github.com/obeli-sk/obelisk/pull/1271)
+  [#1275](https://github.com/obeli-sk/obelisk/pull/1275)
+  [#1285](https://github.com/obeli-sk/obelisk/pull/1285)
+  [#1291](https://github.com/obeli-sk/obelisk/pull/1291)
+  [#1314](https://github.com/obeli-sk/obelisk/pull/1314)
+  [#1319](https://github.com/obeli-sk/obelisk/pull/1319)
 
 ### Removed
 
 - **Breaking:** *(cli)* Removed `obelisk execution get`, the alias for `execution status`.
   Use `execution status` for the current state or `execution result` for the final result.
+  [#1309](https://github.com/obeli-sk/obelisk/pull/1309)
 
 ### Deprecated
 
 - *(api)* `POST /v1/deployments`, as its retries create duplicate deployments. Use
   `PUT /v1/deployments/{deployment_id}` with a client-generated ID.
+  [#1298](https://github.com/obeli-sk/obelisk/pull/1298)
 - *(api)* Multipart `PUT /v1/deployments/{deployment_id}` requests. Upload the files
   referenced by the deployment to `PUT /v1/files/{digest}`, then submit the deployment as JSON.
+  [#1316](https://github.com/obeli-sk/obelisk/pull/1316)
 
 ### Fixed
 
+- *(api)* Listing executions no longer drops or repeats those sharing a timestamp at page
+  boundaries. `GET /v1/executions` returns an opaque `cursor` per item for the new `order`
+  parameter; bare timestamp and execution ID cursors are still accepted.
+  [#1261](https://github.com/obeli-sk/obelisk/pull/1261)
+- *(cron)* A newly registered cron waits for its first occurrence instead of submitting on deploy;
+  `@once` still submits immediately. [#1282](https://github.com/obeli-sk/obelisk/pull/1282)
+- *(http)* Pooled connections also expire by wall clock, so a connection idle across a VM suspension
+  is not reused after its peer closed it. [#1276](https://github.com/obeli-sk/obelisk/pull/1276)
+- *(gc)* A sweep moves on from a tombstoned tree with locked executions instead of busy-looping until
+  the lock clears. [#1272](https://github.com/obeli-sk/obelisk/pull/1272)
+- *(gc)* Active cron trackers no longer use up retention count slots or show up as blocked.
+  [#1254](https://github.com/obeli-sk/obelisk/pull/1254)
 - *(gc)* Successful periodic garbage collection system events use DEBUG severity.
+  [#1273](https://github.com/obeli-sk/obelisk/pull/1273)
 - *(sqlite)* Periodic GC drains free database pages in bounded incremental vacuum batches
   instead of reclaiming only 100 pages per sweep, reducing delays after large deletions.
+  [#1273](https://github.com/obeli-sk/obelisk/pull/1273)
+- *(sqlite)* Deployment age retention compares consistent `inactive_at` timestamps; existing values
+  are normalized by the migration. [#1262](https://github.com/obeli-sk/obelisk/pull/1262)
+- *(postgres)* Idle polling uses indexes, keeping its cost bounded as execution history grows.
+  [#1251](https://github.com/obeli-sk/obelisk/pull/1251)
+- *(db)* Maintenance queries align with their indexes in both backends, adding missing indexes and
+  removing redundant ones. [#1251](https://github.com/obeli-sk/obelisk/pull/1251)
 
 ## [0.43.0-rc.15](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.14...v0.43.0-rc.15)
 
