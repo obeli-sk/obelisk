@@ -1834,7 +1834,7 @@ pub(crate) enum CloudAuth {
     Login {
         /// Cloud API URL of a custom deployment; defaults to `https://cloud.obeli.sk/api`.
         api_url: Option<String>,
-        /// Print a link and read the code it displays, for a browser on another machine.
+        /// Only print the link instead of also opening it, for a browser on another machine.
         #[arg(long)]
         no_browser: bool,
     },
