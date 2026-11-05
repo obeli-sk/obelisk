@@ -1536,12 +1536,52 @@ mod tests {
                 &["auth", "logout"],
             ] {
                 let command = [command, &flag[..]].concat();
-                assert_eq!(
-                    parse(&command),
-                    Err(clap::error::ErrorKind::UnknownArgument)
-                );
+                if command.starts_with(&["auth", "login"]) && flag[0] == "--account" {
+                    assert_eq!(parse(&command), Ok(()));
+                } else {
+                    assert_eq!(
+                        parse(&command),
+                        Err(clap::error::ErrorKind::UnknownArgument)
+                    );
+                }
             }
         }
+    }
+
+    #[test]
+    fn cloud_login_accepts_alias_and_default() {
+        let args = Args::try_parse_from([
+            "obelisk",
+            "cloud",
+            "auth",
+            "login",
+            "https://example.test/staging/api",
+            "--account",
+            "staging",
+            "--default",
+            "--no-browser",
+        ])
+        .unwrap();
+        let Subcommand::Cloud(CloudArgs {
+            command:
+                Cloud::Auth(CloudAuth::Login {
+                    api_url,
+                    account,
+                    default,
+                    no_browser,
+                }),
+            ..
+        }) = args.command
+        else {
+            panic!()
+        };
+        assert_eq!(api_url.as_deref(), Some("https://example.test/staging/api"));
+        assert_eq!(account.as_deref(), Some("staging"));
+        assert!(default);
+        assert!(no_browser);
+        assert!(
+            Args::try_parse_from(["obelisk", "cloud", "auth", "login", "--account", ""]).is_err()
+        );
     }
 
     #[test]
@@ -1771,7 +1811,7 @@ pub(crate) struct CloudCredentials {
     /// Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`.
     #[arg(long, global = true, env = "OBELISK_CLOUD_API_TOKEN", hide_env_values = true, value_parser = parse_secret_string)]
     pub(crate) api_token: Option<SecretString>,
-    /// Saved login to use for this command, as `<slug>@<API host>`, instead of the default one.
+    /// Saved account name or alias to use for this command instead of the default one.
     #[arg(
         long,
         global = true,
@@ -1834,6 +1874,12 @@ pub(crate) enum CloudAuth {
     Login {
         /// Cloud API URL of a custom deployment; defaults to `https://cloud.obeli.sk/api`.
         api_url: Option<String>,
+        /// Save the login under this account name or alias.
+        #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        account: Option<String>,
+        /// Make this login the default account.
+        #[arg(long)]
+        default: bool,
         /// Only print the link instead of also opening it, for a browser on another machine.
         #[arg(long)]
         no_browser: bool,
@@ -1842,12 +1888,12 @@ pub(crate) enum CloudAuth {
     Status,
     /// Change the default account.
     Switch {
-        /// Saved account, as `<slug>@<API host>`.
+        /// Saved account name or alias.
         account: String,
     },
     /// Revoke the token of a saved account and forget it.
     Logout {
-        /// Saved account, as `<slug>@<API host>`; defaults to the selected one.
+        /// Saved account name or alias; defaults to the selected one.
         account: Option<String>,
     },
 }
