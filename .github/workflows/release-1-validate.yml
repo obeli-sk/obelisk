@@ -18,6 +18,11 @@ on:
         required: true
         type: boolean
         default: true
+      validate_native_arm_build:
+        description: "Validate and cache native ARM GNU/musl embedded builds"
+        required: true
+        type: boolean
+        default: true
       push_unversioned_tags:
         description: "Push unversioned Docker tags (requires publishing the release)"
         required: true
@@ -103,8 +108,38 @@ jobs:
         run: nix build .#obeliskCross-x86_64-unknown-linux-gnu-dev
         if: ${{ inputs.validate_nix_dev_build }}
 
+  validate-native-arm:
+    if: ${{ inputs.validate_native_arm_build }}
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [gnu-embedded, musl-embedded]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable Cachix push
+        uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866
+        with:
+          name: ${{ vars.CACHIX_CACHE_NAME || 'obeli-sk' }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          pushFilter: "(-rustc-|-cargo-|-rust-std-|-rust-src-|-clippy-|-rustfmt-|-rust-analyzer-|-llvm-tools-|-rust-docs-|-miri-)"
+
+      - name: Validate native ARM Nix build
+        run: nix build '.#obeliskCross-aarch64-unknown-linux-${{ matrix.package }}'
+
   call_child:
-    needs: [validate, validate-cross-dev]
+    needs: [validate, validate-cross-dev, validate-native-arm]
+    if: >-
+      ${{ !cancelled() && needs.validate.result == 'success' &&
+          needs.validate-cross-dev.result == 'success' &&
+          (needs.validate-native-arm.result == 'success' || needs.validate-native-arm.result == 'skipped') }}
     uses: ./.github/workflows/release-2-create-github-release.yml
     secrets: inherit
     with:
