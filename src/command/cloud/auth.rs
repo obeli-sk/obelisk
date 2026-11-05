@@ -1,9 +1,6 @@
 //! `obelisk cloud auth`: browser login and the local credentials file.
 
-use super::{
-    Client, DEFAULT_API_URL, DEFAULT_APPS_DOMAIN, Kind, api_origin, human_output, print_json,
-    terminal,
-};
+use super::{Client, DEFAULT_API_URL, Kind, api_origin, human_output, print_json, terminal};
 use crate::args::{CloudArgs, CloudAuth};
 use anyhow::{Context as _, bail, ensure};
 use reqwest::{Method, Url};
@@ -30,12 +27,13 @@ const CALLBACK_PAGE: &str = "<!doctype html><title>Obelisk Cloud</title><p>Login
 struct Store {
     #[serde(skip_serializing_if = "Option::is_none")]
     default: Option<String>,
-    #[serde(default, rename = "endpoint")]
-    endpoints: Vec<Endpoint>,
+    #[serde(default, rename = "account")]
+    accounts: Vec<Account>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct Endpoint {
+struct Account {
+    user_slug: String,
     api_url: String,
     apps_domain: String,
     api_token: String,
@@ -43,7 +41,13 @@ struct Endpoint {
     token_name: String,
     expires_at: i64,
 }
-impl Endpoint {
+impl Account {
+    /// `<slug>@<API host>`, how every command refers to this login.
+    fn name(&self) -> String {
+        let endpoint = Url::parse(&self.api_url)
+            .map_or_else(|_| self.api_url.clone(), |url| url.authority().to_owned());
+        format!("{}@{endpoint}", self.user_slug)
+    }
     fn expired(&self) -> bool {
         self.expires_at <= chrono::Utc::now().timestamp()
     }
@@ -55,6 +59,14 @@ impl Endpoint {
 
 fn normalized(api_url: &str) -> &str {
     api_url.trim_end_matches('/')
+}
+
+fn login_command(api_url: &str) -> String {
+    if normalized(api_url) == DEFAULT_API_URL {
+        "obelisk cloud auth login".to_owned()
+    } else {
+        format!("obelisk cloud auth login {api_url}")
+    }
 }
 
 fn store_path() -> Option<PathBuf> {
@@ -93,92 +105,115 @@ impl Store {
             .with_context(|| format!("Cannot write {}", path.display()))?;
         Ok(())
     }
-    fn by_url(&self, api_url: &str) -> Option<&Endpoint> {
-        self.endpoints
+    fn find(&self, name: &str) -> Option<&Account> {
+        self.accounts
             .iter()
-            .find(|entry| normalized(&entry.api_url) == normalized(api_url))
+            .find(|account| account.name().eq_ignore_ascii_case(name))
     }
-    fn by_domain(&self, domain: &str) -> Option<&Endpoint> {
-        self.endpoints
-            .iter()
-            .find(|entry| entry.apps_domain.eq_ignore_ascii_case(domain))
+    fn select(&self, name: Option<&str>) -> Option<&Account> {
+        self.find(name.or(self.default.as_deref())?)
     }
-    /// An explicit URL selects by URL, an explicit domain by domain, and neither the default.
-    fn select(&self, api_url: Option<&str>, domain: Option<&str>) -> Option<&Endpoint> {
-        match (api_url, domain) {
-            (Some(api_url), _) => self.by_url(api_url),
-            (None, Some(domain)) => self.by_domain(domain),
-            (None, None) => self.by_url(self.default.as_deref()?),
-        }
-    }
-    /// Stores the login, returning the entry it replaces. The first login becomes the default.
-    fn insert(&mut self, entry: Endpoint) -> Option<Endpoint> {
+    /// Stores the login, returning the entry of the same account it replaces. The first login becomes the default.
+    fn insert(&mut self, account: Account) -> Option<Account> {
+        let name = account.name();
         let previous = self
-            .endpoints
+            .accounts
             .iter()
-            .position(|old| normalized(&old.api_url) == normalized(&entry.api_url))
-            .map(|index| self.endpoints.remove(index));
-        if self.endpoints.is_empty() && previous.is_none() {
-            self.default = Some(entry.api_url.clone());
+            .position(|old| old.name().eq_ignore_ascii_case(&name))
+            .map(|index| self.accounts.remove(index));
+        if self.accounts.is_empty() && previous.is_none() {
+            self.default = Some(name);
         }
-        self.endpoints.push(entry);
+        self.accounts.push(account);
         previous
     }
     /// Drops the login; a removed default passes to the first remaining entry.
-    fn remove(&mut self, api_url: &str) {
-        self.endpoints
-            .retain(|entry| normalized(&entry.api_url) != normalized(api_url));
+    fn remove(&mut self, name: &str) {
+        self.accounts
+            .retain(|account| !account.name().eq_ignore_ascii_case(name));
         if self
             .default
             .as_deref()
-            .is_some_and(|default| normalized(default) == normalized(api_url))
+            .is_some_and(|default| default.eq_ignore_ascii_case(name))
         {
-            self.default = self.endpoints.first().map(|entry| entry.api_url.clone());
+            self.default = self.accounts.first().map(Account::name);
         }
     }
 }
 
-/// Fills what `obelisk cloud` was not told explicitly from the credentials file.
-/// An explicit token ignores the file, so it never goes to an endpoint the file makes default.
+/// Picks what `obelisk cloud` talks to: a token alone means production, all three values a custom
+/// deployment, and otherwise a saved account.
 pub(super) fn resolve(args: &mut CloudArgs, token_required: bool) -> anyhow::Result<()> {
-    if args.api_token.is_some() {
-        return Ok(());
-    }
-    if let Some(path) = store_path() {
-        let store = Store::load(&path)?;
-        if let Some(entry) = store.select(args.api_url.as_deref(), args.apps_domain.as_deref()) {
-            args.api_url.get_or_insert_with(|| entry.api_url.clone());
-            args.apps_domain
-                .get_or_insert_with(|| entry.apps_domain.clone());
-            ensure!(
-                !token_required || !entry.expired(),
-                "Login to {} expired on {}; run `obelisk cloud auth login`",
-                entry.api_url,
-                entry.expiry()
+    select(args, store_path().as_deref(), token_required)
+}
+
+fn select(args: &mut CloudArgs, path: Option<&Path>, token_required: bool) -> anyhow::Result<()> {
+    let explicit = (
+        args.api_token.is_some(),
+        args.api_url.is_some(),
+        args.apps_domain.is_some(),
+    );
+    ensure!(
+        args.account.is_none() || explicit == (false, false, false),
+        "--account or OBELISK_CLOUD_ACCOUNT cannot be combined with an API token, OBELISK_CLOUD_API_URL or OBELISK_CLOUD_APPS_DOMAIN"
+    );
+    match explicit {
+        (true, false, false) | (true, true, true) => return Ok(()),
+        (false, false, false) => {}
+        (token, api_url, domain) => {
+            let missing = [
+                (!api_url, "OBELISK_CLOUD_API_URL"),
+                (!domain, "OBELISK_CLOUD_APPS_DOMAIN"),
+                (!token, "OBELISK_CLOUD_API_TOKEN"),
+            ]
+            .into_iter()
+            .filter_map(|(missing, name)| missing.then_some(name))
+            .collect::<Vec<_>>()
+            .join(", ");
+            bail!(
+                "A custom deployment needs OBELISK_CLOUD_API_URL, OBELISK_CLOUD_APPS_DOMAIN and an API token together; missing {missing}. Unset them to use a saved login"
             );
-            args.api_token = Some(SecretString::from(entry.api_token.clone()));
         }
     }
+    let store = path.map(Store::load).transpose()?.unwrap_or_default();
+    let Some(account) = store.select(args.account.as_deref()) else {
+        if let Some(name) = &args.account {
+            bail!("No login for {name}; `obelisk cloud auth status` lists the saved accounts");
+        }
+        ensure!(
+            !token_required,
+            "Not logged in; run `obelisk cloud auth login` or set OBELISK_CLOUD_API_TOKEN"
+        );
+        return Ok(());
+    };
     ensure!(
-        !token_required || args.api_token.is_some(),
-        "Not logged in to {}; run `obelisk cloud auth login` or set OBELISK_CLOUD_API_TOKEN",
-        args.api_url.as_deref().unwrap_or(DEFAULT_API_URL)
+        !token_required || !account.expired(),
+        "Login of {} expired on {}; run `{}`",
+        account.name(),
+        account.expiry(),
+        login_command(&account.api_url)
     );
+    args.api_url = Some(account.api_url.clone());
+    args.apps_domain = Some(account.apps_domain.clone());
+    args.api_token = Some(SecretString::from(account.api_token.clone()));
     Ok(())
 }
 
 pub(super) async fn run(args: &CloudArgs, command: &CloudAuth) -> anyhow::Result<()> {
     let path = store_path().context("Cannot determine the configuration directory")?;
     let value = match command {
-        CloudAuth::Login { no_browser } => login(args, &path, *no_browser).await?,
+        CloudAuth::Login {
+            api_url,
+            no_browser,
+        } => login(args, api_url.as_deref(), &path, *no_browser).await?,
         CloudAuth::Status => status(args, &path).await?,
-        CloudAuth::Switch { endpoint } => switch(&path, endpoint)?,
-        CloudAuth::Logout => logout(args, &path).await?,
+        CloudAuth::Switch { account } => switch(&path, account)?,
+        CloudAuth::Logout { account } => logout(args, account.as_deref(), &path).await?,
     };
     if args.json {
         print_json(&value)
     } else {
-        if value["endpoints"].as_array().is_some_and(Vec::is_empty) {
+        if value["accounts"].as_array().is_some_and(Vec::is_empty) {
             eprintln!("Not logged in; run `obelisk cloud auth login`.");
         } else {
             eprint!("{}", human_output(&value));
@@ -382,37 +417,20 @@ struct Redeemed {
     name: String,
     expires_at: i64,
     apps_domain: String,
+    user_slug: String,
 }
 
-// The endpoint to log in to: explicit values, then the default entry, then production.
-fn login_target(args: &CloudArgs, store: &Store) -> anyhow::Result<String> {
-    if let Some(api_url) = &args.api_url {
-        return Ok(api_url.clone());
-    }
-    if let Some(domain) = &args.apps_domain {
-        return store.by_domain(domain).map_or_else(
-            || {
-                if domain.eq_ignore_ascii_case(DEFAULT_APPS_DOMAIN) {
-                    Ok(DEFAULT_API_URL.to_owned())
-                } else {
-                    bail!("No login for apps domain {domain}; set --api-url as well")
-                }
-            },
-            |entry| Ok(entry.api_url.clone()),
-        );
-    }
-    Ok(store
-        .select(None, None)
-        .map_or(DEFAULT_API_URL, |entry| &entry.api_url)
-        .to_owned())
-}
-
-async fn login(args: &CloudArgs, path: &Path, no_browser: bool) -> anyhow::Result<Value> {
+async fn login(
+    args: &CloudArgs,
+    api_url: Option<&str>,
+    path: &Path,
+    no_browser: bool,
+) -> anyhow::Result<Value> {
     ensure!(
         terminal(),
         "`obelisk cloud auth login` needs a terminal; set OBELISK_CLOUD_API_TOKEN instead"
     );
-    let api_url = login_target(args, &Store::load(path)?)?;
+    let api_url = api_url.unwrap_or(DEFAULT_API_URL);
     let verifier = random_hex();
     let state = random_hex();
     let challenge = hex(&Sha256::digest(verifier.as_bytes()));
@@ -428,7 +446,7 @@ async fn login(args: &CloudArgs, path: &Path, no_browser: bool) -> anyhow::Resul
         .map(TcpListener::local_addr)
         .transpose()?
         .map(|address| address.port());
-    let page = login_page(&api_url, &challenge, &state, &host, port)?;
+    let page = login_page(api_url, &challenge, &state, &host, port)?;
     let code = match listener {
         Some(listener) if open_browser(&page) => {
             eprintln!("Opening the browser. If it does not open, visit:\n\n{page}\n");
@@ -438,12 +456,12 @@ async fn login(args: &CloudArgs, path: &Path, no_browser: bool) -> anyhow::Resul
             wait_for_callback(listener, state).await?
         }
         _ => {
-            let page = login_page(&api_url, &challenge, &state, &host, None)?;
+            let page = login_page(api_url, &challenge, &state, &host, None)?;
             eprintln!("Visit this page in any browser:\n\n{page}\n");
             read_pasted_code().await?
         }
     };
-    finish_login(&api_url, path, &code, &verifier, args.verbose).await
+    finish_login(api_url, path, &code, &verifier, args.verbose).await
 }
 
 async fn finish_login(
@@ -465,7 +483,8 @@ async fn finish_login(
             .context("Login failed")?,
     )
     .context("Cannot read the issued token")?;
-    let entry = Endpoint {
+    let account = Account {
+        user_slug: redeemed.user_slug,
         api_url: normalized(api_url).to_owned(),
         apps_domain: redeemed.apps_domain,
         api_token: redeemed.token,
@@ -474,21 +493,22 @@ async fn finish_login(
         expires_at: redeemed.expires_at,
     };
     let mut store = Store::load(path)?;
-    let previous = store.insert(entry.clone());
+    let name = account.name();
+    let previous = store.insert(account.clone());
     store.save(path)?;
     if let Some(previous) = previous {
         revoke(&previous, verbose).await;
     }
     Ok(json!({
-        "logged_in": entry.api_url,
-        "apps_domain": entry.apps_domain,
-        "token_name": entry.token_name,
-        "expires_at": entry.expiry(),
-        "default": store.by_url(store.default.as_deref().unwrap_or_default()).is_some_and(|default| default.api_url == entry.api_url),
+        "logged_in": name,
+        "apps_domain": account.apps_domain,
+        "token_name": account.token_name,
+        "expires_at": account.expiry(),
+        "default": store.default.as_deref() == Some(name.as_str()),
     }))
 }
 
-async fn revoke(entry: &Endpoint, verbose: bool) {
+async fn revoke(entry: &Account, verbose: bool) {
     let result = async {
         let token = SecretString::from(entry.api_token.clone());
         Client::build(&entry.api_url, Some(&token), verbose)?
@@ -512,7 +532,7 @@ async fn revoke(entry: &Endpoint, verbose: bool) {
     }
 }
 
-async fn token_state(entry: &Endpoint, verbose: bool) -> String {
+async fn token_state(entry: &Account, verbose: bool) -> String {
     if entry.expired() {
         return "expired".to_owned();
     }
@@ -531,7 +551,7 @@ async fn token_state(entry: &Endpoint, verbose: bool) -> String {
     match response {
         Ok(response) if response.status().is_success() => "active".to_owned(),
         Ok(response) if response.status() == reqwest::StatusCode::UNAUTHORIZED => {
-            "rejected, run `obelisk cloud auth login`".to_owned()
+            format!("rejected, run `{}`", login_command(&entry.api_url))
         }
         Ok(response) => format!("unknown (HTTP {})", response.status()),
         Err(err) => format!("unknown ({err:#})"),
@@ -543,60 +563,64 @@ async fn status(args: &CloudArgs, path: &Path) -> anyhow::Result<Value> {
     if args.api_token.is_some() && !args.json {
         eprintln!("--api-token or OBELISK_CLOUD_API_TOKEN is set and takes precedence.\n");
     }
-    let default = store.default.as_deref().map(normalized);
-    let mut endpoints = Vec::new();
-    for entry in &store.endpoints {
-        endpoints.push(json!({
+    let mut accounts = Vec::new();
+    for entry in &store.accounts {
+        let name = entry.name();
+        accounts.push(json!({
+            "default": store.default.as_deref() == Some(name.as_str()),
+            "account": name,
             "api_url": entry.api_url,
             "apps_domain": entry.apps_domain,
-            "default": default == Some(normalized(&entry.api_url)),
             "token_name": entry.token_name,
             "expires_at": entry.expiry(),
             "token_state": token_state(entry, args.verbose).await,
         }));
     }
-    Ok(json!({ "endpoints": endpoints }))
+    Ok(json!({ "accounts": accounts }))
 }
 
-fn switch(path: &Path, endpoint: &str) -> anyhow::Result<Value> {
+fn switch(path: &Path, name: &str) -> anyhow::Result<Value> {
     let mut store = Store::load(path)?;
-    let api_url = store
-        .by_url(endpoint)
-        .or_else(|| store.by_domain(endpoint))
-        .map(|entry| entry.api_url.clone())
-        .with_context(|| {
-            format!(
-                "No login for {endpoint}; `obelisk cloud auth status` lists the logged-in endpoints"
-            )
-        })?;
-    store.default = Some(api_url.clone());
+    let name = store.find(name).map(Account::name).with_context(|| {
+        format!("No login for {name}; `obelisk cloud auth status` lists the saved accounts")
+    })?;
+    store.default = Some(name.clone());
     store.save(path)?;
-    Ok(json!({ "default": api_url }))
+    Ok(json!({ "default": name }))
 }
 
-async fn logout(args: &CloudArgs, path: &Path) -> anyhow::Result<Value> {
+async fn logout(args: &CloudArgs, name: Option<&str>, path: &Path) -> anyhow::Result<Value> {
     let mut store = Store::load(path)?;
-    let entry = store
-        .select(args.api_url.as_deref(), args.apps_domain.as_deref())
-        .cloned()
-        .context("Not logged in")?;
+    let name = name.or(args.account.as_deref());
+    let entry = store.select(name).cloned().with_context(|| {
+        name.map_or_else(
+            || "Not logged in".to_owned(),
+            |name| format!("No login for {name}"),
+        )
+    })?;
     revoke(&entry, args.verbose).await;
-    store.remove(&entry.api_url);
+    let name = entry.name();
+    store.remove(&name);
     store.save(path)?;
-    Ok(json!({ "logged_out": entry.api_url, "default": store.default }))
+    Ok(json!({ "logged_out": name, "default": store.default }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::{Json, Router, http::StatusCode, routing::post};
+    use secrecy::ExposeSecret as _;
     use std::sync::{Arc, Mutex};
 
-    fn entry(api_url: &str, domain: &str) -> Endpoint {
-        Endpoint {
+    const ALICE: &str = "alice@cloud.obeli.sk";
+    const DEV: &str = "alice@cloud.dev.test";
+
+    fn entry(slug: &str, api_url: &str, domain: &str) -> Account {
+        Account {
+            user_slug: slug.to_owned(),
             api_url: api_url.to_owned(),
             apps_domain: domain.to_owned(),
-            api_token: format!("token-{domain}"),
+            api_token: format!("token-{slug}-{domain}"),
             token_id: "1".repeat(32),
             token_name: "cli-test-abcdef".to_owned(),
             expires_at: chrono::Utc::now().timestamp() + 1000,
@@ -605,52 +629,151 @@ mod tests {
 
     fn two_logins() -> Store {
         let mut store = Store::default();
-        store.insert(entry("https://cloud.obeli.sk/api", "obelisk.works"));
-        store.insert(entry("https://cloud.dev.test/api", "dev.test"));
+        store.insert(entry(
+            "alice",
+            "https://cloud.obeli.sk/api",
+            "obelisk.works",
+        ));
+        store.insert(entry("alice", "https://cloud.dev.test/api", "dev.test"));
         store
     }
 
+    fn parsed(token: Option<&str>, account: Option<&str>) -> CloudArgs {
+        CloudArgs {
+            json: false,
+            verbose: false,
+            api_token: token.map(SecretString::from),
+            account: account.map(str::to_owned),
+            api_url: None,
+            apps_domain: None,
+            command: crate::args::Cloud::Apps(crate::args::CloudApps::List),
+        }
+    }
+
     #[test]
-    fn selection_prefers_url_then_domain_then_default() {
-        let store = two_logins();
-        let selected = |url, domain| store.select(url, domain).map(|e| e.apps_domain.as_str());
+    fn account_names_use_the_api_host() {
+        let name = |url| entry("alice", url, "d").name();
+        assert_eq!(name("https://cloud.obeli.sk/api"), ALICE);
+        assert_eq!(name("http://127.0.0.1:8080/"), "alice@127.0.0.1:8080");
+    }
+
+    #[test]
+    fn selection_takes_a_token_alone_all_three_values_or_a_saved_account() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cloud-credentials.toml");
+        two_logins().save(&path).unwrap();
+        let run = |args: &mut CloudArgs| select(args, Some(&path), true);
+
+        let mut args = parsed(None, None);
+        run(&mut args).unwrap();
         assert_eq!(
-            selected(None, None),
+            args.apps_domain.as_deref(),
             Some("obelisk.works"),
-            "first is default"
+            "default"
         );
-        assert_eq!(
-            selected(Some("https://cloud.dev.test/api/"), None),
-            Some("dev.test")
+        assert!(args.api_token.is_some());
+
+        let mut args = parsed(None, Some("ALICE@cloud.dev.test"));
+        run(&mut args).unwrap();
+        assert_eq!(args.api_url.as_deref(), Some("https://cloud.dev.test/api"));
+        assert_eq!(args.apps_domain.as_deref(), Some("dev.test"));
+
+        let mut args = parsed(None, Some("bob@cloud.dev.test"));
+        assert!(
+            run(&mut args)
+                .unwrap_err()
+                .to_string()
+                .contains("No login for")
         );
-        assert_eq!(selected(None, Some("DEV.test")), Some("dev.test"));
-        assert_eq!(
-            selected(Some("https://cloud.obeli.sk/api"), Some("dev.test")),
-            Some("obelisk.works")
+
+        let mut args = parsed(Some("t"), None);
+        run(&mut args).unwrap();
+        assert_eq!(args.api_url, None, "a token alone never uses the file");
+
+        let mut args = parsed(Some("t"), Some(ALICE));
+        assert!(
+            run(&mut args)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be combined")
         );
-        assert_eq!(selected(Some("https://other.test"), None), None);
-        assert_eq!(selected(None, Some("other.test")), None);
+
+        let mut args = parsed(Some("t"), None);
+        args.api_url = Some("https://other.test".to_owned());
+        args.apps_domain = Some("other.test".to_owned());
+        run(&mut args).unwrap();
+        assert_eq!(args.apps_domain.as_deref(), Some("other.test"));
+        assert_eq!(args.api_token.as_ref().unwrap().expose_secret(), "t");
+
+        for (token, api_url, domain, missing) in [
+            (false, true, true, "missing OBELISK_CLOUD_API_TOKEN."),
+            (
+                false,
+                true,
+                false,
+                "missing OBELISK_CLOUD_APPS_DOMAIN, OBELISK_CLOUD_API_TOKEN.",
+            ),
+            (true, true, false, "missing OBELISK_CLOUD_APPS_DOMAIN."),
+            (true, false, true, "missing OBELISK_CLOUD_API_URL."),
+        ] {
+            let mut args = parsed(token.then_some("t"), None);
+            args.api_url = api_url.then(|| "https://other.test".to_owned());
+            args.apps_domain = domain.then(|| "other.test".to_owned());
+            let error = run(&mut args).unwrap_err().to_string();
+            assert!(error.contains(missing), "{error}");
+        }
+    }
+
+    #[test]
+    fn offline_commands_need_no_login_but_others_do() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("missing.toml");
+        select(&mut parsed(None, None), Some(&path), false).unwrap();
+        let error = select(&mut parsed(None, None), Some(&path), true).unwrap_err();
+        assert!(error.to_string().contains("Not logged in"));
+    }
+
+    #[test]
+    fn expired_logins_print_the_command_for_their_endpoint() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cloud-credentials.toml");
+        let mut store = Store::default();
+        let mut account = entry("alice", "https://cloud.dev.test/api", "dev.test");
+        account.expires_at = 1;
+        store.insert(account);
+        store.save(&path).unwrap();
+        let error = select(&mut parsed(None, None), Some(&path), true).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("run `obelisk cloud auth login https://cloud.dev.test/api`"),
+            "{error}"
+        );
     }
 
     #[test]
     fn removing_the_default_passes_it_on() {
         let mut store = two_logins();
-        store.remove("https://cloud.dev.test/api");
-        assert_eq!(store.default.as_deref(), Some("https://cloud.obeli.sk/api"));
-        store.insert(entry("https://cloud.dev.test/api", "dev.test"));
-        store.remove("https://cloud.obeli.sk/api/");
-        assert_eq!(store.default.as_deref(), Some("https://cloud.dev.test/api"));
-        store.remove("https://cloud.dev.test/api");
+        store.remove(DEV);
+        assert_eq!(store.default.as_deref(), Some(ALICE));
+        store.insert(entry("alice", "https://cloud.dev.test/api", "dev.test"));
+        store.remove(ALICE);
+        assert_eq!(store.default.as_deref(), Some(DEV));
+        store.remove(DEV);
         assert_eq!(store.default, None);
     }
 
     #[test]
-    fn relogin_replaces_the_entry_and_keeps_the_default() {
+    fn relogin_replaces_only_the_same_account() {
         let mut store = two_logins();
-        let previous = store.insert(entry("https://cloud.dev.test/api/", "dev.test"));
+        let previous = store.insert(entry("alice", "https://cloud.dev.test/api/", "dev.test"));
         assert!(previous.is_some());
-        assert_eq!(store.endpoints.len(), 2);
-        assert_eq!(store.default.as_deref(), Some("https://cloud.obeli.sk/api"));
+        assert_eq!(store.accounts.len(), 2);
+        assert_eq!(store.default.as_deref(), Some(ALICE));
+        let other = store.insert(entry("bob", "https://cloud.dev.test/api", "dev.test"));
+        assert!(other.is_none(), "another account is not replaced");
+        assert_eq!(store.accounts.len(), 3);
+        assert_eq!(store.default.as_deref(), Some(ALICE));
     }
 
     #[cfg(unix)]
@@ -663,11 +786,8 @@ mod tests {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         let loaded = Store::load(&path).unwrap();
-        assert_eq!(loaded.endpoints.len(), 2);
-        assert_eq!(
-            loaded.default.as_deref(),
-            Some("https://cloud.obeli.sk/api")
-        );
+        assert_eq!(loaded.accounts.len(), 2);
+        assert_eq!(loaded.default.as_deref(), Some(ALICE));
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
         assert!(Store::load(&path).is_err());
     }
@@ -749,6 +869,7 @@ mod tests {
                         "name": "cli-laptop-abcdef",
                         "expires_at": 4_000_000_000_i64,
                         "apps_domain": "apps.test",
+                        "user_slug": "alice",
                     })))
                 }),
             )
@@ -778,30 +899,25 @@ mod tests {
         assert_eq!(result["apps_domain"], "apps.test");
         assert!(revoked.lock().unwrap().is_empty());
         let stored = Store::load(&path).unwrap();
-        assert_eq!(stored.endpoints[0].api_token, "obk_new");
-        assert_eq!(stored.endpoints[0].apps_domain, "apps.test");
-        assert_eq!(stored.default.as_deref(), Some(api_url.as_str()));
+        assert_eq!(stored.accounts[0].api_token, "obk_new");
+        assert_eq!(stored.accounts[0].apps_domain, "apps.test");
+        assert_eq!(stored.default, Some(stored.accounts[0].name()));
+        assert_eq!(result["logged_in"], stored.accounts[0].name());
 
         let mut replaced = Store::load(&path).unwrap();
-        replaced.endpoints[0].api_token = "obk_old".to_owned();
-        replaced.endpoints[0].token_id = "1".repeat(32);
+        replaced.accounts[0].api_token = "obk_old".to_owned();
+        replaced.accounts[0].token_id = "1".repeat(32);
         replaced.save(&path).unwrap();
         assert!(
             finish_login(&api_url, &path, "wrong", "verifier", false)
                 .await
                 .is_err()
         );
-        assert_eq!(
-            Store::load(&path).unwrap().endpoints[0].api_token,
-            "obk_old"
-        );
+        assert_eq!(Store::load(&path).unwrap().accounts[0].api_token, "obk_old");
         finish_login(&api_url, &path, "code", "verifier", false)
             .await
             .unwrap();
-        assert_eq!(
-            Store::load(&path).unwrap().endpoints[0].api_token,
-            "obk_new"
-        );
+        assert_eq!(Store::load(&path).unwrap().accounts[0].api_token, "obk_new");
         assert_eq!(
             *revoked.lock().unwrap(),
             [("1".repeat(32), "Bearer obk_old".to_owned())]

@@ -1669,14 +1669,7 @@ mod tests {
         (origin, state, task)
     }
     pub(super) fn args(origin: &str, command: &[&str]) -> CloudArgs {
-        let mut args = vec![
-            "obelisk",
-            "cloud",
-            "--api-url",
-            origin,
-            "--api-token",
-            "cloud-token",
-        ];
+        let mut args = vec!["obelisk", "cloud", "--api-token", "cloud-token"];
         let position = command.iter().position(|arg| *arg == "app");
         if let Some(position) = position {
             args.extend_from_slice(&command[..=position]);
@@ -1685,9 +1678,11 @@ mod tests {
         } else {
             args.extend_from_slice(command);
         }
-        let Subcommand::Cloud(args) = Args::try_parse_from(args).unwrap().command else {
+        let Subcommand::Cloud(mut args) = Args::try_parse_from(args).unwrap().command else {
             panic!()
         };
+        args.api_url = Some(origin.to_owned());
+        args.apps_domain = Some("example.test".to_owned());
         args
     }
     #[test]

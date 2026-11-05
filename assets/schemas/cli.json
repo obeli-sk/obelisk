@@ -22,16 +22,12 @@
           "help": "Show detailed metadata, HTTP requests, and response statuses on stderr"
         },
         {
-          "name": "--api-url",
-          "help": "Cloud control plane URL; selects that login from `obelisk cloud auth`. Defaults to the default login, then `https://cloud.obeli.sk/api`"
-        },
-        {
-          "name": "--apps-domain",
-          "help": "Obelisk cloud apps' domain; app endpoints are `<app>.<domain>`, `api--<app>.<domain>`, `webui--<app>.<domain>` and `internal--<app>.<domain>`. Selects that login from `obelisk cloud auth`; defaults to the default login, then `obelisk.works`"
-        },
-        {
           "name": "--api-token",
-          "help": "Cloud API bearer token; takes precedence over `obelisk cloud auth login`"
+          "help": "Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`"
+        },
+        {
+          "name": "--account",
+          "help": "Saved login to use for this command, as `<slug>@<API host>`, instead of the default one"
         }
       ],
       "subcommands": [
@@ -47,26 +43,38 @@
                   "name": "--no-browser",
                   "help": "Print a link and read the code it displays, for a browser on another machine"
                 }
+              ],
+              "positionals": [
+                {
+                  "name": "api_url",
+                  "help": "Cloud API URL of a custom deployment; defaults to `https://cloud.obeli.sk/api`"
+                }
               ]
             },
             {
               "name": "status",
-              "about": "Show the logged-in endpoints"
+              "about": "Show the saved accounts"
             },
             {
               "name": "switch",
-              "about": "Change the default login",
+              "about": "Change the default account",
               "positionals": [
                 {
-                  "name": "endpoint",
-                  "help": "API URL or apps domain of a logged-in endpoint",
+                  "name": "account",
+                  "help": "Saved account, as `<slug>@<API host>`",
                   "required": true
                 }
               ]
             },
             {
               "name": "logout",
-              "about": "Revoke the token of the selected login and forget it"
+              "about": "Revoke the token of a saved account and forget it",
+              "positionals": [
+                {
+                  "name": "account",
+                  "help": "Saved account, as `<slug>@<API host>`; defaults to the selected one"
+                }
+              ]
             }
           ]
         },
