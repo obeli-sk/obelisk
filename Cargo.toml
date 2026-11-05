@@ -104,7 +104,8 @@ tracing-opentelemetry.workspace = true
 
 ## tokio-console
 console-subscriber = { workspace = true, optional = true }
-tikv-jemallocator = "0.7.0"
+# Serves C and C++ malloc too, otherwise SQLite and V8 fall back to the libc allocator.
+tikv-jemallocator = { version = "0.7.0", features = ["unprefixed_malloc_on_supported_platforms"] }
 
 [dev-dependencies]
 obelisk-api-types = { path = "crates/api-types" }
