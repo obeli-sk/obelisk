@@ -309,6 +309,7 @@ mod tests {
     use super::{OBELISK_TRUSTED_APP_TOML, OBELISK_TRUSTED_SERVER_TOML, ServerConfigToml};
     use crate::config::app::AppConfigToml;
     use crate::config::deployment::MethodsInput;
+    use crate::config::env_var::StartupEnvVars;
     use crate::config::server::PlatformExecActivities;
 
     #[test]
@@ -341,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn oidc_config_is_validated_when_loading_server_config() {
+    fn oidc_config_is_validated_when_resolving_server_config() {
         for (issuer, audience, claims, expected_error) in [
             (
                 "http://oidc.fly.io/my-org",
@@ -372,7 +373,12 @@ mod tests {
             .unwrap();
             let holder =
                 super::ConfigHolder::new(None, None, Some(file.path().to_path_buf())).unwrap();
-            let error = holder.load_config().unwrap_err().to_string();
+            let error = holder
+                .load_config()
+                .unwrap()
+                .resolve_oidc_env_vars(&StartupEnvVars::from_test_values(&[]))
+                .unwrap_err();
+            let error = format!("{error:#}");
             assert!(error.contains(expected_error), "{error}");
         }
         for issuer in [
@@ -381,10 +387,13 @@ mod tests {
             "http://127.0.0.1:9000",
             "http://[::1]:9000",
         ] {
-            let config: ServerConfigToml = toml::from_str(&format!(
+            let mut config: ServerConfigToml = toml::from_str(&format!(
                 "[[api.oidc]]\nissuer = '{issuer}'\naudience = 'obelisk'\nclaims = {{ app_name = 'deployer' }}\n"
             ))
             .unwrap();
+            config
+                .resolve_oidc_env_vars(&StartupEnvVars::from_test_values(&[]))
+                .unwrap();
             assert_eq!(config.api.oidc[0].issuer, issuer);
         }
     }

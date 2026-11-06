@@ -99,6 +99,7 @@
 # ]
 ## OIDC ID tokens (JWTs) from trusted issuers are accepted as bearer tokens too, granting full API access.
 ## `issuer` must equal the token's `iss`, `audience` must be in its `aud`, and every listed claim must match exactly.
+## `issuer`, `audience` and claim values support `${VAR}` and `${VAR:-default}`; an unset variable stops the server.
 ## Example for Fly.io machines: the issuer pins the organization, `app_name` pins the app. A machine obtains a token with
 ## `curl --unix-socket /.fly/api -X POST http://localhost/v1/tokens/oidc -d '{"aud":"https://obelisk.example.com"}'`.
 # api.oidc = [
