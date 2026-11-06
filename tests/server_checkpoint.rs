@@ -248,6 +248,38 @@ fn checkpoint_moves_only_on_activation() {
     server.stop();
 }
 
+// Freeing space takes a running server, so a full database must not stop it from starting.
+#[test]
+fn server_starts_on_full_database() {
+    let fixture = Fixture::new();
+    let server_toml = fixture.path("server.toml");
+    fixture.server(&server_toml, &["--empty"]).stop();
+
+    // A limit below the current page count is clamped to it, so no new page can be allocated.
+    let policy = (0..200).fold(
+        "app_name = 'checkpoint-test'\n[public_env]\n".to_owned(),
+        |acc, i| acc + &format!("VAR_{i} = {{ optional = true }}\n"),
+    );
+    std::fs::write(fixture.path("app.toml"), policy).unwrap();
+    fixture.server_toml("server.toml", "V2_", fixture.port);
+    let config = std::fs::read_to_string(&server_toml).unwrap()
+        + "database.sqlite.pragma = { max_page_count = '1' }\n";
+    std::fs::write(&server_toml, config).unwrap();
+    let server = fixture.server(&server_toml, &["--empty"]);
+
+    let file = "full.toml";
+    std::fs::write(
+        fixture.path(file),
+        "[[activity_stub]]\nname = 'stub'\nffqn = 'testing:checkpoint/stubs.full'\nparams = []\nreturn_type = 'result<string, string>'\n",
+    )
+    .unwrap();
+    let output = fixture.run(&["deployment", "submit", file]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("database is full"), "{stderr}");
+    server.stop();
+}
+
 #[test]
 fn verify_dev_resolves_internal_http_server_url() {
     let fixture = Fixture::new();
