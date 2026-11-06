@@ -346,7 +346,6 @@ rustls = { version = "0.23", default-features = false, features = [
 ruzstd = "0.9"
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12"] }
 rustls-platform-verifier = "0.7"
-webpki-roots = "1"
 route-recognizer = "0.3.1"
 rstest = "0.27"
 rusqlite = { version = "0.40.2", features = [
@@ -401,7 +400,7 @@ wiremock = "0.6"
 wasmtime = { version = "50.0.1", features = ["memory-protection-keys"] }
 wasmtime-wasi = { version = "50.0.1", features = ["p3"] }
 wasmtime-wasi-io = "50.0.1"
-wasmtime-wasi-http = { version = "50.0.1", features = ["p3", "component-model-async"] }
+wasmtime-wasi-http = { version = "50.0.1", default-features = false, features = ["p2", "p3", "component-model-async"] }
 wasmtime-environ = "50.0.1"
 wasip3 = "0.9.0"
 # wasm-tools (keep in sync with wasmtime's pinned wasm-tools suite)

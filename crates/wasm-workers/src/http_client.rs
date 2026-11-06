@@ -5,6 +5,7 @@ use hyper::body::{Body, Bytes, Frame, Incoming};
 use hyper::client::conn::http1::SendRequest;
 use hyper::http::uri::Scheme;
 use hyper_util::rt::TokioIo;
+use rustls_platform_verifier::BuilderVerifierExt as _;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -14,9 +15,9 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use wasmtime_wasi_http::p2::body::{HyperIncomingBody, HyperOutgoingBody};
-use wasmtime_wasi_http::{Error, RequestOptions, default_send_request};
+use wasmtime_wasi_http::{Error, RequestOptions};
 
-/// Matches the timeouts of [`default_send_request`] when the guest sets none.
+/// Used when the guest sets no timeout, matching wasmtime's default.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 /// Expire ahead of the server's `Keep-Alive: timeout` so a request does not race its close.
 const KEEP_ALIVE_HINT_MARGIN: Duration = Duration::from_secs(1);
@@ -43,7 +44,7 @@ impl Default for HttpPoolConfig {
 
 /// Cheaply cloneable handle; clones share the same pool.
 #[derive(Clone)]
-pub struct OutboundHttpClient(Option<Arc<Pool>>);
+pub struct OutboundHttpClient(Arc<Pool>);
 
 impl Default for OutboundHttpClient {
     fn default() -> Self {
@@ -54,7 +55,7 @@ impl Default for OutboundHttpClient {
 impl std::fmt::Debug for OutboundHttpClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("OutboundHttpClient")
-            .field(&self.0.as_ref().map(|pool| pool.config))
+            .field(&self.0.config)
             .finish()
     }
 }
@@ -63,15 +64,12 @@ impl OutboundHttpClient {
     #[must_use]
     /// Connections outlive individual isolates and run on the runtime that creates the pool.
     pub fn new(config: HttpPoolConfig) -> Self {
-        Self((config.max_idle_per_host > 0).then(|| {
-            Arc::new(Pool {
-                config,
-                idle: Mutex::default(),
-                tls: OnceLock::new(),
-                runtime: wasmtime_wasi::runtime::with_ambient_tokio_runtime(
-                    tokio::runtime::Handle::current,
-                ),
-            })
+        Self(Arc::new(Pool {
+            config,
+            idle: Mutex::default(),
+            runtime: wasmtime_wasi::runtime::with_ambient_tokio_runtime(
+                tokio::runtime::Handle::current,
+            ),
         }))
     }
 
@@ -80,14 +78,22 @@ impl OutboundHttpClient {
         request: hyper::Request<HyperOutgoingBody>,
         options: Option<RequestOptions>,
     ) -> Result<(hyper::Response<HyperIncomingBody>, IoFuture), Error> {
-        if let Some(pool) = &self.0 {
-            let response = pool.send(request, options).await?;
-            Ok((response, Box::new(async { Ok(()) })))
-        } else {
-            let (response, io) = default_send_request(request, options).await?;
-            Ok((response.map(BodyExt::boxed_unsync), Box::new(io)))
-        }
+        let response = self.0.send(request, options).await?;
+        Ok((response, Box::new(async { Ok(()) })))
     }
+}
+
+/// Trusts the system's certificates, loaded once on first use. A later change needs a restart.
+pub fn system_tls_config() -> Result<Arc<rustls::ClientConfig>, rustls::Error> {
+    static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, rustls::Error>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            let config = rustls::ClientConfig::builder()
+                .with_platform_verifier()?
+                .with_no_client_auth();
+            Ok(Arc::new(config))
+        })
+        .clone()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -126,7 +132,6 @@ impl IdleConnection {
 struct Pool {
     config: HttpPoolConfig,
     idle: Mutex<HashMap<PoolKey, Vec<IdleConnection>>>,
-    tls: OnceLock<tokio_rustls::TlsConnector>,
     runtime: tokio::runtime::Handle,
 }
 
@@ -239,7 +244,7 @@ impl Pool {
         sender: SendRequest<HyperOutgoingBody>,
         idle_timeout: Duration,
     ) {
-        if idle_timeout.is_zero() {
+        if idle_timeout.is_zero() || self.config.max_idle_per_host == 0 {
             return;
         }
         let expires_at = Instant::now() + idle_timeout;
@@ -278,7 +283,6 @@ impl Pool {
         key: &PoolKey,
         connect_timeout: Duration,
     ) -> Result<SendRequest<HyperOutgoingBody>, Error> {
-        let pool = self.clone();
         let key = key.clone();
         let mut task: wasmtime_wasi::runtime::AbortOnDropJoinHandle<_> = self
             .runtime
@@ -289,9 +293,13 @@ impl Pool {
                         .map_err(Error::Connect)?;
                     if key.use_tls {
                         let domain =
-                            tls_server_name(&key.authority).map_err(Error::InvalidDnsNameError)?;
-                        let stream = pool
-                            .tls_connector()
+                            tls_server_name(&key.authority).map_err(|_| Error::DnsError {
+                                rcode: Some("invalid dns name".to_string()),
+                                info_code: None,
+                            })?;
+                        let config = system_tls_config()
+                            .map_err(|err| Error::Tls(std::io::Error::other(err)))?;
+                        let stream = tokio_rustls::TlsConnector::from(config)
                             .connect(domain, stream)
                             .await
                             .map_err(Error::Tls)?;
@@ -307,18 +315,6 @@ impl Pool {
         (&mut *task)
             .await
             .map_err(|error| Error::InternalError(Some(error.to_string())))?
-    }
-
-    fn tls_connector(&self) -> &tokio_rustls::TlsConnector {
-        self.tls.get_or_init(|| {
-            let roots = rustls::RootCertStore {
-                roots: webpki_roots::TLS_SERVER_ROOTS.into(),
-            };
-            let config = rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            tokio_rustls::TlsConnector::from(Arc::new(config))
-        })
     }
 }
 
@@ -430,7 +426,25 @@ impl Body for PooledBody {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject as _};
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Throwaway Ed25519 identity for `localhost`, in no trust store.
+    const SELF_SIGNED_CERT: &str = "-----BEGIN CERTIFICATE-----
+MIIBVTCCAQegAwIBAgIUNWt0Rri8/PDiuIt0twlH91k2vV8wBQYDK2VwMBQxEjAQ
+BgNVBAMMCWxvY2FsaG9zdDAgFw0yNjExMDYxMjMwMzdaGA8yMTI2MTAxMzEyMzAz
+N1owFDESMBAGA1UEAwwJbG9jYWxob3N0MCowBQYDK2VwAyEAPVgSKami7OO89bnq
+6VSZtfRd1W4k+Pm4+RnWqs1kUpijaTBnMB0GA1UdDgQWBBT8mOOAoPwH+SmZyPfu
+Py1SRpWK8DAfBgNVHSMEGDAWgBT8mOOAoPwH+SmZyPfuPy1SRpWK8DAPBgNVHRMB
+Af8EBTADAQH/MBQGA1UdEQQNMAuCCWxvY2FsaG9zdDAFBgMrZXADQQCip66n5Aai
+lLN0o1ecYh2BXdFmPD68O5qRZ+xFoI9Q7ZtDCAU5pGs62GqbXGPzVow8Z+8H/Tkw
+HApw4MHWNuID
+-----END CERTIFICATE-----
+";
+    const SELF_SIGNED_KEY: &str = "-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIEgRU4uLN4B6ztTuqKEGHyq8pBOiboLniYByda1KX7cc
+-----END PRIVATE KEY-----
+";
 
     /// Serves `200 ok` over plain HTTP/1, counting accepted connections.
     pub(crate) async fn server() -> (std::net::SocketAddr, Arc<AtomicUsize>) {
@@ -504,6 +518,37 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn untrusted_certificate_is_rejected() {
+        let server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from_pem_slice(SELF_SIGNED_CERT.as_bytes()).unwrap()],
+                PrivateKeyDer::from_pem_slice(SELF_SIGNED_KEY.as_bytes()).unwrap(),
+            )
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
+            let _ = acceptor.accept(stream).await;
+        });
+        let request = hyper::Request::get(format!("https://localhost:{port}/"))
+            .body(
+                http_body_util::Empty::new()
+                    .map_err(|never| match never {})
+                    .boxed_unsync(),
+            )
+            .unwrap();
+        let result = OutboundHttpClient::default().send(request, None).await;
+        assert!(
+            matches!(result, Err(Error::Tls(_))),
+            "got {:?}",
+            result.map(|(response, _)| response.status())
+        );
+    }
+
+    #[tokio::test]
     async fn pooled_connection_survives_blocked_origin_runtime() {
         let (addr, accepted) = server().await;
         let client = OutboundHttpClient::default();
@@ -549,8 +594,7 @@ pub(crate) mod tests {
         let client = OutboundHttpClient::default();
         get_sequentially(&client, addr).await;
         // A resumed snapshot sees the wall clock jump while `Instant` stayed put.
-        let pool = client.0.as_ref().unwrap();
-        for connection in pool.idle.lock().unwrap().values_mut().flatten() {
+        for connection in client.0.idle.lock().unwrap().values_mut().flatten() {
             connection.expires_at_wall = SystemTime::now() - Duration::from_secs(1);
         }
         get_sequentially(&client, addr).await;

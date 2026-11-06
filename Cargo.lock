@@ -4111,6 +4111,7 @@ dependencies = [
  "route-recognizer",
  "rstest",
  "rustls",
+ "rustls-platform-verifier",
  "secrecy",
  "semver",
  "serde",
@@ -4148,7 +4149,6 @@ dependencies = [
  "wasmtime-wasi-io",
  "wat",
  "webhook-js-runtime-builder",
- "webpki-roots",
  "wiremock",
  "wit-component 0.261.0",
  "wit-parser 0.261.0",
@@ -4281,7 +4281,6 @@ dependencies = [
  "obeli-sk-wasm-workers",
  "obeli-sk-worker-common",
  "reqwest",
- "rustls",
  "serde",
  "serde_json",
  "tempfile",
@@ -4290,7 +4289,6 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wat",
- "webpki-roots",
  "wiremock",
 ]
 
@@ -7807,15 +7805,12 @@ dependencies = [
  "hyper",
  "pin-project-lite",
  "rustix 1.1.6",
- "rustls",
  "tokio",
- "tokio-rustls",
  "tokio-util",
  "tracing",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-io",
- "webpki-roots",
 ]
 
 [[package]]
@@ -7911,15 +7906,6 @@ name = "webpki-root-certs"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e49d0e65abc00c142e8f9428da991da9f1a250c39be97459901eb12b9b49f62a"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "1.0.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
 dependencies = [
  "rustls-pki-types",
 ]

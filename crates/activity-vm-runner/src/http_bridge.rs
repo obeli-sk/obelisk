@@ -130,13 +130,9 @@ async fn execute(
 
     let (parts, body) = request.into_parts();
     let body = body.collect().await?.to_bytes();
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let tls = rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let tls = wasm_workers::http_client::system_tls_config()?;
     let client = reqwest::Client::builder()
-        .use_preconfigured_tls(tls)
+        .use_preconfigured_tls((*tls).clone())
         // Redirect hops must return to the guest so each new request is policy checked.
         .redirect(reqwest::redirect::Policy::none())
         .build()?;

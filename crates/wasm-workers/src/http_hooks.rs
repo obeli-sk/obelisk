@@ -11,7 +11,9 @@ use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::Instrument;
+use wasmtime_wasi_http::p2::bindings::http::types as p2;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
+use wasmtime_wasi_http::p3::bindings::http::types as p3;
 use wasmtime_wasi_http::{Error, RequestOptions, WasiHttpHooks};
 
 pub type HttpClientTracesContainer = Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>;
@@ -234,6 +236,64 @@ impl WasiHttpHooks for HttpHooks {
             }),
             None => response,
         }
+    }
+
+    fn p2_error_from_tls(&mut self, err: &std::io::Error) -> p2::ErrorCode {
+        tracing::warn!("tls error: {err:?}");
+        match classify_tls_error(err) {
+            TlsFailure::Certificate => p2::ErrorCode::TlsCertificateError,
+            TlsFailure::Alert(alert_id) => {
+                p2::ErrorCode::TlsAlertReceived(p2::TlsAlertReceivedPayload {
+                    alert_id: Some(alert_id),
+                    alert_message: None,
+                })
+            }
+            TlsFailure::Terminated => p2::ErrorCode::ConnectionTerminated,
+            TlsFailure::Protocol => p2::ErrorCode::TlsProtocolError,
+        }
+    }
+
+    fn p3_error_from_tls(&mut self, err: &std::io::Error) -> p3::ErrorCode {
+        tracing::warn!("tls error: {err:?}");
+        match classify_tls_error(err) {
+            TlsFailure::Certificate => p3::ErrorCode::TlsCertificateError,
+            TlsFailure::Alert(alert_id) => {
+                p3::ErrorCode::TlsAlertReceived(p3::TlsAlertReceivedPayload {
+                    alert_id: Some(alert_id),
+                    alert_message: None,
+                })
+            }
+            TlsFailure::Terminated => p3::ErrorCode::ConnectionTerminated,
+            TlsFailure::Protocol => p3::ErrorCode::TlsProtocolError,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TlsFailure {
+    Certificate,
+    Alert(u8),
+    Terminated,
+    Protocol,
+}
+
+/// wasmtime only recognizes rustls errors with its `default-send-request` feature, which bundles Mozilla's roots.
+fn classify_tls_error(err: &std::io::Error) -> TlsFailure {
+    use std::io::ErrorKind;
+    match err
+        .get_ref()
+        .and_then(|err| err.downcast_ref::<rustls::Error>())
+    {
+        Some(rustls::Error::InvalidCertificate(_)) => TlsFailure::Certificate,
+        Some(rustls::Error::AlertReceived(alert)) => TlsFailure::Alert(u8::from(*alert)),
+        Some(_) => TlsFailure::Protocol,
+        None => match err.kind() {
+            ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::BrokenPipe
+            | ErrorKind::UnexpectedEof => TlsFailure::Terminated,
+            _ => TlsFailure::Protocol,
+        },
     }
 }
 
@@ -488,6 +548,34 @@ mod tests {
     use super::*;
     use crate::http_request_policy::{AllowedHostPolicy, HostPattern, PolicyLayer};
     use hyper::Method;
+
+    #[test]
+    fn tls_errors_should_be_classified() {
+        use std::io::{Error, ErrorKind};
+        let rustls_error = |err| Error::new(ErrorKind::InvalidData, err);
+        for (expected, err) in [
+            (
+                TlsFailure::Certificate,
+                rustls_error(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::UnknownIssuer,
+                )),
+            ),
+            (
+                TlsFailure::Alert(40),
+                rustls_error(rustls::Error::AlertReceived(
+                    rustls::AlertDescription::HandshakeFailure,
+                )),
+            ),
+            (
+                TlsFailure::Protocol,
+                rustls_error(rustls::Error::General("no CA certificates".to_owned())),
+            ),
+            (TlsFailure::Terminated, ErrorKind::UnexpectedEof.into()),
+            (TlsFailure::Protocol, ErrorKind::InvalidData.into()),
+        ] {
+            assert_eq!(expected, classify_tls_error(&err), "{err:?}");
+        }
+    }
 
     #[tokio::test]
     async fn wasi_redirects_do_not_bypass_policy() {

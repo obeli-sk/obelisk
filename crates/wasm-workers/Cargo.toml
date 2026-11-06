@@ -44,6 +44,7 @@ rand.workspace = true
 regex.workspace = true
 route-recognizer.workspace = true
 rustls.workspace = true
+rustls-platform-verifier.workspace = true
 secrecy.workspace = true
 serde_json.workspace = true
 serde.workspace = true
@@ -62,7 +63,6 @@ wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 semver.workspace = true
 wit-component.workspace = true
-webpki-roots.workspace = true
 wit-parser.workspace = true
 
 [build-dependencies]
