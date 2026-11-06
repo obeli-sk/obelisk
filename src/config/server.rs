@@ -310,6 +310,31 @@ impl ServerConfigToml {
         if let Some(directory) = &mut self.wasm_global_config.codegen_cache.directory {
             *directory = path_prefixes.resolve_server_path(directory, env_vars)?;
         }
+        self.resolve_oidc_env_vars(env_vars)
+    }
+
+    pub(crate) fn resolve_oidc_env_vars(
+        &mut self,
+        env_vars: &StartupEnvVars,
+    ) -> Result<(), anyhow::Error> {
+        let http_servers = self
+            .http_servers
+            .iter_mut()
+            .map(|(name, server)| (format!("http_server.{name}.oidc"), &mut server.oidc));
+        for (key, oidc) in
+            std::iter::once(("api.oidc".to_string(), &mut self.api.oidc)).chain(http_servers)
+        {
+            for entry in oidc.iter_mut() {
+                let values = [&mut entry.issuer, &mut entry.audience]
+                    .into_iter()
+                    .chain(entry.claims.values_mut());
+                for value in values {
+                    *value = interpolate_startup_env_vars(value, env_vars)
+                        .with_context(|| format!("cannot resolve `{key}`"))?;
+                }
+            }
+            validate_oidc_providers(oidc).with_context(|| format!("invalid `{key}`"))?;
+        }
         Ok(())
     }
 }
@@ -809,11 +834,12 @@ pub(crate) struct ApiConfig {
     #[serde(default)]
     pub(crate) token_hashes: Vec<Digest>,
     /// Trusted OIDC issuers whose ID tokens are accepted as API bearer tokens.
-    #[serde(default, deserialize_with = "deserialize_oidc_providers")]
+    #[serde(default)]
     pub(crate) oidc: Vec<OidcProviderConfig>,
 }
 
 /// An OIDC issuer whose signed ID tokens (JWTs) must match audience and claim constraints.
+/// `issuer`, `audience` and claim values support `${VAR}` and `${VAR:-default}` interpolation.
 #[derive(Debug, Deserialize, serde::Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct OidcProviderConfig {
@@ -825,17 +851,7 @@ pub struct OidcProviderConfig {
     pub(crate) claims: BTreeMap<String, String>,
 }
 
-fn deserialize_oidc_providers<'de, D>(deserializer: D) -> Result<Vec<OidcProviderConfig>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let configs = Vec::<OidcProviderConfig>::deserialize(deserializer)?;
-    validate_oidc_providers(&configs)
-        .map_err(|err| serde::de::Error::custom(format!("{err:#}")))?;
-    Ok(configs)
-}
-
-pub(crate) fn validate_oidc_providers(configs: &[OidcProviderConfig]) -> anyhow::Result<()> {
+fn validate_oidc_providers(configs: &[OidcProviderConfig]) -> anyhow::Result<()> {
     for config in configs {
         validate_oidc_url(&config.issuer)
             .with_context(|| format!("invalid OIDC issuer {:?}", config.issuer))?;
@@ -1757,7 +1773,7 @@ pub(crate) struct HttpServerToml {
     #[serde(default, deserialize_with = "deserialize_public_url")]
     pub(crate) public_url: Option<String>,
     /// Trusted OIDC issuers whose bearer JWTs this listener accepts.
-    #[serde(default, deserialize_with = "deserialize_oidc_providers")]
+    #[serde(default)]
     pub(crate) oidc: Vec<OidcProviderConfig>,
     /// Accept every bearer token the API accepts: its `token_hashes`, `oidc`, the startup token
     /// and the `--api-token`. Requires an enabled API.
@@ -1928,6 +1944,42 @@ pub(crate) const MAX_DEPLOYMENT_FILE_BYTES: u32 = 20 * 1024 * 1024; // 20MiB
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn oidc_values_are_interpolated_before_validation() {
+        use crate::config::env_var::StartupEnvVars;
+        let toml = r#"
+            [[api.oidc]]
+            issuer = "https://${OIDC_HOST:-oidc.fly.io}/${INSTANCE}"
+            audience = "https://${INSTANCE}.example"
+            claims = { app_name = "${INSTANCE}-deployer" }
+            [[http_server.idle.oidc]]
+            issuer = "https://oidc.fly.io/${INSTANCE}"
+            audience = "http://${INSTANCE}.flycast:9092"
+            claims = { app_name = "${INSTANCE}-proxy" }
+        "#;
+        let resolve = |values: &[(&str, &str)]| {
+            let mut config: super::ServerConfigToml = toml::from_str(toml).unwrap();
+            config
+                .resolve_oidc_env_vars(&StartupEnvVars::from_test_values(values))
+                .map(|()| config)
+                .map_err(|err| format!("{err:#}"))
+        };
+        let config = resolve(&[("INSTANCE", "dev")]).unwrap();
+        assert_eq!(config.api.oidc[0].issuer, "https://oidc.fly.io/dev");
+        assert_eq!(config.api.oidc[0].claims["app_name"], "dev-deployer");
+        let idle = &config.http_servers["idle"].oidc[0];
+        assert_eq!(idle.audience, "http://dev.flycast:9092");
+        assert_eq!(idle.claims["app_name"], "dev-proxy");
+
+        let missing = resolve(&[]).unwrap_err();
+        assert!(
+            missing.contains("`api.oidc`") && missing.contains("INSTANCE"),
+            "{missing}"
+        );
+        let invalid = resolve(&[("INSTANCE", "dev"), ("OIDC_HOST", "not a host")]).unwrap_err();
+        assert!(invalid.contains("invalid `api.oidc`"), "{invalid}");
+    }
+
     use super::*;
     use crate::config::deployment::{MethodsInput, ReplaceIn};
 

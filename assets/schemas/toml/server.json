@@ -447,7 +447,7 @@
       ]
     },
     "OidcProviderConfig": {
-      "description": "An OIDC issuer whose signed ID tokens (JWTs) must match audience and claim constraints.",
+      "description": "An OIDC issuer whose signed ID tokens (JWTs) must match audience and claim constraints.\n`issuer`, `audience` and claim values support `${VAR}` and `${VAR:-default}` interpolation.",
       "type": "object",
       "properties": {
         "issuer": {

@@ -18,6 +18,18 @@ impl StartupEnvVars {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_test_values(values: &[(&str, &str)]) -> Self {
+        Self {
+            values: values
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            prefix: String::new(),
+            internal_values: HashMap::new(),
+        }
+    }
+
     pub(crate) fn prefixed(&self, prefix: &str) -> Self {
         Self {
             values: self
