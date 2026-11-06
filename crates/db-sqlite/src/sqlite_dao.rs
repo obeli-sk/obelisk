@@ -124,6 +124,8 @@ enum RusqliteError {
     },
     #[error("close")]
     Close,
+    #[error("database is full")]
+    Full,
 }
 
 mod conversions {
@@ -150,6 +152,9 @@ mod conversions {
         fn from(err: rusqlite::Error) -> Self {
             if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
                 RusqliteError::NotFound
+            } else if err.sqlite_error().map(|err| err.code) == Some(rusqlite::ErrorCode::DiskFull)
+            {
+                RusqliteError::Full
             } else {
                 RusqliteError::Generic {
                     reason: err.to_string().into(),
@@ -166,6 +171,8 @@ mod conversions {
     pub fn to_generic_error(err: RusqliteError) -> DbErrorGeneric {
         if let RusqliteError::Close = err {
             DbErrorGeneric::Close
+        } else if let RusqliteError::Full = err {
+            DbErrorGeneric::Full
         } else {
             DbErrorGeneric::Uncategorized {
                 reason: err.to_string().into(),
@@ -2268,6 +2275,9 @@ impl SqlitePool {
             ":variant": event.variant(),
         })
         .map_err(|err| {
+            if err.sqlite_error().map(|err| err.code) == Some(rusqlite::ErrorCode::DiskFull) {
+                return DbErrorWrite::from(DbErrorGeneric::Full);
+            }
             DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState {
                 reason: "cannot lock".into(),
                 context: SpanTrace::capture(),
