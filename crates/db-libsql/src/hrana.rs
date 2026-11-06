@@ -172,13 +172,6 @@ impl HranaClient {
 
     /// Runs a script of statements, stopping at the first failure. An unfinished transaction is
     /// discarded when the stream closes, so `BEGIN` without `COMMIT` is safe here.
-    pub(crate) fn sequence(&self, sql: &str) -> Result<(), PipelineError> {
-        match self.pipeline(&json!({"type": "sequence", "sql": sql}))? {
-            PipelineResult::Ok { .. } => Ok(()),
-            PipelineResult::Error { error } => Err(PipelineError::Failed(error.message)),
-        }
-    }
-
     pub(crate) fn query(&self, sql: &str) -> Result<QueryResult, PipelineError> {
         let steps = [BatchStep {
             sql: sql.to_owned(),

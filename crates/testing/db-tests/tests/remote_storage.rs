@@ -7,7 +7,7 @@ use concepts::{
     storage::{AppendRequest, CreateRequest, DbPool, DbPoolCloseable, ExecutionRequest, Version},
 };
 use db_libsql::{HranaClient, LibsqlPool};
-use db_sqlite::sql_connection::{BatchStep, PipelineError, SqlPipeline, StepOutcome};
+use db_sqlite::sql_connection::{BatchStep, PipelineError, SqlParams, SqlPipeline, StepOutcome};
 use obeli_db_tests::{SOME_FFQN, SqldServer};
 use std::{
     collections::HashSet,
@@ -429,6 +429,51 @@ async fn files_above_the_server_value_limit_roundtrip_and_are_collected() {
         .unwrap();
     let count = &probe["results"][0]["response"]["result"]["rows"][0][0]["value"];
     assert_eq!("0", count, "{probe}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn migrations_run_one_transaction_each_with_foreign_keys_off() {
+    use refinery::{Migration, Runner};
+    test_utils::set_up();
+    let server = SqldServer::start().await;
+    let client = HranaClient::new(&server.config()).unwrap();
+    let migration = |name: &str, sql: &str| Migration::unapplied(name, sql).unwrap();
+    let parent = "CREATE TABLE parent (id INTEGER PRIMARY KEY);";
+    let schema = migration(
+        "V1__schema",
+        &format!(
+            "{parent} CREATE TABLE child (id INTEGER REFERENCES parent(id) ON DELETE CASCADE);
+             INSERT INTO parent VALUES (1); INSERT INTO child VALUES (1);"
+        ),
+    );
+    let rebuild = migration("V2__rebuild", &format!("DROP TABLE parent; {parent}"));
+    let broken = migration(
+        "V3__broken",
+        "CREATE TABLE half_done (id INTEGER); INSERT INTO missing VALUES (1);",
+    );
+    tokio::task::spawn_blocking(move || {
+        db_libsql::apply(&client, Runner::new(&[schema, rebuild, broken])).unwrap_err();
+        let count = |sql: &str| {
+            let step = BatchStep {
+                sql: sql.to_owned(),
+                params: SqlParams::None,
+                want_rows: true,
+                condition: None,
+            };
+            match client.batch(&[step]).unwrap().remove(0) {
+                StepOutcome::Done(result) => result.rows.len(),
+                StepOutcome::Error { .. } | StepOutcome::Skipped => panic!("query failed"),
+            }
+        };
+        assert_eq!(count("SELECT id FROM child"), 1);
+        assert_eq!(count("SELECT version FROM refinery_schema_history"), 2);
+        assert_eq!(
+            count("SELECT name FROM sqlite_master WHERE name = 'half_done'"),
+            0
+        );
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

@@ -3627,6 +3627,7 @@ dependencies = [
  "obeli-sk-utils",
  "obeli-sk-val-json",
  "rand 0.9.5",
+ "refinery",
  "reqwest",
  "rstest",
  "secrecy",

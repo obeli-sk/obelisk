@@ -1,0 +1,92 @@
+[
+    {
+        "name": "statements are split on semicolons",
+        "sql": "CREATE TABLE a (id INTEGER);\nCREATE INDEX a_id ON a (id);\n",
+        "statements": ["CREATE TABLE a (id INTEGER)", "CREATE INDEX a_id ON a (id)"]
+    },
+    {
+        "name": "the last statement may omit the semicolon",
+        "sql": "SELECT 1; SELECT 2",
+        "statements": ["SELECT 1", "SELECT 2"]
+    },
+    {
+        "name": "empty statements are skipped",
+        "sql": " ;; \n;SELECT 1;;",
+        "statements": ["SELECT 1"]
+    },
+    {
+        "name": "whitespace only means no statements",
+        "sql": " \n\t",
+        "statements": []
+    },
+    {
+        "name": "semicolons in strings and quoted identifiers are kept",
+        "sql": "INSERT INTO \"a;b\" (`c;d`, [e;f]) VALUES ('g;h', 'it''s;');",
+        "statements": ["INSERT INTO \"a;b\" (`c;d`, [e;f]) VALUES ('g;h', 'it''s;')"]
+    },
+    {
+        "name": "semicolons in comments are kept",
+        "sql": "-- first; comment\nSELECT 1 /* inline; */ -- trailing;\n; SELECT 2",
+        "statements": ["-- first; comment\nSELECT 1 /* inline; */ -- trailing;", "SELECT 2"]
+    },
+    {
+        "name": "a comment after the last statement is not a statement",
+        "sql": "SELECT 1;\n-- done;\n/* really; */\n",
+        "statements": ["SELECT 1"]
+    },
+    {
+        "name": "operators are not comments",
+        "sql": "SELECT 4/2 - 1; SELECT 3",
+        "statements": ["SELECT 4/2 - 1", "SELECT 3"]
+    },
+    {
+        "name": "a trigger body ends with END",
+        "sql": "CREATE TRIGGER t AFTER INSERT ON a BEGIN\n  UPDATE b SET n = n + 1;\n  DELETE FROM c;\nEND;\nSELECT 1;",
+        "statements": ["CREATE TRIGGER t AFTER INSERT ON a BEGIN\n  UPDATE b SET n = n + 1;\n  DELETE FROM c;\nEND", "SELECT 1"]
+    },
+    {
+        "name": "a CASE END inside a trigger does not end it",
+        "sql": "create temp trigger t after insert on a begin update b set x = case when 1 then 2 end; end; select 1",
+        "statements": ["create temp trigger t after insert on a begin update b set x = case when 1 then 2 end; end", "select 1"]
+    },
+    {
+        "name": "TEMPORARY and IF NOT EXISTS triggers",
+        "sql": "CREATE TEMPORARY TRIGGER IF NOT EXISTS t BEFORE DELETE ON a BEGIN SELECT 1; END; SELECT 2",
+        "statements": ["CREATE TEMPORARY TRIGGER IF NOT EXISTS t BEFORE DELETE ON a BEGIN SELECT 1; END", "SELECT 2"]
+    },
+    {
+        "name": "trigger as an identifier is not a trigger",
+        "sql": "CREATE TABLE trigger_log (trigger TEXT); SELECT trigger FROM trigger_log; SELECT 1",
+        "statements": ["CREATE TABLE trigger_log (trigger TEXT)", "SELECT trigger FROM trigger_log", "SELECT 1"]
+    },
+    {
+        "name": "identifiers named like object properties",
+        "sql": "SELECT constructor, __proto__, toString FROM t; SELECT 1",
+        "statements": ["SELECT constructor, __proto__, toString FROM t", "SELECT 1"]
+    },
+    {
+        "name": "EXPLAIN statements",
+        "sql": "EXPLAIN SELECT 1; EXPLAIN CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; END; SELECT 2",
+        "statements": ["EXPLAIN SELECT 1", "EXPLAIN CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; END", "SELECT 2"]
+    },
+    {
+        "name": "non-ASCII text",
+        "sql": "INSERT INTO t VALUES ('žluťoučký;kůň'); SELECT ünïcödé FROM t",
+        "statements": ["INSERT INTO t VALUES ('žluťoučký;kůň')", "SELECT ünïcödé FROM t"]
+    },
+    {
+        "name": "an unterminated string is an error",
+        "sql": "SELECT 'oops; SELECT 1",
+        "error": true
+    },
+    {
+        "name": "an unterminated quoted identifier is an error",
+        "sql": "SELECT [oops; SELECT 1",
+        "error": true
+    },
+    {
+        "name": "an unterminated block comment is an error",
+        "sql": "SELECT 1; /* oops",
+        "error": true
+    }
+]

@@ -339,10 +339,6 @@ enum LtxPriority {
 const SLOW_TRANSACTION_THRESHOLD: Duration = Duration::from_millis(500);
 /// `sqld` rejects values of 5 MB and more, so the remote backend splits larger files.
 const REMOTE_FILE_CHUNK_BYTES: usize = 4 * 1024 * 1024;
-/// Must be applied once to every remote database, `SQLite` keeps files inline.
-pub const REMOTE_FILE_CHUNK_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS t_file_chunk (\
-    digest TEXT NOT NULL, chunk_index INTEGER NOT NULL, content BLOB NOT NULL, \
-    PRIMARY KEY (digest, chunk_index)) STRICT;";
 /// Keeps a misbehaving LTX from delaying an unbounded number of others in one remote batch.
 const MAX_REMOTE_LTX_PER_TICK: usize = 64;
 
@@ -489,6 +485,12 @@ impl Default for SqliteConfig {
 }
 
 struct ShutdownRequested;
+
+fn warn_consistency_error(err: rusqlite::Error) {
+    if !crate::replay::is_pending(&err) {
+        warn!("Ignoring consistency error {err:?}");
+    }
+}
 
 fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecord> {
     let deployment_id: DeploymentId = row.get("deployment_id")?;
@@ -1665,21 +1667,22 @@ impl SqlitePool {
         }
 
         // fetch intermittent event count from the just-inserted row.
-        let intermittent_event_count = tx
-            .prepare(
-                "SELECT intermittent_event_count FROM t_state WHERE execution_id = :execution_id",
-            )?
-            .query_row(
-                named_params! {
-                    ":execution_id": execution_id_str,
-                },
-                |row| {
-                    let intermittent_event_count = row.get("intermittent_event_count")?;
-                    Ok(intermittent_event_count)
-                },
-            )?;
+        Ok(Self::get_intermittent_event_count(tx, execution_id)?)
+    }
 
-        Ok(intermittent_event_count)
+    fn get_intermittent_event_count(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+    ) -> rusqlite::Result<u32> {
+        tx.prepare(
+            "SELECT intermittent_event_count FROM t_state WHERE execution_id = :execution_id",
+        )?
+        .query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+            },
+            |row| row.get("intermittent_event_count"),
+        )
     }
 
     /// Appending [`HistoryEvent::JoinNext`].
@@ -2329,6 +2332,65 @@ impl SqlitePool {
     /// the digest in `t_state` is only updated after a successful execution upgrade.
     #[instrument(level = Level::TRACE, skip(tx))]
     #[expect(clippy::too_many_arguments)]
+    fn list_created_and_history_events(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+    ) -> Result<VecDeque<ExecutionEvent>, DbErrorWrite> {
+        tx.prepare(
+            "SELECT json_value, version FROM t_execution_log WHERE \
+                execution_id = :execution_id AND (variant = :variant1 OR variant = :variant2) \
+                ORDER BY version",
+        )?
+        .query_map(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":variant1": DUMMY_CREATED.variant(),
+                ":variant2": DUMMY_HISTORY_EVENT.variant(),
+            },
+            |row| {
+                let created_at_fake = DateTime::from_timestamp_nanos(0); // not used, only the inner event and version
+                let event = row
+                    .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
+                    .map_err(|serde| {
+                        error!("Cannot deserialize {row:?} - {serde:?}");
+                        consistency_rusqlite("cannot deserialize event")
+                    })?
+                    .0;
+                let version = Version(row.get("version")?);
+
+                Ok(ExecutionEvent {
+                    created_at: created_at_fake,
+                    event,
+                    backtrace_id: None,
+                    version,
+                })
+            },
+        )?
+        .collect::<Result<VecDeque<_>, _>>()
+        .map_err(DbErrorWrite::from)
+    }
+
+    fn is_tombstoned(tx: &Transaction, execution_id: &ExecutionId) -> rusqlite::Result<bool> {
+        tx.query_row(
+            "SELECT tombstoned FROM t_state WHERE execution_id = ?1",
+            [execution_id.to_string()],
+            |row| row.get::<_, bool>(0),
+        )
+    }
+
+    /// What `lock_single_execution` reads, independently of what the reads return.
+    fn prefetch_locking(tx: &Transaction, candidates: &[(ExecutionId, Version)]) {
+        tx.prefetch(|| {
+            for (execution_id, _) in candidates {
+                let _ = Self::is_tombstoned(tx, execution_id);
+                let _ = Self::get_combined_state(tx, execution_id);
+                let _ = Self::list_responses(tx, execution_id, None, None);
+                let _ = Self::get_intermittent_event_count(tx, execution_id);
+                let _ = Self::list_created_and_history_events(tx, execution_id);
+            }
+        });
+    }
+
     fn lock_single_execution(
         tx: &Transaction,
         created_at: DateTime<Utc>,
@@ -2343,12 +2405,7 @@ impl SqlitePool {
         retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite> {
         trace!("lock_single_execution");
-        let tombstoned = tx.query_row(
-            "SELECT tombstoned FROM t_state WHERE execution_id = ?1",
-            [execution_id.to_string()],
-            |row| row.get::<_, bool>(0),
-        )?;
-        if tombstoned {
+        if Self::is_tombstoned(tx, execution_id)? {
             return Err(DbErrorWrite::NotFound);
         }
         let combined_state = Self::get_combined_state(tx, execution_id)?;
@@ -2424,40 +2481,7 @@ impl SqlitePool {
             retry_config,
         )?;
         // Fetch event_history and `Created` event to construct the response.
-        let mut events = tx
-            .prepare(
-                "SELECT json_value, version FROM t_execution_log WHERE \
-                execution_id = :execution_id AND (variant = :variant1 OR variant = :variant2) \
-                ORDER BY version",
-            )?
-            .query_map(
-                named_params! {
-                    ":execution_id": execution_id.to_string(),
-                    ":variant1": DUMMY_CREATED.variant(),
-                    ":variant2": DUMMY_HISTORY_EVENT.variant(),
-                },
-                |row| {
-                    let created_at_fake = DateTime::from_timestamp_nanos(0); // not used, only the inner event and version
-                    let event = row
-                        .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
-                        .map_err(|serde| {
-                            error!("Cannot deserialize {row:?} - {serde:?}");
-                            consistency_rusqlite("cannot deserialize event")
-                        })?
-                        .0;
-                    let version = Version(row.get("version")?);
-
-                    Ok(ExecutionEvent {
-                        created_at: created_at_fake,
-                        event,
-                        backtrace_id: None,
-                        version,
-                    })
-                },
-            )?
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .collect::<VecDeque<_>>();
+        let mut events = Self::list_created_and_history_events(tx, execution_id)?;
         let Some(ExecutionRequest::Created(Created {
             ffqn,
             params,
@@ -2556,6 +2580,89 @@ impl SqlitePool {
 
     #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %appending_version))]
     #[expect(clippy::needless_return)]
+    fn insert_execution_log(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        req: &AppendRequest,
+        appending_version: &Version,
+    ) -> Result<(), DbErrorWrite> {
+        let event_ser = serde_json::to_string(&req.event).map_err(|err| {
+            error!("Cannot serialize {:?} - {err:?}", req.event);
+            DbErrorWriteNonRetriable::ValidationFailed("parameter serialization error".into())
+        })?;
+
+        let mut stmt = tx.prepare(
+                    "INSERT INTO t_execution_log (execution_id, created_at, json_value, version, variant, join_set_id) \
+                    VALUES (:execution_id, :created_at, :json_value, :version, :variant, :join_set_id)")
+                    ?;
+        stmt.execute(named_params! {
+            ":execution_id": execution_id.to_string(),
+            ":created_at": req.created_at,
+            ":json_value": event_ser,
+            ":version": appending_version.0,
+            ":variant": req.event.variant(),
+            ":join_set_id": req.event.join_set_id().map(std::string::ToString::to_string),
+        })?;
+        Ok(())
+    }
+
+    /// Events handled in `append` by bumping the version and nothing else.
+    fn only_bumps_version(event: &ExecutionRequest) -> bool {
+        matches!(
+            event,
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinSetCreate { .. }
+                    | HistoryEvent::JoinSetRequest {
+                        request: JoinSetRequest::ChildExecutionRequest { .. },
+                        ..
+                    }
+                    | HistoryEvent::Persist { .. }
+                    | HistoryEvent::Schedule { .. }
+                    | HistoryEvent::Stub { .. }
+                    | HistoryEvent::JoinNextTooMany { .. }
+                    | HistoryEvent::JoinNextTry { .. },
+            }
+        )
+    }
+
+    /// Appends in order. An event after a version bump skips the state read and checks of `append`,
+    /// as the transaction has seen that state and changed nothing but the version it continues.
+    fn append_all(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        batch: &[AppendRequest],
+        mut version: Version,
+    ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
+        let mut state_known = false;
+        let mut last_notifier = AppendNotifier::default();
+        for req in batch {
+            let only_bump = Self::only_bumps_version(&req.event);
+            if state_known && only_bump {
+                Self::insert_execution_log(tx, execution_id, req, &version)?;
+                version = Self::bump_state_next_version(
+                    tx,
+                    execution_id,
+                    req.created_at,
+                    &version,
+                    None,
+                )?;
+                last_notifier = AppendNotifier::default();
+            } else {
+                (version, last_notifier) = Self::append(tx, execution_id, req.clone(), version)?;
+            }
+            state_known = only_bump;
+        }
+        Ok((version, last_notifier))
+    }
+
+    /// Reads of `validate_append_requests` and `append`, which do not depend on the event.
+    fn prefetch_append(tx: &Transaction, execution_id: &ExecutionId) {
+        tx.prefetch(|| {
+            let _ = Self::persisted_value_limit(tx, execution_id);
+            let _ = Self::get_combined_state(tx, execution_id);
+        });
+    }
+
     fn append(
         tx: &Transaction,
         execution_id: &ExecutionId,
@@ -2624,23 +2731,7 @@ impl SqlitePool {
             &combined_state.get_next_version_assert_not_finished(),
             &appending_version,
         )?;
-        let event_ser = serde_json::to_string(&req.event).map_err(|err| {
-            error!("Cannot serialize {:?} - {err:?}", req.event);
-            DbErrorWriteNonRetriable::ValidationFailed("parameter serialization error".into())
-        })?;
-
-        let mut stmt = tx.prepare(
-                    "INSERT INTO t_execution_log (execution_id, created_at, json_value, version, variant, join_set_id) \
-                    VALUES (:execution_id, :created_at, :json_value, :version, :variant, :join_set_id)")
-                    ?;
-        stmt.execute(named_params! {
-            ":execution_id": execution_id.to_string(),
-            ":created_at": req.created_at,
-            ":json_value": event_ser,
-            ":version": appending_version.0,
-            ":variant": req.event.variant(),
-            ":join_set_id": req.event.join_set_id().map(std::string::ToString::to_string),
-        })?;
+        Self::insert_execution_log(tx, execution_id, &req, &appending_version)?;
         // Calculate current pending state
 
         match &req.event {
@@ -2671,7 +2762,7 @@ impl SqlitePool {
                             .component_digest,
                     },
                 )?;
-                return Ok((next_version, notifier));
+                Ok((next_version, notifier))
             }
 
             ExecutionRequest::Unlocked(unlocked) => {
@@ -2680,9 +2771,9 @@ impl SqlitePool {
                         if unlocked.unlocked_at >= pending_at.scheduled_at =>
                     // proposed unlock is equal or later than pending_at, no need to write it.
                     {
-                        return Err(DbErrorWrite::NonRetriable(
+                        Err(DbErrorWrite::NonRetriable(
                             DbErrorWriteNonRetriable::UnlockedCannotBeAppended("pending"),
-                        ));
+                        ))
                     }
                     PendingState::Locked(_) | PendingState::PendingAt(_) => {
                         let (next_version, notifier) =
@@ -2699,14 +2790,14 @@ impl SqlitePool {
                                         .component_digest,
                                 },
                             )?;
-                        return Ok((next_version, notifier));
+                        Ok((next_version, notifier))
                     }
                     PendingState::BlockedByJoinSet(blocked) => {
                         debug!(
                             "blocked: {blocked:?}, setting lock_expires_at to {}",
                             unlocked.unlocked_at
                         );
-                        return Ok((
+                        Ok((
                             Self::update_state_blocked(
                                 tx,
                                 execution_id,
@@ -2717,18 +2808,14 @@ impl SqlitePool {
                                 blocked.closing,
                             )?,
                             AppendNotifier::default(),
-                        ));
+                        ))
                     }
-                    PendingState::Paused(_) => {
-                        return Err(DbErrorWrite::NonRetriable(
-                            DbErrorWriteNonRetriable::UnlockedCannotBeAppended("paused"),
-                        ));
-                    }
-                    PendingState::Cancelling(_) => {
-                        return Err(DbErrorWrite::NonRetriable(
-                            DbErrorWriteNonRetriable::UnlockedCannotBeAppended("cancelling"),
-                        ));
-                    }
+                    PendingState::Paused(_) => Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::UnlockedCannotBeAppended("paused"),
+                    )),
+                    PendingState::Cancelling(_) => Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::UnlockedCannotBeAppended("cancelling"),
+                    )),
                     PendingState::Finished(_) => {
                         unreachable!("handled above");
                     }
@@ -2761,7 +2848,7 @@ impl SqlitePool {
                         )?
                     }
                 };
-                return Ok((next_version, AppendNotifier::default()));
+                Ok((next_version, AppendNotifier::default()))
             }
 
             ExecutionRequest::Paused => {
@@ -2807,7 +2894,7 @@ impl SqlitePool {
                     &appending_version,
                     true,
                 )?;
-                return Ok((next_version, AppendNotifier::default()));
+                Ok((next_version, AppendNotifier::default()))
             }
 
             ExecutionRequest::Unpaused => {
@@ -2831,7 +2918,7 @@ impl SqlitePool {
                     &appending_version,
                     false,
                 )?;
-                return Ok((next_version, AppendNotifier::default()));
+                Ok((next_version, AppendNotifier::default()))
             }
 
             ExecutionRequest::CancellationRequested => {
@@ -2862,7 +2949,7 @@ impl SqlitePool {
                     req.created_at,
                     &appending_version,
                 )?;
-                return Ok((next_version, AppendNotifier::default()));
+                Ok((next_version, AppendNotifier::default()))
             }
 
             ExecutionRequest::Finished { retval, .. } => {
@@ -2873,7 +2960,7 @@ impl SqlitePool {
                     req.created_at,
                     PendingStateFinishedResultKind::from(retval),
                 )?;
-                return Ok((
+                Ok((
                     appending_version,
                     AppendNotifier {
                         pending_at: None,
@@ -2883,7 +2970,7 @@ impl SqlitePool {
                         }),
                         response: None,
                     },
-                ));
+                ))
             }
 
             ExecutionRequest::HistoryEvent {
@@ -2898,18 +2985,16 @@ impl SqlitePool {
                     | HistoryEvent::Stub { .. }
                     | HistoryEvent::JoinNextTooMany { .. }
                     | HistoryEvent::JoinNextTry { .. },
-            } => {
-                return Ok((
-                    Self::bump_state_next_version(
-                        tx,
-                        execution_id,
-                        req.created_at,
-                        &appending_version,
-                        None,
-                    )?,
-                    AppendNotifier::default(),
-                ));
-            }
+            } => Ok((
+                Self::bump_state_next_version(
+                    tx,
+                    execution_id,
+                    req.created_at,
+                    &appending_version,
+                    None,
+                )?,
+                AppendNotifier::default(),
+            )),
 
             ExecutionRequest::HistoryEvent {
                 event:
@@ -2923,23 +3008,21 @@ impl SqlitePool {
                                 ..
                             },
                     },
-            } => {
-                return Ok((
-                    Self::bump_state_next_version(
-                        tx,
-                        execution_id,
-                        req.created_at,
-                        &appending_version,
-                        Some(DelayReq {
-                            join_set_id: join_set_id.clone(),
-                            delay_id: delay_id.clone(),
-                            expires_at: *expires_at,
-                            paused: *paused,
-                        }),
-                    )?,
-                    AppendNotifier::default(),
-                ));
-            }
+            } => Ok((
+                Self::bump_state_next_version(
+                    tx,
+                    execution_id,
+                    req.created_at,
+                    &appending_version,
+                    Some(DelayReq {
+                        join_set_id: join_set_id.clone(),
+                        delay_id: delay_id.clone(),
+                        expires_at: *expires_at,
+                        paused: *paused,
+                    }),
+                )?,
+                AppendNotifier::default(),
+            )),
 
             ExecutionRequest::HistoryEvent {
                 event:
@@ -2981,7 +3064,7 @@ impl SqlitePool {
                     )?;
                     return Ok((next_version, notifier));
                 }
-                return Ok((
+                Ok((
                     Self::update_state_blocked(
                         tx,
                         execution_id,
@@ -2992,7 +3075,7 @@ impl SqlitePool {
                         *closing,
                     )?,
                     AppendNotifier::default(),
-                ));
+                ))
             }
         }
     }
@@ -3495,13 +3578,9 @@ impl SqlitePool {
                 Ok((execution_id, next_version))
             },
         )
-        .map_err(|err| {
-            warn!("Ignoring consistency error {err:?}");
-        })?
+        .map_err(warn_consistency_error)?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| {
-            warn!("Ignoring consistency error {err:?}");
-        })
+        .map_err(warn_consistency_error)
     }
 
     /// Get executions and their next versions
@@ -4659,6 +4738,7 @@ impl DbExecutor for SqlitePool {
                             &ffqns,
                         )
                         .map_err(to_generic_error)?;
+                        Self::prefetch_locking(tx, &candidates);
                         candidates
                             .iter()
                             .map(|(execution_id, version)| {
@@ -4752,6 +4832,7 @@ impl DbExecutor for SqlitePool {
                             &component_id.component_digest,
                         )
                         .map_err(to_generic_error)?;
+                        Self::prefetch_locking(tx, &candidates);
                         candidates
                             .iter()
                             .map(|(execution_id, version)| {
@@ -4850,6 +4931,7 @@ impl DbExecutor for SqlitePool {
                             &component_id.component_digest,
                         )
                         .map_err(to_generic_error)?;
+                        Self::prefetch_locking(tx, &candidates);
                         candidates
                             .iter()
                             .map(|(execution_id, version)| {
@@ -4976,6 +5058,7 @@ impl DbExecutor for SqlitePool {
             .transaction(
                 move |tx| {
                     let mut req = req.clone();
+                    Self::prefetch_append(tx, &execution_id);
                     Self::validate_append_requests(
                         tx,
                         &execution_id,
@@ -5018,24 +5101,22 @@ impl DbExecutor for SqlitePool {
             self.transaction(
                 move |tx| {
                     let mut events = events.clone();
+                    Self::prefetch_append(tx, &events.execution_id);
+                    tx.prefetch(|| {
+                        let _ = Self::get_combined_state(tx, &response.parent_execution_id);
+                    });
                     let limit = Self::validate_append_requests(
                         tx,
                         &events.execution_id,
                         &mut events.batch,
                     )?;
                     response.validate_for_persistence(limit)?;
-                    let mut version = events.version.clone();
-                    let mut notifier_of_child = None;
-                    for append_request in &events.batch {
-                        let (v, n) = Self::append(
-                            tx,
-                            &events.execution_id,
-                            append_request.clone(),
-                            version,
-                        )?;
-                        version = v;
-                        notifier_of_child = Some(n);
-                    }
+                    let (version, notifier_of_child) = Self::append_all(
+                        tx,
+                        &events.execution_id,
+                        &events.batch,
+                        events.version.clone(),
+                    )?;
 
                     let pending_at_parent = Self::append_response(
                         tx,
@@ -5052,13 +5133,7 @@ impl DbExecutor for SqlitePool {
                             },
                         },
                     )?;
-                    Ok::<_, DbErrorWrite>((
-                        version,
-                        vec![
-                            notifier_of_child.expect("checked that the batch is not empty"),
-                            pending_at_parent,
-                        ],
-                    ))
+                    Ok::<_, DbErrorWrite>((version, vec![notifier_of_child, pending_at_parent]))
                 },
                 TxType::MultipleWrites,
                 "append_batch_respond_to_parent",
@@ -5662,6 +5737,12 @@ impl DbExternalApi for SqlitePool {
         let execution_ids = execution_ids.to_vec();
         self.transaction(
             move |tx| {
+                tx.prefetch(|| {
+                    for execution_id in &execution_ids {
+                        let _ = Self::get_combined_state(tx, execution_id);
+                        let _ = Self::get_max_version(tx, execution_id);
+                    }
+                });
                 let mut states = Vec::with_capacity(execution_ids.len());
                 for execution_id in &execution_ids {
                     let state = Self::get_combined_state(tx, execution_id).and_then(|combined| {
@@ -7250,19 +7331,9 @@ impl DbConnection for SqlitePool {
             .transaction(
                 move |tx| {
                     let mut batch = batch.clone();
+                    Self::prefetch_append(tx, &execution_id);
                     Self::validate_append_requests(tx, &execution_id, &mut batch)?;
-                    let mut version = version.clone();
-                    let mut notifier = None;
-                    for append_request in &batch {
-                        let (v, n) =
-                            Self::append(tx, &execution_id, append_request.clone(), version)?;
-                        version = v;
-                        notifier = Some(n);
-                    }
-                    Ok::<_, DbErrorWrite>((
-                        version,
-                        notifier.expect("checked that the batch is not empty"),
-                    ))
+                    Self::append_all(tx, &execution_id, &batch, version.clone())
                 },
                 TxType::MultipleWrites,
                 "append_batch",
@@ -7291,15 +7362,10 @@ impl DbConnection for SqlitePool {
             .transaction(
                 move |tx| {
                     let mut batch = batch.clone();
+                    Self::prefetch_append(tx, &execution_id);
                     Self::validate_append_requests(tx, &execution_id, &mut batch)?;
-                    let mut version = version.clone();
-                    let mut notifier = None;
-                    for append_request in &batch {
-                        let (v, n) =
-                            Self::append(tx, &execution_id, append_request.clone(), version)?;
-                        version = v;
-                        notifier = Some(n);
-                    }
+                    let (version, notifier) =
+                        Self::append_all(tx, &execution_id, &batch, version.clone())?;
                     // Appending the response unblocks the just-written `JoinNext` and deletes
                     // the `t_delay` row the `DelayRequest` inserted, all in this transaction.
                     let response_notifier = Self::append_response(
@@ -7316,13 +7382,7 @@ impl DbConnection for SqlitePool {
                             },
                         },
                     )?;
-                    Ok::<_, DbErrorWrite>((
-                        version,
-                        vec![
-                            notifier.expect("checked that the batch is not empty"),
-                            response_notifier,
-                        ],
-                    ))
+                    Ok::<_, DbErrorWrite>((version, vec![notifier, response_notifier]))
                 },
                 TxType::MultipleWrites,
                 "append_batch_with_delay_response",
@@ -7355,17 +7415,11 @@ impl DbConnection for SqlitePool {
             .transaction(
                 move |tx| {
                     let mut batch = batch.clone();
+                    Self::prefetch_append(tx, &execution_id);
                     Self::validate_append_requests(tx, &execution_id, &mut batch)?;
-                    let mut notifier = None;
-                    let mut version = version.clone();
-                    for append_request in &batch {
-                        let (v, n) =
-                            Self::append(tx, &execution_id, append_request.clone(), version)?;
-                        version = v;
-                        notifier = Some(n);
-                    }
-                    let mut notifiers = Vec::new();
-                    notifiers.push(notifier.expect("checked that the batch is not empty"));
+                    let (version, notifier) =
+                        Self::append_all(tx, &execution_id, &batch, version.clone())?;
+                    let mut notifiers = vec![notifier];
 
                     for child_req in &child_req {
                         let (_, notifier) = Self::create_inner(tx, child_req.clone())?;
@@ -7752,6 +7806,11 @@ impl DbConnection for SqlitePool {
     ) -> Result<Vec<ExpiredTimer>, DbErrorGeneric> {
         self.transaction(
             move |conn| {
+                conn.prefetch(|| {
+                    let _ = conn.prepare(polling::EXPIRED_LOCKS).and_then(|mut stmt| {
+                        stmt.query_map(named_params! { ":at": at }, |_| Ok(())).map(|_| ())
+                    });
+                });
                 let mut expired_timers = conn.prepare(polling::EXPIRED_DELAYS)?
                 .query_map(
                         named_params! {

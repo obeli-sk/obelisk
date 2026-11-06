@@ -2,10 +2,12 @@
 mod config;
 mod hrana;
 mod migrations;
+mod split;
 
 pub use config::LibsqlConfig;
 pub use db_sqlite::sqlite_dao::{InitializationError, SqlitePool as LibsqlPool};
 pub use hrana::HranaClient;
+pub use migrations::apply;
 
 pub async fn connect(config: LibsqlConfig) -> Result<LibsqlPool, InitializationError> {
     connect_with(config, |client| Box::new(client)).await

@@ -1,16 +1,17 @@
 //! Runs the `SQLite` migrations, libSQL being a server around the same engine.
-use crate::hrana::HranaClient;
+use crate::{hrana::HranaClient, split::split_statements};
 use db_sqlite::{
-    replay::EPOCH_TABLE_SQL,
-    sqlite_dao::{REMOTE_FILE_CHUNK_TABLE_SQL, migrations_runner},
+    sql_connection::{BatchStep, Condition, SqlParams, SqlPipeline, StepOutcome},
+    sqlite_dao::migrations_runner,
 };
-use refinery::Migration;
+use refinery::{Migration, Runner};
 use refinery_core::traits::sync::{Migrate, Query, Transaction};
 use rusqlite::types::{FromSql, Value};
 use std::time::Duration;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-const MAX_MIGRATION_ATTEMPTS: u32 = 5;
+/// Each failure means another node applied the migration first, so this is about its total time.
+const MAX_MIGRATION_ATTEMPTS: u32 = 50;
 
 /// The files stay byte-identical since existing `SQLite` databases validate their checksums, so the
 /// two constructs rejected by `sqld` are rewritten here: double-quoted strings and temp tables.
@@ -23,24 +24,52 @@ fn failure(error: impl std::error::Error + Send + Sync + 'static) -> rusqlite::E
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
 }
 
+fn message(error: String) -> rusqlite::Error {
+    failure(std::io::Error::other(error))
+}
+
+/// Sends every request as one stateless batch, so no stream or lock outlives a request.
 struct MigrationConnection<'a>(&'a HranaClient);
 
 impl Transaction for MigrationConnection<'_> {
     type Error = rusqlite::Error;
 
+    // refinery passes a migration together with its history insert, so both commit or neither.
     fn execute<'a, T: Iterator<Item = &'a str>>(
         &mut self,
         queries: T,
     ) -> Result<usize, Self::Error> {
-        let queries = queries.collect::<Vec<_>>();
-        if !queries.is_empty() {
-            // Atomic with the history rows, concurrent nodes serialize on the write lock.
-            self.0
-                .sequence(&format!(
-                    "BEGIN IMMEDIATE;\n{};\nCOMMIT;",
-                    adapt_to_libsql(&queries.join(";\n"))
-                ))
-                .map_err(failure)?;
+        let queries = queries.map(adapt_to_libsql).collect::<Vec<_>>();
+        let mut statements = Vec::new();
+        for query in &queries {
+            statements.extend(split_statements(query).map_err(message)?);
+        }
+        if !statements.is_empty() {
+            let step = |sql: &str, condition| BatchStep {
+                sql: sql.to_owned(),
+                params: SqlParams::None,
+                want_rows: false,
+                condition,
+            };
+            // Foreign keys stay off as in `SQLite`'s migration procedure.
+            let mut steps = vec![step("PRAGMA foreign_keys = OFF", None)];
+            for sql in ["BEGIN IMMEDIATE"].into_iter().chain(statements) {
+                steps.push(step(sql, Some(Condition::Ok(steps.len() - 1))));
+            }
+            let commit = steps.len();
+            steps.push(step("COMMIT", Some(Condition::Ok(commit - 1))));
+            let not_committed = Condition::Not(Box::new(Condition::Ok(commit)));
+            steps.push(step("ROLLBACK", Some(not_committed)));
+            let outcomes = self.0.batch(&steps).map_err(failure)?;
+            if !matches!(outcomes.get(commit), Some(StepOutcome::Done(_))) {
+                let error = outcomes.iter().find_map(|outcome| match outcome {
+                    StepOutcome::Error { message, .. } => Some(message.clone()),
+                    StepOutcome::Done(_) | StepOutcome::Skipped => None,
+                });
+                return Err(message(
+                    error.unwrap_or_else(|| "migration did not commit".to_string()),
+                ));
+            }
         }
         Ok(queries.len())
     }
@@ -80,13 +109,18 @@ impl Query<Vec<Migration>> for MigrationConnection<'_> {
 
 impl Migrate for MigrationConnection<'_> {}
 
+/// Applies each pending migration with its history row in one stateless transaction.
+pub fn apply(client: &HranaClient, runner: Runner) -> Result<(), refinery::Error> {
+    runner
+        .set_grouped(false)
+        .run(&mut MigrationConnection(client))?;
+    Ok(())
+}
+
 pub(crate) fn run(client: &HranaClient) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // A node losing the race for a migration succeeds once it sees the winner's history row.
+    // A concurrent run fails on the history primary key and sees the winner's row on retry.
     let mut attempt = 0;
-    while let Err(error) = migrations_runner()
-        .set_grouped(true)
-        .run(&mut MigrationConnection(client))
-    {
+    while let Err(error) = apply(client, migrations_runner()) {
         attempt += 1;
         if attempt == MAX_MIGRATION_ATTEMPTS {
             return Err(error.into());
@@ -94,8 +128,5 @@ pub(crate) fn run(client: &HranaClient) -> Result<(), Box<dyn std::error::Error 
         tracing::debug!(%error, "retrying libSQL migrations");
         std::thread::sleep(Duration::from_millis(200));
     }
-    client.sequence(&format!(
-        "BEGIN IMMEDIATE;\n{EPOCH_TABLE_SQL}\n{REMOTE_FILE_CHUNK_TABLE_SQL}\nCOMMIT;"
-    ))?;
     Ok(())
 }

@@ -7,6 +7,8 @@
 //! - An `execute` runs speculatively with an assumed row count, verified before COMMIT.
 //! - A dry-run batch replays the log on the server and rolls back, returning fresh outcomes.
 //! - Once every outcome holds for the final statement order, one batch commits all the writes.
+//! - A prefetch sends reads known up front together. Later reads of the same statement use those
+//!   outcomes as speculation, which one dry run validates if the LTX wrote in between.
 //!
 //! A read holds only for the writes that preceded it, tracked as a hash of those writes. Commits
 //! bump a single row epoch, which is read in every batch and guarded on commit, so any commit by
@@ -25,9 +27,6 @@ use tracing::{debug, warn};
 type Result<T> = rusqlite::Result<T>;
 type Prefix = [u8; 32];
 
-/// Must be applied once to every database before it is used through [`Replay`].
-pub const EPOCH_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS t_write_epoch (id INTEGER PRIMARY KEY CHECK (id = 0), epoch INTEGER NOT NULL);\
-    INSERT OR IGNORE INTO t_write_epoch (id, epoch) VALUES (0, 0);";
 const EPOCH_READ: &str = "SELECT epoch FROM t_write_epoch";
 const EPOCH_BUMP: &str = "UPDATE t_write_epoch SET epoch = epoch + 1";
 const MAX_ROUNDS: u32 = 64;
@@ -46,6 +45,11 @@ struct OutcomePending;
 
 fn pending() -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(OutcomePending))
+}
+
+/// The statement runs in a later round, which is not a failure of the logical transaction.
+pub(crate) fn is_pending(error: &rusqlite::Error) -> bool {
+    matches!(error, rusqlite::Error::ToSqlConversionFailure(source) if source.is::<OutcomePending>())
 }
 
 fn replay_error(reason: String) -> rusqlite::Error {
@@ -83,6 +87,7 @@ struct Entry {
     prefix: Prefix,
     /// The prefix under which the server reported `outcome`; `None` for an assumed outcome.
     observed_under: Option<Prefix>,
+    prefetched: bool,
 }
 impl Entry {
     fn observed(&self) -> bool {
@@ -142,6 +147,9 @@ struct LtxLog {
 struct State {
     ltxs: Vec<LtxLog>,
     current: usize,
+    prefetching: bool,
+    /// Together the prefetched reads did not fit into a response.
+    prefetch_too_large: bool,
     prefix: Prefix,
     epoch: Option<i64>,
     rounds: u32,
@@ -260,22 +268,39 @@ impl Replay {
             return Err(pending());
         }
         let is_write = !want_rows || !is_read_only(sql);
+        debug_assert!(
+            !state.prefetching || !is_write,
+            "only reads can be prefetched"
+        );
         let index = ltx.cursor;
-        ltx.cursor += 1;
         if !ltx.entries.get(index).is_some_and(|entry| {
             entry.sql == sql && entry.want_rows == want_rows && entry.params == params
         }) {
+            let prefetched = ltx.entries[..index]
+                .iter()
+                .find(|entry| {
+                    !is_write && entry.prefetched && entry.sql == sql && entry.params == params
+                })
+                .map(|entry| (entry.outcome.clone(), entry.observed_under));
+            if let Some((None, _)) = prefetched {
+                // Already on its way in this round's batch.
+                ltx.stopped = true;
+                return Err(pending());
+            }
+            let (outcome, observed_under) = prefetched.unwrap_or_default();
             ltx.entries.truncate(index);
             ltx.entries.push(Entry {
                 sql: sql.to_owned(),
                 params,
                 is_write,
                 want_rows,
-                outcome: None,
+                outcome,
                 prefix: Prefix::default(),
-                observed_under: None,
+                observed_under,
+                prefetched: state.prefetching,
             });
         }
+        ltx.cursor += 1;
         let entry = &mut ltx.entries[index];
         entry.prefix = state.prefix;
         if is_write {
@@ -290,9 +315,23 @@ impl Replay {
         if let Some(outcome) = &entry.outcome {
             outcome.to_result()
         } else {
-            ltx.stopped = true;
+            ltx.stopped = !state.prefetching;
             Err(pending())
         }
+    }
+
+    /// Reads made by `reads` do not stop the LTX when unknown, they travel in one batch. Must not
+    /// write. Results are for later reads of the same statements, `reads` should ignore them.
+    pub(crate) fn prefetch(&self, reads: impl FnOnce()) {
+        {
+            let mut state = self.state.borrow_mut();
+            if state.prefetch_too_large || state.ltxs[state.current].stopped {
+                return;
+            }
+            state.prefetching = true;
+        }
+        reads();
+        self.state.borrow_mut().prefetching = false;
     }
 
     /// Runs one physical transaction over a prefix of `ltxs`, which the caller repeats for the
@@ -351,7 +390,7 @@ impl Replay {
                 RoundEnd::Split => {
                     ltx_count = ltx_count.div_ceil(2);
                     debug!(ltx_count, "splitting a remote batch");
-                    self.reset(ltx_count);
+                    self.shrink(ltx_count);
                 }
             }
         }
@@ -362,6 +401,16 @@ impl Replay {
         state.ltxs.clear();
         state.ltxs.resize_with(ltx_count, LtxLog::default);
         state.epoch = None;
+        state.prefetch_too_large = false;
+        state.rounds = 0;
+        state.epoch_conflicts = 0;
+        state.transport_failures = 0;
+    }
+
+    /// Outcomes of the remaining LTXes depend only on their predecessors, so they stay known.
+    fn shrink(&self, ltx_count: usize) {
+        let mut state = self.state.borrow_mut();
+        state.ltxs.truncate(ltx_count);
         state.rounds = 0;
         state.epoch_conflicts = 0;
         state.transport_failures = 0;
@@ -582,6 +631,17 @@ impl Replay {
                 steps.len()
             )))),
             Err(PipelineError::ResponseTooLarge) if state.ltxs.len() > 1 => Err(RoundEnd::Split),
+            Err(PipelineError::ResponseTooLarge)
+                if !state.prefetch_too_large
+                    && state
+                        .ltxs
+                        .iter()
+                        .flat_map(|ltx| &ltx.entries)
+                        .any(|entry| entry.prefetched && !entry.observed()) =>
+            {
+                state.prefetch_too_large = true;
+                Err(RoundEnd::Rerun)
+            }
             Err(error @ PipelineError::ResponseTooLarge) => {
                 Err(RoundEnd::Failed(replay_error(error.to_string())))
             }
@@ -669,6 +729,9 @@ mod tests {
     use super::*;
     use rusqlite::params_from_iter;
     use std::sync::{Arc, Mutex};
+
+    const EPOCH_TABLE_SQL: &str = "CREATE TABLE t_write_epoch (id INTEGER PRIMARY KEY CHECK (id = 0), epoch INTEGER NOT NULL);\
+        INSERT INTO t_write_epoch (id, epoch) VALUES (0, 0);";
 
     type Hook = Box<dyn FnMut(&rusqlite::Connection, &[BatchStep]) -> Option<PipelineError> + Send>;
 
@@ -872,6 +935,103 @@ mod tests {
         // Reads, validation of the reads under the speculated writes, commit.
         assert_eq!(3, harness.batch_count());
         assert_eq!(1, harness.commit_count());
+    }
+
+    #[test]
+    fn prefetch_replaces_sequential_reads_and_validates_reads_after_own_writes() {
+        let harness = harness();
+        (0..5).for_each(|i| harness.seed(&format!("k{i}"), i));
+        let mut ltxs: Vec<Ltx<'_>> = vec![Box::new(|replay| {
+            replay.prefetch(|| {
+                (0..5).for_each(|i| {
+                    let _ = get(replay, &format!("k{i}"));
+                });
+            });
+            let k0 = get(replay, "k0")?.unwrap();
+            put(replay, "k1", 100 + k0)?;
+            // The prefetched value is stale here, as this LTX has written it.
+            let k1 = get(replay, "k1")?.unwrap();
+            put(replay, "sum", k1 + get(replay, "k4")?.unwrap())?;
+            Ok(())
+        })];
+        harness.run(&mut ltxs)[0].1.as_ref().unwrap();
+        assert_eq!(Some(104), harness.stored("sum"));
+        // Prefetch, validation yielding the true `k1`, commit of the corrected write.
+        assert_eq!(3, harness.batch_count());
+    }
+
+    #[test]
+    fn prefetched_reads_without_writes_take_one_batch() {
+        let harness = harness();
+        (0..100).for_each(|i| harness.seed(&format!("k{i}"), i));
+        let mut ltxs: Vec<Ltx<'_>> = vec![Box::new(|replay| {
+            replay.prefetch(|| {
+                (0..100).for_each(|i| {
+                    let _ = get(replay, &format!("k{i}"));
+                });
+            });
+            (0..100).try_for_each(|i| {
+                assert_eq!(Some(i), get(replay, &format!("k{i}"))?);
+                Ok(())
+            })
+        })];
+        harness.run(&mut ltxs)[0].1.as_ref().unwrap();
+        assert_eq!(1, harness.batch_count());
+    }
+
+    #[test]
+    fn prefetch_too_large_for_a_response_falls_back_to_sequential_reads() {
+        let harness = harness_with(
+            false,
+            Box::new(|_, batch| {
+                // Fails once the batch reads more than one key.
+                (batch
+                    .iter()
+                    .filter(|step| step.sql.starts_with("SELECT v"))
+                    .count()
+                    > 1)
+                .then_some(PipelineError::ResponseTooLarge)
+            }),
+        );
+        harness.seed("a", 1);
+        harness.seed("b", 2);
+        let mut ltxs: Vec<Ltx<'_>> = vec![Box::new(|replay| {
+            replay.prefetch(|| {
+                let _ = get(replay, "a");
+                let _ = get(replay, "b");
+            });
+            assert_eq!(
+                Some(3),
+                get(replay, "a")?.zip(get(replay, "b")?).map(|(a, b)| a + b)
+            );
+            Ok(())
+        })];
+        harness.run(&mut ltxs)[0].1.as_ref().unwrap();
+    }
+
+    #[test]
+    fn split_keeps_the_outcomes_of_the_remaining_ltxes() {
+        const LTXES: usize = 40;
+        let harness = harness();
+        harness.seed("counter", 0);
+        let mut ltxs: Vec<Ltx<'_>> = (0..LTXES)
+            .map(|_| -> Ltx<'_> {
+                Box::new(|replay| {
+                    let value = get(replay, "counter")?.unwrap();
+                    put(replay, "counter", value + 1)?;
+                    Ok(())
+                })
+            })
+            .collect();
+        let chunks = harness.run(&mut ltxs);
+        assert!(chunks.len() > 1);
+        // Every LTX learns its read once, however many times it was split off.
+        assert!(
+            harness.batch_count() <= LTXES + chunks.len() * 3,
+            "{} batches in {} chunks",
+            harness.batch_count(),
+            chunks.len()
+        );
     }
 
     #[test]

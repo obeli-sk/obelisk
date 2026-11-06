@@ -395,3 +395,10 @@ CREATE INDEX idx_t_file_upload_uploaded_at ON t_file_upload (uploaded_at);
 CREATE INDEX idx_t_state_created_at ON t_state (created_at, execution_id);
 CREATE INDEX idx_t_deployment_updated_at ON t_deployment (updated_at, deployment_id);
 CREATE UNIQUE INDEX idx_t_deployment_digest ON t_deployment (digest) WHERE superseded_by IS NULL;
+CREATE TABLE t_write_epoch (id INTEGER PRIMARY KEY CHECK (id = 0), epoch INTEGER NOT NULL);
+CREATE TABLE t_file_chunk (
+    digest TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    content BLOB NOT NULL,
+    PRIMARY KEY (digest, chunk_index)
+) STRICT;

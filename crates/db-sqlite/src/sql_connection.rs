@@ -139,6 +139,12 @@ impl Connection {
     pub(crate) fn prepare_cached(&self, sql: &str) -> Result<CachedStatement<'_>> {
         self.prepare(sql)
     }
+    /// Lets a remote LTX read everything `reads` asks for in one round, does nothing locally.
+    pub(crate) fn prefetch(&self, reads: impl FnOnce()) {
+        if let Self::External(replay) = self {
+            replay.prefetch(reads);
+        }
+    }
     pub(crate) fn query_row<P: Params, T>(
         &self,
         sql: &str,
