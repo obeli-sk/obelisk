@@ -819,8 +819,10 @@ impl SqlitePool {
                 .iter_mut()
                 .filter(|(_, former_res)| *former_res == ApplyOrSkip::Apply)
             {
-                if let Ok(()) = SqlitePool::ltx_apply_to_phytx(ltx, &mut ptx, histograms) {
-                } else {
+                let res = SqlitePool::ltx_apply_to_phytx(ltx, &mut ptx, histograms);
+                // SQLite errors like SQLITE_FULL can automatically roll back the PhyTx.
+                //  `is_autocommit` is the recommended way to test whether a transaction rolled back.
+                if res.is_err() || ptx.is_autocommit() {
                     *former_res = ApplyOrSkip::Skip; // the problematic ltx will be skipped in the next iteration.
                     // ptx rollbacks on drop
                     return Err(NeedsRestart);
@@ -7634,7 +7636,7 @@ pub mod tempfile {
 
 #[cfg(test)]
 mod tests {
-    use crate::sqlite_dao::{SqlitePool, TxType, tempfile::sqlite_pool};
+    use crate::sqlite_dao::{RusqliteError, SqlitePool, TxType, tempfile::sqlite_pool};
     use assert_matches::assert_matches;
     use chrono::DateTime;
     use concepts::ContentDigest;
@@ -7949,6 +7951,110 @@ mod tests {
         assert_eq!(2, events.len());
         pool.close().await;
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn full_database_should_only_fail_the_ltx_that_hit_it() {
+        fn insert(
+            name: &'static str,
+        ) -> impl FnMut(&mut rusqlite::Transaction) -> Result<(), RusqliteError> {
+            move |tx| {
+                tx.execute("INSERT INTO full_test (name) VALUES (?1)", [name])?;
+                Ok(())
+            }
+        }
+        let (pool, _guard) = sqlite_pool().await;
+        pool.transaction(
+            |tx| {
+                tx.execute_batch("CREATE TABLE full_test (name TEXT)")?;
+                Ok::<_, RusqliteError>(())
+            },
+            TxType::MultipleWrites,
+            "create_table",
+        )
+        .await
+        .unwrap();
+        pool.transaction(
+            |tx| {
+                let page_count: u32 =
+                    tx.query_row("SELECT page_count FROM pragma_page_count", [], |row| {
+                        row.get(0)
+                    })?;
+                tx.pragma_update(None, "max_page_count", page_count)?;
+                Ok::<_, RusqliteError>(())
+            },
+            TxType::Other,
+            "limit_pages",
+        )
+        .await
+        .unwrap();
+
+        // Hold the writer thread until all LTXes are queued, so that they share a PhyTx.
+        let (started_sender, started_receiver) = tokio::sync::oneshot::channel();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel::<()>();
+        let mut started_sender = Some(started_sender);
+        let hold_writer = pool.transaction(
+            move |_tx| {
+                if let Some(started_sender) = started_sender.take() {
+                    started_sender.send(()).unwrap();
+                }
+                let _ = release_receiver.recv();
+                Ok::<_, RusqliteError>(())
+            },
+            TxType::Other,
+            "hold_writer",
+        );
+        let batch = async {
+            started_receiver.await.unwrap();
+            tokio::join!(
+                pool.transaction(insert("before"), TxType::Other, "before"),
+                pool.transaction(
+                    |tx| {
+                        // Overflow pages exceed the limit. Without a statement journal SQLite rolls back the PhyTx.
+                        tx.execute(
+                            "INSERT INTO full_test (name) VALUES (?1)",
+                            ["x".repeat(100_000)],
+                        )?;
+                        Ok::<_, RusqliteError>(())
+                    },
+                    TxType::Other,
+                    "too_big",
+                ),
+                pool.transaction(
+                    |tx| {
+                        insert("partial")(tx)?;
+                        Err::<(), _>(RusqliteError::NotFound)
+                    },
+                    TxType::MultipleWrites,
+                    "partial",
+                ),
+                pool.transaction(insert("after"), TxType::Other, "after"),
+                async { drop(release_sender) },
+            )
+        };
+        let (hold_writer, (before, too_big, partial, after, ())) = tokio::join!(hold_writer, batch);
+        hold_writer.unwrap();
+        before.unwrap();
+        assert_matches!(too_big, Err(RusqliteError::Full));
+        assert_matches!(partial, Err(RusqliteError::NotFound));
+        after.unwrap();
+
+        let names = pool
+            .transaction(
+                |tx| {
+                    let names = tx
+                        .prepare("SELECT name FROM full_test ORDER BY rowid")?
+                        .query_map([], |row| row.get(0))?
+                        .collect::<Result<Vec<String>, _>>()?;
+                    Ok::<_, RusqliteError>(names)
+                },
+                TxType::Other,
+                "read",
+            )
+            .await
+            .unwrap();
+        assert_eq!(vec!["before", "after"], names);
+        pool.close().await;
     }
 
     #[tokio::test]
