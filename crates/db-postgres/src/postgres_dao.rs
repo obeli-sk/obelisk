@@ -46,9 +46,18 @@ use db_common::{
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::{HashMap, HashSet};
+use rustls::pki_types::{CertificateDer, pem::PemObject as _};
+use rustls_platform_verifier::BuilderVerifierExt as _;
 use secrecy::{ExposeSecret as _, SecretString};
 use sha2::{Digest as _, Sha256};
-use std::{collections::VecDeque, pin::Pin, str::FromStr as _, sync::Arc, time::Duration};
+use std::{
+    collections::VecDeque,
+    path::{Path, PathBuf},
+    pin::Pin,
+    str::FromStr as _,
+    sync::Arc,
+    time::Duration,
+};
 use std::{fmt::Write as _, panic::Location};
 use strum::IntoEnumIterator as _;
 use tokio::sync::{mpsc, oneshot};
@@ -57,6 +66,7 @@ use tokio_postgres::{
     row::RowIndex,
     types::{FromSql, Json, ToSql},
 };
+use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{Level, debug, error, info, instrument, trace, warn};
 use tracing_error::SpanTrace;
 
@@ -102,6 +112,47 @@ pub struct PostgresConfig {
     pub user: String,
     pub password: SecretString,
     pub db_name: String,
+    pub tls: PostgresTls,
+}
+
+#[derive(Clone, Debug, Default)]
+pub enum PostgresTls {
+    #[default]
+    Disable,
+    /// Encrypts and verifies the certificate chain and host name. Without a CA file, the system's certificates are trusted.
+    VerifyFull { ca_file: Option<PathBuf> },
+}
+
+impl PostgresTls {
+    fn create_pool(&self, cfg: &deadpool_postgres::Config) -> Result<Pool, InitializationError> {
+        let pool = match self {
+            PostgresTls::Disable => cfg.create_pool(None, NoTls),
+            PostgresTls::VerifyFull { ca_file } => {
+                let client_config = tls_client_config(ca_file.as_deref()).map_err(|err| {
+                    error!("Cannot configure Postgres TLS - {err:?}");
+                    InitializationError
+                })?;
+                cfg.create_pool(None, MakeRustlsConnect::new(client_config))
+            }
+        };
+        pool.map_err(|err| {
+            error!("Cannot create the database pool - {err:?}");
+            InitializationError
+        })
+    }
+}
+
+fn tls_client_config(ca_file: Option<&Path>) -> Result<rustls::ClientConfig, anyhow::Error> {
+    let builder = rustls::ClientConfig::builder();
+    let Some(ca_file) = ca_file else {
+        return Ok(builder.with_platform_verifier()?.with_no_client_auth());
+    };
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in CertificateDer::pem_file_iter(ca_file)? {
+        roots.add(cert?)?;
+    }
+    anyhow::ensure!(!roots.is_empty(), "no certificates in {ca_file:?}");
+    Ok(builder.with_root_certificates(roots).with_no_client_auth())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -121,10 +172,7 @@ async fn create_database(
         recycling_method: RecyclingMethod::Fast,
     });
 
-    let admin_pool = admin_cfg.create_pool(None, NoTls).map_err(|err| {
-        error!("Cannot create the default pool - {err:?}");
-        InitializationError
-    })?;
+    let admin_pool = config.tls.create_pool(&admin_cfg)?;
 
     let client = admin_pool.get().await.map_err(|err| {
         error!("Cannot get a connection from the default pool - {err:?}");
@@ -324,10 +372,7 @@ impl PostgresPool {
             recycling_method: RecyclingMethod::Fast,
         });
 
-        let pool = cfg.create_pool(None, NoTls).map_err(|err| {
-            error!("Cannot create the database pool - {err:?}");
-            InitializationError
-        })?;
+        let pool = config.tls.create_pool(&cfg)?;
         let mut client = pool.get().await.map_err(|err| {
             error!("Cannot get a connection from the database pool - {err:?}");
             InitializationError

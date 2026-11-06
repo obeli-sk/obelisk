@@ -56,6 +56,7 @@ pub async fn initialize_fresh_postgres_db() -> PostgresPool {
         user: get_env_val("TEST_POSTGRES_USER"),
         password: SecretString::from(get_env_val("TEST_POSTGRES_PASSWORD")),
         db_name: get_env_val("TEST_POSTGRES_DATABASE_PREFIX"),
+        tls: db_postgres::postgres_dao::PostgresTls::Disable,
     };
     for _ in 0..10 {
         let mut config = config.clone();

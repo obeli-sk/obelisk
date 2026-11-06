@@ -664,6 +664,17 @@
         },
         "provision_policy": {
           "$ref": "#/$defs/PostgresProvisionPolicy"
+        },
+        "ssl_mode": {
+          "$ref": "#/$defs/PostgresSslMode"
+        },
+        "ssl_root_cert": {
+          "description": "PEM file with the CA certificates trusted by `ssl_mode = \"verify_full\"`. The system's certificates are used if not set.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
       "additionalProperties": false,
@@ -752,6 +763,20 @@
           "description": "Create database if it does not exist.",
           "type": "string",
           "const": "auto"
+        }
+      ]
+    },
+    "PostgresSslMode": {
+      "oneOf": [
+        {
+          "description": "Credentials and data travel unencrypted.",
+          "type": "string",
+          "const": "disable"
+        },
+        {
+          "description": "Encrypt, verify the certificate chain and the host name.",
+          "type": "string",
+          "const": "verify_full"
         }
       ]
     },

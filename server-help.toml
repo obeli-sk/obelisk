@@ -130,6 +130,8 @@
 # database.postgres.password = "${POSTGRES_PASSWORD}"
 # database.postgres.db_name =  "${POSTGRES_DATABASE}"
 # database.postgres.provision_policy = "never" # One of "auto"|"never". If `auto` is selected, missing database will be created on startup.
+# database.postgres.ssl_mode = "disable" # One of "disable"|"verify_full". `disable` sends credentials and data unencrypted.
+# database.postgres.ssl_root_cert = "${POSTGRES_CA_FILE}" # PEM file with trusted CAs for `verify_full`, the system's certificates are used if not set.
 
 ## Automatic garbage collection. Tombstoned execution trees and unreferenced shared data are
 ## removed in bounded batches. Disable this only when maintenance is managed externally.
