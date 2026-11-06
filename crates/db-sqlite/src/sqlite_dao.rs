@@ -95,14 +95,13 @@ https://www.sqlite.org/pragma.html#pragma_journal_size_limit
 Inspired by https://github.com/rails/rails/pull/49349
 */
 
-const PRAGMA: [[&str; 2]; 10] = [
+const PRAGMA: [[&str; 2]; 9] = [
     ["journal_mode", "wal"],
     ["synchronous", "FULL"],
     ["foreign_keys", "true"],
     ["busy_timeout", "1000"],
     ["cache_size", "10000"], // number of pages
     ["temp_store", "MEMORY"],
-    ["page_size", "8192"], // 8 KB
     ["mmap_size", "134217728"],
     ["journal_size_limit", "67108864"],
     ["quick_check", ""],
