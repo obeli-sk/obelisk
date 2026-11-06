@@ -18,7 +18,6 @@ http-body-util.workspace = true
 hyper.workspace = true
 nix = { version = "0.31", features = ["inotify"] }
 reqwest.workspace = true
-rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
@@ -28,7 +27,6 @@ wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 wasm-workers.workspace = true
 worker-common.workspace = true
-webpki-roots.workspace = true
 
 [dev-dependencies]
 wat.workspace = true
