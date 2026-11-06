@@ -46,9 +46,18 @@ use db_common::{
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::{HashMap, HashSet};
+use rustls::pki_types::{CertificateDer, pem::PemObject as _};
+use rustls_platform_verifier::BuilderVerifierExt as _;
 use secrecy::{ExposeSecret as _, SecretString};
 use sha2::{Digest as _, Sha256};
-use std::{collections::VecDeque, pin::Pin, str::FromStr as _, sync::Arc, time::Duration};
+use std::{
+    collections::VecDeque,
+    path::{Path, PathBuf},
+    pin::Pin,
+    str::FromStr as _,
+    sync::Arc,
+    time::Duration,
+};
 use std::{fmt::Write as _, panic::Location};
 use strum::IntoEnumIterator as _;
 use tokio::sync::{mpsc, oneshot};
@@ -57,6 +66,7 @@ use tokio_postgres::{
     row::RowIndex,
     types::{FromSql, Json, ToSql},
 };
+use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{Level, debug, error, info, instrument, trace, warn};
 use tracing_error::SpanTrace;
 
@@ -102,6 +112,47 @@ pub struct PostgresConfig {
     pub user: String,
     pub password: SecretString,
     pub db_name: String,
+    pub tls: PostgresTls,
+}
+
+#[derive(Clone, Debug, Default)]
+pub enum PostgresTls {
+    #[default]
+    Disable,
+    /// Encrypts and verifies the certificate chain and host name. Without a CA file, the system's certificates are trusted.
+    VerifyFull { ca_file: Option<PathBuf> },
+}
+
+impl PostgresTls {
+    fn create_pool(&self, cfg: &deadpool_postgres::Config) -> Result<Pool, InitializationError> {
+        let pool = match self {
+            PostgresTls::Disable => cfg.create_pool(None, NoTls),
+            PostgresTls::VerifyFull { ca_file } => {
+                let client_config = tls_client_config(ca_file.as_deref()).map_err(|err| {
+                    error!("Cannot configure Postgres TLS - {err:?}");
+                    InitializationError
+                })?;
+                cfg.create_pool(None, MakeRustlsConnect::new(client_config))
+            }
+        };
+        pool.map_err(|err| {
+            error!("Cannot create the database pool - {err:?}");
+            InitializationError
+        })
+    }
+}
+
+fn tls_client_config(ca_file: Option<&Path>) -> Result<rustls::ClientConfig, anyhow::Error> {
+    let builder = rustls::ClientConfig::builder();
+    let Some(ca_file) = ca_file else {
+        return Ok(builder.with_platform_verifier()?.with_no_client_auth());
+    };
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in CertificateDer::pem_file_iter(ca_file)? {
+        roots.add(cert?)?;
+    }
+    anyhow::ensure!(!roots.is_empty(), "no certificates in {ca_file:?}");
+    Ok(builder.with_root_certificates(roots).with_no_client_auth())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -121,10 +172,7 @@ async fn create_database(
         recycling_method: RecyclingMethod::Fast,
     });
 
-    let admin_pool = admin_cfg.create_pool(None, NoTls).map_err(|err| {
-        error!("Cannot create the default pool - {err:?}");
-        InitializationError
-    })?;
+    let admin_pool = config.tls.create_pool(&admin_cfg)?;
 
     let client = admin_pool.get().await.map_err(|err| {
         error!("Cannot get a connection from the default pool - {err:?}");
@@ -192,10 +240,8 @@ pub struct PostgresPool {
 #[async_trait]
 impl DbPool for PostgresPool {
     async fn db_exec_conn(&self) -> Result<Box<dyn DbExecutor>, DbErrorGeneric> {
-        let client = self.pool.get().await?;
-
         Ok(Box::new(PostgresConnection {
-            client: tokio::sync::Mutex::new(client),
+            pool: self.pool.clone(),
             response_subscribers: self.response_subscribers.clone(),
             pending_subscribers: self.pending_subscribers.clone(),
             execution_finished_subscribers: self.execution_finished_subscribers.clone(),
@@ -203,10 +249,8 @@ impl DbPool for PostgresPool {
     }
 
     async fn connection(&self) -> Result<Box<dyn DbConnection>, DbErrorGeneric> {
-        let client = self.pool.get().await?;
-
         Ok(Box::new(PostgresConnection {
-            client: tokio::sync::Mutex::new(client),
+            pool: self.pool.clone(),
             response_subscribers: self.response_subscribers.clone(),
             pending_subscribers: self.pending_subscribers.clone(),
             execution_finished_subscribers: self.execution_finished_subscribers.clone(),
@@ -214,10 +258,8 @@ impl DbPool for PostgresPool {
     }
 
     async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric> {
-        let client = self.pool.get().await?;
-
         Ok(Box::new(PostgresConnection {
-            client: tokio::sync::Mutex::new(client),
+            pool: self.pool.clone(),
             response_subscribers: self.response_subscribers.clone(),
             pending_subscribers: self.pending_subscribers.clone(),
             execution_finished_subscribers: self.execution_finished_subscribers.clone(),
@@ -225,9 +267,8 @@ impl DbPool for PostgresPool {
     }
 
     async fn admin_conn(&self) -> Result<Box<dyn DbAdmin>, DbErrorGeneric> {
-        let client = self.pool.get().await?;
         Ok(Box::new(PostgresConnection {
-            client: tokio::sync::Mutex::new(client),
+            pool: self.pool.clone(),
             response_subscribers: self.response_subscribers.clone(),
             pending_subscribers: self.pending_subscribers.clone(),
             execution_finished_subscribers: self.execution_finished_subscribers.clone(),
@@ -235,10 +276,8 @@ impl DbPool for PostgresPool {
     }
 
     async fn cas_conn(&self) -> Result<Box<dyn Cas>, DbErrorGeneric> {
-        let client = self.pool.get().await?;
-
         Ok(Box::new(PostgresConnection {
-            client: tokio::sync::Mutex::new(client),
+            pool: self.pool.clone(),
             response_subscribers: self.response_subscribers.clone(),
             pending_subscribers: self.pending_subscribers.clone(),
             execution_finished_subscribers: self.execution_finished_subscribers.clone(),
@@ -246,9 +285,8 @@ impl DbPool for PostgresPool {
     }
 
     async fn cas_gc_conn(&self) -> Result<Box<dyn CasGc>, DbErrorGeneric> {
-        let client = self.pool.get().await?;
         Ok(Box::new(PostgresConnection {
-            client: tokio::sync::Mutex::new(client),
+            pool: self.pool.clone(),
             response_subscribers: self.response_subscribers.clone(),
             pending_subscribers: self.pending_subscribers.clone(),
             execution_finished_subscribers: self.execution_finished_subscribers.clone(),
@@ -259,10 +297,8 @@ impl DbPool for PostgresPool {
     async fn connection_test(
         &self,
     ) -> Result<Box<dyn concepts::storage::DbConnectionTest>, DbErrorGeneric> {
-        let client = self.pool.get().await?;
-
         Ok(Box::new(PostgresConnection {
-            client: tokio::sync::Mutex::new(client),
+            pool: self.pool.clone(),
             response_subscribers: self.response_subscribers.clone(),
             pending_subscribers: self.pending_subscribers.clone(),
             execution_finished_subscribers: self.execution_finished_subscribers.clone(),
@@ -271,7 +307,7 @@ impl DbPool for PostgresPool {
 }
 
 pub struct PostgresConnection {
-    client: tokio::sync::Mutex<Client>, // Callers should not hold onto a connection for too long but it is not controlled by this module, thus tokio mutex.
+    pool: Pool, // Callers can hold this for long, e.g. while waiting, so a client is only checked out per operation.
     response_subscribers: ResponseSubscribers,
     pending_subscribers: PendingSubscribers,
     execution_finished_subscribers: Arc<ExecutionFinishedSubscribers>,
@@ -324,10 +360,7 @@ impl PostgresPool {
             recycling_method: RecyclingMethod::Fast,
         });
 
-        let pool = cfg.create_pool(None, NoTls).map_err(|err| {
-            error!("Cannot create the database pool - {err:?}");
-            InitializationError
-        })?;
+        let pool = config.tls.create_pool(&cfg)?;
         let mut client = pool.get().await.map_err(|err| {
             error!("Cannot get a connection from the database pool - {err:?}");
             InitializationError
@@ -3803,6 +3836,10 @@ async fn upgrade_execution_component(
 }
 
 impl PostgresConnection {
+    async fn client(&self) -> Result<Client, DbErrorGeneric> {
+        Ok(self.pool.get().await?)
+    }
+
     // Must be called after write transaction commit for a correct happens-before relationship.
     #[instrument(level = Level::TRACE, skip_all)]
     fn notify_all(&self, notifiers: Vec<AppendNotifier>, current_time: DateTime<Utc>) {
@@ -3869,7 +3906,7 @@ impl DbExecutor for PostgresConnection {
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let execution_ids_versions = get_pending_by_ffqns(
@@ -3936,7 +3973,7 @@ impl DbExecutor for PostgresConnection {
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let current_digest = component_id.component_digest.clone();
 
@@ -4000,7 +4037,7 @@ impl DbExecutor for PostgresConnection {
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let execution_ids_versions = get_pending_by_component_input_digest(
@@ -4064,7 +4101,7 @@ impl DbExecutor for PostgresConnection {
         retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite> {
         debug!(%execution_id, "lock_one");
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let res = lock_single_execution(
@@ -4097,7 +4134,7 @@ impl DbExecutor for PostgresConnection {
         trace!(?req, "append");
         let created_at = req.created_at;
 
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         validate_append_requests(&tx, &execution_id, std::slice::from_mut(&mut req)).await?;
@@ -4134,7 +4171,7 @@ impl DbExecutor for PostgresConnection {
             ));
         }
 
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let limit = validate_append_requests(&tx, &events.execution_id, &mut events.batch).await?;
@@ -4194,10 +4231,11 @@ impl DbExecutor for PostgresConnection {
         async {
             let mut db_has_pending = false;
             {
-                // Scope the lock so we don't hold it while waiting for timeout
-                let mut client_guard = self.client.lock().await;
+                // Scope the client so we don't hold it while waiting for timeout
                 // Read-only transaction check
-                if let Ok(tx) = client_guard.transaction().await {
+                if let Ok(mut client_guard) = self.client().await
+                    && let Ok(tx) = client_guard.transaction().await
+                {
                     let res = if let Some(current_digest) = current_digest {
                         get_pending_by_ffqns_auto(
                             &tx,
@@ -4276,8 +4314,9 @@ impl DbExecutor for PostgresConnection {
         async {
             let mut db_has_pending = false;
             {
-                let mut client_guard = self.client.lock().await;
-                if let Ok(tx) = client_guard.transaction().await {
+                if let Ok(mut client_guard) = self.client().await
+                    && let Ok(tx) = client_guard.transaction().await
+                {
                     if let Ok(res) = get_pending_by_component_input_digest(
                         &tx,
                         1,
@@ -4326,7 +4365,7 @@ impl DbExecutor for PostgresConnection {
         &self,
         execution_id: &ExecutionId,
     ) -> Result<ExecutionEvent, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let event = get_last_execution_event(&tx, execution_id).await?;
@@ -4341,7 +4380,7 @@ impl DbExecutor for PostgresConnection {
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         require_live_root(&tx, execution_id)
@@ -4358,7 +4397,7 @@ impl DbExecutor for PostgresConnection {
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         require_live_root(&tx, execution_id)
@@ -4377,7 +4416,7 @@ impl DbConnection for PostgresConnection {
         tracker.validate_for_storage()?;
         let now = tracker.created_at;
         let digest = &tracker.component_id.component_digest;
-        let mut client = self.client.lock().await;
+        let mut client = self.client().await?;
         let tx = client.transaction().await?;
         let inserted = tx.execute(
             "INSERT INTO t_cron (cron_digest, tracking_execution_id, created_at) VALUES ($1, $2, $3) ON CONFLICT (cron_digest) DO NOTHING",
@@ -4440,7 +4479,7 @@ impl DbConnection for PostgresConnection {
     }
 
     async fn get_cron(&self, digest: &ComponentDigest) -> Result<CronRecord, DbErrorRead> {
-        let mut client = self.client.lock().await;
+        let mut client = self.client().await?;
         let tx = client.transaction().await?;
         let record = get_cron_tx(&tx, digest).await?;
         tx.commit().await?;
@@ -4451,7 +4490,7 @@ impl DbConnection for PostgresConnection {
         for create in request.target.iter().chain(request.successor.iter()) {
             create.validate_for_storage()?;
         }
-        let mut client = self.client.lock().await;
+        let mut client = self.client().await?;
         let tx = client.transaction().await?;
         let changed = tx.execute(
             "UPDATE t_cron SET tracking_execution_id = $3, last_target_execution_id = COALESCE($4, last_target_execution_id), last_submitted_at = CASE WHEN $4::text IS NULL THEN last_submitted_at ELSE $5 END WHERE cron_digest = $1 AND tracking_execution_id = $2",
@@ -4485,7 +4524,7 @@ impl DbConnection for PostgresConnection {
         req.validate_for_storage()?;
         let created_at = req.created_at;
 
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let (version, notifier) = create_inner(&tx, req.clone()).await?;
@@ -4503,7 +4542,7 @@ impl DbConnection for PostgresConnection {
         execution_id: &ExecutionId,
     ) -> Result<concepts::storage::ExecutionLog, DbErrorRead> {
         trace!("get");
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let res = get_execution_log(&tx, execution_id).await?;
@@ -4514,7 +4553,7 @@ impl DbConnection for PostgresConnection {
 
     #[instrument(level = Level::DEBUG, skip(self))]
     async fn get_cancelling(&self, batch_size: u32) -> Result<Vec<ExecutionId>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let rows = tx
             .query(polling::CANCELLING, &[&(i64::from(batch_size))])
@@ -4542,7 +4581,7 @@ impl DbConnection for PostgresConnection {
         trace!(?batch, "append_batch");
         assert!(!batch.is_empty(), "Empty batch request");
 
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         validate_append_requests(&tx, &execution_id, &mut batch).await?;
@@ -4580,7 +4619,7 @@ impl DbConnection for PostgresConnection {
         trace!(?batch, "append_batch_with_delay_response");
         assert!(!batch.is_empty(), "Empty batch request");
 
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         validate_append_requests(&tx, &execution_id, &mut batch).await?;
@@ -4638,7 +4677,7 @@ impl DbConnection for PostgresConnection {
             request.validate_for_storage()?;
         }
 
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         validate_append_requests(&tx, &execution_id, &mut batch).await?;
@@ -4692,7 +4731,7 @@ impl DbConnection for PostgresConnection {
         };
 
         let receiver = {
-            let mut client_guard = self.client.lock().await;
+            let mut client_guard = self.client().await?;
             let tx = client_guard.transaction().await?;
 
             // Register listener before fetching from database.
@@ -4733,7 +4772,7 @@ impl DbConnection for PostgresConnection {
         cleanup();
         woken?;
 
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let responses = get_responses_after(&tx, execution_id, last_response).await?;
         tx.commit().await?;
@@ -4757,7 +4796,7 @@ impl DbConnection for PostgresConnection {
         };
 
         let receiver = {
-            let mut client_guard = self.client.lock().await;
+            let mut client_guard = self.client().await?;
             let tx = client_guard.transaction().await?;
 
             // Register listener
@@ -4828,7 +4867,7 @@ impl DbConnection for PostgresConnection {
             },
         };
 
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let res = append_response(&tx, &execution_id, event).await;
@@ -4868,7 +4907,7 @@ impl DbConnection for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite> {
         debug!("append_backtrace");
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let live = live_ancillary_roots(&tx, std::iter::once(append.execution_id.clone())).await?;
@@ -4886,7 +4925,7 @@ impl DbConnection for PostgresConnection {
         batch: Vec<BacktraceInfo>,
     ) -> Result<usize, DbErrorWrite> {
         debug!("append_backtrace_batch");
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let live =
@@ -4913,7 +4952,7 @@ impl DbConnection for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_log(&self, row: LogInfoAppendRow) -> Result<(), DbErrorWrite> {
         trace!("append_log");
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let live = live_ancillary_roots(&tx, std::iter::once(row.execution_id.clone())).await?;
         if live.contains(&ExecutionId::TopLevel(row.execution_id.get_top_level())) {
@@ -4927,7 +4966,7 @@ impl DbConnection for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_log_batch(&self, batch: &[LogInfoAppendRow]) -> Result<(), DbErrorWrite> {
         trace!("append_log_batch");
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let live =
             live_ancillary_roots(&tx, batch.iter().map(|row| row.execution_id.clone())).await?;
@@ -4946,7 +4985,7 @@ impl DbConnection for PostgresConnection {
         &self,
         at: DateTime<Utc>,
     ) -> Result<Vec<ExpiredTimer>, DbErrorGeneric> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         // Expired Delays
@@ -5045,7 +5084,7 @@ impl DbConnection for PostgresConnection {
         execution_id: &ExecutionId,
         version: &Version,
     ) -> Result<ExecutionEvent, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let event = get_execution_event(&tx, execution_id, version.0).await?;
@@ -5075,7 +5114,7 @@ impl DbConnection for PostgresConnection {
         let expected_retval = response.result.clone();
         let version_for_read = version.0;
 
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await.map_err(DbErrorWrite::from)?;
         let tx = client_guard.transaction().await?;
         require_live_root(&tx, &execution_id)
             .await
@@ -5133,7 +5172,7 @@ impl DbConnection for PostgresConnection {
         &self,
         execution_id: &ExecutionId,
     ) -> Result<ExecutionWithState, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let combined_state = get_combined_state(&tx, execution_id).await?;
@@ -5153,7 +5192,7 @@ impl DbExternalApi for PostgresConnection {
     ) -> Result<BacktraceInfo, DbErrorRead> {
         debug!("get_backtrace");
 
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         require_live_root(&tx, execution_id).await?;
 
@@ -5220,7 +5259,7 @@ impl DbExternalApi for PostgresConnection {
 
     #[instrument(skip_all)]
     async fn upsert_source_mappings(&self, mappings: &[SourceMapping]) -> Result<(), DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let stmt = tx
             .prepare(
@@ -5252,7 +5291,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         component_digest: &ComponentDigest,
     ) -> Result<Vec<SourceMapping>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let rows = tx
             .query(
@@ -5282,7 +5321,7 @@ impl DbExternalApi for PostgresConnection {
         component_digest: &ComponentDigest,
         file: &str,
     ) -> Result<Option<ContentDigest>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let rows = tx
             .query(
@@ -5312,7 +5351,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         records: Vec<ComponentMetadataRecord>,
     ) -> Result<(), DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         upsert_component_metadata_tx(&tx, &records).await?;
         tx.commit().await?;
@@ -5325,7 +5364,7 @@ impl DbExternalApi for PostgresConnection {
         deployment_id: DeploymentId,
         records: Vec<DeploymentComponentRecord>,
     ) -> Result<(), DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         insert_deployment_components_tx(&tx, deployment_id, &records).await?;
         tx.commit().await?;
@@ -5337,7 +5376,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Vec<DeploymentComponentDetail>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let rows = tx
             .query(
@@ -5387,7 +5426,7 @@ impl DbExternalApi for PostgresConnection {
         deployment_id: DeploymentId,
         component_digest: &ComponentDigest,
     ) -> Result<Option<String>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
@@ -5410,7 +5449,7 @@ impl DbExternalApi for PostgresConnection {
         filter: ListExecutionsFilter,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let result = list_executions(&tx, filter, &pagination).await?;
@@ -5426,7 +5465,7 @@ impl DbExternalApi for PostgresConnection {
         pagination: Pagination<VersionType>,
         include_backtrace_id: bool,
     ) -> Result<ListExecutionEventsResponse, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         require_live_root(&tx, execution_id).await?;
 
@@ -5446,7 +5485,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         execution_ids: &[ExecutionId],
     ) -> Result<Vec<concepts::storage::ExecutionEventBounds>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let mut bounds = Vec::with_capacity(execution_ids.len());
         for execution_id in execution_ids {
@@ -5497,7 +5536,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         execution_ids: &[ExecutionId],
     ) -> Result<Vec<concepts::storage::ExecutionStateWithVersion>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let mut states = Vec::with_capacity(execution_ids.len());
         for execution_id in execution_ids {
@@ -5521,7 +5560,7 @@ impl DbExternalApi for PostgresConnection {
         pagination: Pagination<u32>,
         join_set: Option<&JoinSetId>,
     ) -> Result<ListResponsesResponse, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         reject_tombstoned_root(&tx, execution_id).await?;
 
@@ -5543,7 +5582,7 @@ impl DbExternalApi for PostgresConnection {
         req_include_backtrace_id: bool,
         resp_pagination: Pagination<u32>,
     ) -> Result<ExecutionWithStateRequestsResponses, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         require_live_root(&tx, execution_id).await?;
 
@@ -5585,7 +5624,7 @@ impl DbExternalApi for PostgresConnection {
         reason: ComponentUpgradeReason,
         created_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         require_live_root(&tx, execution_id)
             .await
@@ -5605,7 +5644,7 @@ impl DbExternalApi for PostgresConnection {
         filter: LogFilter,
         pagination: Pagination<LogCursor>,
     ) -> Result<ListLogsResponse, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         require_live_root(&tx, execution_id).await?;
         let responses = list_logs_tx(&tx, execution_id, show_derived, &filter, &pagination).await?;
@@ -5621,7 +5660,7 @@ impl DbExternalApi for PostgresConnection {
         include_deployment_toml: bool,
         execution_counts: DeploymentExecutionCounts,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let deployments = list_deployment_states(
             &tx,
@@ -5643,7 +5682,7 @@ impl DbExternalApi for PostgresConnection {
         deployment_component_files: Vec<DeploymentComponentFileRecord>,
     ) -> Result<(), DbErrorWrite> {
         let deployment_id = record.deployment_id;
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         // Parent row first so the t_deployment_component FK is satisfied within the tx.
         insert_deployment_tx(&tx, &record).await?;
@@ -5660,7 +5699,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Vec<ContentDigest>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let rows = tx
             .query(
@@ -5683,7 +5722,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Vec<DeploymentFileRecord>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let rows = tx
             .query(
@@ -5709,7 +5748,7 @@ impl DbExternalApi for PostgresConnection {
         now: DateTime<Utc>,
         app_config_digest: Option<&str>,
     ) -> Result<(), DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         // Preserve an unrelated enqueued deployment.
         tx.execute(
@@ -5737,7 +5776,7 @@ impl DbExternalApi for PostgresConnection {
         now: DateTime<Utc>,
         app_config_digest: String,
     ) -> Result<(), DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         tx.execute(
             "UPDATE t_deployment SET status='inactive', updated_at=$1 WHERE status='active'",
@@ -5756,7 +5795,7 @@ impl DbExternalApi for PostgresConnection {
     async fn get_app_checkpoint(
         &self,
     ) -> Result<Option<concepts::storage::AppCheckpoint>, DbErrorRead> {
-        let client_guard = self.client.lock().await;
+        let client_guard = self.client().await?;
         let row = client_guard
             .query_opt(
                 "SELECT checkpoint FROM t_app_checkpoint WHERE singleton=1",
@@ -5776,7 +5815,7 @@ impl DbExternalApi for PostgresConnection {
         deployment_id: DeploymentId,
         now: DateTime<Utc>,
     ) -> Result<EnqueueOutcome, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let status_opt = tx
             .query_opt(
@@ -5819,7 +5858,7 @@ impl DbExternalApi for PostgresConnection {
         description: Option<String>,
         now: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
-        let client_guard = self.client.lock().await;
+        let client_guard = self.client().await?;
         let rows = client_guard
             .execute(
                 "UPDATE t_deployment SET description = NULLIF(COALESCE($1, description), ''), updated_at = $2 WHERE deployment_id = $3",
@@ -5837,7 +5876,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
@@ -5861,7 +5900,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         digest: &ContentDigest,
     ) -> Result<Option<DeploymentId>, DbErrorRead> {
-        let client_guard = self.client.lock().await;
+        let client_guard = self.client().await?;
         let row = client_guard
             .query_opt(
                 "SELECT deployment_id FROM t_deployment WHERE digest = $1 AND superseded_by IS NULL",
@@ -5880,7 +5919,7 @@ impl DbExternalApi for PostgresConnection {
     #[instrument(skip(self))]
     #[cfg(feature = "test")]
     async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
@@ -5900,7 +5939,7 @@ impl DbExternalApi for PostgresConnection {
     }
 
     async fn get_current_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
@@ -5925,7 +5964,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         pagination: Pagination<Option<DeploymentId>>,
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = Vec::new();
         let mut add_param = |p: Box<dyn tokio_postgres::types::ToSql + Sync + Send>| {
@@ -5991,7 +6030,7 @@ impl DbExternalApi for PostgresConnection {
         execution_id: &ExecutionId,
         paused_at: DateTime<Utc>,
     ) -> Result<AppendResponse, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         // A `Locked` execution can concurrently append its own event for the same
         // version; retry the read+append on that lost race instead of surfacing it.
         // Bounded so a pathologically fast-appending execution fails loudly rather
@@ -6071,7 +6110,7 @@ impl DbExternalApi for PostgresConnection {
         execution_id: &ExecutionId,
         unpaused_at: DateTime<Utc>,
     ) -> Result<AppendResponse, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         require_live_root(&tx, execution_id)
@@ -6098,7 +6137,7 @@ impl DbExternalApi for PostgresConnection {
     #[instrument(skip(self))]
     async fn pause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
         let (execution_id, join_set_id) = delay_id.split_to_parts();
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         require_live_root(&tx, &execution_id)
             .await
@@ -6124,7 +6163,7 @@ impl DbExternalApi for PostgresConnection {
     #[instrument(skip(self))]
     async fn unpause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
         let (execution_id, join_set_id) = delay_id.split_to_parts();
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         require_live_root(&tx, &execution_id)
             .await
@@ -6359,7 +6398,7 @@ async fn delete_deployment_tx(
 #[async_trait]
 impl DbAdmin for PostgresConnection {
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
-        self.client.lock().await.execute(
+        self.client().await?.execute(
             "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest, app_config_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
             &[&event.event_id.to_string(), &event.node_run_id.to_string(), &event.created_at, &event.level.as_str(), &event.code,
               &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key, &event.cas_digest.map(|digest| digest.to_string()), &event.app_config_digest],
@@ -6381,7 +6420,7 @@ impl DbAdmin for PostgresConnection {
                 loc: Location::caller(),
             })
         })?;
-        let mut client = self.client.lock().await;
+        let mut client = self.client().await?;
         let tx = client.transaction().await?;
         tx.execute(
             "INSERT INTO t_file (digest, content, size) VALUES ($1, $2, $3) ON CONFLICT (digest) DO NOTHING",
@@ -6402,9 +6441,8 @@ impl DbAdmin for PostgresConnection {
         filter: SystemEventFilter,
     ) -> Result<Vec<SystemEvent>, DbErrorRead> {
         let rows = self
-            .client
-            .lock()
-            .await
+            .client()
+            .await?
             .query(
                 &db_common::system_event_list_sql(&filter, |i| {
                     format!(
@@ -6475,7 +6513,7 @@ impl DbAdmin for PostgresConnection {
     }
 
     async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead> {
-        let row = self.client.lock().await.query_one(
+        let row = self.client().await?.query_one(
             "SELECT pg_database_size(current_database()), (SELECT COUNT(*) FROM t_state WHERE tombstoned = FALSE), (SELECT COUNT(*) FROM t_deployment), (SELECT COUNT(*) FROM t_system_event)", &[]
         ).await?;
         Ok(StorageStatus {
@@ -6495,7 +6533,7 @@ impl DbAdmin for PostgresConnection {
     ) -> Result<SystemEventRetentionResult, DbErrorWrite> {
         let limit = limit.clamp(1, 10_000);
         let keep_node_run_id = keep_node_run_id.to_string();
-        let mut client = self.client.lock().await;
+        let mut client = self.client().await?;
         let tx = client.transaction().await?;
         let rows = tx
             .query(
@@ -6523,7 +6561,7 @@ impl DbAdmin for PostgresConnection {
         execution_id: &ExecutionId,
         force_non_terminal: bool,
     ) -> Result<DeleteExecutionTreeResult, DbErrorWrite> {
-        let mut client = self.client.lock().await;
+        let mut client = self.client().await?;
         let tx = client.transaction().await?;
         let result = delete_execution_tree_tx(&tx, execution_id, force_non_terminal).await?;
         tx.commit().await?;
@@ -6538,7 +6576,7 @@ impl DbAdmin for PostgresConnection {
         dry_run: bool,
         cursor: Option<ExecutionRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite> {
-        let mut client = self.client.lock().await;
+        let mut client = self.client().await?;
         let tx = client.transaction().await?;
         let eligible = format!(
             "{} AND NOT ({CRON_TRACKER_PREDICATE})",
@@ -6634,7 +6672,7 @@ impl DbAdmin for PostgresConnection {
         force_non_terminal: bool,
     ) -> Result<DeleteDeploymentResult, DbErrorWrite> {
         const ROOT_BATCH_SIZE: u32 = 1000;
-        let mut client = self.client.lock().await;
+        let mut client = self.client().await?;
         let mut deleted_execution_trees = 0;
         loop {
             let tx = client.transaction().await?;
@@ -6679,7 +6717,7 @@ impl DbAdmin for PostgresConnection {
         dry_run: bool,
         cursor: Option<DeploymentRetentionCursor>,
     ) -> Result<CleanupResult, DbErrorWrite> {
-        let mut client = self.client.lock().await;
+        let mut client = self.client().await?;
         let tx = client.transaction().await?;
         let after = if cursor.is_some() {
             "(updated_at, deployment_id) > ($3, $4)"
@@ -6791,7 +6829,7 @@ impl DbAdmin for PostgresConnection {
         batch_size: u32,
         after: Option<ExecutionIdTopLevel>,
     ) -> Result<ExecutionGcResult, DbErrorWrite> {
-        let mut client = self.client.lock().await;
+        let mut client = self.client().await?;
         let tx = client.transaction().await?;
         let row = if let Some(after) = after {
             tx.query_opt(
@@ -6979,7 +7017,7 @@ impl CasGc for PostgresConnection {
             source: Some(Arc::new(err)),
             loc: Location::caller(),
         })?;
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         tx.execute(
             "INSERT INTO t_file (digest, content, size) VALUES ($1, $2, $3) \
@@ -7003,7 +7041,7 @@ impl CasGc for PostgresConnection {
         batch_size: u32,
         uploaded_before: DateTime<Utc>,
     ) -> Result<CasGcResult, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
         let limit = batch_size.clamp(1, 10_000);
         if !dry_run {
@@ -7072,7 +7110,10 @@ impl CasGc for PostgresConnection {
 #[async_trait]
 impl Cas for PostgresConnection {
     async fn read_blob(&self, digest: &ContentDigest) -> Result<Option<Vec<u8>>, CasError> {
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self
+            .client()
+            .await
+            .map_err(|err| CasError::Uncategorized(err.to_string()))?;
         let tx = client_guard
             .transaction()
             .await
@@ -7094,7 +7135,10 @@ impl Cas for PostgresConnection {
         let digest = compute_file_digest(content);
         let size = i64::try_from(content.len())
             .map_err(|err| CasError::Uncategorized(format!("deployment file too large: {err}")))?;
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self
+            .client()
+            .await
+            .map_err(|err| CasError::Uncategorized(err.to_string()))?;
         let tx = client_guard
             .transaction()
             .await
@@ -7140,7 +7184,7 @@ impl concepts::storage::DbConnectionTest for PostgresConnection {
             event: response_event,
         };
 
-        let mut client_guard = self.client.lock().await;
+        let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
         let notifier = append_response(&tx, &execution_id, event).await?;

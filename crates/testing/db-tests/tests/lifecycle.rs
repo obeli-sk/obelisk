@@ -4,7 +4,7 @@ use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, RunId};
 use concepts::storage::http_client_trace::{HttpClientTrace, RequestTrace};
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
-    BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest,
+    BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest, DbPool,
     DelayCancelOutcome, ExecutionListCreatedAtCursor, ExecutionListPagination, ExecutionRequest,
     ExecutionStateFilter, ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol,
     FunctionNameFilter, JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedBy,
@@ -64,6 +64,39 @@ async fn initialize_postgres_twice() {
         .await
         .unwrap();
     assert_eq!(DbInitialzationOutcome::Existing, init_outcome);
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn postgres_waiters_should_not_hold_connections() {
+    let pool = initialize_fresh_postgres_db().await;
+    // Default pool size is 4 x CPUs.
+    let waiter_count = std::thread::available_parallelism().unwrap().get() * 8;
+    let test = async {
+        let mut waiters = tokio::task::JoinSet::new();
+        for _ in 0..waiter_count {
+            let db_exec = pool.db_exec_conn().await.unwrap();
+            waiters.spawn(async move {
+                db_exec
+                    .wait_for_pending_by_ffqn(
+                        DateTime::<Utc>::MIN_UTC,
+                        Arc::from([SOME_FFQN]),
+                        None,
+                        Box::pin(std::future::pending()),
+                    )
+                    .await;
+            });
+        }
+        let conn = pool.connection().await.unwrap();
+        assert_matches!(
+            conn.get_pending_state(&ExecutionId::generate()).await,
+            Err(storage::DbErrorRead::NotFound)
+        );
+        waiters.abort_all();
+    };
+    tokio::time::timeout(Duration::from_secs(10), test)
+        .await
+        .expect("waiters must not exhaust the pool");
     pool.close().await;
 }
 

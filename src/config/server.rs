@@ -17,7 +17,7 @@ use crate::config::secret_registry::{
 use anyhow::Context as _;
 use concepts::component_id::Digest;
 use concepts::persisted_value::DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES;
-use db_postgres::postgres_dao::{self, PostgresConfig};
+use db_postgres::postgres_dao::{self, PostgresConfig, PostgresTls};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -990,6 +990,11 @@ pub(crate) struct PostgresConfigToml {
     pub subscription_interruption: DurationConfigOptional,
     #[serde(default)]
     provision_policy: PostgresProvisionPolicy,
+    #[serde(default)]
+    ssl_mode: PostgresSslMode,
+    /// PEM file with the CA certificates trusted by `ssl_mode = "verify_full"`. The system's certificates are used if not set.
+    #[serde(default)]
+    ssl_root_cert: Option<String>,
 }
 
 impl PostgresConfigToml {
@@ -997,7 +1002,26 @@ impl PostgresConfigToml {
         &self,
         secret_registry: &SecretRegistry,
     ) -> Result<PostgresConfig, anyhow::Error> {
+        let ssl_root_cert = self
+            .ssl_root_cert
+            .as_deref()
+            .map(|path| interpolate_env_vars_plaintext(path, secret_registry))
+            .transpose()?
+            .map(PathBuf::from);
+        let tls = match self.ssl_mode {
+            PostgresSslMode::Disable => {
+                anyhow::ensure!(
+                    ssl_root_cert.is_none(),
+                    "`ssl_root_cert` requires `ssl_mode = \"verify_full\"`"
+                );
+                PostgresTls::Disable
+            }
+            PostgresSslMode::VerifyFull => PostgresTls::VerifyFull {
+                ca_file: ssl_root_cert,
+            },
+        };
         Ok(PostgresConfig {
+            tls,
             host: interpolate_env_vars_plaintext(&self.host, secret_registry)?,
             user: interpolate_env_vars_plaintext(&self.user, secret_registry)?,
             password: interpolate_env_vars_secret(&self.password, secret_registry)?,
@@ -1010,6 +1034,16 @@ impl PostgresConfigToml {
             PostgresProvisionPolicy::Auto => postgres_dao::ProvisionPolicy::Auto,
         }
     }
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PostgresSslMode {
+    /// Credentials and data travel unencrypted.
+    #[default]
+    Disable,
+    /// Encrypt, verify the certificate chain and the host name.
+    VerifyFull,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]

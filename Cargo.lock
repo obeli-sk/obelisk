@@ -3881,6 +3881,8 @@ dependencies = [
  "obeli-sk-val-json",
  "rand 0.9.5",
  "refinery",
+ "rustls",
+ "rustls-platform-verifier",
  "secrecy",
  "serde_json",
  "sha2 0.11.1",
@@ -3888,6 +3890,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-postgres",
+ "tokio-postgres-rustls",
  "tracing",
  "tracing-error",
 ]

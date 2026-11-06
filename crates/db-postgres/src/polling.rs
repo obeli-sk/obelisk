@@ -37,7 +37,7 @@ pub(crate) const EXPIRED_LOCKS: &str = "
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::postgres_dao::{PostgresConfig, PostgresPool, ProvisionPolicy};
+    use crate::postgres_dao::{PostgresConfig, PostgresPool, PostgresTls, ProvisionPolicy};
     use concepts::storage::DbPoolCloseable;
     use secrecy::SecretString;
     use serde_json::Value;
@@ -50,6 +50,7 @@ mod tests {
             host: env("TEST_POSTGRES_HOST"),
             user: env("TEST_POSTGRES_USER"),
             password: SecretString::from(env("TEST_POSTGRES_PASSWORD")),
+            tls: PostgresTls::Disable,
             db_name: format!(
                 "{}_polling_{}",
                 env("TEST_POSTGRES_DATABASE_PREFIX"),
