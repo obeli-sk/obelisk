@@ -382,8 +382,8 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.19"
-toml = { version = "1.1.8", features = ["preserve_order"] }
-toml_edit = "0.25.17"
+toml = { version = "1.2.1", features = ["preserve_order"] }
+toml_edit = "0.25.19"
 tower = "0.5.3"
 tower-http = { version = "0.6.11", features = ["trace", "cors"] } # keep in sync with reqwest's tower-http
 tracing = { version = "0.1", features = ["log"] }
