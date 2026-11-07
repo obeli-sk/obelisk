@@ -304,6 +304,7 @@ fn prepare_server_startup_with_exec_policy(
         .path_prefixes
         .app_name
         .clone_from(&app.app_name);
+    config.app_name.clone_from(&app.app_name);
     config.app_toml = app_toml;
     let app_policy = app.policy();
     let app_config_digest = app_policy.digest();
@@ -350,9 +351,6 @@ fn prepare_server_startup_with_exec_policy(
     config.allowed_exec_activities = app.allowed_exec_activities;
     config.outbound_http = app.outbound_http;
     config.app_source_path.clone_from(&config_holder.app_source);
-    config
-        .app_name
-        .clone_from(&config_holder.path_prefixes.app_name);
     config.app_policy = app_policy;
 
     let secret_registry = Arc::new(SecretRegistry::resolve(
@@ -460,6 +458,7 @@ mod app_policy_tests {
 app_name = 'example'
 public_http_servers = ['hooks']
 [public_env]
+APP_NAME = { type = 'internal', source = 'app-name' }
 PATH = { type = 'internal', source = 'api-url' }
 UI = { type = 'internal', source = 'webui-url' }
 HOOKS = { type = 'internal', source = 'http-server-url', http_server = 'hooks' }
@@ -502,6 +501,14 @@ methods = ['GET']
                 assert_eq!(
                     startup
                         .secret_registry
+                        .deployment_env_lookup("APP_NAME")
+                        .unwrap()
+                        .as_deref(),
+                    Some("example")
+                );
+                assert_eq!(
+                    startup
+                        .secret_registry
                         .public_env_lookup("UI")
                         .unwrap()
                         .as_deref(),
@@ -519,6 +526,7 @@ methods = ['GET']
                 assert_eq!(
                     policy["public_env"],
                     serde_json::json!([
+                        {"name":"APP_NAME", "type":"internal", "source":"app-name"},
                         {"name":"HOOKS", "type":"internal", "source":"http-server-url", "http_server":"hooks"},
                         {"name":"PATH", "type":"internal", "source":"api-url"},
                         {"name":"UI", "type":"internal", "source":"webui-url"},
@@ -612,6 +620,8 @@ methods = ['GET']
             assert!(format!("{error:#}").contains(expected), "{error:#}");
         }
         for declaration in [
+            "{type='internal',source='app-name',optional=true}",
+            "{type='internal',source='app-name',http_server='webui'}",
             "{type='internal',source='api-url',optional=true}",
             "{type='internal',source='api-url',optional=false}",
             "{type='internal',source='unknown'}",

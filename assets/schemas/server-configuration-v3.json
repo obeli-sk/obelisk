@@ -223,6 +223,19 @@
                 "source",
                 "http_server"
               ]
+            },
+            {
+              "description": "App name from `app.toml` or `OBELISK_APP_NAME`.",
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "app-name"
+                }
+              },
+              "required": [
+                "source"
+              ]
             }
           ]
         }

@@ -496,6 +496,7 @@ mod tests {
                 TRACE_ID = {{ optional = true }}
                 TYPED = {{ type = "env", optional = false }}
                 API_URL = {{ type = "internal", source = "api-url" }}
+                APP_NAME = {{ type = "internal", source = "app-name" }}
                 WEBUI_URL = {{ type = "internal", source = "webui-url" }}
                 LLM_URL = {{}}
                 [secrets]

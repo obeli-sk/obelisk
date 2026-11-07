@@ -9,6 +9,7 @@ fn policy() -> Value {
             "SELF": {"type": "internal", "exposed_to": {}}
         },
         "public_env": ["REGION", {"name": "LABEL", "optional": true},
+            {"name": "APP_NAME", "type": "internal", "source": "app-name"},
             {"name": "SELF_API", "type": "internal", "source": "api-url"}],
         "allowed_exec_activities": {"exec": ["sha256:example"]},
         "outbound_http": [{"pattern": "https://example.com", "methods": "*",
