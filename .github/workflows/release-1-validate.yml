@@ -105,10 +105,6 @@ jobs:
 
   call_child:
     needs: [validate, validate-cross-dev]
-    if: >-
-      ${{ !cancelled() && needs.validate.result == 'success' &&
-          needs.validate-cross-dev.result == 'success' &&
-          (needs.validate-native-arm.result == 'success' || needs.validate-native-arm.result == 'skipped') }}
     uses: ./.github/workflows/release-2-create-github-release.yml
     secrets: inherit
     with:
