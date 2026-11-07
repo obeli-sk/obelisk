@@ -1875,7 +1875,8 @@ pub(crate) enum Cloud {
 pub(crate) enum CloudAuth {
     /// Log in through a browser; the first login becomes the default.
     Login {
-        /// Cloud API URL of a custom deployment; defaults to `https://cloud.obeli.sk/api`.
+        /// Cloud API URL of a custom deployment; defaults to `OBELISK_CLOUD_API_URL`, then `https://cloud.obeli.sk/api`.
+        #[arg(env = "OBELISK_CLOUD_API_URL")]
         api_url: Option<String>,
         /// Save the login under this account name or alias.
         #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
