@@ -125,6 +125,13 @@ impl AppConfigToml {
                     source: AppPolicyV1PublicEnvItemVariant4Source::HttpServerUrl,
                     type_: AppPolicyV1PublicEnvItemVariant4Type::Internal,
                 },
+                PublicEnvConfigToml::InternalPublicEnvConfigToml(
+                    InternalPublicEnvConfigToml::Variant3 { .. },
+                ) => AppPolicyV1PublicEnvItem::Variant5 {
+                    name: name.clone(),
+                    source: AppPolicyV1PublicEnvItemVariant5Source::AppName,
+                    type_: AppPolicyV1PublicEnvItemVariant5Type::Internal,
+                },
                 PublicEnvConfigToml::EnvPublicEnvConfigToml(config) if config.optional => {
                     AppPolicyV1PublicEnvItem::Variant1 {
                         name: name.clone(),

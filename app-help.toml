@@ -41,6 +41,8 @@ app_name = "my-app"
 # LLM_BASE_URL = {}
 # TRACE_ID = { optional = true }
 ## Internal entries ignore process environment values and require an available source.
+## `app-name` uses the configured app name from `app.toml` or `OBELISK_APP_NAME`.
+# APP_NAME = { type = "internal", source = "app-name" }
 ## URLs come from `api.public_url`, `webui.public_url` or `http_server.<name>.public_url` when configured,
 ## otherwise from the listener address, replacing wildcard binds with loopback.
 # OBELISK_API_URL = { type = "internal", source = "api-url" }

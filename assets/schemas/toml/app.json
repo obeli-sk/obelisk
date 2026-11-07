@@ -249,6 +249,23 @@
             "source",
             "http_server"
           ]
+        },
+        {
+          "description": "App name from `app.toml` or `OBELISK_APP_NAME`.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "$ref": "#/$defs/InternalSecretType"
+            },
+            "source": {
+              "$ref": "#/$defs/AppNameSource"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "source"
+          ]
         }
       ]
     },
@@ -268,6 +285,12 @@
       "type": "string",
       "enum": [
         "http-server-url"
+      ]
+    },
+    "AppNameSource": {
+      "type": "string",
+      "enum": [
+        "app-name"
       ]
     },
     "OutboundHttpToml": {

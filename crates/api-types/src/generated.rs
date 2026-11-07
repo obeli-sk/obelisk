@@ -193,6 +193,53 @@ impl<'de> ::serde::Deserialize<'de> for AppConfigTomlAppName {
             })
     }
 }
+///`AppNameSource`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AppNameSource {
+    #[serde(rename = "app-name")]
+    AppName,
+}
+impl ::std::fmt::Display for AppNameSource {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::AppName => f.write_str("app-name"),
+        }
+    }
+}
+impl ::std::str::FromStr for AppNameSource {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "app-name" => Ok(Self::AppName),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AppNameSource {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AppNameSource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`AppPolicyV1`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -457,6 +504,12 @@ pub enum AppPolicyV1PublicEnvItem {
         source: AppPolicyV1PublicEnvItemVariant4Source,
         #[serde(rename = "type")]
         type_: AppPolicyV1PublicEnvItemVariant4Type,
+    },
+    Variant5 {
+        name: ::std::string::String,
+        source: AppPolicyV1PublicEnvItemVariant5Source,
+        #[serde(rename = "type")]
+        type_: AppPolicyV1PublicEnvItemVariant5Type,
     },
 }
 ///`AppPolicyV1PublicEnvItemVariant2Source`
@@ -734,6 +787,100 @@ impl ::std::convert::TryFrom<&str> for AppPolicyV1PublicEnvItemVariant4Type {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for AppPolicyV1PublicEnvItemVariant4Type {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`AppPolicyV1PublicEnvItemVariant5Source`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AppPolicyV1PublicEnvItemVariant5Source {
+    #[serde(rename = "app-name")]
+    AppName,
+}
+impl ::std::fmt::Display for AppPolicyV1PublicEnvItemVariant5Source {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::AppName => f.write_str("app-name"),
+        }
+    }
+}
+impl ::std::str::FromStr for AppPolicyV1PublicEnvItemVariant5Source {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "app-name" => Ok(Self::AppName),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AppPolicyV1PublicEnvItemVariant5Source {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AppPolicyV1PublicEnvItemVariant5Source {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`AppPolicyV1PublicEnvItemVariant5Type`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AppPolicyV1PublicEnvItemVariant5Type {
+    #[serde(rename = "internal")]
+    Internal,
+}
+impl ::std::fmt::Display for AppPolicyV1PublicEnvItemVariant5Type {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Internal => f.write_str("internal"),
+        }
+    }
+}
+impl ::std::str::FromStr for AppPolicyV1PublicEnvItemVariant5Type {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "internal" => Ok(Self::Internal),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AppPolicyV1PublicEnvItemVariant5Type {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AppPolicyV1PublicEnvItemVariant5Type {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -1037,6 +1184,11 @@ pub enum InternalPublicEnvConfigToml {
     Variant2 {
         http_server: ::std::string::String,
         source: HttpServerUrlSource,
+        #[serde(rename = "type")]
+        type_: InternalSecretType,
+    },
+    Variant3 {
+        source: AppNameSource,
         #[serde(rename = "type")]
         type_: InternalSecretType,
     },

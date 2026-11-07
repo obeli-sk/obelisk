@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(app)* Internal public environment source `source = "app-name"` exposes the configured app name to deployments.
+
 ### Changed
 
 - **Breaking (RC):** *(cloud)* `auth login` accepts `--account` aliases and `--default`, preserves saved names on refresh, and distinguishes backends by full API URL; credentials now use `[account."name"]` tables instead of `[[account]]` (manual conversion required).

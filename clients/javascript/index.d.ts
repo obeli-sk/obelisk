@@ -135,6 +135,11 @@ export interface AppPolicyV1 {
         source: "http-server-url";
         type: "internal";
       }
+    | {
+        name: string;
+        source: "app-name";
+        type: "internal";
+      }
   )[];
   /**
    * `http_server` names that may serve webhooks without credentials. Omitted when empty.

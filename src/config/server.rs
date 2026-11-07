@@ -240,6 +240,7 @@ impl ServerConfigToml {
     ) -> anyhow::Result<String> {
         use crate::config::secret_registry::InternalPublicEnvSource;
         let (public_url, address) = match source {
+            InternalPublicEnvSource::AppName {} => return Ok(self.app_name.clone()),
             InternalPublicEnvSource::ApiUrl {} => {
                 anyhow::ensure!(self.api.enabled, "api-url requires an enabled API listener");
                 (self.api.public_url.clone(), self.api.listening_addr)
