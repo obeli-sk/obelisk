@@ -156,7 +156,6 @@
       "minimum": 0
     },
     "ActivityCellsToml": {
-      "description": "The activity runtimes are four different resources: a wasmtime instance, a V8 isolate with its\nown heap and thread, an external process, and an emulated machine. A VM storm must not crowd\nout plain exec activities, so each gets its own reservation. A VM cell is keyed by backend\nbecause the backend decides what a slot costs.",
       "type": "object",
       "properties": {
         "wasm": {
@@ -170,10 +169,6 @@
         "process": {
           "description": "`activity_exec` activities, each slot an operating system process.",
           "$ref": "#/$defs/ProcessCellToml"
-        },
-        "vm_bochs": {
-          "description": "`activity_vm` activities on the Bochs backend.",
-          "$ref": "#/$defs/CellToml"
         }
       },
       "additionalProperties": false

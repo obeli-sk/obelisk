@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- *(activity-vm)* Removed experimental `[[activity_vm]]` components and their VM backends.
+  Remove VM components from deployments and `[limits.activities.vm_bochs]` from server configuration.
+
 ### Changed
 
 - **Breaking (RC):** *(cloud)* `auth login` accepts `--account` aliases and `--default`, preserves saved names on refresh, and distinguishes backends by full API URL; credentials now use `[account."name"]` tables instead of `[[account]]` (manual conversion required).

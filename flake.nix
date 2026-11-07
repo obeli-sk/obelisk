@@ -296,8 +296,6 @@
                 cargo-expand
                 cargo-insta
                 cargo-nextest
-                erofs-utils # Firecracker activity VM store images
-                firecracker # Firecracker activity VM runtime
                 gh # scripts/sync-branch-protection.sh
                 git-cliff
                 gzip
@@ -309,7 +307,6 @@
                 oras # scripts/push-wasm-oci.sh
                 pkg-config
                 postgresql
-                qemu # native activity VM runtime
                 sqlite
                 wasm-tools
                 yq-go # scripts/sync-branch-protection.sh

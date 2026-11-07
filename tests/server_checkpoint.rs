@@ -69,8 +69,7 @@ wasm.codegen_cache.directory = "{codegen}"
                 "OBELISK_API_TOKEN",
                 "checkpoint-test-api-token-0000000000000000",
             )
-            .env_remove("OBELISK_APP_NAME")
-            .env_remove("OBELISK_UNSTABLE_ACTIVITY_VM");
+            .env_remove("OBELISK_APP_NAME");
         command
     }
 

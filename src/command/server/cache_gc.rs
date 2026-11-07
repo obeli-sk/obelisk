@@ -221,24 +221,9 @@ fn collect_entry(
     let metadata = fs::symlink_metadata(path)?;
     let relative = path.strip_prefix(root)?;
     if matches!(relative.to_str(), Some(LOCK | PINS)) {
-    } else if metadata.is_dir()
-        && matches!(
-            relative.to_str(),
-            Some(
-                "metadata"
-                    | "js"
-                    | "exec"
-                    | "activity-vm"
-                    | "activity-vm/entrypoints"
-                    | "activity-vm/runtimes"
-                    | "activity-vm/native-qemu"
-                    | "activity-vm/firecracker"
-            )
-        )
-    {
+    } else if metadata.is_dir() && matches!(relative.to_str(), Some("metadata" | "js" | "exec")) {
         collect(root, path, protected, entries)?;
     } else {
-        // The Nix store has a shared manifest and completion markers, so evict it atomically.
         let mut pinned = protected.iter().any(|p| p.starts_with(path));
         if metadata.is_file() && path.extension().is_some_and(|ext| ext == "txt") {
             match fs::read_to_string(path) {
@@ -373,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn active_metadata_and_whole_vm_artifacts_are_protected() {
+    fn active_metadata_is_protected() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         let digest = concepts::ContentDigest(concepts::component_id::Digest([1; 32]));
@@ -382,22 +367,14 @@ mod tests {
         let mapping = root.join("metadata/mapping.txt");
         fs::create_dir_all(mapping.parent().unwrap()).unwrap();
         fs::write(&mapping, digest.to_string()).unwrap();
-        let runtime = root.join("activity-vm/native-qemu/old/guest/machine.json");
-        let store = root.join("activity-vm/store/package/bin/tool");
-        write(&runtime, 0);
-        write(&store, 0);
-        let manifest = root.join("activity-vm/store/.obelisk-activity-vm-manifest");
-        write(&manifest, 0);
-        let lease = pin(root, &BTreeSet::from([wasm.clone(), store.clone()])).unwrap();
+        let lease = pin(root, &BTreeSet::from([wasm.clone()])).unwrap();
         sweep(root, 0).unwrap();
         assert!(wasm.exists());
         assert!(mapping.exists());
-        assert!(store.exists());
-        assert!(manifest.exists());
-        assert!(!root.join("activity-vm/native-qemu/old").exists());
         drop(lease);
         sweep(root, 0).unwrap();
-        assert!(!root.join("activity-vm/store").exists());
+        assert!(!wasm.exists());
+        assert!(!mapping.exists());
     }
 
     #[cfg(unix)]

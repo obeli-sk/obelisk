@@ -11,7 +11,6 @@ use crate::config::config_holder::{
 };
 use crate::config::deployment::OCI_SCHEMA_PREFIX;
 use crate::config::deployment::{prepare_deployment_manifest, resolve_manifest};
-use crate::config::env_var::StartupEnvVars;
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::server::ServerConfigToml;
 use crate::init::{self};
@@ -86,7 +85,6 @@ impl Generate {
                     &deployment,
                     component_name.as_deref(),
                     secret_registry,
-                    crate::parse_activity_vm_runtime_from_env(&StartupEnvVars::capture())?,
                 )
                 .await?;
                 if json {
@@ -982,8 +980,6 @@ async fn generate_wit_deps(
     options: GenerateWitDepsOptions,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
-    let activity_vm_runtime =
-        crate::parse_activity_vm_runtime_from_env(&StartupEnvVars::capture())?;
     let raw = tokio::fs::read_to_string(&deployment_toml)
         .await
         .with_context(|| format!("cannot read deployment manifest {deployment_toml:?}"))?;
@@ -1031,7 +1027,6 @@ async fn generate_wit_deps(
         suppress_type_checking_errors: true, // Just extracting WITs, not running components
         suppress_linking_errors: true,       // Just extracting WITs, not running components
         js_runtime: crate::command::server::JsRuntimeMode::default(),
-        activity_vm_runtime,
     };
 
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
@@ -1050,7 +1045,6 @@ async fn generate_wit_deps(
         engines,
         secret_registry,
         crate::command::server::JsRuntimeMode::default(),
-        activity_vm_runtime,
     ))
     .await?;
     let deployment_verified = deployment_verify_config(

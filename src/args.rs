@@ -20,7 +20,6 @@ pub(crate) enum TomlComponentType {
     ActivityExternal,
     ActivityJs,
     ActivityExec,
-    ActivityVm,
     WorkflowWasm,
     WorkflowJs,
     WebhookEndpointWasm,
@@ -528,7 +527,7 @@ pub(crate) enum Generate {
         #[arg(long, value_enum, default_value_t)]
         template: StarterTemplate,
     },
-    /// Calculate reviewed configuration digests for exec and secret-exposing VM activities.
+    /// Calculate reviewed configuration digests for exec and secret-exposing activities.
     SecretConfigDigest {
         /// Path to the deployment TOML file.
         #[arg(long, short)]
