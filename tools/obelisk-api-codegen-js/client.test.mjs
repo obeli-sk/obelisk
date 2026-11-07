@@ -34,7 +34,8 @@ test("switch rejects unknown outcomes and null flags without mutating defaults",
 
 test("policy preserves nullable fields and rejects malformed unions", () => {
     const policy = {
-        format: "obelisk-app-config-v1", secrets: {}, public_env: [], allowed_exec_activities: {},
+        format: "obelisk-app-config-v1", secrets: {},
+        public_env: [{ name: "APP_NAME", type: "internal", source: "app-name" }], allowed_exec_activities: {},
         outbound_http: [{ pattern: "example.com", methods: "*", request_url_regex: null, secrets: [], replace_in: [] }],
     };
     assert.equal(parseAppPolicyV1(policy), policy);
