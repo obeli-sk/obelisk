@@ -5197,9 +5197,14 @@ impl From<ErrorWrapper<DbErrorGeneric>> for HttpResponse {
         let err = value.0;
         let accept = value.1;
         warn!("{err:?}");
+        let (status, message) = if matches!(err, DbErrorGeneric::Full) {
+            (StatusCode::INSUFFICIENT_STORAGE, "database is full")
+        } else {
+            (StatusCode::SERVICE_UNAVAILABLE, "database error")
+        };
         HttpResponse {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            message: "database error".to_string(),
+            status,
+            message: message.to_string(),
             accept,
         }
     }

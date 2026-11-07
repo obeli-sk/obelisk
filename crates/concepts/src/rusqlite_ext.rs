@@ -149,6 +149,8 @@ impl From<rusqlite::Error> for DbErrorWrite {
             Self::NotFound
         } else if err.sqlite_error().map(|err| err.code) == Some(ErrorCode::ConstraintViolation) {
             DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
+        } else if err.sqlite_error().map(|err| err.code) == Some(ErrorCode::DiskFull) {
+            DbErrorGeneric::Full.into()
         } else {
             DbErrorGeneric::Uncategorized {
                 reason: err.to_string().into(),

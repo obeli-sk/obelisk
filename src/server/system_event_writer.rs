@@ -49,30 +49,17 @@ pub(crate) async fn record_with_cas(
     details: Value,
     cas_digest: ContentDigest,
     cas_content: Vec<u8>,
-) -> Option<SystemEventId> {
-    let event = match SystemEvent::new(code, execution_id, deployment_id, details) {
-        Ok(event) => event.with_cas_digest(cas_digest),
-        Err(err) => {
-            warn!(code = code.as_str(), "Cannot construct system event: {err}");
-            return None;
-        }
-    };
+) -> Result<SystemEventId, anyhow::Error> {
+    let event =
+        SystemEvent::new(code, execution_id, deployment_id, details)?.with_cas_digest(cas_digest);
     log_event(&event);
     let event_id = event.event_id;
-    let result = async {
-        db_pool
-            .admin_conn()
-            .await?
-            .append_system_event_with_cas(event, cas_content)
-            .await
-    }
-    .await;
-    if let Err(err) = result {
-        warn!(code = code.as_str(), "Cannot persist system event: {err}");
-        None
-    } else {
-        Some(event_id)
-    }
+    db_pool
+        .admin_conn()
+        .await?
+        .append_system_event_with_cas(event, cas_content)
+        .await?;
+    Ok(event_id)
 }
 
 fn log_event(event: &SystemEvent) {

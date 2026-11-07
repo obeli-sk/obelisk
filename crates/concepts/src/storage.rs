@@ -1247,6 +1247,8 @@ pub enum DbErrorGeneric {
     },
     #[error("database was closed")]
     Close,
+    #[error("database is full")]
+    Full,
 }
 
 #[derive(thiserror::Error, Clone, Debug, derive_more::PartialEq, derive_more::Eq)]

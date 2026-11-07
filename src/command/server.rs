@@ -105,6 +105,7 @@ use concepts::component_id::ComponentDigest;
 use concepts::component_id::Digest;
 use concepts::prefixed_ulid::{DeploymentId, SystemEventId};
 use concepts::storage::CreateRequest;
+use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::DbExternalApi;
@@ -161,6 +162,7 @@ use tokio::sync::watch;
 use toml_edit::{DocumentMut, Item, Table, value};
 use tracing::Instrument;
 use tracing::Span;
+use tracing::error;
 use tracing::info_span;
 use tracing::instrument;
 use tracing::warn;
@@ -446,11 +448,8 @@ impl DeploymentSwitchManagerHandle {
             app_toml: self.inner.server_verified.app_toml.clone(),
             app_env_prefix: self.inner.server_verified.app_env_prefix.clone(),
         };
-        let server_configuration_event_id = self
-            .inner
-            .server_verified
-            .server_configuration_event_id
-            .expect("server configuration event must be recorded before switching deployments");
+        let server_configuration_event_id =
+            self.inner.server_verified.server_configuration_event_id;
         // Keep the checkpoint commit and worker swap alive if the request is cancelled.
         utils::spawn::spawn_named("deployment_switch", async move {
             let _switch_permit = switch_permit;
@@ -2248,13 +2247,16 @@ async fn persist_startup_deployment(
     match persist {
         DeploymentPersist::AlreadyActive | DeploymentPersist::ActivateEnqueued => {}
         DeploymentPersist::Refresh { description } => {
-            db_pool
+            let api_conn = db_pool
                 .external_api_conn()
                 .await
-                .context("cannot get db connection for deployment refresh")?
-                .refresh_deployment(deployment_id, description, Utc::now())
-                .await
-                .context("cannot refresh deployment")?;
+                .context("cannot get db connection for deployment refresh")?;
+            allow_full_database(
+                api_conn
+                    .refresh_deployment(deployment_id, description, Utc::now())
+                    .await
+                    .context("cannot refresh deployment"),
+            )?;
         }
         DeploymentPersist::Insert {
             record,
@@ -2278,6 +2280,23 @@ async fn persist_startup_deployment(
         }
     }
     Ok(())
+}
+
+/// Startup writes must not stop the server: freeing space takes a running server.
+fn allow_full_database<T>(result: Result<T, anyhow::Error>) -> Result<Option<T>, anyhow::Error> {
+    match result {
+        Ok(ok) => Ok(Some(ok)),
+        Err(err)
+            if matches!(
+                err.downcast_ref::<DbErrorWrite>(),
+                Some(DbErrorWrite::Generic(DbErrorGeneric::Full))
+            ) =>
+        {
+            error!("Starting with a full database: {err:#}");
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 /// Persists a `server.startup.failed` event so a failed start is visible to operators, who
@@ -4247,7 +4266,7 @@ async fn switch_hot_redeploy(
     webhook_registry: Arc<WebhookRegistry>,
     cancel_registry: CancelRegistry,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
-    server_configuration_event_id: SystemEventId,
+    server_configuration_event_id: Option<SystemEventId>,
 ) -> Result<SwitchOutcome, SwitchError> {
     server_compiled_linked
         .runtime_config_availability
@@ -4278,7 +4297,7 @@ async fn switch_hot_redeploy(
         deployment_id,
         server_compiled_linked.policy_event_id,
         &server_compiled_linked.policy_audit,
-        &server_configuration_event_id,
+        server_configuration_event_id.as_ref(),
     )
     .await?;
 
@@ -4315,7 +4334,7 @@ async fn record_policy_audit(
     deployment_id: DeploymentId,
     event_id: SystemEventId,
     audit: &serde_json::Value,
-    server_configuration_event_id: &SystemEventId,
+    server_configuration_event_id: Option<&SystemEventId>,
 ) -> Result<(), anyhow::Error> {
     let bytes = serde_json::to_vec(audit).expect("deployment policy audit must encode");
     let digest = concepts::cas::content_digest(&bytes);
@@ -4451,7 +4470,7 @@ async fn record_server_configuration_audit(
     db_pool: &dyn DbPool,
     server_verified: &ServerVerified,
     maintenance_gc_config: GarbageCollectionTomlConfig,
-) -> Option<SystemEventId> {
+) -> Result<SystemEventId, anyhow::Error> {
     let snapshot = ServerConfigurationAuditV3 {
         format: ServerConfigurationFormatV3::V3,
         obelisk_version: PKG_VERSION.to_owned(),
@@ -4571,14 +4590,16 @@ async fn spawn_tasks_and_threads(
     );
     let v8_interrupt_ticker = V8InterruptTicker::spawn_new(Duration::from_millis(EPOCH_MILLIS));
     // Record startup event
-    let server_configuration_event_id = record_server_configuration_audit(
-        db_pool.as_ref(),
-        &server_verified,
-        maintenance_gc_config,
-    )
-    .await
-    .ok_or_else(|| anyhow::anyhow!("cannot persist server configuration audit"))?;
-    server_verified.server_configuration_event_id = Some(server_configuration_event_id);
+    let server_configuration_event_id = allow_full_database(
+        record_server_configuration_audit(
+            db_pool.as_ref(),
+            &server_verified,
+            maintenance_gc_config,
+        )
+        .await
+        .context("cannot persist server configuration audit"),
+    )?;
+    server_verified.server_configuration_event_id = server_configuration_event_id;
     for (http_server, reason) in &server_verified.ignored_public_http_servers {
         crate::server::system_event_writer::record(
             db_pool.as_ref(),
@@ -4589,14 +4610,16 @@ async fn spawn_tasks_and_threads(
         )
         .await;
     }
-    record_policy_audit(
-        db_pool.as_ref(),
-        deployment_id,
-        server_compiled_linked.policy_event_id,
-        &server_compiled_linked.policy_audit,
-        &server_configuration_event_id,
-    )
-    .await?;
+    allow_full_database(
+        record_policy_audit(
+            db_pool.as_ref(),
+            deployment_id,
+            server_compiled_linked.policy_event_id,
+            &server_compiled_linked.policy_audit,
+            server_configuration_event_id.as_ref(),
+        )
+        .await,
+    )?;
     upsert_backtrace_sources(
         db_pool.external_api_conn().await?.as_ref(),
         db_pool.cas_conn().await?.as_ref(),
@@ -4629,9 +4652,11 @@ async fn spawn_tasks_and_threads(
     );
     let cancel_watcher = cancel_registry.spawn_cancel_watcher(cancel_watcher.tick_sleep.into());
 
-    server_compiled_linked
-        .register_crons(&db_pool, deployment_id)
-        .await?;
+    allow_full_database(
+        server_compiled_linked
+            .register_crons(&db_pool, deployment_id)
+            .await,
+    )?;
 
     // Spawn Log -> Db Forwarder
     let (log_forwarder_sender, log_db_forarder) = {

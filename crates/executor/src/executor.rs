@@ -6,9 +6,8 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, RunId};
 use concepts::storage::{
-    AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbConnection,
-    DbErrorGeneric, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool, ExecutionLog,
-    LockedExecution, Unlocked,
+    AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbConnection, DbErrorWrite,
+    DbErrorWriteNonRetriable, DbExecutor, DbPool, ExecutionLog, LockedExecution, Unlocked,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -302,52 +301,59 @@ impl ExecTask {
                     execution_interrupt_watcher,
                 };
                 let mut old_err = None;
+                let mut old_tick_err = None;
                 while !is_closing_inner.load(Ordering::Relaxed) {
                     let res = task.db_pool.db_exec_conn().await;
                     let res = log_err_if_new(res, &mut old_err);
                     if let Ok(db_exec) = res {
-                        let _ = task
+                        let tick_res = task
                             .tick(
                                 db_exec.as_ref(),
                                 clock_fn.now(),
                                 RunId::generate(),
                                 deployment_id,
                             )
-                            .await;
-                        let timeout_fut = {
-                            let sleep = sleep.clone();
-                            Box::pin(async move { sleep.sleep(task.config.tick_sleep).await })
-                        };
-                        match &task.locking_strategy_holder {
-                            LockingStrategyHolder::ByFfqns(ffqns) => {
-                                db_exec
-                                    .wait_for_pending_by_ffqn(
-                                        clock_fn.now(),
-                                        ffqns.clone(),
-                                        None,
-                                        timeout_fut,
-                                    )
-                                    .await;
+                            .await
+                            .map(drop);
+                        if log_err_if_new(tick_res, &mut old_tick_err).is_ok() {
+                            let timeout_fut = {
+                                let sleep = sleep.clone();
+                                Box::pin(async move { sleep.sleep(task.config.tick_sleep).await })
+                            };
+                            match &task.locking_strategy_holder {
+                                LockingStrategyHolder::ByFfqns(ffqns) => {
+                                    db_exec
+                                        .wait_for_pending_by_ffqn(
+                                            clock_fn.now(),
+                                            ffqns.clone(),
+                                            None,
+                                            timeout_fut,
+                                        )
+                                        .await;
+                                }
+                                LockingStrategyHolder::ByComponentDigest => {
+                                    db_exec
+                                        .wait_for_pending_by_component_digest(
+                                            clock_fn.now(),
+                                            &task.config.component_id.component_digest,
+                                            timeout_fut,
+                                        )
+                                        .await;
+                                }
+                                LockingStrategyHolder::Auto { ffqns } => {
+                                    db_exec
+                                        .wait_for_pending_by_ffqn(
+                                            clock_fn.now(),
+                                            ffqns.clone(),
+                                            Some(task.config.component_id.component_digest.clone()),
+                                            timeout_fut,
+                                        )
+                                        .await;
+                                }
                             }
-                            LockingStrategyHolder::ByComponentDigest => {
-                                db_exec
-                                    .wait_for_pending_by_component_digest(
-                                        clock_fn.now(),
-                                        &task.config.component_id.component_digest,
-                                        timeout_fut,
-                                    )
-                                    .await;
-                            }
-                            LockingStrategyHolder::Auto { ffqns } => {
-                                db_exec
-                                    .wait_for_pending_by_ffqn(
-                                        clock_fn.now(),
-                                        ffqns.clone(),
-                                        Some(task.config.component_id.component_digest.clone()),
-                                        timeout_fut,
-                                    )
-                                    .await;
-                            }
+                        } else {
+                            // Waiting would find the pending work and return at once, spinning on the failing write.
+                            sleep.sleep(task.config.tick_sleep).await;
                         }
                     } else {
                         sleep.sleep(task.config.tick_sleep).await;
@@ -1114,9 +1120,9 @@ impl Append {
     }
 }
 
-fn log_err_if_new<T>(
-    res: Result<T, DbErrorGeneric>,
-    old_err: &mut Option<DbErrorGeneric>,
+fn log_err_if_new<T, E: PartialEq + std::fmt::Debug>(
+    res: Result<T, E>,
+    old_err: &mut Option<E>,
 ) -> Result<T, ()> {
     match (res, &old_err) {
         (Ok(ok), _) => {
@@ -1225,7 +1231,9 @@ mod tests {
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
+    use concepts::component_id::ComponentDigest;
     use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
+    use concepts::storage::LockPendingResponse;
     use concepts::storage::{
         CreateRequest, DbConnectionTest, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
     };
@@ -1242,7 +1250,7 @@ mod tests {
     use indexmap::IndexMap;
     use rstest::rstest;
     use simple_worker::FFQN_SOME;
-    use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
+    use std::{fmt::Debug, future::Future, ops::Deref, pin::Pin, sync::Arc};
     use test_db_macro::expand_enum_database;
     use test_utils::set_up;
     use test_utils::sim_clock::SimClock;
@@ -1252,6 +1260,217 @@ mod tests {
     };
 
     pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn-child");
+
+    #[derive(Clone)]
+    struct CountingSleep(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Sleep for CountingSleep {
+        fn sleep(&self, _duration: Duration) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Box::pin(tokio::task::yield_now())
+        }
+    }
+
+    // Reports pending work like the real database, while every lock write fails.
+    #[derive(Clone)]
+    struct FailingLockDb(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl FailingLockDb {
+        async fn fail_lock(&self) -> Result<LockPendingResponse, DbErrorWrite> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            tokio::task::yield_now().await;
+            Err(concepts::storage::DbErrorGeneric::Full.into())
+        }
+    }
+
+    #[async_trait]
+    impl DbPool for FailingLockDb {
+        async fn db_exec_conn(
+            &self,
+        ) -> Result<Box<dyn DbExecutor>, concepts::storage::DbErrorGeneric> {
+            Ok(Box::new(self.clone()))
+        }
+        async fn connection(
+            &self,
+        ) -> Result<Box<dyn DbConnection>, concepts::storage::DbErrorGeneric> {
+            unreachable!()
+        }
+        async fn external_api_conn(
+            &self,
+        ) -> Result<Box<dyn concepts::storage::DbExternalApi>, concepts::storage::DbErrorGeneric>
+        {
+            unreachable!()
+        }
+        async fn admin_conn(
+            &self,
+        ) -> Result<Box<dyn concepts::storage::DbAdmin>, concepts::storage::DbErrorGeneric>
+        {
+            unreachable!()
+        }
+        async fn cas_conn(
+            &self,
+        ) -> Result<Box<dyn concepts::cas::Cas>, concepts::storage::DbErrorGeneric> {
+            unreachable!()
+        }
+        async fn cas_gc_conn(
+            &self,
+        ) -> Result<Box<dyn concepts::storage::CasGc>, concepts::storage::DbErrorGeneric> {
+            unreachable!()
+        }
+        async fn connection_test(
+            &self,
+        ) -> Result<Box<dyn DbConnectionTest>, concepts::storage::DbErrorGeneric> {
+            unreachable!()
+        }
+    }
+
+    #[async_trait]
+    impl DbExecutor for FailingLockDb {
+        async fn lock_pending_by_ffqns(
+            &self,
+            _: u32,
+            _: DateTime<Utc>,
+            _: Arc<[FunctionFqn]>,
+            _: DateTime<Utc>,
+            _: ComponentId,
+            _: DeploymentId,
+            _: ExecutorId,
+            _: DateTime<Utc>,
+            _: RunId,
+            _: ComponentRetryConfig,
+        ) -> Result<LockPendingResponse, DbErrorWrite> {
+            self.fail_lock().await
+        }
+        async fn lock_pending_by_ffqns_auto(
+            &self,
+            _: u32,
+            _: DateTime<Utc>,
+            _: Arc<[FunctionFqn]>,
+            _: DateTime<Utc>,
+            _: ComponentId,
+            _: DeploymentId,
+            _: ExecutorId,
+            _: DateTime<Utc>,
+            _: RunId,
+            _: ComponentRetryConfig,
+        ) -> Result<LockPendingResponse, DbErrorWrite> {
+            unreachable!()
+        }
+        async fn lock_pending_by_component_digest(
+            &self,
+            _: u32,
+            _: DateTime<Utc>,
+            _: &ComponentId,
+            _: DeploymentId,
+            _: DateTime<Utc>,
+            _: ExecutorId,
+            _: DateTime<Utc>,
+            _: RunId,
+            _: ComponentRetryConfig,
+        ) -> Result<LockPendingResponse, DbErrorWrite> {
+            unreachable!()
+        }
+        async fn lock_one(
+            &self,
+            _: DateTime<Utc>,
+            _: ComponentId,
+            _: DeploymentId,
+            _: &ExecutionId,
+            _: RunId,
+            _: Version,
+            _: ExecutorId,
+            _: DateTime<Utc>,
+            _: ComponentRetryConfig,
+        ) -> Result<LockedExecution, DbErrorWrite> {
+            unreachable!()
+        }
+        async fn append(
+            &self,
+            _: ExecutionId,
+            _: Version,
+            _: AppendRequest,
+        ) -> Result<concepts::storage::AppendResponse, DbErrorWrite> {
+            unreachable!()
+        }
+        async fn append_batch_respond_to_parent(
+            &self,
+            _: AppendEventsToExecution,
+            _: AppendResponseToExecution,
+            _: DateTime<Utc>,
+        ) -> Result<concepts::storage::AppendBatchResponse, DbErrorWrite> {
+            unreachable!()
+        }
+        async fn wait_for_pending_by_ffqn(
+            &self,
+            _: DateTime<Utc>,
+            _: Arc<[FunctionFqn]>,
+            _: Option<ComponentDigest>,
+            _: Pin<Box<dyn Future<Output = ()> + Send>>,
+        ) {
+        }
+        async fn wait_for_pending_by_component_digest(
+            &self,
+            _: DateTime<Utc>,
+            _: &ComponentDigest,
+            _: Pin<Box<dyn Future<Output = ()> + Send>>,
+        ) {
+        }
+        async fn append_cancel_workflow_requested(
+            &self,
+            _: &ExecutionId,
+            _: DateTime<Utc>,
+        ) -> Result<concepts::storage::CancelOutcome, DbErrorWrite> {
+            unreachable!()
+        }
+        async fn get_last_execution_event(
+            &self,
+            _: &ExecutionId,
+        ) -> Result<ExecutionEvent, concepts::storage::DbErrorRead> {
+            unreachable!()
+        }
+        async fn append_activity_cancellation_requested(
+            &self,
+            _: &ExecutionId,
+            _: DateTime<Utc>,
+        ) -> Result<concepts::storage::CancelOutcome, DbErrorWrite> {
+            unreachable!()
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_tick_sleeps_instead_of_spinning() {
+        set_up();
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sleeps = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let handle = ExecTask::spawn_new(
+            DEPLOYMENT_ID_DUMMY,
+            Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
+                WorkerResultOk::RunFinished(RunFinished {
+                    retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    version: Version::new(2),
+                    http_client_traces: None,
+                }),
+            ))),
+            ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: Duration::from_millis(100),
+                component_id: ComponentId::dummy_activity(),
+                task_limiter_cell: None,
+                executor_id: ExecutorId::generate(),
+                retry_config: ComponentRetryConfig::ZERO,
+                locking_strategy: LockingStrategy::ByFfqns,
+            },
+            Box::new(ConstClock(DateTime::UNIX_EPOCH)),
+            Arc::new(FailingLockDb(attempts.clone())),
+            CountingSleep(sleeps.clone()),
+        );
+        while attempts.load(Ordering::Relaxed) < 3 {
+            tokio::task::yield_now().await;
+        }
+        handle.close_outer_task().await.close().await;
+        assert!(sleeps.load(Ordering::Relaxed) >= attempts.load(Ordering::Relaxed) - 1);
+    }
 
     #[test]
     fn oversized_activity_result_is_a_permanent_failure() {
