@@ -47,7 +47,7 @@
               "positionals": [
                 {
                   "name": "api_url",
-                  "help": "Cloud API URL of a custom deployment; defaults to `https://cloud.obeli.sk/api`"
+                  "help": "Cloud API URL of a custom deployment; defaults to `OBELISK_CLOUD_API_URL`, then `https://cloud.obeli.sk/api`"
                 }
               ]
             },

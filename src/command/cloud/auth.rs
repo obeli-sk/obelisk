@@ -379,7 +379,9 @@ async fn login(
         terminal(),
         "`obelisk cloud auth login` needs a terminal; set OBELISK_CLOUD_API_TOKEN instead"
     );
-    let api_url = api_url.unwrap_or(DEFAULT_API_URL);
+    let api_url = api_url
+        .filter(|url| !url.is_empty())
+        .unwrap_or(DEFAULT_API_URL);
     let verifier = random_hex();
     let challenge = hex(&Sha256::digest(verifier.as_bytes()));
     let page = login_page(api_url, &challenge, &hostname())?;
