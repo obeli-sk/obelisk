@@ -12,7 +12,6 @@ pub enum DeploymentComponentType {
     ActivityWasm,
     ActivityJs,
     ActivityExec,
-    ActivityVm,
     ActivityStub,
     ActivityExternal,
     WebhookEndpointWasm,

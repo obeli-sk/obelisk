@@ -12,8 +12,8 @@ mod server;
 mod wit_printer;
 
 use crate::command::server::{
-    ActivityVmRuntimeMode, JsRuntimeMode, PrepareDirsParams, RunParams, RuntimeConfigAvailability,
-    VerifyParams, run, verify,
+    JsRuntimeMode, PrepareDirsParams, RunParams, RuntimeConfigAvailability, VerifyParams, run,
+    verify,
 };
 use crate::config::secret_registry::EnvVarSecretsCleanup;
 use args::{
@@ -76,7 +76,6 @@ fn command_future(
                 mut config,
                 secret_registry,
                 js_runtime,
-                activity_vm_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
                 app_config,
@@ -100,9 +99,6 @@ fn command_future(
                     suppress_type_checking_errors,
                     api_token,
                     js_runtime,
-                    activity_vm_runtime,
-                    #[cfg(test)]
-                    test_hooks: command::server::RuntimeTestHooks::default(),
                 },
                 secret_registry,
             ))
@@ -143,7 +139,6 @@ fn command_future(
                 mut config,
                 secret_registry,
                 js_runtime,
-                activity_vm_runtime,
             } = prepare_server_startup_with_exec_policy(
                 server_config.clone(),
                 app_config,
@@ -170,7 +165,6 @@ fn command_future(
                     suppress_type_checking_errors,
                     suppress_linking_errors: false,
                     js_runtime,
-                    activity_vm_runtime,
                 },
                 skip_db,
                 fixes,
@@ -201,7 +195,6 @@ fn command_future(
                     suppress_type_checking_errors,
                     suppress_linking_errors: false,
                     js_runtime: parse_js_runtime_from_env(&env_vars)?,
-                    activity_vm_runtime: parse_activity_vm_runtime_from_env(&env_vars)?,
                 },
             ))
         }
@@ -267,7 +260,6 @@ struct ServerStartup {
     config: ServerConfigToml,
     secret_registry: Arc<SecretRegistry>,
     js_runtime: crate::command::server::JsRuntimeMode,
-    activity_vm_runtime: crate::command::server::ActivityVmRuntimeMode,
 }
 
 /// Parse the complete server config once, then resolve and wipe its secret sources
@@ -319,7 +311,6 @@ fn prepare_server_startup_with_exec_policy(
     info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");
     let env_vars = StartupEnvVars::capture();
     let js_runtime = parse_js_runtime_from_env(&env_vars)?;
-    let activity_vm_runtime = parse_activity_vm_runtime_from_env(&env_vars)?;
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
     // Before `with_internal_public_env`, which resolves `http-server-url` against started servers.
     config
@@ -374,7 +365,6 @@ fn prepare_server_startup_with_exec_policy(
         config,
         secret_registry,
         js_runtime,
-        activity_vm_runtime,
     })
 }
 
@@ -388,22 +378,6 @@ fn parse_js_runtime_from_env(env_vars: &StartupEnvVars) -> anyhow::Result<JsRunt
                 "invalid OBELISK_JS_RUNTIME value `{other:?}`; expected `v8` or `boa-wasm`"
             )
         }
-    }
-}
-
-pub(crate) fn parse_activity_vm_runtime_from_env(
-    env_vars: &StartupEnvVars,
-) -> anyhow::Result<ActivityVmRuntimeMode> {
-    let value = env_vars.lookup("OBELISK_UNSTABLE_ACTIVITY_VM");
-    match value.as_deref() {
-        None => Ok(ActivityVmRuntimeMode::Disabled),
-        Some("bochs-wasm") => Ok(ActivityVmRuntimeMode::BochsWasm),
-        Some("qemu-tcg") => Ok(ActivityVmRuntimeMode::QemuTcg),
-        Some("qemu-kvm") => Ok(ActivityVmRuntimeMode::QemuKvm),
-        Some("firecracker") => Ok(ActivityVmRuntimeMode::Firecracker),
-        Some(other) => anyhow::bail!(
-            "invalid OBELISK_UNSTABLE_ACTIVITY_VM value `{other:?}`; expected `bochs-wasm`, `qemu-tcg`, `qemu-kvm`, or `firecracker`"
-        ),
     }
 }
 

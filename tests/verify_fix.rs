@@ -76,8 +76,7 @@ directory = "codegen-cache"
                     .arg("--deployment")
                     .arg(&deployment_path)
                     .env("OBELISK_JS_RUNTIME", "v8")
-                    .env("OBELISK_VERIFY_FIX_TEST_ENV", "hello")
-                    .env_remove("OBELISK_UNSTABLE_ACTIVITY_VM");
+                    .env("OBELISK_VERIFY_FIX_TEST_ENV", "hello");
                 if fix {
                     cli.arg("--fix");
                 }
@@ -169,7 +168,6 @@ replace_in = ["headers"]
             .env_remove("OBELISK_VERIFY_REPAIR_MISSING")
             .env_remove("TOKEN")
             .env_remove("OBELISK_APP_NAME")
-            .env_remove("OBELISK_UNSTABLE_ACTIVITY_VM")
             .output()
             .unwrap()
     }
@@ -345,7 +343,6 @@ fn deployment_verification_ignores_policy_files_and_runtime_values() {
         .env_remove("OBELISK_APP_NAME")
         .env_remove("OBELISK_VERIFY_REPAIR_MISSING")
         .env_remove("TOKEN")
-        .env_remove("OBELISK_UNSTABLE_ACTIVITY_VM")
         .output()
         .unwrap();
     assert!(

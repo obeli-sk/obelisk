@@ -16,193 +16,21 @@ fn digest_of(bytes: &[u8]) -> ContentDigest {
 }
 
 #[test]
-fn activity_vm_requires_explicit_enablement() {
-    let deployment: DeploymentToml =
-        toml::from_str("[[activity_vm]]\nffqn = \"testing:vm/echo.run\"\ncontent = \"echo null\"\nstore_paths = []\nmemory.mib = 512")
-            .unwrap();
-    let error = deployment
-        .validate_with_activity_vm(std::path::Path::new("."), false)
-        .err()
-        .expect("activity_vm must be disabled")
-        .to_string();
-    assert!(error.contains("OBELISK_UNSTABLE_ACTIVITY_VM"));
-}
-
-#[test]
-fn activity_vm_authored_config_uses_http_policy_and_exact_store_roots() {
-    let deployment: DeploymentToml = toml::from_str(
-        r##"
-[[activity_vm]]
-memory.mib = 512
-name = "fetch"
-ffqn = "testing:vm/fetch.run"
-content = "#!/bin/sh\necho null"
-store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-curl"]
-
-[[activity_vm.allowed_host]]
-pattern = "https://api.example.com"
-methods = ["POST"]
-secrets = ["API_TOKEN"]
-replace_in = ["headers"]
-"##,
-    )
-    .unwrap();
-
-    let validated = deployment
-        .validate_with_activity_vm(std::path::Path::new("."), true)
-        .unwrap();
-    let (activity, name) = &validated.activities_vm[0];
-    assert_eq!(name.as_str(), "fetch");
-    assert_eq!(activity.store_paths.len(), 1);
-    assert!(activity.nixos_cache.enabled);
-    assert_eq!(activity.allowed_hosts[0].secrets, ["API_TOKEN".into()]);
-}
-
-#[test]
-fn activity_vm_accepts_one_entrypoint_source() {
-    let deployment: DeploymentToml = toml::from_str(
-        r#"
-[[activity_vm]]
-memory.mib = 512
-ffqn = "testing:vm/entrypoint.run"
-entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool", "--json"]
-store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
-
-"#,
-    )
-    .unwrap();
-
-    let validated = deployment
-        .validate_with_activity_vm(std::path::Path::new("."), true)
-        .unwrap();
-    assert_eq!(
-        validated.activities_vm[0].0.entrypoint.as_deref(),
-        Some(
-            [
-                "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool".to_owned(),
-                "--json".to_owned(),
-            ]
-            .as_slice()
-        )
-    );
-}
-
-#[test]
-fn activity_vm_can_disable_nixos_cache() {
-    let deployment: DeploymentToml = toml::from_str(
-        r#"
-[[activity_vm]]
-memory.mib = 512
-ffqn = "testing:vm/entrypoint.run"
-entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool"]
-store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
-nixos_cache.enabled = false
-
-[[activity_vm.nix_cache]]
-url = "https://cache.example.com"
-public_key = "example-1:test"
-"#,
-    )
-    .unwrap();
-
-    let validated = deployment
-        .validate_with_activity_vm(std::path::Path::new("."), true)
-        .unwrap();
-    assert!(!validated.activities_vm[0].0.nixos_cache.enabled);
-}
-
-#[test]
-fn activity_vm_parses_guest_memory() {
-    let deployment: DeploymentToml = toml::from_str(
-        r#"
-[[activity_vm]]
-ffqn = "testing:vm/entrypoint.run"
-entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool"]
-store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
-memory.gib = 4
-"#,
-    )
-    .unwrap();
-
-    let validated = deployment
-        .validate_with_activity_vm(std::path::Path::new("."), true)
-        .unwrap();
-    assert_eq!(u64::from(validated.activities_vm[0].0.memory), 4 << 30);
-    assert_eq!(validated.activities_vm[0].0.cpus, 1);
-}
-
-#[test]
-fn activity_vm_parses_guest_cpus() {
-    let deployment: DeploymentToml = toml::from_str(
-        r#"
-[[activity_vm]]
-ffqn = "testing:vm/entrypoint.run"
-entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool"]
-store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
-memory.gib = 4
-cpus = 4
-"#,
-    )
-    .unwrap();
-
-    let validated = deployment
-        .validate_with_activity_vm(std::path::Path::new("."), true)
-        .unwrap();
-    assert_eq!(validated.activities_vm[0].0.cpus, 4);
-}
-
-#[test]
-fn activity_vm_requires_memory() {
-    let Err(error) = toml::from_str::<DeploymentToml>(
-        r#"
-[[activity_vm]]
-ffqn = "testing:vm/entrypoint.run"
-entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool"]
-store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
-"#,
-    ) else {
-        panic!("activity_vm without memory must be rejected");
-    };
-    let error = error.to_string();
-    assert!(error.contains("missing field `memory`"), "{error}");
-}
-
-#[test]
-fn activity_vm_rejects_multiple_program_sources() {
-    let deployment: DeploymentToml = toml::from_str(
-        r#"
-[[activity_vm]]
-memory.mib = 512
-ffqn = "testing:vm/invalid.run"
-entrypoint = ["/bin/true"]
-content = "exit 0"
-store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
-"#,
-    )
-    .unwrap();
-
-    let result = deployment.validate_with_activity_vm(std::path::Path::new("."), true);
-    assert!(matches!(result, Err(error) if error.to_string().contains("exactly one")));
-}
-
-#[test]
 fn optional_secret_references_parse_and_serialize_back() {
     let deployment: DeploymentToml = toml::from_str(
-        r##"
-[[activity_vm]]
-memory.mib = 512
+        r#"
+[[activity_js]]
 name = "aws"
-ffqn = "testing:vm/aws.run"
-content = "#!/bin/sh\necho null"
-store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-aws"]
+ffqn = "testing:js/aws.run"
+content = "export function run() {}"
 exposed_secrets = ["AWS_KEY", { name = "AWS_SESSION_TOKEN", optional = true }]
 
-[[activity_vm.allowed_host]]
+[[activity_js.allowed_host]]
 pattern = "https://api.github.com"
 methods = ["GET"]
 secrets = [{ name = "GITHUB_TOKEN", optional = true }]
 replace_in = ["headers"]
-"##,
+"#,
     )
     .unwrap();
     let serialized = toml::to_string(&deployment).unwrap();
@@ -213,10 +41,8 @@ replace_in = ["headers"]
         ),
         "{serialized}"
     );
-    let validated = deployment
-        .validate_with_activity_vm(std::path::Path::new("."), true)
-        .unwrap();
-    let (activity, _) = &validated.activities_vm[0];
+    let validated = deployment.validate(std::path::Path::new(".")).unwrap();
+    let (activity, _) = &validated.activities_js[0];
     assert_eq!(
         activity.exposed_secrets,
         [

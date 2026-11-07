@@ -2665,7 +2665,7 @@
         },
         {
           "name": "secret-config-digest",
-          "about": "Calculate reviewed configuration digests for exec and secret-exposing VM activities",
+          "about": "Calculate reviewed configuration digests for exec and secret-exposing activities",
           "options": [
             {
               "name": "--deployment",

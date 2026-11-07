@@ -30,7 +30,6 @@ OBELISK_PHASE5_DEFINITELY_MISSING_VAR = {{ optional = true }}
 
 [secrets]
 MY_SECRET = {{ env = "MY_SECRET" }}
-VM_SECRET = {{ env = "VM_SECRET" }}
 
 [[outbound_http.allowed_host]]
 pattern = "*"

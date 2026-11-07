@@ -140,7 +140,6 @@ impl EngineConfig {
 #[derive(Clone)]
 pub struct Engines {
     pub activity_engine: Arc<Engine>,
-    pub activity_vm_engine: Arc<Engine>,
     pub webhook_engine: Arc<Engine>,
     pub workflow_engine: Arc<Engine>,
 }
@@ -156,7 +155,6 @@ impl Engines {
     pub fn weak_refs(&self) -> Vec<EngineWeak> {
         vec![
             self.activity_engine.weak(),
-            self.activity_vm_engine.weak(),
             self.webhook_engine.weak(),
             self.workflow_engine.weak(),
         ]
@@ -208,15 +206,6 @@ impl Engines {
         Self::get_activity_async_engine_internal(config)
     }
 
-    #[cfg(any(test, feature = "test"))]
-    pub fn get_activity_vm_engine_test(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
-        Self::get_activity_engine_internal(config)
-    }
-
-    fn get_activity_engine_internal(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
-        Self::configure_common(wasmtime::Config::new(), config, AsyncSupport::Disable)
-    }
-
     fn get_activity_async_engine_internal(
         config: EngineConfig,
     ) -> Result<Arc<Engine>, EngineError> {
@@ -240,7 +229,6 @@ impl Engines {
         let res: Result<_, EngineError> = (|engine_config: &EngineConfig| {
             Ok(Engines {
                 activity_engine: Self::get_activity_async_engine_internal(engine_config.clone())?,
-                activity_vm_engine: Self::get_activity_engine_internal(engine_config.clone())?,
                 webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
                 workflow_engine: Self::get_workflow_engine_internal(engine_config.clone())?,
             })

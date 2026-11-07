@@ -3721,7 +3721,6 @@
           "activity_wasm",
           "activity_js",
           "activity_exec",
-          "activity_vm",
           "activity_stub",
           "activity_external",
           "webhook_endpoint_wasm",

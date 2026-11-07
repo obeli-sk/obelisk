@@ -414,9 +414,6 @@ pub(super) fn preflight(
         for activity in &deployment.activities_js {
             check("activity_js", &activity.name, &activity.allowed_hosts);
         }
-        for activity in &deployment.activities_vm {
-            check("activity_vm", &activity.name, &activity.allowed_hosts);
-        }
         for webhook in &deployment.webhooks_wasm {
             check(
                 "webhook_endpoint_wasm",
@@ -611,7 +608,6 @@ pub(super) fn deployment_allowed_host_lists(
     let mut lists: Vec<&[AllowedHostToml]> = Vec::new();
     lists.extend(deployment.activities_wasm.iter().map(|c| &*c.allowed_hosts));
     lists.extend(deployment.activities_js.iter().map(|c| &*c.allowed_hosts));
-    lists.extend(deployment.activities_vm.iter().map(|c| &*c.allowed_hosts));
     lists.extend(deployment.webhooks_wasm.iter().map(|c| &*c.allowed_hosts));
     lists.extend(deployment.webhooks_js.iter().map(|c| &*c.allowed_hosts));
     lists
@@ -641,12 +637,6 @@ pub(super) fn collect_deployment_secrets(
         .chain(
             deployment
                 .activities_exec
-                .iter()
-                .flat_map(|component| &component.exposed_secrets),
-        )
-        .chain(
-            deployment
-                .activities_vm
                 .iter()
                 .flat_map(|component| &component.exposed_secrets),
         )

@@ -5,7 +5,6 @@ fn cli(dir: &std::path::Path, args: &[&str]) -> Output {
         .args(args)
         .current_dir(dir)
         .env_remove("OBELISK_APP_NAME")
-        .env_remove("OBELISK_UNSTABLE_ACTIVITY_VM")
         .env("OBELISK_JS_RUNTIME", "v8")
         .output()
         .unwrap()
@@ -70,7 +69,6 @@ fn server_app_discovery_preserves_explicit_paths_and_rejects_invalid_files() {
         .current_dir(dir.path())
         .env("OBELISK_APP_NAME", "from-env")
         .env("OBELISK_JS_RUNTIME", "v8")
-        .env_remove("OBELISK_UNSTABLE_ACTIVITY_VM")
         .output()
         .unwrap();
     assert_success(&output);

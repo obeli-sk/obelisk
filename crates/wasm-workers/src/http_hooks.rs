@@ -447,7 +447,7 @@ impl HttpHooks {
 }
 
 /// Whether a header is one the runtime owns, matching wasmtime's forbidden-header set
-/// so every outgoing-HTTP path (wasmtime, native V8, activity VM) behaves identically.
+/// so every outgoing-HTTP path (wasmtime, native V8) behaves identically.
 /// A guest may not set these on an outbound request; they are stripped from inbound
 /// headers (webhook request, fetch response).
 #[must_use]

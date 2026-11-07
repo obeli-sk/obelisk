@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- *(activity-vm)* Removed experimental `[[activity_vm]]` components and their VM backends.
+  Remove VM components from deployments and `[limits.activities.vm_bochs]` from server configuration.
+
 ### Added
 
 - *(app)* Internal public environment source `source = "app-name"` exposes the configured app name to deployments.

@@ -9,8 +9,7 @@
 
 const TEST_API_TOKEN: &str = "integration-test-api-token-0000000000000000";
 
-use crate::command::server::{self, JsRuntimeMode};
-use crate::config::env_var::StartupEnvVars;
+use crate::command::server::JsRuntimeMode;
 use crate::{
     command::server::{LocalDeployment, PrepareDirsParams, RunParams, prepare_dirs, run_internal},
     config::config_holder::ConfigHolder,
@@ -19,7 +18,6 @@ use rest_types::replay::{ReplayOutcomeSer, ReplayResponseSer};
 use toml_edit::{DocumentMut, value};
 
 mod activity_exec;
-mod activity_vm;
 mod crypto;
 mod follow;
 mod greet_activity;
@@ -605,29 +603,19 @@ async fn authorize_test_deployment(
 ) {
     test_utils::set_up();
     let registry = std::sync::Arc::new(
-        crate::config::secret_registry::SecretRegistry::from_test_values([
-            (
-                "MY_SECRET".to_owned(),
-                secrecy::SecretString::from("s3cret_value"),
-            ),
-            (
-                "VM_SECRET".to_owned(),
-                secrecy::SecretString::from("swordfish"),
-            ),
-        ])
+        crate::config::secret_registry::SecretRegistry::from_test_values([(
+            "MY_SECRET".to_owned(),
+            secrecy::SecretString::from("s3cret_value"),
+        )])
         .with_public_env([
             "PATH".to_owned(),
             "OBELISK_PHASE5_DEFINITELY_MISSING_VAR".to_owned(),
         ]),
     );
-    let outputs = crate::command::server::generate_secret_config_digests(
-        deployment_path,
-        None,
-        registry,
-        crate::parse_activity_vm_runtime_from_env(&StartupEnvVars::capture()).unwrap(),
-    )
-    .await
-    .unwrap();
+    let outputs =
+        crate::command::server::generate_secret_config_digests(deployment_path, None, registry)
+            .await
+            .unwrap();
     crate::command::server::fix_app_digest_permissions(
         &server_path.with_file_name("app.toml"),
         &outputs,
@@ -647,7 +635,6 @@ struct TestServer {
     server_handle: JoinHandle<anyhow::Result<()>>,
     sqlite_file: std::path::PathBuf,
     tmp_dir: tempfile::TempDir,
-    persisted_logs: Option<tokio::sync::broadcast::Receiver<concepts::storage::LogInfoAppendRow>>,
 }
 
 impl TestServer {
@@ -740,25 +727,6 @@ impl TestServer {
         files: &[(&str, &str)],
         js_runtime: JsRuntimeMode,
     ) -> Self {
-        Self::start_inline_deployment_with_hooks(
-            ip,
-            server_toml_tail,
-            deployment_toml,
-            files,
-            js_runtime,
-            server::RuntimeTestHooks::default(),
-        )
-        .await
-    }
-
-    async fn start_inline_deployment_with_hooks(
-        ip: String,
-        server_toml_tail: &str,
-        deployment_toml: &str,
-        files: &[(&str, &str)],
-        js_runtime: JsRuntimeMode,
-        test_hooks: server::RuntimeTestHooks,
-    ) -> Self {
         let (tmp_dir, server_path, deployment_path) =
             util::write_server_config(&ip, "", server_toml_tail);
         for (rel, content) in files {
@@ -771,7 +739,7 @@ impl TestServer {
         std::fs::write(&deployment_path, deployment_toml).unwrap();
         authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Box::pin(Self::launch_with_hooks(
+        Box::pin(Self::launch(
             ip,
             tmp_dir,
             server_path,
@@ -779,7 +747,6 @@ impl TestServer {
             true,
             None,
             js_runtime,
-            test_hooks,
         ))
         .await
     }
@@ -892,34 +859,6 @@ impl TestServer {
         api_token: Option<secrecy::SecretString>,
         js_runtime: JsRuntimeMode,
     ) -> Self {
-        Box::pin(Self::launch_with_hooks(
-            ip,
-            tmp_dir,
-            server_path,
-            deployment,
-            use_default_token,
-            api_token,
-            js_runtime,
-            server::RuntimeTestHooks::default(),
-        ))
-        .await
-    }
-
-    #[expect(clippy::too_many_arguments)]
-    async fn launch_with_hooks(
-        ip: String,
-        tmp_dir: tempfile::TempDir,
-        server_path: std::path::PathBuf,
-        deployment: LocalDeployment,
-        use_default_token: bool,
-        api_token: Option<secrecy::SecretString>,
-        js_runtime: JsRuntimeMode,
-        test_hooks: server::RuntimeTestHooks,
-    ) -> Self {
-        let persisted_logs = test_hooks
-            .persisted_logs
-            .as_ref()
-            .map(tokio::sync::broadcast::Sender::subscribe);
         test_utils::set_up();
 
         let project_dirs = crate::project_dirs();
@@ -938,16 +877,10 @@ impl TestServer {
         config.public_http_servers = app.public_http_servers;
         config.outbound_http = app.outbound_http;
         let secret_registry = std::sync::Arc::new(
-            crate::config::secret_registry::SecretRegistry::from_test_values([
-                (
-                    "MY_SECRET".to_string(),
-                    secrecy::SecretString::from("s3cret_value"),
-                ),
-                (
-                    "VM_SECRET".to_string(),
-                    secrecy::SecretString::from("swordfish"),
-                ),
-            ])
+            crate::config::secret_registry::SecretRegistry::from_test_values([(
+                "MY_SECRET".to_string(),
+                secrecy::SecretString::from("s3cret_value"),
+            )])
             .with_public_env([
                 "PATH".to_string(),
                 "OBELISK_PHASE5_DEFINITELY_MISSING_VAR".to_string(),
@@ -971,11 +904,6 @@ impl TestServer {
                 api_token
             },
             js_runtime,
-            activity_vm_runtime: crate::parse_activity_vm_runtime_from_env(
-                &StartupEnvVars::capture(),
-            )
-            .unwrap(),
-            test_hooks,
         };
 
         let prepared_dirs = prepare_dirs(
@@ -1060,7 +988,6 @@ impl TestServer {
             server_handle,
             sqlite_file,
             tmp_dir,
-            persisted_logs,
         }
     }
 

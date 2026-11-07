@@ -400,10 +400,6 @@ pub(crate) struct ProcessCellToml {
     pub(crate) count: Option<InflightSemaphore>,
 }
 
-/// The activity runtimes are four different resources: a wasmtime instance, a V8 isolate with its
-/// own heap and thread, an external process, and an emulated machine. A VM storm must not crowd
-/// out plain exec activities, so each gets its own reservation. A VM cell is keyed by backend
-/// because the backend decides what a slot costs.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityCellsToml {
@@ -416,9 +412,6 @@ pub(crate) struct ActivityCellsToml {
     /// `activity_exec` activities, each slot an operating system process.
     #[serde(default)]
     pub(crate) process: ProcessCellToml,
-    /// `activity_vm` activities on the Bochs backend.
-    #[serde(default)]
-    pub(crate) vm_bochs: CellToml,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
@@ -506,7 +499,6 @@ pub(crate) struct ConcurrencyCells {
     pub(crate) activities_wasm: ConcurrencyCell,
     pub(crate) activities_v8: ConcurrencyCell,
     pub(crate) activities_process: ConcurrencyCell,
-    pub(crate) activities_vm_bochs: ConcurrencyCell,
     pub(crate) workflows_wasm: ConcurrencyCell,
     pub(crate) workflows_v8: ConcurrencyCell,
     pub(crate) webhooks_wasm: ConcurrencyCell,
@@ -520,7 +512,6 @@ pub(crate) struct ComponentCells {
     pub(crate) activities_wasm: ConcurrencyCell,
     pub(crate) activities_js: ConcurrencyCell,
     pub(crate) activities_process: ConcurrencyCell,
-    pub(crate) activities_vm: ConcurrencyCell,
     pub(crate) workflows_wasm: ConcurrencyCell,
     pub(crate) workflows_js: ConcurrencyCell,
     pub(crate) webhooks_wasm: ConcurrencyCell,
@@ -538,7 +529,6 @@ impl ConcurrencyCells {
                 self.activities_wasm.clone()
             },
             activities_process: self.activities_process.clone(),
-            activities_vm: self.activities_vm_bochs.clone(),
             workflows_wasm: self.workflows_wasm.clone(),
             workflows_js: if native_v8 {
                 self.workflows_v8.clone()
@@ -573,10 +563,6 @@ impl LimitsToml {
                 32,
             )
             .map(|count| ConcurrencyCell::new(count, None))?,
-            activities_vm_bochs: self
-                .activities
-                .vm_bochs
-                .resolve("activities.vm_bochs", 8, GIB)?,
             workflows_wasm: self
                 .workflows
                 .wasm
@@ -2079,7 +2065,6 @@ mod tests {
                 ("activities.wasm", &cells.activities_wasm),
                 ("workflows.wasm", &cells.workflows_wasm),
                 ("webhooks.wasm", &cells.webhooks_wasm),
-                ("activities.vm_bochs", &cells.activities_vm_bochs),
             ] {
                 let count = cell.count.expect("a wasm cell must have a real default");
                 assert!(
@@ -2174,7 +2159,6 @@ mod tests {
             assert_eq!(Some(500), cells.activities_wasm.count);
             assert_eq!(Some(GIB), cells.activities_wasm.memory);
             assert_eq!(Some(32), cells.activities_process.count);
-            assert_eq!(Some(8), cells.activities_vm_bochs.count);
             assert_eq!(Some(100), cells.workflows_v8.count);
             assert_eq!(Some(16), cells.webhooks_v8.count);
             assert_eq!(Some(256 * MIB), cells.webhooks_v8.memory);
