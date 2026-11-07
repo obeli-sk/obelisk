@@ -104,7 +104,7 @@ jobs:
         if: ${{ inputs.validate_nix_dev_build }}
 
   call_child:
-    needs: [validate, validate-cross-dev, validate-native-arm]
+    needs: [validate, validate-cross-dev]
     if: >-
       ${{ !cancelled() && needs.validate.result == 'success' &&
           needs.validate-cross-dev.result == 'success' &&
