@@ -6,18 +6,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Removed
+## [0.43.0-rc.17](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.16...v0.43.0-rc.17)
 
-- *(activity-vm)* Removed experimental `[[activity_vm]]` components and their VM backends.
-  Remove VM components from deployments and `[limits.activities.vm_bochs]` from server configuration.
+This release candidate adds verified PostgreSQL TLS, uses the system's certificates for outbound
+HTTPS, and improves recovery when SQLite runs out of space. Cloud logins gain account aliases and
+default selection, with a credentials file format change that requires manual conversion.
+Experimental VM activities have been removed; deployments and server configuration must drop
+their VM settings before upgrading.
 
 ### Added
 
-- *(app)* Internal public environment source `source = "app-name"` exposes the configured app name to deployments.
+- *(app)* Internal public environment source `source = "app-name"` exposes the configured app
+  name to deployments. [#1339](https://github.com/obeli-sk/obelisk/pull/1339)
+- *(postgres)* `database.postgres.ssl_mode = "verify_full"` encrypts connections and verifies
+  the certificate chain and host name against the system's certificates. `ssl_root_cert` selects
+  a PEM file of trusted CAs instead. TLS remains disabled by default.
+  [#1331](https://github.com/obeli-sk/obelisk/pull/1331)
+- *(server)* OIDC `issuer`, `audience` and claim values in `api.oidc` and
+  `http_server.<name>.oidc` accept `${VAR}` and `${VAR:-default}` from the server's environment.
+  Missing variables stop startup, and resolved values are validated.
+  [#1329](https://github.com/obeli-sk/obelisk/pull/1329)
+- *(cli)* `server verify --dev` uses the development listener policy, allowing verification to
+  resolve internal HTTP server URLs without configured credentials.
+  [#1326](https://github.com/obeli-sk/obelisk/pull/1326)
 
 ### Changed
 
-- **Breaking (RC):** *(cloud)* `auth login` accepts `--account` aliases and `--default`, preserves saved names on refresh, and distinguishes backends by full API URL; credentials now use `[account."name"]` tables instead of `[[account]]` (manual conversion required).
+- **Breaking (RC):** *(cloud)* `auth login` accepts `--account` aliases and `--default`, preserves
+  saved names on refresh, and distinguishes backends by full API URL. Credentials now use
+  `[account."name"]` tables instead of `[[account]]`; manually convert each table using its saved
+  account name, or remove the credentials file and log in again. Account selection is case-sensitive.
+  [#1328](https://github.com/obeli-sk/obelisk/pull/1328)
+- *(cloud)* `auth login` defaults its API URL to `OBELISK_CLOUD_API_URL`, falling back to
+  `https://cloud.obeli.sk/api` when unset or empty. An explicit URL takes precedence.
+  [#1337](https://github.com/obeli-sk/obelisk/pull/1337)
+- *(http)* Outbound HTTPS from activities and webhooks trusts the system's
+  certificates instead of bundled Mozilla roots, including private CAs installed on the host.
+  Hosts without a CA bundle must install one for HTTPS requests to work.
+  [#1332](https://github.com/obeli-sk/obelisk/pull/1332)
+- *(postgres)* Database operations check out pooled clients only while in use, so waiting
+  executors and workflows no longer exhaust the connection pool.
+  [#1331](https://github.com/obeli-sk/obelisk/pull/1331)
+- *(build)* Updated Rust dependencies.
+  [#1334](https://github.com/obeli-sk/obelisk/pull/1334)
+- *(release)* Improved ARM GNU loader selection and release caching; native ARM validation is
+  optional in the release workflow.
+  [#1325](https://github.com/obeli-sk/obelisk/pull/1325)
+
+### Fixed
+
+- *(sqlite)* Full-database writes return HTTP `507` instead of `503`. Executors back off after
+  failed ticks instead of spinning and repeatedly logging errors. The server can start against
+  a full database despite failed audit, deployment refresh or cron registration writes, allowing
+  retention to free space. Batched transactions restart after SQLite rolls back a physical
+  transaction, preventing partial writes from subsequent failed operations.
+  [#1333](https://github.com/obeli-sk/obelisk/pull/1333)
+- *(cloud)* Verbose `auth status` prints the credentials file path on stderr, including when the
+  file is missing or unreadable, while preserving JSON output.
+  [#1327](https://github.com/obeli-sk/obelisk/pull/1327)
+
+### Removed
+
+- **Breaking (RC):** *(activity-vm)* Removed experimental `[[activity_vm]]` components and their
+  VM backends. Remove VM components from deployments and `[limits.activities.vm_bochs]` from
+  server configuration. [#1338](https://github.com/obeli-sk/obelisk/pull/1338)
 
 ## [0.43.0-rc.16](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.15...v0.43.0-rc.16)
 
