@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::fmt::Write as _;
 
 pub(super) enum Summary {
-    App(Option<&'static str>),
+    App(&'static str),
     Apps,
     Lifecycle,
     Status,
@@ -23,7 +23,6 @@ impl From<&Cloud> for Summary {
     fn from(command: &Cloud) -> Self {
         match command {
             Cloud::Auth(_) => unreachable!("command has its own output"),
-            Cloud::Apps(_) => Self::Apps,
             Cloud::Token(CloudTokenArgs {
                 command: CloudToken::List,
                 ..
@@ -40,37 +39,48 @@ impl From<&Cloud> for Summary {
                 command: CloudToken::Get { .. },
                 ..
             }) => Self::Token(None),
-            Cloud::App(CloudAppTarget { app, command, .. }) => {
-                let apply = app.as_ref().map_or_else(
+            Cloud::App(CloudAppTarget {
+                command: CloudApp::List,
+                ..
+            }) => Self::Apps,
+            Cloud::App(CloudAppTarget { command, .. }) => {
+                let apply = command.selected_app().map_or_else(
                     || "obelisk cloud app apply".to_owned(),
-                    |app| format!("obelisk cloud app --app {app} apply"),
+                    |app| format!("obelisk cloud app apply --app {app}"),
                 );
                 match command {
-                    CloudApp::Get => Self::App(None),
                     CloudApp::Status { .. } => Self::Status,
                     CloudApp::Events { .. } => Self::Events,
-                    CloudApp::New { .. } => Self::App(Some("App created.")),
+                    CloudApp::New { .. } => Self::App("App created."),
                     CloudApp::Apply { .. } | CloudApp::Enable { .. } | CloudApp::Disable { .. } => {
                         Self::Lifecycle
                     }
                     CloudApp::Delete { .. } => Self::Message("App deleted."),
                     CloudApp::Stage { .. } => Self::Staged("Configuration staged.", apply),
-                    CloudApp::Env(CloudEnv::List) => Self::Env,
-                    CloudApp::Env(CloudEnv::Set { .. } | CloudEnv::Unset { .. }) => {
-                        Self::Staged("Environment staged.", apply)
-                    }
-                    CloudApp::Secrets(CloudSecrets::List) => Self::Secrets,
-                    CloudApp::Secrets(CloudSecrets::Set { .. } | CloudSecrets::Unset { .. }) => {
-                        Self::Staged("Secret change staged.", apply)
-                    }
+                    CloudApp::Env {
+                        command: CloudEnv::List,
+                        ..
+                    } => Self::Env,
+                    CloudApp::Env {
+                        command: CloudEnv::Set { .. } | CloudEnv::Unset { .. },
+                        ..
+                    } => Self::Staged("Environment staged.", apply),
+                    CloudApp::Secrets {
+                        command: CloudSecrets::List,
+                        ..
+                    } => Self::Secrets,
+                    CloudApp::Secrets {
+                        command: CloudSecrets::Set { .. } | CloudSecrets::Unset { .. },
+                        ..
+                    } => Self::Staged("Secret change staged.", apply),
                     CloudApp::Fill { .. } => Self::Fill(apply),
-                    CloudApp::Endpoint { .. }
-                    | CloudApp::Deploy { .. }
-                    | CloudApp::Deployment(_)
-                    | CloudApp::Execution(_)
-                    | CloudApp::Component(_)
-                    | CloudApp::Admin(_)
-                    | CloudApp::Pull(_) => unreachable!("command has its own output"),
+                    CloudApp::Deploy { .. }
+                    | CloudApp::Deployment { .. }
+                    | CloudApp::Execution { .. }
+                    | CloudApp::Component { .. }
+                    | CloudApp::Admin { .. }
+                    | CloudApp::Pull { .. } => unreachable!("command has its own output"),
+                    CloudApp::List => unreachable!("matched above"),
                 }
             }
         }
@@ -82,9 +92,7 @@ impl Summary {
         let mut out = String::new();
         match self {
             Self::App(message) => {
-                if let Some(message) = message {
-                    let _ = writeln!(out, "{message}");
-                }
+                let _ = writeln!(out, "{message}");
                 app(&mut out, value);
             }
             Self::Lifecycle => {
@@ -122,16 +130,13 @@ impl Summary {
                     let _ = writeln!(out, "Memory: {memory} MB");
                 }
                 health(&mut out, value);
-                let _ = writeln!(
-                    out,
-                    "API: {}",
-                    match &value["api_ready"] {
-                        Value::Bool(true) => "ready",
-                        // Not checked: probing would wake the suspended Machine.
-                        Value::Null if idle => "resumes on request",
-                        _ => "unavailable",
-                    }
-                );
+                let api = match &value["api_ready"] {
+                    Value::Bool(true) => "ready",
+                    // Not checked: probing would wake the suspended Machine.
+                    Value::Null if idle => "resumes on request",
+                    _ => "unavailable",
+                };
+                endpoints(&mut out, &value["app"]["endpoints"], api);
             }
             Self::Events => {
                 if let Some(events) = value["events"]
@@ -305,6 +310,30 @@ fn health(out: &mut String, value: &Value) {
     }
 }
 
+/// Endpoints served by the applied configuration, with the API readiness.
+pub(super) fn endpoints(out: &mut String, endpoints: &Value, api: &str) {
+    if endpoints.is_null() {
+        let _ = writeln!(
+            out,
+            "API: {api}\nEndpoints are available after the first apply."
+        );
+        return;
+    }
+    for (key, label) in [
+        ("api", "API"),
+        ("webui", "Web UI"),
+        ("internal", "Internal webhooks"),
+        ("external", "External webhooks"),
+    ] {
+        if let Some(url) = endpoints[key].as_str() {
+            let _ = match key {
+                "api" if !api.is_empty() => writeln!(out, "{label}: {url} ({api})"),
+                _ => writeln!(out, "{label}: {url}"),
+            };
+        }
+    }
+}
+
 fn app(out: &mut String, value: &Value) {
     app_with_note(out, value, None);
 }
@@ -326,21 +355,18 @@ fn app_with_note(out: &mut String, value: &Value, note: Option<&str>) {
         if matches!(value["status"].as_str(), Some("running" | "stopped")) {
             let _ = writeln!(
                 out,
-                "Intended state: {desired}. Run `obelisk cloud app --app {} apply` to reach it.",
+                "Intended state: {desired}. Run `obelisk cloud app apply --app {}` to reach it.",
                 text(value, "app_name", "")
             );
         } else {
             let _ = writeln!(out, "Intended state: {desired}");
         }
     }
-    if let Some(url) = value["webhook_url"].as_str() {
-        let _ = writeln!(out, "URL: {url}");
-    }
     if value["potentially_stale"] == true {
         let name = text(value, "app_name", "");
         let _ = writeln!(
             out,
-            "Pending changes. Run `obelisk cloud app --app {name} apply` to apply them."
+            "Pending changes. Run `obelisk cloud app apply --app {name}` to apply them."
         );
     }
     if let Some(failure) = value["state"]["failure"].as_str() {
@@ -383,7 +409,7 @@ fn config_revisions(out: &mut String, value: &Value) {
                 .join(", ");
             let _ = writeln!(
                 out,
-                "{path}: differs from the staged configuration: {changes}. Run `obelisk cloud app --app {} stage` to stage it.",
+                "{path}: differs from the staged configuration: {changes}. Run `obelisk cloud app stage --app {}` to stage it.",
                 text(app, "app_name", "")
             );
         }

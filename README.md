@@ -232,8 +232,7 @@ obelisk cloud auth login
 obelisk generate new
 obelisk cloud app deploy
 obelisk cloud app status
-obelisk cloud app endpoint
-obelisk cloud app deployment apply
+obelisk cloud app apply
 obelisk cloud app execution list
 obelisk cloud app component list
 ```

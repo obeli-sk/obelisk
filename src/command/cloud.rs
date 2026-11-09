@@ -1,9 +1,9 @@
-use super::output::{print_json, print_value};
+use super::output::print_json;
 use crate::args::CloudToken;
 use crate::args::{
-    AdminArgs, App, AppArgs, ClientConnection, Cloud, CloudApp, CloudAppTarget, CloudApps,
-    CloudAppsArgs, CloudArgs, CloudCommandId, CloudEndpoint, CloudEnv, CloudSecrets, ComponentArgs,
-    Deployment, DeploymentArgs, ExecutionArgs, Subcommand,
+    AdminArgs, App, AppArgs, ClientConnection, Cloud, CloudApp, CloudAppTarget, CloudArgs,
+    CloudCommandId, CloudEnv, CloudSecrets, ComponentArgs, Deployment, DeploymentArgs,
+    ExecutionArgs, SelectedApp, Subcommand,
 };
 use crate::client::ClientStartup;
 use crate::config::app::{AppConfigToml, generate_app_name_hint, with_app_name};
@@ -377,7 +377,7 @@ async fn policy(path: &Path) -> anyhow::Result<LocalConfig> {
 /// App config path of commands that read one, with whether `-a` was given.
 fn app_config_path(command: &CloudApp) -> anyhow::Result<Option<(PathBuf, bool)>> {
     let (CloudApp::New { app_config, .. }
-    | CloudApp::Status { app_config }
+    | CloudApp::Status { app_config, .. }
     | CloudApp::Stage { app_config, .. }
     | CloudApp::Deploy { app_config, .. }
     | CloudApp::Apply { app_config, .. }
@@ -484,11 +484,12 @@ async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<V
 impl CloudArgs {
     fn selected_app(&self) -> Option<&str> {
         match &self.command {
-            Cloud::App(args) => args.app.as_deref(),
-            Cloud::Auth(_) | Cloud::Apps(_) | Cloud::Token(_) => None,
+            Cloud::App(args) => args.command.selected_app(),
+            Cloud::Auth(_) | Cloud::Token(_) => None,
         }
     }
-    async fn endpoints(&self) -> anyhow::Result<Value> {
+    /// The tenant API is reachable without asking the provisioner.
+    async fn direct_api_url(&self) -> anyhow::Result<String> {
         let name = app_name(self.selected_app()).await?;
         let domain = self
             .apps_domain
@@ -513,18 +514,7 @@ impl CloudArgs {
             hostname.len() + "internal--".len() <= 253,
             "App hostname exceeds the DNS length limit"
         );
-        Ok(json!({
-            "api_url": format!("https://api--{hostname}"),
-            "webhook_url": format!("https://{hostname}"),
-            "webui_url": format!("https://webui--{hostname}"),
-            "internal_url": format!("https://internal--{hostname}"),
-        }))
-    }
-    async fn direct_api_url(&self) -> anyhow::Result<String> {
-        Ok(self.endpoints().await?["api_url"]
-            .as_str()
-            .unwrap()
-            .to_owned())
+        Ok(format!("https://api--{hostname}"))
     }
     async fn run_app_api(self, api_url: String) -> anyhow::Result<()> {
         let startup = ClientStartup::cloud(api_url.clone(), self.api_token, self.verbose);
@@ -535,23 +525,23 @@ impl CloudArgs {
         };
         let command = match self.command {
             Cloud::App(CloudAppTarget {
-                command: CloudApp::Deployment(command),
+                command: CloudApp::Deployment { command, .. },
                 ..
             }) => Subcommand::Deployment(DeploymentArgs { command, token }),
             Cloud::App(CloudAppTarget {
-                command: CloudApp::Execution(command),
+                command: CloudApp::Execution { command, .. },
                 ..
             }) => Subcommand::Execution(ExecutionArgs { command, token }),
             Cloud::App(CloudAppTarget {
-                command: CloudApp::Component(command),
+                command: CloudApp::Component { command, .. },
                 ..
             }) => Subcommand::Component(ComponentArgs { command, token }),
             Cloud::App(CloudAppTarget {
-                command: CloudApp::Admin(command),
+                command: CloudApp::Admin { command, .. },
                 ..
             }) => Subcommand::Admin(AdminArgs { command, token }),
             Cloud::App(CloudAppTarget {
-                command: CloudApp::Pull(pull),
+                command: CloudApp::Pull { pull, .. },
                 ..
             }) => Subcommand::App(AppArgs {
                 command: App::Pull(pull),
@@ -565,9 +555,10 @@ impl CloudArgs {
         if matches!(
             &self.command,
             Cloud::App(CloudAppTarget {
-                command: CloudApp::Deployment(
-                    Deployment::Enqueue { .. } | Deployment::Apply { .. }
-                ),
+                command: CloudApp::Deployment {
+                    command: Deployment::Enqueue { .. } | Deployment::Apply { .. },
+                    ..
+                },
                 ..
             })
         ) {
@@ -584,20 +575,11 @@ impl CloudArgs {
         let credentials = match &mut self.command {
             Cloud::Auth(_) => unreachable!("handled above"),
             Cloud::Token(args) => &mut args.credentials,
-            Cloud::Apps(args) => &mut args.credentials,
             Cloud::App(args) => &mut args.credentials,
         };
         self.api_token = credentials.api_token.take();
         self.account = credentials.account.take();
-        // Printing endpoints is offline and needs no login.
-        let token_required = !matches!(
-            &self.command,
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::Endpoint { .. },
-                ..
-            })
-        );
-        auth::resolve(&mut self, token_required)?;
+        auth::resolve(&mut self)?;
         if matches!(
             &self.command,
             Cloud::App(CloudAppTarget {
@@ -607,57 +589,30 @@ impl CloudArgs {
         ) {
             return self.deploy().await;
         }
-        if let Cloud::App(CloudAppTarget {
-            command: CloudApp::Endpoint { command },
-            ..
-        }) = &self.command
-        {
-            if matches!(command, Some(CloudEndpoint::Api)) {
-                return print_value(&self.direct_api_url().await?, self.json);
-            }
-            let endpoints = self.endpoints().await?;
-            if let Some(command) = command {
-                let key = match command {
-                    CloudEndpoint::Api => "api_url",
-                    CloudEndpoint::Webhook => "webhook_url",
-                    CloudEndpoint::Webui => "webui_url",
-                    CloudEndpoint::Internal => "internal_url",
-                };
-                return print_value(
-                    &endpoints[key].as_str().context("Missing endpoint URL")?,
-                    self.json,
-                );
-            }
-            return if self.json {
-                print_json(&endpoints)
-            } else {
-                eprint!("{}", human_output(&endpoints));
-                Ok(())
-            };
-        }
         if matches!(
             self.command,
             Cloud::App(CloudAppTarget {
-                command: CloudApp::Deployment(_)
-                    | CloudApp::Execution(_)
-                    | CloudApp::Component(_)
-                    | CloudApp::Admin(_)
-                    | CloudApp::Pull(_),
+                command: CloudApp::Deployment { .. }
+                    | CloudApp::Execution { .. }
+                    | CloudApp::Component { .. }
+                    | CloudApp::Admin { .. }
+                    | CloudApp::Pull { .. },
                 ..
             })
         ) {
             let api_url = self.direct_api_url().await?;
             return self.run_app_api(api_url).await;
         }
-        if let Cloud::App(CloudAppTarget { app, command, .. }) = &mut self.command
-            && app.is_none()
+        if let Cloud::App(CloudAppTarget { command, .. }) = &mut self.command
+            && command.selected_app().is_none()
             && matches!(
                 command,
                 CloudApp::Stage { .. } | CloudApp::Fill { .. } | CloudApp::Apply { .. }
             )
             && let Some((path, _)) = app_config_path(command)?
         {
-            *app = Some(policy(&path).await?.config.app_name);
+            let app_name = policy(&path).await?.config.app_name;
+            command.selected_mut().expect("command selects an app").app = Some(app_name);
         }
         let json = self.json;
         let verbose = self.verbose;
@@ -682,8 +637,8 @@ impl CloudArgs {
         match self.command {
             Cloud::Auth(_) => unreachable!("handled in run"),
             Cloud::Token(args) => token_command(&client, args.command).await,
-            Cloud::Apps(CloudAppsArgs {
-                command: CloudApps::List,
+            Cloud::App(CloudAppTarget {
+                command: CloudApp::List,
                 ..
             }) => {
                 client
@@ -691,9 +646,9 @@ impl CloudArgs {
                     .await
             }
             Cloud::App(CloudAppTarget {
-                app,
                 command:
                     CloudApp::New {
+                        selected: SelectedApp { app },
                         app_config,
                         fill,
                         fill_non_interactive,
@@ -737,7 +692,8 @@ impl CloudArgs {
                     )
                     .await
             }
-            Cloud::App(CloudAppTarget { app, command, .. }) => {
+            Cloud::App(CloudAppTarget { command, .. }) => {
+                let app = command.selected_app().map(str::to_owned);
                 let config_path = app_config_path(&command)?;
                 let config = match &config_path {
                     // Status only reports a readable discovered ./app.toml.
@@ -758,12 +714,12 @@ impl CloudArgs {
                     matches!(command, CloudApp::Stage { .. }),
                 )?;
                 match command {
-                    CloudApp::Deployment(_)
-                    | CloudApp::Execution(_)
-                    | CloudApp::Component(_)
-                    | CloudApp::Admin(_)
-                    | CloudApp::Pull(_) => unreachable!("API commands are dispatched in run"),
-                    CloudApp::Get => client.app(name, Method::GET, &[], None, Kind::Read).await,
+                    CloudApp::Deployment { .. }
+                    | CloudApp::Execution { .. }
+                    | CloudApp::Component { .. }
+                    | CloudApp::Admin { .. }
+                    | CloudApp::Pull { .. } => unreachable!("API commands are dispatched in run"),
+                    CloudApp::List => unreachable!("handled above"),
                     CloudApp::Status { .. } => {
                         let mut value = client
                             .app(name, Method::GET, &["status"], None, Kind::Read)
@@ -778,7 +734,7 @@ impl CloudArgs {
                         }
                         Ok(value)
                     }
-                    CloudApp::Events { limit } => client.events(name, limit).await,
+                    CloudApp::Events { limit, .. } => client.events(name, limit).await,
                     CloudApp::Stage { command_id, .. } => {
                         let (config, _) = local.expect("stage requires an app config");
                         client
@@ -821,8 +777,11 @@ impl CloudArgs {
                             )?,
                         )
                         .await?;
-                        let origin =
-                            api_origin(current["api_url"].as_str().context("Missing api_url")?)?;
+                        let origin = api_origin(
+                            current["endpoints"]["api"]
+                                .as_str()
+                                .context("Missing endpoints.api")?,
+                        )?;
                         let startup = ClientStartup::cloud(
                             origin.as_str().trim_end_matches('/').to_owned(),
                             self.api_token.clone(),
@@ -847,17 +806,17 @@ impl CloudArgs {
                             )
                             .await
                     }
-                    CloudApp::Enable { command_id } => {
+                    CloudApp::Enable { command_id, .. } => {
                         client
                             .app(name, Method::POST, &["enable"], None, command_id.into())
                             .await
                     }
-                    CloudApp::Disable { command_id } => {
+                    CloudApp::Disable { command_id, .. } => {
                         client
                             .app(name, Method::POST, &["disable"], None, command_id.into())
                             .await
                     }
-                    CloudApp::Delete { command_id } => {
+                    CloudApp::Delete { command_id, .. } => {
                         client
                             .app(name, Method::DELETE, &[], None, command_id.into())
                             .await
@@ -888,16 +847,23 @@ impl CloudArgs {
                         };
                         fill_values(&client, name, &user_supplied_policy(&desired), values).await
                     }
-                    CloudApp::Env(CloudEnv::List) => {
+                    CloudApp::Env {
+                        command: CloudEnv::List,
+                        ..
+                    } => {
                         client
                             .app(name, Method::GET, &["env"], None, Kind::Read)
                             .await
                     }
-                    CloudApp::Env(CloudEnv::Set {
-                        name: key,
-                        value,
-                        command_id,
-                    }) => {
+                    CloudApp::Env {
+                        command:
+                            CloudEnv::Set {
+                                name: key,
+                                value,
+                                command_id,
+                            },
+                        ..
+                    } => {
                         config_name(&key)?;
                         client
                             .app(
@@ -909,10 +875,14 @@ impl CloudArgs {
                             )
                             .await
                     }
-                    CloudApp::Env(CloudEnv::Unset {
-                        name: key,
-                        command_id,
-                    }) => {
+                    CloudApp::Env {
+                        command:
+                            CloudEnv::Unset {
+                                name: key,
+                                command_id,
+                            },
+                        ..
+                    } => {
                         config_name(&key)?;
                         client
                             .app(
@@ -924,16 +894,23 @@ impl CloudArgs {
                             )
                             .await
                     }
-                    CloudApp::Secrets(CloudSecrets::List) => {
+                    CloudApp::Secrets {
+                        command: CloudSecrets::List,
+                        ..
+                    } => {
                         client
                             .app(name, Method::GET, &["secrets"], None, Kind::Secret)
                             .await
                     }
-                    CloudApp::Secrets(CloudSecrets::Set {
-                        name: key,
-                        from_env,
-                        stdin,
-                    }) => {
+                    CloudApp::Secrets {
+                        command:
+                            CloudSecrets::Set {
+                                name: key,
+                                from_env,
+                                stdin,
+                            },
+                        ..
+                    } => {
                         config_name(&key)?;
                         let value = if stdin {
                             let mut value = String::new();
@@ -960,14 +937,16 @@ impl CloudArgs {
                             .await?;
                         Ok(json!({"staged_secret":key}))
                     }
-                    CloudApp::Secrets(CloudSecrets::Unset { name: key }) => {
+                    CloudApp::Secrets {
+                        command: CloudSecrets::Unset { name: key },
+                        ..
+                    } => {
                         config_name(&key)?;
                         client
                             .app(name, Method::DELETE, &["secrets", &key], None, Kind::Secret)
                             .await?;
                         Ok(json!({"deleted_secret":key}))
                     }
-                    CloudApp::Endpoint { .. } => unreachable!("endpoint is printed in run"),
                     CloudApp::New { .. } => unreachable!(),
                     CloudApp::Deploy { .. } => unreachable!("deploy has its own output"),
                 }
@@ -1041,7 +1020,7 @@ async fn staged_or_local(
     let text = format!("{path} differs from staged configuration revision {revision}: {changes}\n");
     let Some(prompt) = prompt else {
         bail!(
-            "{text}Run `obelisk cloud app --app {name} stage -a {path}`, or pass `--staged` to use the staged configuration"
+            "{text}Run `obelisk cloud app stage --app {name} -a {path}`, or pass `--staged` to use the staged configuration"
         );
     };
     let choices = [
@@ -1187,7 +1166,7 @@ async fn fill_values(
         .context("Invalid cloud secrets response")?;
     let (report, pending) = collect_values(
         &format!(
-            "Run `obelisk cloud app --app {app} fill`, or retry with `--fill` or `--fill-non-interactive`"
+            "Run `obelisk cloud app fill --app {app}`, or retry with `--fill` or `--fill-non-interactive`"
         ),
         policy,
         env_values,
@@ -1607,7 +1586,7 @@ mod tests {
             }
             "/prefix/v1/apps/demo" => {
                 json!({
-                    "api_url":state.api_url.clone().unwrap_or_else(||format!("http://{}/prefix/tenant",headers["host"].to_str().unwrap())),
+                    "endpoints":{"api":state.api_url.clone().unwrap_or_else(||format!("http://{}/prefix/tenant",headers["host"].to_str().unwrap()))},
                     "policy":state.staged["policy"],
                     "cloud":state.staged["cloud"],
                     "revision":state.revision,
@@ -1683,10 +1662,12 @@ mod tests {
     pub(super) fn args(origin: &str, command: &[&str]) -> CloudArgs {
         let mut args = vec!["obelisk", "cloud"];
         let position = command.iter().position(|arg| *arg == "app");
-        if let Some(position) = position {
-            args.extend_from_slice(&command[..=position]);
+        if let Some(position) = position
+            && command.get(position + 1) != Some(&"list")
+        {
+            args.extend_from_slice(&command[..=position + 1]);
             args.extend_from_slice(&["--app", "demo"]);
-            args.extend_from_slice(&command[position + 1..]);
+            args.extend_from_slice(&command[position + 2..]);
         } else {
             args.extend_from_slice(command);
         }
@@ -1709,14 +1690,17 @@ mod tests {
             assert!(matches!(
                 args.command,
                 Cloud::App(CloudAppTarget {
-                    command: CloudApp::Admin(crate::args::Admin::NodeRunId { json: true }),
+                    command: CloudApp::Admin {
+                        command: crate::args::Admin::NodeRunId { json: true },
+                        ..
+                    },
                     ..
                 })
             ));
         }
     }
     #[tokio::test]
-    async fn cloud_endpoints_reject_invalid_domains() {
+    async fn cloud_api_url_rejects_invalid_domains() {
         for domain in [
             "",
             "https://obelisk.works",
@@ -1726,9 +1710,9 @@ mod tests {
             "-invalid.example",
             "bad..example",
         ] {
-            let mut args = args("http://127.0.0.1:1", &["app", "endpoint"]);
+            let mut args = args("http://127.0.0.1:1", &["app", "status"]);
             args.apps_domain = Some(domain.to_owned());
-            assert!(args.endpoints().await.is_err(), "{domain}");
+            assert!(args.direct_api_url().await.is_err(), "{domain}");
         }
     }
 
@@ -1817,7 +1801,7 @@ mod tests {
     #[tokio::test]
     async fn local_config_differing_from_staged_needs_a_choice() {
         let (origin, state, task) = server().await;
-        let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
+        let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
         let config =
             LocalConfig::parse("app_name='demo'\n[public_env]\nREGION={optional=true}\n".into())
                 .unwrap();
@@ -1839,7 +1823,7 @@ mod tests {
             "{error}"
         );
         assert!(
-            error.contains("stage -a app.toml`, or pass `--staged`"),
+            error.contains("stage --app demo -a app.toml`, or pass `--staged`"),
             "{error}"
         );
         assert_eq!(pick("u").await.unwrap(), (staged, 4));
@@ -1996,7 +1980,7 @@ mod tests {
     async fn cloud_fill_asks_per_value_and_collects_before_writing() {
         let (origin, state, task) = server().await;
         state.lock().unwrap().existing_config = true;
-        let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
+        let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
         let policy = json!({
             "public_env":["PATH", "ALREADY_SET", {"name":"HOME", "optional":true}, {"name":"OBELISK_CLOUD_TEST_EMPTY", "optional":true}, {"name":"SELF_API", "type":"internal", "source":"api-url"}, {"name":"BROWSER_UI", "type":"internal", "source":"webui-url"}],
             "secrets":{"OBELISK_CLOUD_TEST_PROMPT_SECRET":{},"ALREADY_SET":{},"HOME":{"optional":true},"OBELISK_API_TOKEN":{"type":"internal"}}
@@ -2131,7 +2115,7 @@ mod tests {
     #[tokio::test]
     async fn cloud_fill_validates_before_mutation_and_secret_errors_are_redacted() {
         let (origin, state, task) = server().await;
-        let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
+        let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
         let policy = client
             .app("demo", Method::GET, &["policy"], None, Kind::Read)
             .await
@@ -2152,7 +2136,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("Run `obelisk cloud app --app demo stage -a"),
+                .contains("Run `obelisk cloud app stage --app demo -a"),
             "{error}"
         );
         assert!(

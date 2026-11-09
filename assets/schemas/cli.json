@@ -142,27 +142,8 @@
           ]
         },
         {
-          "name": "apps",
-          "about": "List apps owned by the authenticated user",
-          "options": [
-            {
-              "name": "--api-token",
-              "help": "Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`"
-            },
-            {
-              "name": "--account",
-              "help": "Saved account name or alias to use for this command instead of the default one"
-            }
-          ],
-          "subcommands": [
-            {
-              "name": "list"
-            }
-          ]
-        },
-        {
           "name": "app",
-          "about": "Manage an app and its deployments, executions and configuration",
+          "about": "List apps or manage one and its deployments, executions and configuration",
           "options": [
             {
               "name": "--api-token",
@@ -171,16 +152,22 @@
             {
               "name": "--account",
               "help": "Saved account name or alias to use for this command instead of the default one"
-            },
-            {
-              "name": "--app",
-              "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
             }
           ],
           "subcommands": [
+            {
+              "name": "list",
+              "about": "List apps owned by the authenticated user"
+            },
             {
               "name": "deployment",
               "about": "Manage deployments through the selected app's API",
+              "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                }
+              ],
               "subcommands": [
                 {
                   "name": "submit",
@@ -398,6 +385,12 @@
             {
               "name": "execution",
               "about": "Manage executions through the selected app's API",
+              "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                }
+              ],
               "subcommands": [
                 {
                   "name": "list",
@@ -807,6 +800,12 @@
             {
               "name": "component",
               "about": "Inspect components or manage OCI artifacts",
+              "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                }
+              ],
               "subcommands": [
                 {
                   "name": "list",
@@ -912,6 +911,12 @@
             {
               "name": "admin",
               "about": "Perform operator-only destructive maintenance on the selected app",
+              "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                }
+              ],
               "subcommands": [
                 {
                   "name": "executions",
@@ -1123,6 +1128,10 @@
               "about": "Write the running app config as `app.toml`, plus the active deployment and its source files",
               "options": [
                 {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
+                {
                   "name": "--output",
                   "short": "o",
                   "help": "Directory to write `app.toml`, `deployment.toml` and source files into. Defaults to the current directory",
@@ -1146,6 +1155,10 @@
               "about": "Create a stopped app; apply explicitly to start it",
               "options": [
                 {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
+                {
                   "name": "--app-config",
                   "short": "a",
                   "help": "App config path; defaults to ./app.toml if present",
@@ -1168,13 +1181,13 @@
               ]
             },
             {
-              "name": "get",
-              "about": "Inspect the app row"
-            },
-            {
               "name": "status",
-              "about": "Inspect management, Machine and target API health",
+              "about": "Show the app's state, endpoints, Machine and API health",
               "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
                 {
                   "name": "--app-config",
                   "short": "a",
@@ -1190,6 +1203,10 @@
               "about": "List recent lifecycle and Machine events, newest first",
               "options": [
                 {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
+                {
                   "name": "--limit",
                   "short": "n",
                   "help": "Number of events to show"
@@ -1200,6 +1217,10 @@
               "name": "stage",
               "about": "Stage app policy and cloud settings without restarting the VM",
               "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
                 {
                   "name": "--app-config",
                   "short": "a",
@@ -1218,6 +1239,10 @@
               "name": "deploy",
               "about": "Publish the local project, creating or configuring the app and activating its deployment",
               "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
                 {
                   "name": "--app-config",
                   "short": "a",
@@ -1253,6 +1278,10 @@
               "about": "Apply the staged configuration with the currently active deployment",
               "options": [
                 {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
+                {
                   "name": "--app-config",
                   "short": "a",
                   "help": "App config path compared with the staged configuration; defaults to ./app.toml if present",
@@ -1286,6 +1315,10 @@
               "name": "enable",
               "options": [
                 {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
+                {
                   "name": "--command-id",
                   "help": "Reuse this root execution ID when retrying the command"
                 }
@@ -1294,6 +1327,10 @@
             {
               "name": "disable",
               "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
                 {
                   "name": "--command-id",
                   "help": "Reuse this root execution ID when retrying the command"
@@ -1304,6 +1341,10 @@
               "name": "delete",
               "options": [
                 {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
+                {
                   "name": "--command-id",
                   "help": "Reuse this root execution ID when retrying the command"
                 }
@@ -1313,6 +1354,10 @@
               "name": "fill",
               "about": "Interactively stage declared env vars and secrets, offering process environment values",
               "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
                 {
                   "name": "--app-config",
                   "short": "a",
@@ -1333,6 +1378,12 @@
             },
             {
               "name": "env",
+              "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                }
+              ],
               "subcommands": [
                 {
                   "name": "list"
@@ -1375,6 +1426,12 @@
             },
             {
               "name": "secrets",
+              "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                }
+              ],
               "subcommands": [
                 {
                   "name": "list",
@@ -1407,24 +1464,6 @@
                       "required": true
                     }
                   ]
-                }
-              ]
-            },
-            {
-              "name": "endpoint",
-              "about": "Show all endpoints, or select the API, webhook, Web UI or internal webhook URL",
-              "subcommands": [
-                {
-                  "name": "api"
-                },
-                {
-                  "name": "webhook"
-                },
-                {
-                  "name": "webui"
-                },
-                {
-                  "name": "internal"
                 }
               ]
             }
