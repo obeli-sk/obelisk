@@ -16,7 +16,6 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "MIT",
-    "CDLA-Permissive-2.0",
     "MPL-2.0",
     "Zlib",
     "Unicode-3.0",
@@ -65,8 +64,6 @@ skip = [
     { name = "block-buffer", version = "0.10" },
     { name = "crypto-common", version = "0.1" },
     { name = "cpufeatures", version = "0.2" },
-    # jsonwebtoken 10 (required by oci-client 0.17) uses signature 2; ed25519-dalek 3 uses signature 3
-    { name = "signature", version = "2" },
     # oci-wasm uses wit-component 0.253 (older wasm-tools suite)
     { name = "wasmparser", version = "0.253" },
     { name = "wasm-encoder", version = "0.253" },
@@ -101,9 +98,4 @@ skip = [
 ignore = [
     # paste is unmaintained; also pulled in by utoipa-axum so unavoidable
     { id = "RUSTSEC-2024-0436" },
-    # zstd 0.13 pinned by wasmtime-internal-cache, which only uses bulk encode_all/decode_all
-    # without default features: no with_context streams, seekable, or legacy decoding.
-    { id = "RUSTSEC-2026-0391" },
-    { id = "RUSTSEC-2026-0398" },
-    { id = "RUSTSEC-2026-0403" },
 ]
