@@ -188,7 +188,7 @@ async fn cloud_output_and_endpoint_selection() {
         );
     }
     let status = run(&["app", "status"]).await.1;
-    let apply = "Run `obelisk cloud app --app demo apply`";
+    let apply = "Run `obelisk cloud app apply --app demo`";
     assert!(
         status.contains(&format!("Intended state: running. {apply} to reach it.")),
         "{status}"
@@ -207,7 +207,7 @@ async fn cloud_output_and_endpoint_selection() {
     assert!(run(&["app", "events"]).await.1.contains("limit 5"));
     for command in [
         vec!["app", "get"],
-        vec!["apps", "list"],
+        vec!["app", "list"],
         vec!["token", "list"],
     ] {
         let (stdout, text) = run(&command).await;
@@ -217,9 +217,9 @@ async fn cloud_output_and_endpoint_selection() {
         let parsed: Value = serde_json::from_str(&run(&json_command).await.0).unwrap();
         assert_eq!(
             parsed,
-            match command[0] {
-                "app" => app.clone(),
-                "apps" => json!({"apps":[app]}),
+            match command[..] {
+                ["app", "get"] => app.clone(),
+                ["app", "list"] => json!({"apps":[app]}),
                 _ => json!({"tokens":[]}),
             }
         );

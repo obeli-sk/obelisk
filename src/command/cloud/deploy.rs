@@ -17,9 +17,9 @@ impl CloudArgs {
         };
         let config_path = app_config_path(&target.command)?;
         let Cloud::App(CloudAppTarget {
-            app,
             command:
                 CloudApp::Deploy {
+                    selected: SelectedApp { app },
                     deployment,
                     fill: interactive,
                     fill_non_interactive,
@@ -131,7 +131,7 @@ impl CloudArgs {
             description,
             None,
         ).await
-            .with_context(|| format!("Deployment staging failed; inspect `obelisk cloud app --app {name} status` and retry deploy"))?;
+            .with_context(|| format!("Deployment staging failed; inspect `obelisk cloud app status --app {name}` and retry deploy"))?;
         let filled = if is_new {
             json!({"declarations":[]})
         } else {
@@ -165,7 +165,7 @@ impl CloudArgs {
             .collect::<Vec<_>>();
         if !interactive && !unset.is_empty() {
             eprintln!(
-                "Optional configuration not set: {}. Run `obelisk cloud app --app {name} fill` or `deploy --fill` to set it.",
+                "Optional configuration not set: {}. Run `obelisk cloud app fill --app {name}` or `deploy --fill` to set it.",
                 unset.join(", ")
             );
         }
@@ -188,7 +188,7 @@ impl CloudArgs {
         }
         ensure!(
             current["status"] == "running",
-            "App is {}; inspect it with `obelisk cloud app --app {name} status`",
+            "App is {}; inspect it with `obelisk cloud app status --app {name}`",
             current["status"]
         );
         let result = json!({"app":current,"deployment_id":id,"outcomes":outcomes});
@@ -462,7 +462,7 @@ mod tests {
                 let Cloud::App(target) = &mut args.command else {
                     unreachable!()
                 };
-                target.app = None;
+                target.command.selected_mut().unwrap().app = None;
             }
             let result = if scenario == "new-values" {
                 let Cloud::App(target) = &mut args.command else {

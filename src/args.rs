@@ -1364,7 +1364,7 @@ mod tests {
                 | Subcommand::Cloud(CloudArgs {
                     command:
                         Cloud::App(CloudAppTarget {
-                            command: CloudApp::Deployment(command),
+                            command: CloudApp::Deployment { command, .. },
                             ..
                         }),
                     ..
@@ -1460,7 +1460,11 @@ mod tests {
                 }
                 Subcommand::Cloud(args) => {
                     let Cloud::App(CloudAppTarget {
-                        command: CloudApp::Deployment(Deployment::Verify(verify)),
+                        command:
+                            CloudApp::Deployment {
+                                command: Deployment::Verify(verify),
+                                ..
+                            },
                         ..
                     }) = args.command
                     else {
@@ -1528,7 +1532,7 @@ mod tests {
                 .map_err(|err| err.kind())
         };
         for flag in [["--api-token", "t"], ["--account", "a@b"]] {
-            for command in [["token", "list"], ["apps", "list"]] {
+            for command in [["token", "list"], ["app", "list"]] {
                 assert_eq!(parse(&[command[0], command[1], flag[0], flag[1]]), Ok(()));
             }
             assert_eq!(parse(&["app", "status", flag[0], flag[1]]), Ok(()));
@@ -1832,22 +1836,18 @@ pub(crate) struct CloudTokenArgs {
 }
 
 #[derive(Debug, clap::Args)]
-pub(crate) struct CloudAppsArgs {
-    #[command(flatten)]
-    pub(crate) credentials: CloudCredentials,
-    #[command(subcommand)]
-    pub(crate) command: CloudApps,
-}
-
-#[derive(Debug, clap::Args)]
 pub(crate) struct CloudAppTarget {
     #[command(flatten)]
     pub(crate) credentials: CloudCredentials,
+    #[command(subcommand)]
+    pub(crate) command: CloudApp,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct SelectedApp {
     /// Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config.
     #[arg(long, global = true, env = "OBELISK_APP_NAME", value_name = "NAME")]
     pub(crate) app: Option<String>,
-    #[command(subcommand)]
-    pub(crate) command: CloudApp,
 }
 
 #[derive(Debug, clap::Args)]
@@ -1864,9 +1864,7 @@ pub(crate) enum Cloud {
     Auth(CloudAuth),
     /// Create, inspect and revoke cloud bearer tokens.
     Token(CloudTokenArgs),
-    /// List apps owned by the authenticated user.
-    Apps(CloudAppsArgs),
-    /// Manage an app and its deployments, executions and configuration.
+    /// List apps or manage one and its deployments, executions and configuration.
     App(CloudAppTarget),
 }
 
@@ -1902,11 +1900,6 @@ pub(crate) enum CloudAuth {
 }
 
 #[derive(Debug, clap::Subcommand)]
-pub(crate) enum CloudApps {
-    List,
-}
-
-#[derive(Debug, clap::Subcommand)]
 pub(crate) enum CloudToken {
     /// Create a token; defaults to account-wide access, including future apps.
     New {
@@ -1933,22 +1926,47 @@ pub(crate) enum CloudToken {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum CloudApp {
+    /// List apps owned by the authenticated user.
+    List,
     /// Manage deployments through the selected app's API.
-    #[command(subcommand)]
-    Deployment(Deployment),
+    Deployment {
+        #[command(flatten)]
+        selected: SelectedApp,
+        #[command(subcommand)]
+        command: Deployment,
+    },
     /// Manage executions through the selected app's API.
-    #[command(subcommand)]
-    Execution(Execution),
+    Execution {
+        #[command(flatten)]
+        selected: SelectedApp,
+        #[command(subcommand)]
+        command: Execution,
+    },
     /// Inspect components or manage OCI artifacts.
-    #[command(subcommand)]
-    Component(Component),
+    Component {
+        #[command(flatten)]
+        selected: SelectedApp,
+        #[command(subcommand)]
+        command: Component,
+    },
     /// Perform operator-only destructive maintenance on the selected app.
-    #[command(subcommand)]
-    Admin(Admin),
+    Admin {
+        #[command(flatten)]
+        selected: SelectedApp,
+        #[command(subcommand)]
+        command: Admin,
+    },
     /// Write the running app config as `app.toml`, plus the active deployment and its source files.
-    Pull(AppPull),
+    Pull {
+        #[command(flatten)]
+        selected: SelectedApp,
+        #[command(flatten)]
+        pull: AppPull,
+    },
     /// Create a stopped app; apply explicitly to start it.
     New {
+        #[command(flatten)]
+        selected: SelectedApp,
         /// App config path; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
@@ -1962,21 +1980,30 @@ pub(crate) enum CloudApp {
         command_id: CloudCommandId,
     },
     /// Inspect the app row.
-    Get,
+    Get {
+        #[command(flatten)]
+        selected: SelectedApp,
+    },
     /// Inspect management, Machine and target API health.
     Status {
+        #[command(flatten)]
+        selected: SelectedApp,
         /// App config path compared with the staged configuration; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
     },
     /// List recent lifecycle and Machine events, newest first.
     Events {
+        #[command(flatten)]
+        selected: SelectedApp,
         /// Number of events to show.
         #[arg(short = 'n', long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=50))]
         limit: u8,
     },
     /// Stage app policy and cloud settings without restarting the VM.
     Stage {
+        #[command(flatten)]
+        selected: SelectedApp,
         /// App config path; defaults to ./app.toml.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
@@ -1985,6 +2012,8 @@ pub(crate) enum CloudApp {
     },
     /// Publish the local project, creating or configuring the app and activating its deployment.
     Deploy {
+        #[command(flatten)]
+        selected: SelectedApp,
         /// App config path; defaults to ./app.toml.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
@@ -2004,6 +2033,8 @@ pub(crate) enum CloudApp {
     },
     /// Apply the staged configuration with the currently active deployment.
     Apply {
+        #[command(flatten)]
+        selected: SelectedApp,
         /// App config path compared with the staged configuration; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
@@ -2024,18 +2055,26 @@ pub(crate) enum CloudApp {
     },
     Enable {
         #[command(flatten)]
+        selected: SelectedApp,
+        #[command(flatten)]
         command_id: CloudCommandId,
     },
     Disable {
+        #[command(flatten)]
+        selected: SelectedApp,
         #[command(flatten)]
         command_id: CloudCommandId,
     },
     Delete {
         #[command(flatten)]
+        selected: SelectedApp,
+        #[command(flatten)]
         command_id: CloudCommandId,
     },
     /// Interactively stage declared env vars and secrets, offering process environment values.
     Fill {
+        #[command(flatten)]
+        selected: SelectedApp,
         /// App config path compared with the staged configuration; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
@@ -2046,15 +2085,62 @@ pub(crate) enum CloudApp {
         #[arg(long)]
         non_interactive: bool,
     },
-    #[command(subcommand)]
-    Env(CloudEnv),
-    #[command(subcommand)]
-    Secrets(CloudSecrets),
+    Env {
+        #[command(flatten)]
+        selected: SelectedApp,
+        #[command(subcommand)]
+        command: CloudEnv,
+    },
+    Secrets {
+        #[command(flatten)]
+        selected: SelectedApp,
+        #[command(subcommand)]
+        command: CloudSecrets,
+    },
     /// Show all endpoints, or select the API, webhook, Web UI or internal webhook URL.
     Endpoint {
+        #[command(flatten)]
+        selected: SelectedApp,
         #[command(subcommand)]
         command: Option<CloudEndpoint>,
     },
+}
+
+// Binds by reference or mutably, following `$app`.
+macro_rules! cloud_app_selected {
+    ($app:expr) => {
+        match $app {
+            CloudApp::List => None,
+            CloudApp::Deployment { selected, .. }
+            | CloudApp::Execution { selected, .. }
+            | CloudApp::Component { selected, .. }
+            | CloudApp::Admin { selected, .. }
+            | CloudApp::Pull { selected, .. }
+            | CloudApp::New { selected, .. }
+            | CloudApp::Get { selected }
+            | CloudApp::Status { selected, .. }
+            | CloudApp::Events { selected, .. }
+            | CloudApp::Stage { selected, .. }
+            | CloudApp::Deploy { selected, .. }
+            | CloudApp::Apply { selected, .. }
+            | CloudApp::Enable { selected, .. }
+            | CloudApp::Disable { selected, .. }
+            | CloudApp::Delete { selected, .. }
+            | CloudApp::Fill { selected, .. }
+            | CloudApp::Env { selected, .. }
+            | CloudApp::Secrets { selected, .. }
+            | CloudApp::Endpoint { selected, .. } => Some(selected),
+        }
+    };
+}
+
+impl CloudApp {
+    pub(crate) fn selected_app(&self) -> Option<&str> {
+        cloud_app_selected!(self).and_then(|selected| selected.app.as_deref())
+    }
+    pub(crate) fn selected_mut(&mut self) -> Option<&mut SelectedApp> {
+        cloud_app_selected!(self)
+    }
 }
 
 #[derive(Debug, Clone, Copy, clap::Subcommand)]

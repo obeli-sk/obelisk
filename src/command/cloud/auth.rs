@@ -603,12 +603,12 @@ mod tests {
             account: account.map(str::to_owned),
             api_url: None,
             apps_domain: None,
-            command: crate::args::Cloud::Apps(crate::args::CloudAppsArgs {
+            command: crate::args::Cloud::App(crate::args::CloudAppTarget {
                 credentials: crate::args::CloudCredentials {
                     api_token: None,
                     account: None,
                 },
-                command: crate::args::CloudApps::List,
+                command: crate::args::CloudApp::List,
             }),
         }
     }
