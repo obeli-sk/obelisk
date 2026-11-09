@@ -1,9 +1,9 @@
-use super::output::{print_json, print_value};
+use super::output::print_json;
 use crate::args::CloudToken;
 use crate::args::{
     AdminArgs, App, AppArgs, ClientConnection, Cloud, CloudApp, CloudAppTarget, CloudArgs,
-    CloudCommandId, CloudEndpoint, CloudEnv, CloudSecrets, ComponentArgs, Deployment,
-    DeploymentArgs, ExecutionArgs, SelectedApp, Subcommand,
+    CloudCommandId, CloudEnv, CloudSecrets, ComponentArgs, Deployment, DeploymentArgs,
+    ExecutionArgs, SelectedApp, Subcommand,
 };
 use crate::client::ClientStartup;
 use crate::config::app::{AppConfigToml, generate_app_name_hint, with_app_name};
@@ -488,7 +488,8 @@ impl CloudArgs {
             Cloud::Auth(_) | Cloud::Token(_) => None,
         }
     }
-    async fn endpoints(&self) -> anyhow::Result<Value> {
+    /// The tenant API is reachable without asking the provisioner.
+    async fn direct_api_url(&self) -> anyhow::Result<String> {
         let name = app_name(self.selected_app()).await?;
         let domain = self
             .apps_domain
@@ -513,18 +514,7 @@ impl CloudArgs {
             hostname.len() + "internal--".len() <= 253,
             "App hostname exceeds the DNS length limit"
         );
-        Ok(json!({
-            "api_url": format!("https://api--{hostname}"),
-            "webhook_url": format!("https://{hostname}"),
-            "webui_url": format!("https://webui--{hostname}"),
-            "internal_url": format!("https://internal--{hostname}"),
-        }))
-    }
-    async fn direct_api_url(&self) -> anyhow::Result<String> {
-        Ok(self.endpoints().await?["api_url"]
-            .as_str()
-            .unwrap()
-            .to_owned())
+        Ok(format!("https://api--{hostname}"))
     }
     async fn run_app_api(self, api_url: String) -> anyhow::Result<()> {
         let startup = ClientStartup::cloud(api_url.clone(), self.api_token, self.verbose);
@@ -589,15 +579,7 @@ impl CloudArgs {
         };
         self.api_token = credentials.api_token.take();
         self.account = credentials.account.take();
-        // Printing endpoints is offline and needs no login.
-        let token_required = !matches!(
-            &self.command,
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::Endpoint { .. },
-                ..
-            })
-        );
-        auth::resolve(&mut self, token_required)?;
+        auth::resolve(&mut self)?;
         if matches!(
             &self.command,
             Cloud::App(CloudAppTarget {
@@ -606,34 +588,6 @@ impl CloudArgs {
             })
         ) {
             return self.deploy().await;
-        }
-        if let Cloud::App(CloudAppTarget {
-            command: CloudApp::Endpoint { command, .. },
-            ..
-        }) = &self.command
-        {
-            if matches!(command, Some(CloudEndpoint::Api)) {
-                return print_value(&self.direct_api_url().await?, self.json);
-            }
-            let endpoints = self.endpoints().await?;
-            if let Some(command) = command {
-                let key = match command {
-                    CloudEndpoint::Api => "api_url",
-                    CloudEndpoint::Webhook => "webhook_url",
-                    CloudEndpoint::Webui => "webui_url",
-                    CloudEndpoint::Internal => "internal_url",
-                };
-                return print_value(
-                    &endpoints[key].as_str().context("Missing endpoint URL")?,
-                    self.json,
-                );
-            }
-            return if self.json {
-                print_json(&endpoints)
-            } else {
-                eprint!("{}", human_output(&endpoints));
-                Ok(())
-            };
         }
         if matches!(
             self.command,
@@ -766,9 +720,6 @@ impl CloudArgs {
                     | CloudApp::Admin { .. }
                     | CloudApp::Pull { .. } => unreachable!("API commands are dispatched in run"),
                     CloudApp::List => unreachable!("handled above"),
-                    CloudApp::Get { .. } => {
-                        client.app(name, Method::GET, &[], None, Kind::Read).await
-                    }
                     CloudApp::Status { .. } => {
                         let mut value = client
                             .app(name, Method::GET, &["status"], None, Kind::Read)
@@ -826,8 +777,11 @@ impl CloudArgs {
                             )?,
                         )
                         .await?;
-                        let origin =
-                            api_origin(current["api_url"].as_str().context("Missing api_url")?)?;
+                        let origin = api_origin(
+                            current["endpoints"]["api"]
+                                .as_str()
+                                .context("Missing endpoints.api")?,
+                        )?;
                         let startup = ClientStartup::cloud(
                             origin.as_str().trim_end_matches('/').to_owned(),
                             self.api_token.clone(),
@@ -993,7 +947,6 @@ impl CloudArgs {
                             .await?;
                         Ok(json!({"deleted_secret":key}))
                     }
-                    CloudApp::Endpoint { .. } => unreachable!("endpoint is printed in run"),
                     CloudApp::New { .. } => unreachable!(),
                     CloudApp::Deploy { .. } => unreachable!("deploy has its own output"),
                 }
@@ -1633,7 +1586,7 @@ mod tests {
             }
             "/prefix/v1/apps/demo" => {
                 json!({
-                    "api_url":state.api_url.clone().unwrap_or_else(||format!("http://{}/prefix/tenant",headers["host"].to_str().unwrap())),
+                    "endpoints":{"api":state.api_url.clone().unwrap_or_else(||format!("http://{}/prefix/tenant",headers["host"].to_str().unwrap()))},
                     "policy":state.staged["policy"],
                     "cloud":state.staged["cloud"],
                     "revision":state.revision,
@@ -1747,7 +1700,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn cloud_endpoints_reject_invalid_domains() {
+    async fn cloud_api_url_rejects_invalid_domains() {
         for domain in [
             "",
             "https://obelisk.works",
@@ -1757,9 +1710,9 @@ mod tests {
             "-invalid.example",
             "bad..example",
         ] {
-            let mut args = args("http://127.0.0.1:1", &["app", "endpoint"]);
+            let mut args = args("http://127.0.0.1:1", &["app", "status"]);
             args.apps_domain = Some(domain.to_owned());
-            assert!(args.endpoints().await.is_err(), "{domain}");
+            assert!(args.direct_api_url().await.is_err(), "{domain}");
         }
     }
 
@@ -1848,7 +1801,7 @@ mod tests {
     #[tokio::test]
     async fn local_config_differing_from_staged_needs_a_choice() {
         let (origin, state, task) = server().await;
-        let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
+        let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
         let config =
             LocalConfig::parse("app_name='demo'\n[public_env]\nREGION={optional=true}\n".into())
                 .unwrap();
@@ -2027,7 +1980,7 @@ mod tests {
     async fn cloud_fill_asks_per_value_and_collects_before_writing() {
         let (origin, state, task) = server().await;
         state.lock().unwrap().existing_config = true;
-        let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
+        let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
         let policy = json!({
             "public_env":["PATH", "ALREADY_SET", {"name":"HOME", "optional":true}, {"name":"OBELISK_CLOUD_TEST_EMPTY", "optional":true}, {"name":"SELF_API", "type":"internal", "source":"api-url"}, {"name":"BROWSER_UI", "type":"internal", "source":"webui-url"}],
             "secrets":{"OBELISK_CLOUD_TEST_PROMPT_SECRET":{},"ALREADY_SET":{},"HOME":{"optional":true},"OBELISK_API_TOKEN":{"type":"internal"}}
@@ -2162,7 +2115,7 @@ mod tests {
     #[tokio::test]
     async fn cloud_fill_validates_before_mutation_and_secret_errors_are_redacted() {
         let (origin, state, task) = server().await;
-        let client = Client::new(&args(&origin, &["app", "get"])).unwrap();
+        let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
         let policy = client
             .app("demo", Method::GET, &["policy"], None, Kind::Read)
             .await

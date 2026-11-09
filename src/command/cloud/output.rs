@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::fmt::Write as _;
 
 pub(super) enum Summary {
-    App(Option<&'static str>),
+    App(&'static str),
     Apps,
     Lifecycle,
     Status,
@@ -49,10 +49,9 @@ impl From<&Cloud> for Summary {
                     |app| format!("obelisk cloud app apply --app {app}"),
                 );
                 match command {
-                    CloudApp::Get { .. } => Self::App(None),
                     CloudApp::Status { .. } => Self::Status,
                     CloudApp::Events { .. } => Self::Events,
-                    CloudApp::New { .. } => Self::App(Some("App created.")),
+                    CloudApp::New { .. } => Self::App("App created."),
                     CloudApp::Apply { .. } | CloudApp::Enable { .. } | CloudApp::Disable { .. } => {
                         Self::Lifecycle
                     }
@@ -75,8 +74,7 @@ impl From<&Cloud> for Summary {
                         ..
                     } => Self::Staged("Secret change staged.", apply),
                     CloudApp::Fill { .. } => Self::Fill(apply),
-                    CloudApp::Endpoint { .. }
-                    | CloudApp::Deploy { .. }
+                    CloudApp::Deploy { .. }
                     | CloudApp::Deployment { .. }
                     | CloudApp::Execution { .. }
                     | CloudApp::Component { .. }
@@ -94,9 +92,7 @@ impl Summary {
         let mut out = String::new();
         match self {
             Self::App(message) => {
-                if let Some(message) = message {
-                    let _ = writeln!(out, "{message}");
-                }
+                let _ = writeln!(out, "{message}");
                 app(&mut out, value);
             }
             Self::Lifecycle => {
@@ -134,16 +130,13 @@ impl Summary {
                     let _ = writeln!(out, "Memory: {memory} MB");
                 }
                 health(&mut out, value);
-                let _ = writeln!(
-                    out,
-                    "API: {}",
-                    match &value["api_ready"] {
-                        Value::Bool(true) => "ready",
-                        // Not checked: probing would wake the suspended Machine.
-                        Value::Null if idle => "resumes on request",
-                        _ => "unavailable",
-                    }
-                );
+                let api = match &value["api_ready"] {
+                    Value::Bool(true) => "ready",
+                    // Not checked: probing would wake the suspended Machine.
+                    Value::Null if idle => "resumes on request",
+                    _ => "unavailable",
+                };
+                endpoints(&mut out, &value["app"]["endpoints"], api);
             }
             Self::Events => {
                 if let Some(events) = value["events"]
@@ -317,6 +310,30 @@ fn health(out: &mut String, value: &Value) {
     }
 }
 
+/// Endpoints served by the applied configuration, with the API readiness.
+pub(super) fn endpoints(out: &mut String, endpoints: &Value, api: &str) {
+    if endpoints.is_null() {
+        let _ = writeln!(
+            out,
+            "API: {api}\nEndpoints are available after the first apply."
+        );
+        return;
+    }
+    for (key, label) in [
+        ("api", "API"),
+        ("webui", "Web UI"),
+        ("internal", "Internal webhooks"),
+        ("external", "External webhooks"),
+    ] {
+        if let Some(url) = endpoints[key].as_str() {
+            let _ = match key {
+                "api" if !api.is_empty() => writeln!(out, "{label}: {url} ({api})"),
+                _ => writeln!(out, "{label}: {url}"),
+            };
+        }
+    }
+}
+
 fn app(out: &mut String, value: &Value) {
     app_with_note(out, value, None);
 }
@@ -344,9 +361,6 @@ fn app_with_note(out: &mut String, value: &Value, note: Option<&str>) {
         } else {
             let _ = writeln!(out, "Intended state: {desired}");
         }
-    }
-    if let Some(url) = value["webhook_url"].as_str() {
-        let _ = writeln!(out, "URL: {url}");
     }
     if value["potentially_stale"] == true {
         let name = text(value, "app_name", "");

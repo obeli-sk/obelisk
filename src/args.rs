@@ -1979,12 +1979,7 @@ pub(crate) enum CloudApp {
         #[command(flatten)]
         command_id: CloudCommandId,
     },
-    /// Inspect the app row.
-    Get {
-        #[command(flatten)]
-        selected: SelectedApp,
-    },
-    /// Inspect management, Machine and target API health.
+    /// Show the app's state, endpoints, Machine and API health.
     Status {
         #[command(flatten)]
         selected: SelectedApp,
@@ -2097,13 +2092,6 @@ pub(crate) enum CloudApp {
         #[command(subcommand)]
         command: CloudSecrets,
     },
-    /// Show all endpoints, or select the API, webhook, Web UI or internal webhook URL.
-    Endpoint {
-        #[command(flatten)]
-        selected: SelectedApp,
-        #[command(subcommand)]
-        command: Option<CloudEndpoint>,
-    },
 }
 
 // Binds by reference or mutably, following `$app`.
@@ -2117,7 +2105,6 @@ macro_rules! cloud_app_selected {
             | CloudApp::Admin { selected, .. }
             | CloudApp::Pull { selected, .. }
             | CloudApp::New { selected, .. }
-            | CloudApp::Get { selected }
             | CloudApp::Status { selected, .. }
             | CloudApp::Events { selected, .. }
             | CloudApp::Stage { selected, .. }
@@ -2128,8 +2115,7 @@ macro_rules! cloud_app_selected {
             | CloudApp::Delete { selected, .. }
             | CloudApp::Fill { selected, .. }
             | CloudApp::Env { selected, .. }
-            | CloudApp::Secrets { selected, .. }
-            | CloudApp::Endpoint { selected, .. } => Some(selected),
+            | CloudApp::Secrets { selected, .. } => Some(selected),
         }
     };
 }
@@ -2141,14 +2127,6 @@ impl CloudApp {
     pub(crate) fn selected_mut(&mut self) -> Option<&mut SelectedApp> {
         cloud_app_selected!(self)
     }
-}
-
-#[derive(Debug, Clone, Copy, clap::Subcommand)]
-pub(crate) enum CloudEndpoint {
-    Api,
-    Webhook,
-    Webui,
-    Internal,
 }
 
 #[derive(Debug, clap::Subcommand)]

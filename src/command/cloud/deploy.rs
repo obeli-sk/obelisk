@@ -113,9 +113,9 @@ impl CloudArgs {
         };
         let revision = staged_revision(&current)?;
         let api_url = api_origin(
-            current["api_url"]
+            current["endpoints"]["api"]
                 .as_str()
-                .context("Control plane response is missing api_url")?,
+                .context("Control plane response is missing endpoints.api")?,
         )?;
         let startup = ClientStartup::cloud(
             api_url.as_str().trim_end_matches('/').to_owned(),
@@ -195,10 +195,9 @@ impl CloudArgs {
         if self.json {
             print_json(&result)
         } else {
-            eprintln!("Deployed {name}");
-            if let Some(url) = current["webhook_url"].as_str() {
-                println!("{url}");
-            }
+            let mut out = format!("Deployed {name}\n");
+            output::endpoints(&mut out, &current["endpoints"], "");
+            eprint!("{out}");
             Ok(())
         }
     }
@@ -362,7 +361,7 @@ mod tests {
             _ => panic!("unexpected request: {}", state.calls.last().unwrap()),
         };
         if value.get("policy").is_some() {
-            value["api_url"] = json!(state.api_url);
+            value["endpoints"] = json!({"api": state.api_url});
         }
         axum::Json(value).into_response()
     }
@@ -413,7 +412,7 @@ mod tests {
             let desired = policy(&app_path).await.unwrap();
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", listener.local_addr().unwrap());
-            let mut app = json!({"policy":desired.policy(),"cloud":{},"status":"running","desired_state":"running","potentially_stale":false,"revision":1,"applied_revision":1,"api_url":format!("{origin}/tenant")});
+            let mut app = json!({"policy":desired.policy(),"cloud":{},"status":"running","desired_state":"running","potentially_stale":false,"revision":1,"applied_revision":1,"endpoints":{"api":format!("{origin}/tenant")}});
             if matches!(scenario, "config" | "stopped-config") {
                 app["cloud"] = json!({"memory_mb":512});
             }

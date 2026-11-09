@@ -2,92 +2,11 @@ use axum::{Json, Router, extract::Query, routing::get};
 use serde_json::{Value, json};
 
 #[tokio::test]
-async fn cloud_app_endpoints_resolve_project_environment_and_explicit_targets_offline() {
-    let directory = tempfile::tempdir().unwrap();
-    let source = "# Project identity\napp_name='from-file'\n";
-    std::fs::write(directory.path().join("app.toml"), source).unwrap();
-    for (app_env, domain_env, arguments, expected_name, expected_domain) in [
-        (
-            None,
-            None,
-            vec!["endpoint", "--json"],
-            "from-file",
-            "obelisk.works",
-        ),
-        (
-            Some("from-env"),
-            Some("dev.obelisk.works"),
-            vec!["--json", "endpoint"],
-            "from-env",
-            "dev.obelisk.works",
-        ),
-        (
-            Some("from-env"),
-            Some("test.obelisk.works"),
-            vec!["endpoint", "--app", "explicit", "--json"],
-            "explicit",
-            "test.obelisk.works",
-        ),
-    ] {
-        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_obelisk"));
-        command
-            .args(["cloud", "app"])
-            .args(arguments)
-            .current_dir(directory.path())
-            .env("XDG_CONFIG_HOME", directory.path())
-            .env_remove("OBELISK_APP_NAME")
-            .env_remove("OBELISK_CLOUD_ACCOUNT")
-            .env_remove("OBELISK_CLOUD_API_URL")
-            .env_remove("OBELISK_CLOUD_APPS_DOMAIN")
-            .env_remove("OBELISK_CLOUD_API_TOKEN");
-        if let Some(app_env) = app_env {
-            command.env("OBELISK_APP_NAME", app_env);
-        }
-        if let Some(domain_env) = domain_env {
-            command
-                .env("OBELISK_CLOUD_API_URL", "http://127.0.0.1:1")
-                .env("OBELISK_CLOUD_APPS_DOMAIN", domain_env)
-                .env("OBELISK_CLOUD_API_TOKEN", "test-token");
-        }
-        let output = command.output().await.unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(
-            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-            json!({
-                "api_url":format!("https://api--{expected_name}.{expected_domain}"),
-                "webhook_url":format!("https://{expected_name}.{expected_domain}"),
-                "webui_url":format!("https://webui--{expected_name}.{expected_domain}"),
-                 "internal_url": format!("https://internal--{expected_name}.{expected_domain}"),
-            })
-        );
-        assert_eq!(
-            std::fs::read_to_string(directory.path().join("app.toml")).unwrap(),
-            source
-        );
-    }
-}
-
-#[tokio::test]
-async fn cloud_output_and_endpoint_selection() {
+async fn cloud_output() {
     let app = json!({
-        "app_name":"demo", "status":"running", "hostname":"demo.example.com",
-        "api_url":"https://api--demo.example.com", "webui_url":"https://webui--demo.example.com"
+        "app_name":"demo", "status":"running", "hostname":"demo.example.com"
     });
     let router = Router::new()
-        .route(
-            "/v1/apps/demo",
-            get({
-                let app = app.clone();
-                move || {
-                    let app = app.clone();
-                    async move { Json(app) }
-                }
-            }),
-        )
         .route(
             "/v1/apps",
             get({
@@ -102,7 +21,9 @@ async fn cloud_output_and_endpoint_selection() {
             "/v1/apps/demo/status",
             get(|| async {
                 Json(json!({
-                    "app":{"app_name":"demo", "status":"stopped", "desired_state":"running"},
+                    "app":{"app_name":"demo", "status":"stopped", "desired_state":"running", "endpoints":{
+                        "api":"https://api--demo.example.com", "webui":"https://webui--demo.example.com",
+                        "internal":"https://internal--demo.example.com"}},
                     "machine_state":"started", "api_ready":false
                 }))
             }),
@@ -156,38 +77,15 @@ async fn cloud_output_and_endpoint_selection() {
             String::from_utf8(output.stderr).unwrap(),
         )
     };
-    let endpoints = json!({
-        "api_url": "https://api--demo.example.com",
-        "webhook_url": "https://demo.example.com",
-        "webui_url": "https://webui--demo.example.com",
-        "internal_url": "https://internal--demo.example.com",
-
-    });
-    let (stdout, text) = run(&["app", "endpoint"]).await;
-    assert!(stdout.is_empty(), "{stdout}");
-    for url in endpoints.as_object().unwrap().values() {
-        assert!(text.contains(url.as_str().unwrap()), "{text}");
-    }
-    assert_eq!(
-        serde_json::from_str::<Value>(&run(&["app", "endpoint", "--json"]).await.0).unwrap(),
-        endpoints
-    );
-    for (command, key) in [
-        ("api", "api_url"),
-        ("webhook", "webhook_url"),
-        ("webui", "webui_url"),
-    ] {
-        assert_eq!(
-            run(&["app", "endpoint", command]).await.0.trim(),
-            endpoints[key].as_str().unwrap()
-        );
-        assert_eq!(
-            serde_json::from_str::<Value>(&run(&["app", "endpoint", command, "--json"]).await.0)
-                .unwrap(),
-            endpoints[key]
-        );
-    }
     let status = run(&["app", "status"]).await.1;
+    for line in [
+        "API: https://api--demo.example.com (unavailable)",
+        "Web UI: https://webui--demo.example.com",
+        "Internal webhooks: https://internal--demo.example.com",
+    ] {
+        assert!(status.contains(line), "{status}");
+    }
+    assert!(!status.contains("External webhooks"), "{status}");
     let apply = "Run `obelisk cloud app apply --app demo`";
     assert!(
         status.contains(&format!("Intended state: running. {apply} to reach it.")),
@@ -205,11 +103,7 @@ async fn cloud_output_and_endpoint_selection() {
         "1970-01-01 00:00:00 UTC  warn   limit 7  (machine.health.critical)\n"
     );
     assert!(run(&["app", "events"]).await.1.contains("limit 5"));
-    for command in [
-        vec!["app", "get"],
-        vec!["app", "list"],
-        vec!["token", "list"],
-    ] {
+    for command in [vec!["app", "list"], vec!["token", "list"]] {
         let (stdout, text) = run(&command).await;
         assert!(stdout.is_empty() && !text.is_empty(), "{stdout}");
         let mut json_command = command.clone();
@@ -218,7 +112,6 @@ async fn cloud_output_and_endpoint_selection() {
         assert_eq!(
             parsed,
             match command[..] {
-                ["app", "get"] => app.clone(),
                 ["app", "list"] => json!({"apps":[app]}),
                 _ => json!({"tokens":[]}),
             }

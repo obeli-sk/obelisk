@@ -161,11 +161,11 @@ impl Store {
 
 /// Picks what `obelisk cloud` talks to: a token alone means production, all three values a custom
 /// deployment, and otherwise a saved account.
-pub(super) fn resolve(args: &mut CloudArgs, token_required: bool) -> anyhow::Result<()> {
-    select(args, store_path().as_deref(), token_required)
+pub(super) fn resolve(args: &mut CloudArgs) -> anyhow::Result<()> {
+    select(args, store_path().as_deref())
 }
 
-fn select(args: &mut CloudArgs, path: Option<&Path>, token_required: bool) -> anyhow::Result<()> {
+fn select(args: &mut CloudArgs, path: Option<&Path>) -> anyhow::Result<()> {
     let explicit = (
         args.api_token.is_some(),
         args.api_url.is_some(),
@@ -198,14 +198,10 @@ fn select(args: &mut CloudArgs, path: Option<&Path>, token_required: bool) -> an
         if let Some(name) = &args.account {
             bail!("No login for {name}; `obelisk cloud auth status` lists the saved accounts");
         }
-        ensure!(
-            !token_required,
-            "Not logged in; run `obelisk cloud auth login` or set OBELISK_CLOUD_API_TOKEN"
-        );
-        return Ok(());
+        bail!("Not logged in; run `obelisk cloud auth login` or set OBELISK_CLOUD_API_TOKEN");
     };
     ensure!(
-        !token_required || !account.expired(),
+        !account.expired(),
         "Login of {} expired on {}; run `{}`",
         name,
         account.expiry(),
@@ -625,7 +621,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("cloud-credentials.toml");
         two_logins().save(&path).unwrap();
-        let run = |args: &mut CloudArgs| select(args, Some(&path), true);
+        let run = |args: &mut CloudArgs| select(args, Some(&path));
 
         let mut args = parsed(None, None);
         run(&mut args).unwrap();
@@ -688,11 +684,10 @@ mod tests {
     }
 
     #[test]
-    fn offline_commands_need_no_login_but_others_do() {
+    fn commands_need_a_login() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("missing.toml");
-        select(&mut parsed(None, None), Some(&path), false).unwrap();
-        let error = select(&mut parsed(None, None), Some(&path), true).unwrap_err();
+        let error = select(&mut parsed(None, None), Some(&path)).unwrap_err();
         assert!(error.to_string().contains("Not logged in"));
     }
 
@@ -705,7 +700,7 @@ mod tests {
         account.expires_at = 1;
         store.insert(account, None, false).unwrap();
         store.save(&path).unwrap();
-        let error = select(&mut parsed(None, None), Some(&path), true).unwrap_err();
+        let error = select(&mut parsed(None, None), Some(&path)).unwrap_err();
         assert!(
             error
                 .to_string()
@@ -805,7 +800,7 @@ mod tests {
         let path = directory.path().join("cloud-credentials.toml");
         store.save(&path).unwrap();
         let mut args = parsed(None, Some("alice@https://example.test/Prod/api"));
-        select(&mut args, Some(&path), true).unwrap();
+        select(&mut args, Some(&path)).unwrap();
         assert_eq!(
             args.api_url.as_deref(),
             Some("https://example.test/Prod/api")
