@@ -1055,6 +1055,24 @@ pub(crate) struct SqliteConfigToml {
     metrics_threshold: Option<DurationConfig>,
     #[serde(default)]
     fsync: SqliteFsyncToml,
+    #[serde(default)]
+    litestream: Option<LitestreamConfigToml>,
+}
+
+/// Replicate the database with Litestream synchronously: a commit is revealed outside of the
+/// server only after Litestream uploads it. Litestream must be replicating the database file
+/// before the server starts; the server waits for it on startup.
+///
+/// The server does not check that the database is consistent with the replica; the launcher
+/// must. Litestream can upload commits whose WAL frames are not on the disk yet, so after a host
+/// crash the replica can be ahead of the database, or hold different commits under the same
+/// position. Before starting Litestream, the launcher must restore the replica whenever the
+/// database is behind it or does not match Litestream's local position.
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LitestreamConfigToml {
+    /// Path to the Litestream control socket (`socket.path` in the Litestream configuration).
+    socket: String,
 }
 
 /// When SQLite commits reach the disk.
@@ -1079,6 +1097,7 @@ impl Default for SqliteConfigToml {
             pragma: std::collections::HashMap::default(),
             metrics_threshold: Option::default(),
             fsync: SqliteFsyncToml::default(),
+            litestream: None,
         }
     }
 }
@@ -1100,6 +1119,20 @@ impl SqliteConfigToml {
             .await
     }
 
+    pub(crate) fn get_litestream_socket(
+        &self,
+        path_prefixes: &PathPrefixes,
+        secret_registry: &SecretRegistry,
+    ) -> Result<Option<PathBuf>, anyhow::Error> {
+        self.litestream
+            .as_ref()
+            .map(|litestream| {
+                path_prefixes.server_config_replace_path_prefix(&litestream.socket, secret_registry)
+            })
+            .transpose()
+    }
+
+    /// Litestream is not configured, see [`Self::get_litestream_socket`].
     pub(crate) fn as_sqlite_config(&self) -> SqliteConfig {
         SqliteConfig {
             queue_capacity: self.queue_capacity,
@@ -1109,6 +1142,7 @@ impl SqliteConfigToml {
                 SqliteFsyncToml::Commit => SqliteFsync::Commit,
                 SqliteFsyncToml::Group => SqliteFsync::Group,
             },
+            litestream_socket: None,
         }
     }
 }

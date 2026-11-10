@@ -127,6 +127,11 @@
 ## all commits made before an activity runs, an API call returns, or a webhook responds.
 ## "group" sets `synchronous = NORMAL` and cannot be combined with `pragma.synchronous`.
 # database.sqlite.fsync = "commit"
+## Replicate synchronously with Litestream: commits are revealed only after Litestream uploads them.
+## Litestream must replicate the database file and listen on this control socket before the server starts.
+## The launcher must restore the replica before starting Litestream when the database is behind it
+## or does not match Litestream's local position, e.g. after a host crash; the server does not check.
+# database.sqlite.litestream.socket = "/run/litestream.sock"
 
 ## Postgres configuration, keys support environment variable interpolation.
 # database.postgres.host =     "${POSTGRES_HOST}"
