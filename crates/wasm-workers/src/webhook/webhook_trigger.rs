@@ -1141,6 +1141,15 @@ impl types::obelisk::webhook::webhook_dynamic_support_backtrace::Host for Webhoo
 }
 
 impl WebhookEndpointCtx {
+    /// A webhook reveals its writes, e.g. a scheduled child's ID, in a streamed body or an
+    /// outgoing request: they must be durable first. Every write records this execution.
+    // `&mut`: the context is not `Sync`, so a shared reference would make the future `!Send`.
+    async fn wait_writes_durable(&mut self) {
+        self.db_pool
+            .wait_durable(&[ExecutionId::TopLevel(self.execution_id)])
+            .await;
+    }
+
     pub(super) async fn schedule_json_inner(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_dynamic_support::ExecutionId,
@@ -1302,6 +1311,7 @@ impl WebhookEndpointCtx {
         {
             Ok((new_version, result)) => {
                 self.version = Some(new_version);
+                self.wait_writes_durable().await;
                 result.map_err(|err| ScheduleJsonError::TypeCheckError(err.to_string()).into())
             }
             Err(err) => Err(wasmtime::Error::msg(format!("database write error: {err:?}")).into()),
@@ -1475,6 +1485,7 @@ impl WebhookEndpointCtx {
         {
             Ok(new_version) => {
                 self.version = Some(new_version);
+                self.wait_writes_durable().await;
             }
             Err(err) => {
                 return Err(wasmtime::Error::msg(format!("database write error: {err:?}")).into());
@@ -1908,6 +1919,7 @@ impl WebhookEndpointCtx {
                 };
                 assert_eq!(version, expected_next_version); // Expected for backtrace's version_max_excluding
                 self.version = Some(version.clone());
+                self.wait_writes_durable().await;
                 results[0] = match result {
                     Ok(()) => {
                         Val::Result(Ok(Some(Box::new(execution_id_into_val(&new_execution_id)))))
@@ -2033,6 +2045,7 @@ impl WebhookEndpointCtx {
                 .await?;
             assert_eq!(version, expected_next_version); // Expected for backtrace's version_max_excluding
             self.version = Some(version);
+            self.wait_writes_durable().await;
 
             let res = Self::wait_for_finished_result(
                 self.subscription_interruption,

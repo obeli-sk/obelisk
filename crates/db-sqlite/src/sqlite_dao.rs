@@ -309,7 +309,8 @@ enum TxType {
     Other,          // Read only or a single write LTX. Continue the PhyTx if LTX returns error.
 }
 
-/// Whether a write returns only once it is durable, with [`SqliteFsync::Group`].
+/// Whether a transaction returns only once what it wrote or read is durable, with
+/// [`SqliteFsync::Group`].
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum TxSync {
     /// The caller reveals the write outside the process.
@@ -317,6 +318,9 @@ enum TxSync {
     /// Executor writes: a later sync makes them durable, before whatever depends on them leaves
     /// the process (an activity's lock, an external read, a webhook response).
     Later,
+    /// External reads of state not tracked per execution (deployments, system events, blobs):
+    /// wait until everything committed before the read is durable.
+    Barrier,
 }
 
 /// Records the given executions as changed by a write.
@@ -1157,6 +1161,22 @@ impl SqlitePool {
             .await
     }
 
+    /// Like [`Self::transaction`] for an external read of state not tracked per execution.
+    async fn transaction_read_durable<F, T, E>(
+        &self,
+        func: F,
+        tx_type: TxType,
+        func_name: &'static str,
+    ) -> Result<T, E>
+    where
+        F: FnMut(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
+        T: Send + 'static,
+        E: From<RusqliteError> + Send + 'static,
+    {
+        self.transaction_durable(func, tx_type, func_name, TxSync::Barrier, None)
+            .await
+    }
+
     #[expect(clippy::type_complexity)]
     async fn transaction_durable<F, T, E>(
         &self,
@@ -1217,11 +1237,16 @@ impl SqlitePool {
             Ok(Ok(seq)) => {
                 let (res, changed) = std::mem::take(fn_res.lock().unwrap().deref_mut())
                     .expect("ltx must have been run at least once");
+                let wait = match sync {
+                    TxSync::Wait => changed,
+                    TxSync::Barrier => true,
+                    TxSync::Later => false,
+                };
                 if let Some(durability) = durability
-                    && sync == TxSync::Wait
-                    && changed
+                    && wait
                     && res.is_ok()
                 {
+                    // Without changes `seq` is the latest commit, covering everything read.
                     durability.wait_seq(seq).await;
                 }
                 res
@@ -5316,7 +5341,7 @@ impl DbExternalApi for SqlitePool {
         component_digest: &ComponentDigest,
     ) -> Result<Vec<SourceMapping>, DbErrorRead> {
         let component_digest = component_digest.clone();
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| {
                 let mut stmt = tx.prepare(
                     "SELECT frame_key, is_suffix, digest \
@@ -5352,7 +5377,7 @@ impl DbExternalApi for SqlitePool {
     ) -> Result<Option<ContentDigest>, DbErrorRead> {
         let component_digest = component_digest.clone();
         let file = file.to_owned();
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| {
                 let mut stmt = tx.prepare(
                     "SELECT digest \
@@ -5420,7 +5445,7 @@ impl DbExternalApi for SqlitePool {
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Vec<DeploymentComponentDetail>, DbErrorRead> {
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| {
                 let mut stmt = tx.prepare(
                     "SELECT dc.component_name, dc.component_type, dc.component_digest, \
@@ -5484,7 +5509,7 @@ impl DbExternalApi for SqlitePool {
         component_digest: &ComponentDigest,
     ) -> Result<Option<String>, DbErrorRead> {
         let component_digest = component_digest.clone();
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| {
                 tx.prepare(
                     "SELECT cm.wit \
@@ -5800,7 +5825,7 @@ impl DbExternalApi for SqlitePool {
         include_deployment_toml: bool,
         execution_counts: DeploymentExecutionCounts,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| {
                 Self::list_deployment_states(
                     tx,
@@ -5848,7 +5873,7 @@ impl DbExternalApi for SqlitePool {
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Vec<ContentDigest>, DbErrorRead> {
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| Self::missing_digests_tx(tx, deployment_id),
             TxType::Other,
             "missing_digests",
@@ -5861,7 +5886,7 @@ impl DbExternalApi for SqlitePool {
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Vec<DeploymentFileRecord>, DbErrorRead> {
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| Self::list_deployment_files_tx(tx, deployment_id),
             TxType::Other,
             "list_deployment_files",
@@ -5904,7 +5929,7 @@ impl DbExternalApi for SqlitePool {
     async fn get_app_checkpoint(
         &self,
     ) -> Result<Option<concepts::storage::AppCheckpoint>, DbErrorRead> {
-        self.transaction(
+        self.transaction_read_durable(
             |tx| -> Result<_, DbErrorRead> {
                 let raw: Option<String> = tx
                     .query_row(
@@ -5976,7 +6001,7 @@ impl DbExternalApi for SqlitePool {
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| Self::get_deployment_tx(tx, deployment_id),
             TxType::Other,
             "get_deployment",
@@ -5990,7 +6015,7 @@ impl DbExternalApi for SqlitePool {
         digest: &ContentDigest,
     ) -> Result<Option<DeploymentId>, DbErrorRead> {
         let digest = digest.to_string();
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| {
                 tx.query_row(
                     "SELECT deployment_id FROM t_deployment WHERE digest = :digest AND superseded_by IS NULL",
@@ -6009,7 +6034,7 @@ impl DbExternalApi for SqlitePool {
     #[cfg(feature = "test")]
     #[instrument(skip(self))]
     async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| Self::get_active_deployment_tx(tx),
             TxType::Other,
             "get_active_deployment",
@@ -6019,7 +6044,7 @@ impl DbExternalApi for SqlitePool {
 
     #[instrument(skip(self))]
     async fn get_current_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| {
                 let Some(record) = tx
                     .query_row(
@@ -6047,7 +6072,7 @@ impl DbExternalApi for SqlitePool {
         &self,
         pagination: Pagination<Option<DeploymentId>>,
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead> {
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| Self::list_deployments_tx(tx, pagination),
             TxType::Other,
             "list_deployments",
@@ -6395,7 +6420,7 @@ impl DbAdmin for SqlitePool {
         &self,
         filter: SystemEventFilter,
     ) -> Result<Vec<SystemEvent>, DbErrorRead> {
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| {
                 let mut statement = tx
                     .prepare(&db_common::system_event_list_sql(&filter, |i| {
@@ -6495,7 +6520,7 @@ impl DbAdmin for SqlitePool {
     }
 
     async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead> {
-        self.transaction(
+        self.transaction_read_durable(
             |tx| {
                 let page_count: i64 = tx.query_row("PRAGMA page_count", [], |row| row.get(0))?;
                 let page_size: i64 = tx.query_row("PRAGMA page_size", [], |row| row.get(0))?;
@@ -7043,7 +7068,7 @@ impl CasGc for SqlitePool {
 impl Cas for SqlitePool {
     async fn read_blob(&self, digest: &ContentDigest) -> Result<Option<Vec<u8>>, CasError> {
         let digest = digest.clone();
-        self.transaction(
+        self.transaction_read_durable(
             move |tx| Self::get_file_tx(tx, &digest),
             TxType::Other,
             "cas_read_blob",

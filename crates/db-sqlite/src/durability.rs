@@ -9,8 +9,10 @@
 //!
 //! The writer thread numbers each physical commit that changed something and records, for each
 //! execution whose state changed, the latest such commit. External reads of an execution wait
-//! until its latest commit is synced; reads of executions not in the map never wait. Everything
-//! is in memory: the WAL is fsynced once on startup, so the map starts empty.
+//! until its latest commit is synced; reads of executions not in the map never wait. External
+//! reads of state not tracked per execution (deployments, system events, blobs) wait until
+//! everything committed before them is synced. Everything is in memory: the WAL is fsynced once
+//! on startup, so the map starts empty.
 use concepts::ExecutionId;
 use hashbrown::HashMap;
 use std::path::PathBuf;
