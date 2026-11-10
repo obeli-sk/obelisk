@@ -1959,13 +1959,23 @@ async fn materialize_wasm_location(
         format!("deployment-owned WASM component `{path}` is missing a content digest")
     })?;
     let target = content_digest_to_wasm_file(wasm_cache_dir, digest);
-    if !target.exists() {
+    // A corrupt file, e.g. one truncated by a full disk before writes were atomic, is deleted.
+    if crate::oci::verify_cached_file(&target, digest)
+        .await
+        .is_err()
+    {
         let bytes = cas.read_blob(digest).await?.with_context(|| {
             format!("blob {digest} for WASM component `{path}` not present in the CAS")
         })?;
-        tokio::fs::write(&target, &bytes)
+        // The temp file is removed on failure, so a full disk leaves no partial blob behind.
+        let tmp = tempfile::NamedTempFile::new_in(wasm_cache_dir)
+            .with_context(|| format!("cannot create temp file in {wasm_cache_dir:?}"))?;
+        tokio::fs::write(tmp.path(), &bytes)
             .await
             .with_context(|| format!("cannot write WASM blob to cache file {target:?}"))?;
+        tmp.persist(&target)
+            .map_err(|err| err.error)
+            .with_context(|| format!("cannot persist WASM blob to cache file {target:?}"))?;
     }
     *location = ComponentLocationToml::Path(target.to_string_lossy().into_owned());
     Ok(())
@@ -7263,6 +7273,31 @@ pub(crate) fn gen_trace_id() -> String {
     (0..5)
         .map(|_| rand::Rng::random_range(&mut rng, b'a'..=b'z') as char)
         .collect::<String>()
+}
+
+#[cfg(test)]
+mod materialize_wasm_tests {
+    use super::materialize_wasm_location;
+    use crate::config::{content_digest_to_wasm_file, deployment::ComponentLocationToml};
+    use concepts::cas::{Cas as _, InMemoryCas};
+
+    #[tokio::test]
+    async fn truncated_cache_file_is_replaced() {
+        let cas = InMemoryCas::default();
+        let bytes = b"\0asm wasm component bytes".to_vec();
+        let digest = cas.write_blob(&bytes).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let target = content_digest_to_wasm_file(dir.path(), &digest);
+        std::fs::write(&target, &bytes[..4]).unwrap();
+        let mut location = ComponentLocationToml::Path("a.wasm".to_string());
+        materialize_wasm_location(&mut location, Some(&digest), &cas, dir.path())
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+        assert_matches::assert_matches!(location, ComponentLocationToml::Path(path) if path == target.to_string_lossy());
+        // Only the blob remains, no temp file.
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 }
 
 #[cfg(test)]
