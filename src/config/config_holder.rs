@@ -55,6 +55,14 @@ impl PathPrefixes {
         Ok(path)
     }
 
+    pub(crate) fn server_config_replace_path_prefix(
+        &self,
+        path: &str,
+        secret_registry: &SecretRegistry,
+    ) -> Result<PathBuf, anyhow::Error> {
+        Ok(PathBuf::from(self.interpolate_path(path, secret_registry)?))
+    }
+
     /// Resolve a server-config path field: a leading `~/` becomes the home directory, then
     /// synthetic path variables (`${DATA_DIR}` etc.) and process environment variables are
     /// interpolated, with synthetic names taking precedence.

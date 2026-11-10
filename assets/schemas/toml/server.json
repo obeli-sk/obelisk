@@ -634,6 +634,16 @@
         },
         "fsync": {
           "$ref": "#/$defs/SqliteFsyncToml"
+        },
+        "litestream": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LitestreamConfigToml"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -651,6 +661,20 @@
           "type": "string",
           "const": "group"
         }
+      ]
+    },
+    "LitestreamConfigToml": {
+      "description": "Replicate the database with Litestream synchronously: a commit is revealed outside of the\nserver only after Litestream uploads it. Litestream must be replicating the database file\nbefore the server starts; the server waits for it on startup.\n\nThe server does not check that the database is consistent with the replica; the launcher\nmust. Litestream can upload commits whose WAL frames are not on the disk yet, so after a host\ncrash the replica can be ahead of the database, or hold different commits under the same\nposition. Before starting Litestream, the launcher must restore the replica whenever the\ndatabase is behind it or does not match Litestream's local position.",
+      "type": "object",
+      "properties": {
+        "socket": {
+          "description": "Path to the Litestream control socket (`socket.path` in the Litestream configuration).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "socket"
       ]
     },
     "PostgresConfigToml": {

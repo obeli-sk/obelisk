@@ -63,7 +63,7 @@ use std::{
     fmt::Debug,
     ops::DerefMut,
     panic::Location,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -407,7 +407,7 @@ struct SqlitePoolInner {
     pending_subscribers: PendingSubscribers,
     execution_finished_subscribers: Arc<ExecutionFinishedSubscribers>,
     join_handle: Option<Arc<std::thread::JoinHandle<()>>>, // always Some, Optional for swapping in drop.
-    /// Set with [`SqliteFsync::Group`].
+    /// Set with [`SqliteFsync::Group`] or [`SqliteConfig::litestream_socket`].
     durability: Option<Arc<Durability>>,
     syncer: Option<Arc<tokio::task::AbortHandle>>,
 }
@@ -424,6 +424,13 @@ impl DbPoolCloseable for SqlitePool {
         }
         while !self.0.shutdown_finished.load(Ordering::Acquire) {
             tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        if let Some(durability) = &self.0.durability {
+            // Litestream may upload the rest of the WAL after we exit, the local database must
+            // not end up behind it.
+            if let Err(err) = durability.fsync_wal().await {
+                error!("Cannot fsync the SQLite WAL on close - {err:?}");
+            }
         }
         debug!("Sqlite was closed");
     }
@@ -530,6 +537,8 @@ pub struct SqliteConfig {
     pub pragma_override: Option<HashMap<String, String>>,
     pub metrics_threshold: Option<Duration>,
     pub fsync: SqliteFsync,
+    /// Litestream control socket. Every commit is revealed only after Litestream replicates it.
+    pub litestream_socket: Option<PathBuf>,
 }
 impl Default for SqliteConfig {
     fn default() -> Self {
@@ -538,6 +547,7 @@ impl Default for SqliteConfig {
             pragma_override: None,
             metrics_threshold: None,
             fsync: SqliteFsync::default(),
+            litestream_socket: None,
         }
     }
 }
@@ -1063,30 +1073,33 @@ impl SqlitePool {
 
         let (command_tx, command_rx) = tokio::sync::mpsc::channel(config.queue_capacity);
         info!("Sqlite database location: {path:?}");
-        let durability =
-            (config.fsync == SqliteFsync::Group).then(|| Arc::new(Durability::new(&path)));
+        let durability = if config.fsync == SqliteFsync::Group || config.litestream_socket.is_some()
+        {
+            // Litestream identifies the database by its absolute path.
+            let path = std::path::absolute(&path).map_err(|err| {
+                error!("Cannot resolve the database path {path:?} - {err:?}");
+                InitializationError
+            })?;
+            if let Some(socket) = &config.litestream_socket {
+                info!("Replicating commits via the Litestream socket {socket:?}");
+            }
+            Some(Arc::new(Durability::new(
+                &path,
+                config.litestream_socket.clone(),
+            )))
+        } else {
+            None
+        };
         let join_handle = {
             // Initialize the `Connection`.
-            let init_task = {
-                let durability = durability.clone();
-                tokio::task::spawn_blocking(move || {
-                    let conn = Self::init_thread(
-                        &path,
-                        config.pragma_override.unwrap_or_default(),
-                        config.fsync,
-                    )?;
-                    if let Some(durability) = durability {
-                        // A previous process may have exited with commits not on disk yet,
-                        // and nothing tracks them.
-                        durability.fsync_wal().map_err(|err| {
-                            error!("Cannot fsync the SQLite WAL - {err:?}");
-                            InitializationError
-                        })?;
-                    }
-                    Ok(conn)
-                })
-                .await
-            };
+            let init_task = tokio::task::spawn_blocking(move || {
+                Self::init_thread(
+                    &path,
+                    config.pragma_override.unwrap_or_default(),
+                    config.fsync,
+                )
+            })
+            .await;
             let conn = match init_task {
                 Ok(res) => res?,
                 Err(join_err) => {
@@ -1094,6 +1107,14 @@ impl SqlitePool {
                     return Err(InitializationError);
                 }
             };
+            if let Some(durability) = &durability {
+                // A previous process may have exited with commits not on disk or not replicated
+                // yet, and nothing tracks them.
+                durability.startup_sync().await.map_err(|err| {
+                    error!("Cannot fsync the SQLite WAL - {err:?}");
+                    InitializationError
+                })?;
+            }
             let shutdown_requested = shutdown_requested.clone();
             let shutdown_finished = shutdown_finished.clone();
             let durability = durability.clone();

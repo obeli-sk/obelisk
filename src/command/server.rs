@@ -121,7 +121,7 @@ use concepts::time::Now;
 use concepts::time::TokioSleep;
 pub(crate) use config_prepass::MissingRuntimeConfigError;
 use db_postgres::postgres_dao::PostgresPool;
-use db_sqlite::sqlite_dao::SqlitePool;
+use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use executor::AbortOnDropHandle;
 use executor::executor::ExecutorTaskHandle;
@@ -2321,7 +2321,11 @@ pub(crate) async fn run_internal(
             let db_dir = sqlite_config_toml
                 .get_sqlite_dir(&path_prefixes, &secret_registry)
                 .await?;
-            let sqlite_config = sqlite_config_toml.as_sqlite_config();
+            let sqlite_config = SqliteConfig {
+                litestream_socket: sqlite_config_toml
+                    .get_litestream_socket(&path_prefixes, &secret_registry)?,
+                ..sqlite_config_toml.as_sqlite_config()
+            };
             let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
             if params.clean_sqlite_directory {
                 warn!("Deleting sqlite directory {db_dir:?}");
