@@ -536,6 +536,13 @@ impl ExecTask {
                     let retry_config = self.config.retry_config;
                     async move {
                         let instance_permit = permit;
+                        if component_type != ComponentType::Workflow {
+                            // Activities have side effects outside of the database: their lock
+                            // must survive a host crash. Workflows are replayed deterministically.
+                            db_pool
+                                .wait_durable(std::slice::from_ref(&locked_execution.execution_id))
+                                .await;
+                        }
                         let res = Self::run_worker(
                             component_type,
                             worker,

@@ -1141,6 +1141,15 @@ impl types::obelisk::webhook::webhook_dynamic_support_backtrace::Host for Webhoo
 }
 
 impl WebhookEndpointCtx {
+    /// A webhook reveals its writes, e.g. a scheduled child's ID, in a streamed body or an
+    /// outgoing request: they must be durable first. Every write records this execution.
+    // `&mut`: the context is not `Sync`, so a shared reference would make the future `!Send`.
+    async fn wait_writes_durable(&mut self) {
+        self.db_pool
+            .wait_durable(&[ExecutionId::TopLevel(self.execution_id)])
+            .await;
+    }
+
     pub(super) async fn schedule_json_inner(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_dynamic_support::ExecutionId,
@@ -1302,6 +1311,7 @@ impl WebhookEndpointCtx {
         {
             Ok((new_version, result)) => {
                 self.version = Some(new_version);
+                self.wait_writes_durable().await;
                 result.map_err(|err| ScheduleJsonError::TypeCheckError(err.to_string()).into())
             }
             Err(err) => Err(wasmtime::Error::msg(format!("database write error: {err:?}")).into()),
@@ -1475,6 +1485,7 @@ impl WebhookEndpointCtx {
         {
             Ok(new_version) => {
                 self.version = Some(new_version);
+                self.wait_writes_durable().await;
             }
             Err(err) => {
                 return Err(wasmtime::Error::msg(format!("database write error: {err:?}")).into());
@@ -1908,6 +1919,7 @@ impl WebhookEndpointCtx {
                 };
                 assert_eq!(version, expected_next_version); // Expected for backtrace's version_max_excluding
                 self.version = Some(version.clone());
+                self.wait_writes_durable().await;
                 results[0] = match result {
                     Ok(()) => {
                         Val::Result(Ok(Some(Box::new(execution_id_into_val(&new_execution_id)))))
@@ -2033,6 +2045,7 @@ impl WebhookEndpointCtx {
                 .await?;
             assert_eq!(version, expected_next_version); // Expected for backtrace's version_max_excluding
             self.version = Some(version);
+            self.wait_writes_durable().await;
 
             let res = Self::wait_for_finished_result(
                 self.subscription_interruption,
@@ -2548,12 +2561,16 @@ impl RequestHandler {
         let max_stream_duration = self.max_stream_duration;
         let (stream_expired_sender, stream_expired) = watch::channel(());
         let deadline = tokio::time::Instant::now() + self.request_timeout;
+        let db_pool = self.db_pool.clone();
         let res = tokio::time::timeout_at(
             deadline,
             self.handle_request_inner(req, wasm_cell, Span::current(), deadline, stream_expired),
         )
         .await
         .unwrap_or(Err(HandleRequestError::Timeout));
+        // The response may reveal anything committed so far, e.g. results of child executions.
+        // A streamed body can still reveal later writes.
+        db_pool.durable_barrier().await;
         match res {
             Ok(mut response) => {
                 if response.body().size_hint().exact().is_none() {
