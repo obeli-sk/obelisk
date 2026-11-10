@@ -18,7 +18,7 @@ use anyhow::Context as _;
 use concepts::component_id::Digest;
 use concepts::persisted_value::DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES;
 use db_postgres::postgres_dao::{self, PostgresConfig, PostgresTls};
-use db_sqlite::sqlite_dao::SqliteConfig;
+use db_sqlite::sqlite_dao::{SqliteConfig, SqliteFsync};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1053,6 +1053,22 @@ pub(crate) struct SqliteConfigToml {
     pragma: std::collections::HashMap<String, String>, // hashbrown is not supported by schemars
     #[serde(default)]
     metrics_threshold: Option<DurationConfig>,
+    #[serde(default)]
+    fsync: SqliteFsyncToml,
+}
+
+/// When SQLite commits reach the disk.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SqliteFsyncToml {
+    /// Every commit fsyncs the WAL (`synchronous = FULL`).
+    #[default]
+    Commit,
+    /// Commits do not fsync (`synchronous = NORMAL`). A single fsync of the WAL covers all commits
+    /// made before it; it runs before a commit is revealed outside of the server: before an
+    /// activity runs, an API call returns, or a webhook responds. Cannot be combined with
+    /// `pragma.synchronous`.
+    Group,
 }
 
 impl Default for SqliteConfigToml {
@@ -1062,6 +1078,7 @@ impl Default for SqliteConfigToml {
             queue_capacity: default_sqlite_queue_capacity(),
             pragma: std::collections::HashMap::default(),
             metrics_threshold: Option::default(),
+            fsync: SqliteFsyncToml::default(),
         }
     }
 }
@@ -1088,6 +1105,10 @@ impl SqliteConfigToml {
             queue_capacity: self.queue_capacity,
             pragma_override: Some(self.pragma.clone().into_iter().collect()),
             metrics_threshold: self.metrics_threshold.map(Duration::from),
+            fsync: match self.fsync {
+                SqliteFsyncToml::Commit => SqliteFsync::Commit,
+                SqliteFsyncToml::Group => SqliteFsync::Group,
+            },
         }
     }
 }

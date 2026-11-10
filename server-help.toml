@@ -123,6 +123,10 @@
 ## Customize PRAGMA statements.
 ## Defaults are in `crates/db-sqlite/src/sqlite_dao.rs`.
 # database.sqlite.pragma = { "cache_size" = "3000" }
+## When commits reach the disk: "commit" fsyncs every commit, "group" shares one WAL fsync among
+## all commits made before an activity runs, an API call returns, or a webhook responds.
+## "group" sets `synchronous = NORMAL` and cannot be combined with `pragma.synchronous`.
+# database.sqlite.fsync = "commit"
 
 ## Postgres configuration, keys support environment variable interpolation.
 # database.postgres.host =     "${POSTGRES_HOST}"

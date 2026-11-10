@@ -1,4 +1,7 @@
-use crate::{histograms::Histograms, polling, sqlite_dao::conversions::to_generic_error};
+use crate::{
+    durability::Durability, histograms::Histograms, polling,
+    sqlite_dao::conversions::to_generic_error,
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -306,6 +309,32 @@ enum TxType {
     Other,          // Read only or a single write LTX. Continue the PhyTx if LTX returns error.
 }
 
+/// Whether a write returns only once it is durable, with [`SqliteFsync::Group`].
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum TxSync {
+    /// The caller reveals the write outside the process.
+    Wait,
+    /// Executor writes: a later sync makes them durable, before whatever depends on them leaves
+    /// the process (an activity's lock, an external read, a webhook response).
+    Later,
+}
+
+/// Records the given executions as changed by a write.
+fn touching<T>(
+    execution_ids: impl IntoIterator<Item = ExecutionId>,
+) -> impl Fn(&T) -> Vec<ExecutionId> + Send + 'static {
+    let execution_ids: Vec<_> = execution_ids.into_iter().collect();
+    move |_| execution_ids.clone()
+}
+
+#[expect(clippy::ptr_arg)] // matches the transaction's result type
+fn locked_execution_ids(locked: &Vec<LockedExecution>) -> Vec<ExecutionId> {
+    locked
+        .iter()
+        .map(|locked| locked.execution_id.clone())
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CancellationFfqnCheck {
     Required,
@@ -326,8 +355,8 @@ struct LogicalTx {
     sent_at: Instant,
     func_name: &'static str,
     #[debug(skip)]
-    // Result of Physical Tx commit / rollback
-    phytx_flush_sender: oneshot::Sender<Result<(), CommitError>>,
+    // Result of Physical Tx commit / rollback, with the commit number when tracking durability.
+    phytx_flush_sender: oneshot::Sender<Result<u64, CommitError>>,
     priority: LtxPriority,
 }
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -374,6 +403,9 @@ struct SqlitePoolInner {
     pending_subscribers: PendingSubscribers,
     execution_finished_subscribers: Arc<ExecutionFinishedSubscribers>,
     join_handle: Option<Arc<std::thread::JoinHandle<()>>>, // always Some, Optional for swapping in drop.
+    /// Set with [`SqliteFsync::Group`].
+    durability: Option<Arc<Durability>>,
+    syncer: Option<Arc<tokio::task::AbortHandle>>,
 }
 
 #[async_trait]
@@ -383,6 +415,9 @@ impl DbPoolCloseable for SqlitePool {
         self.0.shutdown_requested.store(true, Ordering::Release);
         // Unblock the thread's blocking_recv. If the capacity is reached, the next processed message will trigger shutdown.
         let _ = self.0.command_tx.try_send(ThreadCommand::Shutdown);
+        if let Some(syncer) = &self.0.syncer {
+            syncer.abort();
+        }
         while !self.0.shutdown_finished.load(Ordering::Acquire) {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
@@ -429,6 +464,14 @@ impl DbPool for SqlitePool {
         }
         Ok(Box::new(self.clone()))
     }
+    async fn wait_durable(&self, execution_ids: &[ExecutionId]) {
+        self.wait_executions_durable(execution_ids).await;
+    }
+    async fn durable_barrier(&self) {
+        if let Some(durability) = &self.0.durability {
+            durability.barrier().await;
+        }
+    }
     #[cfg(feature = "test")]
     async fn connection_test(
         &self,
@@ -453,6 +496,9 @@ impl Drop for SqlitePool {
                     self.0.shutdown_requested.store(true, Ordering::Release);
                     // Unblock the thread's blocking_recv. If the capacity is reached, the next processed message will trigger shutdown.
                     let _ = self.0.command_tx.try_send(ThreadCommand::Shutdown);
+                    if let Some(syncer) = &self.0.syncer {
+                        syncer.abort();
+                    }
                     // Not joining the thread, drop might be called from async context.
                     // We are shutting down the server anyway.
                 } else {
@@ -463,11 +509,23 @@ impl Drop for SqlitePool {
     }
 }
 
+/// When commits reach the disk.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SqliteFsync {
+    /// Every commit fsyncs the WAL (`synchronous = FULL`, unless overridden by a pragma).
+    #[default]
+    Commit,
+    /// Commits do not fsync (`synchronous = NORMAL`). A single syncer fsyncs the WAL before a
+    /// commit becomes visible outside the process, shared by everything committed before it.
+    Group,
+}
+
 #[derive(Debug, Clone)]
 pub struct SqliteConfig {
     pub queue_capacity: usize,
     pub pragma_override: Option<HashMap<String, String>>,
     pub metrics_threshold: Option<Duration>,
+    pub fsync: SqliteFsync,
 }
 impl Default for SqliteConfig {
     fn default() -> Self {
@@ -475,6 +533,7 @@ impl Default for SqliteConfig {
             queue_capacity: 100,
             pragma_override: None,
             metrics_threshold: None,
+            fsync: SqliteFsync::default(),
         }
     }
 }
@@ -682,6 +741,7 @@ impl SqlitePool {
     fn init_thread(
         path: &Path,
         mut pragma_override: HashMap<String, String>,
+        fsync: SqliteFsync,
     ) -> Result<Connection, InitializationError> {
         fn pragma_update(
             conn: &Connection,
@@ -723,6 +783,13 @@ impl SqlitePool {
             error!("Cannot enable SQLite incremental vacuum - {err:?}");
             InitializationError
         })?;
+        if fsync == SqliteFsync::Group {
+            if pragma_override.contains_key("synchronous") {
+                error!("PRAGMA synchronous cannot be overridden with group fsync");
+                return Err(InitializationError);
+            }
+            pragma_override.insert("synchronous".to_string(), "NORMAL".to_string());
+        }
         for [pragma_name, default_value] in PRAGMA {
             let pragma_value = pragma_override
                 .remove(pragma_name)
@@ -773,6 +840,7 @@ impl SqlitePool {
         shutdown_finished: &AtomicBool,
         mut command_rx: mpsc::Receiver<ThreadCommand>,
         metrics_threshold: Option<Duration>,
+        durability: Option<&Durability>,
     ) {
         let mut histograms = Histograms::new(metrics_threshold);
         while Self::tick(
@@ -780,6 +848,7 @@ impl SqlitePool {
             shutdown_requested,
             &mut command_rx,
             &mut histograms,
+            durability,
         )
         .is_ok()
         {
@@ -795,6 +864,7 @@ impl SqlitePool {
         shutdown_requested: &AtomicBool,
         command_rx: &mut mpsc::Receiver<ThreadCommand>,
         histograms: &mut Histograms,
+        durability: Option<&Durability>,
     ) -> Result<(), ShutdownRequested> {
         #[derive(Clone, Copy, PartialEq, Eq)]
         enum ApplyOrSkip {
@@ -911,6 +981,7 @@ impl SqlitePool {
                 }
             }
         }
+        let changes_before = conn.total_changes();
         let ok_or_commit_error = apply_all(
             conn,
             &mut ltx_list,
@@ -918,6 +989,12 @@ impl SqlitePool {
             all_fns_start,
             shutdown_requested,
         )?;
+        // Numbered before any caller is notified, so a later read sees the executions as unsynced.
+        let ok_or_commit_error = ok_or_commit_error.map(|()| {
+            durability.map_or(0, |durability| {
+                durability.committed(conn.total_changes() != changes_before)
+            })
+        });
 
         for (ltx, apply_or_skip) in ltx_list {
             let total_elapsed = ltx.sent_at.elapsed();
@@ -931,7 +1008,7 @@ impl SqlitePool {
             let to_send = match apply_or_skip {
                 ApplyOrSkip::Apply => ok_or_commit_error.clone(),
                 ApplyOrSkip::Skip => {
-                    Ok(()) // tx was aborted, caller will receive error from the LTX fn
+                    Ok(0) // tx was aborted, caller will receive error from the LTX fn
                 }
             };
             // Ignore the sending result: ThreadCommand producer timed out before awaiting the ack.
@@ -982,11 +1059,27 @@ impl SqlitePool {
 
         let (command_tx, command_rx) = tokio::sync::mpsc::channel(config.queue_capacity);
         info!("Sqlite database location: {path:?}");
+        let durability =
+            (config.fsync == SqliteFsync::Group).then(|| Arc::new(Durability::new(&path)));
         let join_handle = {
             // Initialize the `Connection`.
             let init_task = {
+                let durability = durability.clone();
                 tokio::task::spawn_blocking(move || {
-                    Self::init_thread(&path, config.pragma_override.unwrap_or_default())
+                    let conn = Self::init_thread(
+                        &path,
+                        config.pragma_override.unwrap_or_default(),
+                        config.fsync,
+                    )?;
+                    if let Some(durability) = durability {
+                        // A previous process may have exited with commits not on disk yet,
+                        // and nothing tracks them.
+                        durability.fsync_wal().map_err(|err| {
+                            error!("Cannot fsync the SQLite WAL - {err:?}");
+                            InitializationError
+                        })?;
+                    }
+                    Ok(conn)
                 })
                 .await
             };
@@ -999,6 +1092,7 @@ impl SqlitePool {
             };
             let shutdown_requested = shutdown_requested.clone();
             let shutdown_finished = shutdown_finished.clone();
+            let durability = durability.clone();
             // Start the RPC thread.
             std::thread::spawn(move || {
                 Self::connection_rpc(
@@ -1007,9 +1101,13 @@ impl SqlitePool {
                     &shutdown_finished,
                     command_rx,
                     config.metrics_threshold,
+                    durability.as_deref(),
                 );
             })
         };
+        let syncer = durability.as_ref().map(|durability| {
+            Arc::new(tokio::spawn(durability.clone().run_syncer()).abort_handle())
+        });
         Ok(SqlitePool(SqlitePoolInner {
             shutdown_requested,
             shutdown_finished,
@@ -1018,13 +1116,16 @@ impl SqlitePool {
             pending_subscribers: Arc::default(),
             join_handle: Some(Arc::new(join_handle)),
             execution_finished_subscribers: Arc::default(),
+            durability,
+            syncer,
         }))
     }
 
     /// Invokes the provided function wrapping a new [`rusqlite::Transaction`] that is committed automatically.
+    /// With [`SqliteFsync::Group`], returns once a write is durable.
     async fn transaction<F, T, E>(
         &self,
-        mut func: F,
+        func: F,
         tx_type: TxType,
         func_name: &'static str,
     ) -> Result<T, E>
@@ -1033,22 +1134,67 @@ impl SqlitePool {
         T: Send + 'static,
         E: From<RusqliteError> + Send + 'static,
     {
-        let fn_res: Arc<std::sync::Mutex<Option<_>>> = Arc::default();
+        self.transaction_durable(func, tx_type, func_name, TxSync::Wait, None)
+            .await
+    }
+
+    /// Like [`Self::transaction`], recording the executions whose state the write changed, so
+    /// that external reads of them wait until it is durable.
+    async fn transaction_touching<F, T, E>(
+        &self,
+        func: F,
+        tx_type: TxType,
+        func_name: &'static str,
+        sync: TxSync,
+        touched: impl Fn(&T) -> Vec<ExecutionId> + Send + 'static,
+    ) -> Result<T, E>
+    where
+        F: FnMut(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
+        T: Send + 'static,
+        E: From<RusqliteError> + Send + 'static,
+    {
+        self.transaction_durable(func, tx_type, func_name, sync, Some(Box::new(touched)))
+            .await
+    }
+
+    #[expect(clippy::type_complexity)]
+    async fn transaction_durable<F, T, E>(
+        &self,
+        mut func: F,
+        tx_type: TxType,
+        func_name: &'static str,
+        sync: TxSync,
+        touched: Option<Box<dyn Fn(&T) -> Vec<ExecutionId> + Send>>,
+    ) -> Result<T, E>
+    where
+        F: FnMut(&mut rusqlite::Transaction) -> Result<T, E> + Send + 'static,
+        T: Send + 'static,
+        E: From<RusqliteError> + Send + 'static,
+    {
+        // The result and whether the LTX changed anything.
+        let fn_res: Arc<std::sync::Mutex<Option<(_, bool)>>> = Arc::default();
         let (phytx_flush_sender, phytx_flush_receiver) = oneshot::channel();
         let current_span = Span::current();
+        let durability = self.0.durability.clone();
         let thread_command_func = {
             let fn_res = fn_res.clone();
+            let durability = durability.clone();
             ThreadCommand::LogicalTx(LogicalTx {
                 func: Box::new(move |tx| {
                     let _guard = current_span.enter();
+                    let changes_before = tx.total_changes();
                     let func_res = func(tx);
-                    let res = if func_res.is_ok() {
+                    let changed = tx.total_changes() != changes_before;
+                    let res = if let Ok(value) = &func_res {
+                        if let (Some(durability), Some(touched)) = (&durability, &touched) {
+                            durability.touch(touched(value));
+                        }
                         Ok(())
                     } else {
                         Err(ShouldRollback)
                     };
                     // save result to be sent to the caller
-                    *fn_res.lock().unwrap() = Some(func_res);
+                    *fn_res.lock().unwrap() = Some((func_res, changed));
                     match tx_type {
                         TxType::MultipleWrites => res, // Rollback, skipping this on LTX replay.
                         TxType::Other => Ok(()), // Failed single write should not rollback the PhyTx
@@ -1068,12 +1214,30 @@ impl SqlitePool {
 
         // Wait for commit / rollbeck, then get the retval from the mutex.
         match phytx_flush_receiver.await {
-            Ok(Ok(())) => {
-                let mut guard = fn_res.lock().unwrap();
-                std::mem::take(guard.deref_mut()).expect("ltx must have been run at least once")
+            Ok(Ok(seq)) => {
+                let (res, changed) = std::mem::take(fn_res.lock().unwrap().deref_mut())
+                    .expect("ltx must have been run at least once");
+                if let Some(durability) = durability
+                    && sync == TxSync::Wait
+                    && changed
+                    && res.is_ok()
+                {
+                    durability.wait_seq(seq).await;
+                }
+                res
             }
             Ok(Err(CommitError(rusqlite_err))) => Err(E::from(rusqlite_err)),
             Err(_) => Err(E::from(RusqliteError::Close)),
+        }
+    }
+
+    /// Waits until the latest writes of the given executions are durable.
+    async fn wait_executions_durable<'a>(
+        &self,
+        execution_ids: impl IntoIterator<Item = &'a ExecutionId>,
+    ) {
+        if let Some(durability) = &self.0.durability {
+            durability.wait_executions(execution_ids).await;
         }
     }
 
@@ -4531,7 +4695,7 @@ impl DbExecutor for SqlitePool {
             Ok(vec![])
         } else {
             debug!("Locking {execution_ids_versions:?}");
-            self.transaction(
+            self.transaction_touching(
                 move |tx| {
                     let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
                     // Append lock
@@ -4554,6 +4718,8 @@ impl DbExecutor for SqlitePool {
                 },
                 TxType::MultipleWrites,
                 "lock_pending_by_ffqns_one",
+                TxSync::Later,
+                locked_execution_ids,
             )
             .await
         }
@@ -4594,7 +4760,7 @@ impl DbExecutor for SqlitePool {
             Ok(vec![])
         } else {
             debug!("Auto-locking {execution_ids_versions:?}");
-            self.transaction(
+            self.transaction_touching(
                 move |tx| {
                     let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
                     for (execution_id, version) in &execution_ids_versions {
@@ -4616,6 +4782,8 @@ impl DbExecutor for SqlitePool {
                 },
                 TxType::MultipleWrites,
                 "lock_pending_by_ffqns_auto_one",
+                TxSync::Later,
+                locked_execution_ids,
             )
             .await
         }
@@ -4657,7 +4825,7 @@ impl DbExecutor for SqlitePool {
             Ok(vec![])
         } else {
             debug!("Locking {execution_ids_versions:?}");
-            self.transaction(
+            self.transaction_touching(
                 move |tx| {
                     let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
                     // Append lock
@@ -4680,6 +4848,8 @@ impl DbExecutor for SqlitePool {
                 },
                 TxType::MultipleWrites,
                 "lock_pending_by_component_id_one",
+                TxSync::Later,
+                locked_execution_ids,
             )
             .await
         }
@@ -4701,7 +4871,8 @@ impl DbExecutor for SqlitePool {
     ) -> Result<LockedExecution, DbErrorWrite> {
         debug!(%execution_id, "lock_one");
         let execution_id = execution_id.clone();
-        self.transaction(
+        let touched = touching([execution_id.clone()]);
+        self.transaction_touching(
             move |tx| {
                 Self::lock_single_execution(
                     tx,
@@ -4719,6 +4890,8 @@ impl DbExecutor for SqlitePool {
             },
             TxType::MultipleWrites, // insert + update t_state
             "lock_inner",
+            TxSync::Later,
+            touched,
         )
         .await
     }
@@ -4733,8 +4906,9 @@ impl DbExecutor for SqlitePool {
         debug!(%req, "append");
         trace!(?req, "append");
         let created_at = req.created_at;
+        let touched = touching([execution_id.clone()]);
         let (version, notifier) = self
-            .transaction(
+            .transaction_touching(
                 move |tx| {
                     let mut req = req.clone();
                     Self::validate_append_requests(
@@ -4746,6 +4920,8 @@ impl DbExecutor for SqlitePool {
                 },
                 TxType::MultipleWrites, // insert + update t_state
                 "append",
+                TxSync::Later,
+                touched,
             )
             .await?;
         self.notify_all(vec![notifier], created_at);
@@ -4775,8 +4951,12 @@ impl DbExecutor for SqlitePool {
                 DbErrorWriteNonRetriable::ValidationFailed("batch cannot be empty".into()),
             ));
         }
+        let touched = touching([
+            events.execution_id.clone(),
+            response.parent_execution_id.clone(),
+        ]);
         let (version, notifiers) = {
-            self.transaction(
+            self.transaction_touching(
                 move |tx| {
                     let mut events = events.clone();
                     let limit = Self::validate_append_requests(
@@ -4823,6 +5003,8 @@ impl DbExecutor for SqlitePool {
                 },
                 TxType::MultipleWrites,
                 "append_batch_respond_to_parent",
+                TxSync::Later,
+                touched,
             )
             .await?
         };
@@ -4985,12 +5167,16 @@ impl DbExecutor for SqlitePool {
         execution_id: &ExecutionId,
     ) -> Result<ExecutionEvent, DbErrorRead> {
         let execution_id = execution_id.clone();
-        self.transaction(
-            move |tx| Self::get_last_execution_event(tx, &execution_id),
-            TxType::Other, // read only
-            "get_last_execution_event",
-        )
-        .await
+        let durable_id = execution_id.clone();
+        let res = self
+            .transaction(
+                move |tx| Self::get_last_execution_event(tx, &execution_id),
+                TxType::Other, // read only
+                "get_last_execution_event",
+            )
+            .await;
+        self.wait_executions_durable([&durable_id]).await;
+        res
     }
 
     #[instrument(skip(self))]
@@ -5000,7 +5186,8 @@ impl DbExecutor for SqlitePool {
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let execution_id = execution_id.clone();
-        self.transaction(
+        let touched = touching([execution_id.clone()]);
+        self.transaction_touching(
             move |tx| {
                 Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
                 let combined_state = Self::get_combined_state(tx, &execution_id)?;
@@ -5013,6 +5200,8 @@ impl DbExecutor for SqlitePool {
             },
             TxType::MultipleWrites,
             "append_activity_cancellation_requested",
+            TxSync::Wait,
+            touched,
         )
         .await
     }
@@ -5024,13 +5213,16 @@ impl DbExecutor for SqlitePool {
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let execution_id = execution_id.clone();
-        self.transaction(
+        let touched = touching([execution_id.clone()]);
+        self.transaction_touching(
             move |tx| {
                 Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
                 SqlitePool::cancel_workflow(tx, &execution_id, cancelled_at)
             },
             TxType::MultipleWrites,
             "cancel_workflow",
+            TxSync::Wait,
+            touched,
         )
         .await
     }
@@ -5046,8 +5238,9 @@ impl DbExternalApi for SqlitePool {
     ) -> Result<BacktraceInfo, DbErrorRead> {
         debug!("get_backtrace");
         let execution_id = execution_id.clone();
+        let durable_id = execution_id.clone();
 
-        self.transaction(
+        let res = self.transaction(
             move |tx| {
                 Self::require_live_root(tx, &execution_id)?;
                 let select = "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_execution_backtrace e \
@@ -5084,7 +5277,9 @@ impl DbExternalApi for SqlitePool {
             },
             TxType::Other, // read only
             "get_last_backtrace",
-        ).await
+        ).await;
+        self.wait_executions_durable([&durable_id]).await;
+        res
     }
 
     #[instrument(skip_all)]
@@ -5321,13 +5516,17 @@ impl DbExternalApi for SqlitePool {
         filter: ListExecutionsFilter,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbErrorGeneric> {
-        self.transaction(
-            move |tx| Self::list_executions(tx, &filter, &pagination),
-            TxType::Other, // read only
-            "list_executions",
-        )
-        .await
-        .map_err(to_generic_error)
+        let executions = self
+            .transaction(
+                move |tx| Self::list_executions(tx, &filter, &pagination),
+                TxType::Other, // read only
+                "list_executions",
+            )
+            .await
+            .map_err(to_generic_error)?;
+        self.wait_executions_durable(executions.iter().map(|execution| &execution.execution_id))
+            .await;
+        Ok(executions)
     }
 
     #[instrument(skip(self))]
@@ -5338,25 +5537,29 @@ impl DbExternalApi for SqlitePool {
         include_backtrace_id: bool,
     ) -> Result<ListExecutionEventsResponse, DbErrorRead> {
         let execution_id = execution_id.clone();
-        self.transaction(
-            move |tx| {
-                Self::require_live_root(tx, &execution_id)?;
-                let events = Self::list_execution_events(
-                    tx,
-                    &execution_id,
-                    pagination,
-                    include_backtrace_id,
-                )?;
-                let max_version = Self::get_max_version(tx, &execution_id)?;
-                Ok(ListExecutionEventsResponse {
-                    events,
-                    max_version,
-                })
-            },
-            TxType::Other, // read only
-            "get",
-        )
-        .await
+        let durable_id = execution_id.clone();
+        let res = self
+            .transaction(
+                move |tx| {
+                    Self::require_live_root(tx, &execution_id)?;
+                    let events = Self::list_execution_events(
+                        tx,
+                        &execution_id,
+                        pagination,
+                        include_backtrace_id,
+                    )?;
+                    let max_version = Self::get_max_version(tx, &execution_id)?;
+                    Ok(ListExecutionEventsResponse {
+                        events,
+                        max_version,
+                    })
+                },
+                TxType::Other, // read only
+                "get",
+            )
+            .await;
+        self.wait_executions_durable([&durable_id]).await;
+        res
     }
 
     #[instrument(skip(self))]
@@ -5365,52 +5568,56 @@ impl DbExternalApi for SqlitePool {
         execution_ids: &[ExecutionId],
     ) -> Result<Vec<concepts::storage::ExecutionEventBounds>, DbErrorRead> {
         let execution_ids = execution_ids.to_vec();
-        self.transaction(
-            move |tx| {
-                let mut bounds = Vec::with_capacity(execution_ids.len());
-                for execution_id in &execution_ids {
-                    Self::require_live_root(tx, execution_id)?;
-                    let length = std::num::NonZeroU16::new(1).expect("one is nonzero");
-                    let created = Self::list_execution_events(
-                        tx,
-                        execution_id,
-                        Pagination::NewerThan {
-                            length,
-                            cursor: 0,
-                            including_cursor: true,
-                        },
-                        false,
-                    )?
-                    .into_iter()
-                    .next()
-                    .ok_or(DbErrorRead::NotFound)?;
-                    let latest = Self::list_execution_events(
-                        tx,
-                        execution_id,
-                        Pagination::OlderThan {
-                            length,
-                            cursor: VersionType::MAX,
-                            including_cursor: true,
-                        },
-                        false,
-                    )?
-                    .into_iter()
-                    .next()
-                    .ok_or(DbErrorRead::NotFound)?;
-                    let finished = matches!(&latest.event, ExecutionRequest::Finished { .. })
-                        .then_some(latest);
-                    bounds.push(concepts::storage::ExecutionEventBounds {
-                        execution_id: execution_id.clone(),
-                        created,
-                        finished,
-                    });
-                }
-                Ok(bounds)
-            },
-            TxType::Other,
-            "get_execution_event_bounds_batch",
-        )
-        .await
+        let durable_ids = execution_ids.clone();
+        let res = self
+            .transaction(
+                move |tx| {
+                    let mut bounds = Vec::with_capacity(execution_ids.len());
+                    for execution_id in &execution_ids {
+                        Self::require_live_root(tx, execution_id)?;
+                        let length = std::num::NonZeroU16::new(1).expect("one is nonzero");
+                        let created = Self::list_execution_events(
+                            tx,
+                            execution_id,
+                            Pagination::NewerThan {
+                                length,
+                                cursor: 0,
+                                including_cursor: true,
+                            },
+                            false,
+                        )?
+                        .into_iter()
+                        .next()
+                        .ok_or(DbErrorRead::NotFound)?;
+                        let latest = Self::list_execution_events(
+                            tx,
+                            execution_id,
+                            Pagination::OlderThan {
+                                length,
+                                cursor: VersionType::MAX,
+                                including_cursor: true,
+                            },
+                            false,
+                        )?
+                        .into_iter()
+                        .next()
+                        .ok_or(DbErrorRead::NotFound)?;
+                        let finished = matches!(&latest.event, ExecutionRequest::Finished { .. })
+                            .then_some(latest);
+                        bounds.push(concepts::storage::ExecutionEventBounds {
+                            execution_id: execution_id.clone(),
+                            created,
+                            finished,
+                        });
+                    }
+                    Ok(bounds)
+                },
+                TxType::Other,
+                "get_execution_event_bounds_batch",
+            )
+            .await;
+        self.wait_executions_durable(&durable_ids).await;
+        res
     }
 
     #[instrument(skip(self))]
@@ -5419,28 +5626,33 @@ impl DbExternalApi for SqlitePool {
         execution_ids: &[ExecutionId],
     ) -> Result<Vec<concepts::storage::ExecutionStateWithVersion>, DbErrorRead> {
         let execution_ids = execution_ids.to_vec();
-        self.transaction(
-            move |tx| {
-                let mut states = Vec::with_capacity(execution_ids.len());
-                for execution_id in &execution_ids {
-                    let state = Self::get_combined_state(tx, execution_id).and_then(|combined| {
-                        Ok(concepts::storage::ExecutionStateWithVersion {
-                            execution_with_state: combined.execution_with_state,
-                            max_version: Self::get_max_version(tx, execution_id)?,
-                        })
-                    });
-                    match state {
-                        Ok(state) => states.push(state),
-                        Err(DbErrorRead::NotFound) => {} // skip missing executions
-                        Err(err) => return Err(err),
+        let durable_ids = execution_ids.clone();
+        let res = self
+            .transaction(
+                move |tx| {
+                    let mut states = Vec::with_capacity(execution_ids.len());
+                    for execution_id in &execution_ids {
+                        let state =
+                            Self::get_combined_state(tx, execution_id).and_then(|combined| {
+                                Ok(concepts::storage::ExecutionStateWithVersion {
+                                    execution_with_state: combined.execution_with_state,
+                                    max_version: Self::get_max_version(tx, execution_id)?,
+                                })
+                            });
+                        match state {
+                            Ok(state) => states.push(state),
+                            Err(DbErrorRead::NotFound) => {} // skip missing executions
+                            Err(err) => return Err(err),
+                        }
                     }
-                }
-                Ok(states)
-            },
-            TxType::Other, // read only
-            "get_pending_state_batch",
-        )
-        .await
+                    Ok(states)
+                },
+                TxType::Other, // read only
+                "get_pending_state_batch",
+            )
+            .await;
+        self.wait_executions_durable(&durable_ids).await;
+        res
     }
 
     #[instrument(skip(self))]
@@ -5451,21 +5663,29 @@ impl DbExternalApi for SqlitePool {
         join_set: Option<&JoinSetId>,
     ) -> Result<ListResponsesResponse, DbErrorRead> {
         let execution_id = execution_id.clone();
+        let durable_id = execution_id.clone();
         let join_set = join_set.cloned();
-        self.transaction(
-            move |tx| {
-                Self::reject_tombstoned_root(tx, &execution_id)?;
-                let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
-                let responses =
-                    Self::list_responses(tx, &execution_id, Some(pagination), join_set.as_ref())?;
-                Ok(ListResponsesResponse::from_page(
-                    responses, max_cursor, pagination,
-                ))
-            },
-            TxType::Other, // read only
-            "list_responses",
-        )
-        .await
+        let res = self
+            .transaction(
+                move |tx| {
+                    Self::reject_tombstoned_root(tx, &execution_id)?;
+                    let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
+                    let responses = Self::list_responses(
+                        tx,
+                        &execution_id,
+                        Some(pagination),
+                        join_set.as_ref(),
+                    )?;
+                    Ok(ListResponsesResponse::from_page(
+                        responses, max_cursor, pagination,
+                    ))
+                },
+                TxType::Other, // read only
+                "list_responses",
+            )
+            .await;
+        self.wait_executions_durable([&durable_id]).await;
+        res
     }
 
     #[instrument(skip(self))]
@@ -5478,37 +5698,41 @@ impl DbExternalApi for SqlitePool {
         resp_pagination: Pagination<u32>,
     ) -> Result<ExecutionWithStateRequestsResponses, DbErrorRead> {
         let execution_id = execution_id.clone();
+        let durable_id = execution_id.clone();
         let req_since = req_since.0;
-        self.transaction(
-            move |tx| {
-                Self::require_live_root(tx, &execution_id)?;
-                let combined_state = Self::get_combined_state(tx, &execution_id)?;
-                let events = Self::list_execution_events(
-                    tx,
-                    &execution_id,
-                    Pagination::NewerThan {
-                        length: req_max_length,
-                        cursor: req_since,
-                        including_cursor: true,
-                    },
-                    req_include_backtrace_id,
-                )?;
-                let responses =
-                    Self::list_responses(tx, &execution_id, Some(resp_pagination), None)?;
-                let max_version = Self::get_max_version(tx, &execution_id)?;
-                let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
-                Ok(ExecutionWithStateRequestsResponses {
-                    execution_with_state: combined_state.execution_with_state,
-                    events,
-                    responses,
-                    max_version,
-                    max_cursor,
-                })
-            },
-            TxType::Other, // read only
-            "list_execution_events_responses",
-        )
-        .await
+        let res = self
+            .transaction(
+                move |tx| {
+                    Self::require_live_root(tx, &execution_id)?;
+                    let combined_state = Self::get_combined_state(tx, &execution_id)?;
+                    let events = Self::list_execution_events(
+                        tx,
+                        &execution_id,
+                        Pagination::NewerThan {
+                            length: req_max_length,
+                            cursor: req_since,
+                            including_cursor: true,
+                        },
+                        req_include_backtrace_id,
+                    )?;
+                    let responses =
+                        Self::list_responses(tx, &execution_id, Some(resp_pagination), None)?;
+                    let max_version = Self::get_max_version(tx, &execution_id)?;
+                    let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
+                    Ok(ExecutionWithStateRequestsResponses {
+                        execution_with_state: combined_state.execution_with_state,
+                        events,
+                        responses,
+                        max_version,
+                        max_cursor,
+                    })
+                },
+                TxType::Other, // read only
+                "list_execution_events_responses",
+            )
+            .await;
+        self.wait_executions_durable([&durable_id]).await;
+        res
     }
 
     #[instrument(skip(self))]
@@ -5523,7 +5747,8 @@ impl DbExternalApi for SqlitePool {
         let execution_id = execution_id.clone();
         let old = old.clone();
         let new = new.clone();
-        self.transaction(
+        let touched = touching([execution_id.clone()]);
+        self.transaction_touching(
             move |tx| {
                 Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
                 Self::upgrade_execution_component_single_write(
@@ -5537,6 +5762,8 @@ impl DbExternalApi for SqlitePool {
             },
             TxType::Other, // single write
             "upgrade_execution_component",
+            TxSync::Wait,
+            touched,
         )
         .await
     }
@@ -5550,15 +5777,19 @@ impl DbExternalApi for SqlitePool {
         pagination: Pagination<LogCursor>,
     ) -> Result<ListLogsResponse, DbErrorRead> {
         let execution_id = execution_id.clone();
-        self.transaction(
-            move |tx| {
-                Self::require_live_root(tx, &execution_id)?;
-                Self::list_logs_tx(tx, &execution_id, show_derived, &filter, &pagination)
-            },
-            TxType::Other, // read only
-            "list_logs",
-        )
-        .await
+        let durable_id = execution_id.clone();
+        let res = self
+            .transaction(
+                move |tx| {
+                    Self::require_live_root(tx, &execution_id)?;
+                    Self::list_logs_tx(tx, &execution_id, show_derived, &filter, &pagination)
+                },
+                TxType::Other, // read only
+                "list_logs",
+            )
+            .await;
+        self.wait_executions_durable([&durable_id]).await;
+        res
     }
 
     #[instrument(skip(self))]
@@ -5831,13 +6062,16 @@ impl DbExternalApi for SqlitePool {
         paused_at: DateTime<Utc>,
     ) -> Result<AppendResponse, DbErrorWrite> {
         let execution_id = execution_id.clone();
-        self.transaction(
+        let touched = touching([execution_id.clone()]);
+        self.transaction_touching(
             move |tx| {
                 Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
                 SqlitePool::pause_execution(tx, &execution_id, paused_at)
             },
             TxType::MultipleWrites,
             "pause_execution",
+            TxSync::Wait,
+            touched,
         )
         .await
     }
@@ -5849,13 +6083,16 @@ impl DbExternalApi for SqlitePool {
         unpaused_at: DateTime<Utc>,
     ) -> Result<AppendResponse, DbErrorWrite> {
         let execution_id = execution_id.clone();
-        self.transaction(
+        let touched = touching([execution_id.clone()]);
+        self.transaction_touching(
             move |tx| {
                 Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
                 SqlitePool::unpause_execution(tx, &execution_id, unpaused_at)
             },
             TxType::MultipleWrites,
             "unpause_execution",
+            TxSync::Wait,
+            touched,
         )
         .await
     }
@@ -5863,7 +6100,8 @@ impl DbExternalApi for SqlitePool {
     #[instrument(skip(self))]
     async fn pause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
         let delay_id = delay_id.clone();
-        self.transaction(
+        let touched = touching([delay_id.split_to_parts().0]);
+        self.transaction_touching(
             move |tx| {
                 let (execution_id, join_set_id) = delay_id.split_to_parts();
                 Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
@@ -5883,6 +6121,8 @@ impl DbExternalApi for SqlitePool {
             },
             TxType::Other,
             "pause_delay",
+            TxSync::Wait,
+            touched,
         )
         .await
     }
@@ -5890,7 +6130,8 @@ impl DbExternalApi for SqlitePool {
     #[instrument(skip(self))]
     async fn unpause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
         let delay_id = delay_id.clone();
-        self.transaction(
+        let touched = touching([delay_id.split_to_parts().0]);
+        self.transaction_touching(
             move |tx| {
                 let (execution_id, join_set_id) = delay_id.split_to_parts();
                 Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
@@ -5910,6 +6151,8 @@ impl DbExternalApi for SqlitePool {
             },
             TxType::Other,
             "unpause_delay",
+            TxSync::Wait,
+            touched,
         )
         .await
     }
@@ -6931,11 +7174,14 @@ impl DbConnection for SqlitePool {
         trace!(?req, "create");
         req.validate_for_storage()?;
         let created_at = req.created_at;
+        let touched = touching([req.execution_id.clone()]);
         let (version, notifier) = self
-            .transaction(
+            .transaction_touching(
                 move |tx| Self::create_inner(tx, req.clone()),
                 TxType::MultipleWrites,
                 "create",
+                TxSync::Wait,
+                touched,
             )
             .await?;
         self.notify_all(vec![notifier], created_at);
@@ -6997,8 +7243,9 @@ impl DbConnection for SqlitePool {
         trace!(?batch, "append_batch");
         assert!(!batch.is_empty(), "Empty batch request");
 
+        let touched = touching([execution_id.clone()]);
         let (version, notifier) = self
-            .transaction(
+            .transaction_touching(
                 move |tx| {
                     let mut batch = batch.clone();
                     Self::validate_append_requests(tx, &execution_id, &mut batch)?;
@@ -7017,6 +7264,8 @@ impl DbConnection for SqlitePool {
                 },
                 TxType::MultipleWrites,
                 "append_batch",
+                TxSync::Later,
+                touched,
             )
             .await?;
 
@@ -7038,8 +7287,9 @@ impl DbConnection for SqlitePool {
         trace!(?batch, "append_batch_with_delay_response");
         assert!(!batch.is_empty(), "Empty batch request");
 
+        let touched = touching([execution_id.clone()]);
         let (version, notifiers) = self
-            .transaction(
+            .transaction_touching(
                 move |tx| {
                     let mut batch = batch.clone();
                     Self::validate_append_requests(tx, &execution_id, &mut batch)?;
@@ -7077,6 +7327,8 @@ impl DbConnection for SqlitePool {
                 },
                 TxType::MultipleWrites,
                 "append_batch_with_delay_response",
+                TxSync::Later,
+                touched,
             )
             .await?;
 
@@ -7102,8 +7354,12 @@ impl DbConnection for SqlitePool {
             request.validate_for_storage()?;
         }
 
+        let touched = touching(
+            std::iter::once(execution_id.clone())
+                .chain(child_req.iter().map(|req| req.execution_id.clone())),
+        );
         let (version, notifiers) = self
-            .transaction(
+            .transaction_touching(
                 move |tx| {
                     let mut batch = batch.clone();
                     Self::validate_append_requests(tx, &execution_id, &mut batch)?;
@@ -7126,6 +7382,8 @@ impl DbConnection for SqlitePool {
                 },
                 TxType::MultipleWrites,
                 "append_batch_create_new_execution_inner",
+                TxSync::Later,
+                touched,
             )
             .await?;
         self.notify_all(notifiers, current_time);
@@ -7277,7 +7535,7 @@ impl DbConnection for SqlitePool {
         })?;
 
         let timeout_fut = timeout_fut.unwrap_or_else(|| Box::pin(std::future::pending()));
-        match resp_or_receiver {
+        let res = match resp_or_receiver {
             itertools::Either::Left(resp) => Ok(resp), // no need for cleanup
             itertools::Either::Right(receiver) => {
                 let res = tokio::select! {
@@ -7292,7 +7550,12 @@ impl DbConnection for SqlitePool {
                 cleanup();
                 res
             }
+        };
+        if res.is_ok() {
+            // The caller reveals the result outside of the process.
+            self.wait_executions_durable([&execution_id]).await;
         }
+        res
     }
 
     #[instrument(level = Level::DEBUG, skip_all, fields(%join_set_id, %execution_id))]
@@ -7316,13 +7579,15 @@ impl DbConnection for SqlitePool {
             },
         };
         let res = self
-            .transaction(
+            .transaction_touching(
                 {
                     let execution_id = execution_id.clone();
                     move |tx| Self::append_response(tx, &execution_id, event.clone())
                 },
                 TxType::MultipleWrites,
                 "append_delay_response",
+                TxSync::Later,
+                touching([execution_id.clone()]),
             )
             .await;
         match res {
@@ -7376,7 +7641,7 @@ impl DbConnection for SqlitePool {
         batch: Vec<BacktraceInfo>,
     ) -> Result<usize, DbErrorWrite> {
         trace!("append_backtrace_batch");
-        self.transaction(
+        self.transaction_touching(
             move |tx| {
                 let mut inserted = 0;
                 for append in &batch {
@@ -7388,6 +7653,8 @@ impl DbConnection for SqlitePool {
             },
             TxType::MultipleWrites,
             "append_backtrace_batch",
+            TxSync::Later,
+            touching([]),
         )
         .await
     }
@@ -7530,8 +7797,9 @@ impl DbConnection for SqlitePool {
         }
         let execution_id = ExecutionId::Derived(execution_id);
         let expected_retval = response.result.clone();
+        let touched = touching([execution_id.clone(), response.parent_execution_id.clone()]);
         let notifiers = self
-            .transaction(
+            .transaction_touching(
                 move |tx| {
                     Self::require_live_root(tx, &execution_id)
                         .map_err(|err| DbErrorStubResponse::Write(err.into()))?;
@@ -7589,6 +7857,8 @@ impl DbConnection for SqlitePool {
                 },
                 TxType::MultipleWrites,
                 "upsert_stub_response",
+                TxSync::Wait,
+                touched,
             )
             .await?;
         if let Some(notifiers) = notifiers {
@@ -7602,14 +7872,16 @@ impl DbConnection for SqlitePool {
         execution_id: &ExecutionId,
     ) -> Result<ExecutionWithState, DbErrorRead> {
         let execution_id = execution_id.clone();
-        Ok(self
+        let state = self
             .transaction(
                 move |tx| Self::get_combined_state(tx, &execution_id),
                 TxType::Other, // read only
                 "get_pending_state",
             )
             .await?
-            .execution_with_state)
+            .execution_with_state;
+        self.wait_executions_durable([&state.execution_id]).await;
+        Ok(state)
     }
 }
 
@@ -7856,7 +8128,12 @@ mod tests {
     )]
     fn idle_polling_work_is_bounded(#[case] sql: &str) {
         let file = tempfile::NamedTempFile::new().unwrap();
-        let conn = SqlitePool::init_thread(file.path(), hashbrown::HashMap::new()).unwrap();
+        let conn = SqlitePool::init_thread(
+            file.path(),
+            hashbrown::HashMap::new(),
+            super::SqliteFsync::Commit,
+        )
+        .unwrap();
         conn.execute_batch(
             "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i + 1 FROM n WHERE i < 10000),
              kinds(state, ffqn, digest, lifecycle, tombstoned) AS (VALUES
@@ -7946,7 +8223,12 @@ mod tests {
             )
             .unwrap();
             drop(conn);
-            let conn = SqlitePool::init_thread(file.path(), hashbrown::HashMap::new()).unwrap();
+            let conn = SqlitePool::init_thread(
+                file.path(),
+                hashbrown::HashMap::new(),
+                super::SqliteFsync::Commit,
+            )
+            .unwrap();
             assert_eq!(
                 conn.pragma_query_value(None, "auto_vacuum", |row| row.get::<_, u32>(0))
                     .unwrap(),
@@ -7962,7 +8244,12 @@ mod tests {
                 .pragma_query_value(None, "schema_version", |row| row.get(0))
                 .unwrap();
             drop(conn);
-            let conn = SqlitePool::init_thread(file.path(), hashbrown::HashMap::new()).unwrap();
+            let conn = SqlitePool::init_thread(
+                file.path(),
+                hashbrown::HashMap::new(),
+                super::SqliteFsync::Commit,
+            )
+            .unwrap();
             assert_eq!(
                 conn.pragma_query_value(None, "schema_version", |row| row.get::<_, u32>(0))
                     .unwrap(),

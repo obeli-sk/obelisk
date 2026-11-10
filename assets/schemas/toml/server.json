@@ -631,9 +631,27 @@
             }
           ],
           "default": null
+        },
+        "fsync": {
+          "$ref": "#/$defs/SqliteFsyncToml"
         }
       },
       "additionalProperties": false
+    },
+    "SqliteFsyncToml": {
+      "description": "When SQLite commits reach the disk.",
+      "oneOf": [
+        {
+          "description": "Every commit fsyncs the WAL (`synchronous = FULL`).",
+          "type": "string",
+          "const": "commit"
+        },
+        {
+          "description": "Commits do not fsync (`synchronous = NORMAL`). A single fsync of the WAL covers all commits\nmade before it; it runs before a commit is revealed outside of the server: before an\nactivity runs, an API call returns, or a webhook responds. Cannot be combined with\n`pragma.synchronous`.",
+          "type": "string",
+          "const": "group"
+        }
+      ]
     },
     "PostgresConfigToml": {
       "type": "object",

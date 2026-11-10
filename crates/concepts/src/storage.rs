@@ -1495,6 +1495,14 @@ pub trait DbPool: Send + Sync {
 
     async fn cas_gc_conn(&self) -> Result<Box<dyn CasGc>, DbErrorGeneric>;
 
+    /// Waits until the latest writes of the given executions survive a power loss. Executor
+    /// writes may return before they are durable; this must be awaited before their effects
+    /// leave the process, for example before an activity runs.
+    async fn wait_durable(&self, _execution_ids: &[ExecutionId]) {}
+
+    /// Waits until every write committed so far survives a power loss.
+    async fn durable_barrier(&self) {}
+
     #[cfg(feature = "test")]
     async fn connection_test(&self) -> Result<Box<dyn DbConnectionTest>, DbErrorGeneric>;
 }

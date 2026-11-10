@@ -2548,12 +2548,16 @@ impl RequestHandler {
         let max_stream_duration = self.max_stream_duration;
         let (stream_expired_sender, stream_expired) = watch::channel(());
         let deadline = tokio::time::Instant::now() + self.request_timeout;
+        let db_pool = self.db_pool.clone();
         let res = tokio::time::timeout_at(
             deadline,
             self.handle_request_inner(req, wasm_cell, Span::current(), deadline, stream_expired),
         )
         .await
         .unwrap_or(Err(HandleRequestError::Timeout));
+        // The response may reveal anything committed so far, e.g. results of child executions.
+        // A streamed body can still reveal later writes.
+        db_pool.durable_barrier().await;
         match res {
             Ok(mut response) => {
                 if response.body().size_hint().exact().is_none() {
