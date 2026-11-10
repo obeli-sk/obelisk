@@ -2,7 +2,7 @@ use crate::config::deployment::DurationConfig;
 use crate::config::server::IdleReportConfig;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::IdlePeriodId;
-use concepts::storage::{DbPool, SystemEventCode};
+use concepts::storage::{DbPool, PendingExecutionFilter, SystemEventCode};
 use db_sqlite::sqlite_dao::{IdleState, SqlitePool};
 use std::time::Duration;
 use tokio::time::Instant;
@@ -77,7 +77,15 @@ impl Detector {
     }
 }
 
-pub(crate) async fn run(config: IdleReportConfig, db: SqlitePool, http: HttpActivity) {
+pub(crate) async fn run<F, Fut>(
+    config: IdleReportConfig,
+    db: SqlitePool,
+    http: HttpActivity,
+    executors: F,
+) where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Vec<PendingExecutionFilter>>,
+{
     let client = match reqwest::Client::builder()
         .timeout(config.request_timeout.into())
         .redirect(reqwest::redirect::Policy::none())
@@ -93,7 +101,7 @@ pub(crate) async fn run(config: IdleReportConfig, db: SqlitePool, http: HttpActi
     loop {
         tokio::time::sleep(detector.config.check_interval.into()).await;
         let generation = http.snapshot().generation;
-        match db.idle_state().await {
+        match db.idle_state(executors().await).await {
             Ok(state) => {
                 let activity = http.snapshot();
                 let idle = detector.check(Utc::now(), Instant::now(), activity, state);
@@ -402,7 +410,9 @@ mod tests {
             },
             ..Default::default()
         };
-        let task = tokio::spawn(run(config, db.clone(), http.clone()));
+        let task = tokio::spawn(run(config, db.clone(), http.clone(), || async {
+            Vec::new()
+        }));
         let task = executor::AbortOnDropHandle::new(task.abort_handle());
         let count = async || sink.received_requests().await.unwrap().len();
         async fn wait_for(sink: &MockServer, count: usize) {

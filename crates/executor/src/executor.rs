@@ -85,6 +85,7 @@ pub struct ExecutorTaskHandle {
     #[debug(skip)]
     join_handle: JoinHandle<()>,
     component_id: ComponentId,
+    pending_execution_filter: concepts::storage::PendingExecutionFilter,
     executor_id: ExecutorId,
     deployment_id: DeploymentId,
     // Signals close() -> workers to shut down
@@ -104,6 +105,11 @@ pub struct WorkerTasksHandle {
 }
 
 impl ExecutorTaskHandle {
+    #[must_use]
+    pub fn pending_execution_filter(&self) -> &concepts::storage::PendingExecutionFilter {
+        &self.pending_execution_filter
+    }
+
     /// Shut down the executor task, return worker tasks handle untouched.
     #[instrument(name = "executor.close", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id,
         deployment_id = %self.deployment_id))]
@@ -282,6 +288,20 @@ impl ExecTask {
         let is_closing_inner = is_closing.clone();
         let ffqns = extract_exported_ffqns_noext(worker.as_ref());
         let component_id = config.component_id.clone();
+        let pending_execution_filter = match config.locking_strategy {
+            LockingStrategy::ByFfqns => {
+                concepts::storage::PendingExecutionFilter::ByFfqns(ffqns.clone())
+            }
+            LockingStrategy::ByComponentDigest => {
+                concepts::storage::PendingExecutionFilter::ByComponentDigest(
+                    component_id.component_digest.clone(),
+                )
+            }
+            LockingStrategy::Auto => concepts::storage::PendingExecutionFilter::Auto {
+                ffqns: ffqns.clone(),
+                current_digest: component_id.component_digest.clone(),
+            },
+        };
         let executor_id = config.executor_id;
         let (worker_count_tx, worker_count_rx) = tokio::sync::watch::channel(0);
         let (execution_interrupt_sender, execution_interrupt_watcher) =
@@ -365,6 +385,7 @@ impl ExecTask {
             is_closing,
             join_handle,
             component_id,
+            pending_execution_filter,
             executor_id,
             deployment_id,
             execution_interrupt_sender,
