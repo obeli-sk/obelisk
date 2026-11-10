@@ -55,21 +55,26 @@ app_name = "my-app"
 # worker = "sha256:..."
 
 ## Outbound HTTP needs matching app and deployment permissions. Both policies are applied;
-## request_url_regex values need not be identical or subsets of each other.
+## their URL regexes need not be identical or subsets of each other.
+## `pattern` matches scheme, host and port; see deployment-help.toml for its wildcards.
+## URL regexes are matched against `METHOD URL` with the query string removed:
+## `https://api.github.com/repos?page=2` is seen as `GET https://api.github.com/repos`.
+## That text never contains `?`, so a regex that expects one never matches.
+## request_url_regex is searched anywhere in that text; anchor it with ^ and $ as needed.
 # [[outbound_http.allowed_host]]
 # pattern = "api.github.com"
-# methods = ["POST"]
+# methods = ["GET"]
 # request_url_regex = "^GET https://api\\.github\\.com/repos/"
 # secrets = ["OPENAI_API_KEY", { name = "GITHUB_TOKEN", optional = true }]
 # replace_in = ["headers"]
 
 ## Alternatively, use a single base URL for the application and its HTTP permissions.
-## url_prefix replaces pattern and request_url_regex; the original form supports wildcards.
-## The prefix must be an absolute HTTP(S) URL without credentials, query, fragment, or wildcards.
-## Environment variables expand before the prefix is regex-escaped; a trailing slash is kept.
-## url_regex_suffix is a grouped regex fragment appended to the literal prefix.
-## A leading ^ is forbidden; $ requires an exact endpoint. Without a suffix, any continuation matches.
-## Query parameters are excluded. App and deployment restrictions both apply at runtime.
+## url_prefix replaces pattern and request_url_regex.
+## It must be an absolute HTTP(S) URL without credentials, query, fragment, or wildcards.
+## Env vars are expanded first, then the prefix is matched literally, including any trailing slash.
+## url_regex_suffix is a regex appended after the prefix. It must not start with ^.
+## End it with $ to allow one exact path; without $, longer paths match too.
+## Without a suffix, any URL starting with the prefix is allowed.
 # [[outbound_http.allowed_host]]
 # url_prefix = "${LLM_URL:-https://openrouter.ai/api}"
 # methods = ["GET"]

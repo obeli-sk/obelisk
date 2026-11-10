@@ -77,24 +77,30 @@
 ## - `methods = []` allows nothing (config warning)
 ## - Omitting `methods` entirely allows nothing (config warning)
 ##
-## Optional request URL regex restriction:
+## What URL regexes see:
+## Both `request_url_regex` and `url_regex_suffix` below are matched against the text
+## `METHOD URL`, with the query string and fragment removed. A request to
+## `https://api.example.com/v1/items?page=2` is matched as
+## `GET https://api.example.com/v1/items`. That text never contains `?`, so a regex
+## that expects one never matches, and query parameters cannot be restricted.
+##
+## Optional `request_url_regex` restriction:
 ## - Checked after host and method matching.
-## - The request is matched as `METHOD URL` with query params removed,
-##   for example `GET https://api.example.com/v1/items`.
+## - Searched anywhere in the text: anchor it with `^` and `$` as needed.
 ## - Supports `${VAR}` and `${VAR:-default}` env var interpolation.
-## - Env var values are regex syntax; use regex-escaped values when precision matters.
-## - Omit `request_url_regex` to allow all paths accepted by host and method restrictions.
+## - Env var values are inserted as regex syntax, so escape them if precision matters.
+## - Without it, every path on the allowed host and methods is allowed.
 ##
 ## Simplified URL form (also supported in app.toml):
-## - Use `url_prefix` instead of `pattern` and `request_url_regex`.
-## - The prefix must be an absolute HTTP(S) URL without credentials, query, fragment, or wildcards.
-## - Environment variables are expanded before the URL prefix is regex-escaped.
-## - The prefix is matched literally, including any trailing slash; a bare origin matches any path.
-## - Optional `url_regex_suffix` is a grouped regex fragment appended to that literal prefix.
-## - A leading `^` is forbidden; use `$` to require an exact endpoint.
-## - Omitting the suffix allows any continuation of the literal prefix.
-## - Query parameters are excluded from matching, as with request_url_regex.
-## - Host and method coverage is checked at verification; both app and component regexes apply at runtime.
+## - `url_prefix` replaces both `pattern` and `request_url_regex`.
+## - It must be an absolute HTTP(S) URL without credentials, query, fragment, or wildcards.
+## - Env vars are expanded first, then the prefix is matched literally, including any
+##   trailing slash. A bare origin matches any path.
+## - Optional `url_regex_suffix` is a regex appended after the prefix. It must not start
+##   with `^`. End it with `$` to allow one exact path; without `$`, longer paths match too.
+## - Without a suffix, any URL starting with the prefix is allowed.
+## - Host and method coverage is checked at verification; both app and component regexes
+##   apply at runtime.
 # [[activity_wasm.allowed_host]]
 # url_prefix = "${LLM_URL:-https://openrouter.ai/api}"
 # methods = ["GET"]
