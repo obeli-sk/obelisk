@@ -228,7 +228,7 @@
           ]
         },
         "url_regex_suffix": {
-          "description": "Regex fragment appended to the escaped URL prefix; leading ^ is forbidden.",
+          "description": "Regex appended to the literal URL prefix; leading ^ is forbidden, end with $ for an exact path.\nMatched without the query string, so a `?` never matches.",
           "type": [
             "string",
             "null"
@@ -246,7 +246,7 @@
           ]
         },
         "request_url_regex": {
-          "description": "Optional regex restriction checked against `METHOD URL` with query params removed.\nFor example, `GET https://api.example.com/v1/items`.\nSupports `${VAR}` and `${VAR:-default}` env var interpolation.\nEnv var values are interpreted as regex syntax; use regex-escaped values when precision matters.\nOmit to allow all paths accepted by the host and method restrictions.",
+          "description": "Optional regex restriction checked against `METHOD URL` with the query string removed.\nFor example, `GET https://api.example.com/v1/items`, so a `?` never matches.\nUnanchored: use ^ and $ to match the whole text.\nSupports `${VAR}` and `${VAR:-default}` env var interpolation.\nEnv var values are interpreted as regex syntax; use regex-escaped values when precision matters.\nOmit to allow all paths accepted by the host and method restrictions.",
           "type": [
             "string",
             "null"

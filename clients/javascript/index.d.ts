@@ -84,8 +84,9 @@ export interface AppPolicyV1 {
      */
     replace_in: ("headers" | "body" | "params")[];
     /**
-     * Optional regex restriction checked against `METHOD URL` with query params removed.
-     * For example, `GET https://api.example.com/v1/items`.
+     * Optional regex restriction checked against `METHOD URL` with the query string removed.
+     * For example, `GET https://api.example.com/v1/items`, so a `?` never matches.
+     * Unanchored: use ^ and $ to match the whole text.
      * Supports `${VAR}` and `${VAR:-default}` env var interpolation.
      * Env var values are interpreted as regex syntax; use regex-escaped values when precision matters.
      * Omit to allow all paths accepted by the host and method restrictions.
@@ -109,7 +110,8 @@ export interface AppPolicyV1 {
      */
     url_prefix?: string | null;
     /**
-     * Regex fragment appended to the escaped URL prefix; leading ^ is forbidden.
+     * Regex appended to the literal URL prefix; leading ^ is forbidden, end with $ for an exact path.
+     * Matched without the query string, so a `?` never matches.
      */
     url_regex_suffix?: string | null;
   }[];

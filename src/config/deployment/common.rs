@@ -403,7 +403,8 @@ pub struct AllowedHostToml {
     /// HTTP(S) URL prefix, mutually exclusive with pattern and `request_url_regex`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_prefix: Option<String>,
-    /// Regex fragment appended to the escaped URL prefix; leading ^ is forbidden.
+    /// Regex appended to the literal URL prefix; leading ^ is forbidden, end with $ for an exact path.
+    /// Matched without the query string, so a `?` never matches.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_regex_suffix: Option<String>,
     /// Allowed HTTP methods.
@@ -412,8 +413,9 @@ pub struct AllowedHostToml {
     /// - `methods = ["GET", "POST"]` to allow specific methods.
     /// - `methods = []` to allow nothing (warning emitted).
     pub methods: Option<MethodsInput>,
-    /// Optional regex restriction checked against `METHOD URL` with query params removed.
-    /// For example, `GET https://api.example.com/v1/items`.
+    /// Optional regex restriction checked against `METHOD URL` with the query string removed.
+    /// For example, `GET https://api.example.com/v1/items`, so a `?` never matches.
+    /// Unanchored: use ^ and $ to match the whole text.
     /// Supports `${VAR}` and `${VAR:-default}` env var interpolation.
     /// Env var values are interpreted as regex syntax; use regex-escaped values when precision matters.
     /// Omit to allow all paths accepted by the host and method restrictions.

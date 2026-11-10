@@ -20,8 +20,9 @@ pub enum AllowedHostToml {
         Default: empty (no replacement, deny by default).*/
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         replace_in: ::std::vec::Vec<ReplaceIn>,
-        /**Optional regex restriction checked against `METHOD URL` with query params removed.
-        For example, `GET https://api.example.com/v1/items`.
+        /**Optional regex restriction checked against `METHOD URL` with the query string removed.
+        For example, `GET https://api.example.com/v1/items`, so a `?` never matches.
+        Unanchored: use ^ and $ to match the whole text.
         Supports `${VAR}` and `${VAR:-default}` env var interpolation.
         Env var values are interpreted as regex syntax; use regex-escaped values when precision matters.
         Omit to allow all paths accepted by the host and method restrictions.*/
@@ -59,7 +60,8 @@ pub enum AllowedHostToml {
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         secrets: ::std::vec::Vec<SecretRef>,
         url_prefix: ::std::string::String,
-        ///Regex fragment appended to the escaped URL prefix; leading ^ is forbidden.
+        /**Regex appended to the literal URL prefix; leading ^ is forbidden, end with $ for an exact path.
+        Matched without the query string, so a `?` never matches.*/
         #[serde(skip_serializing_if = "::std::option::Option::is_none")]
         url_regex_suffix: ::std::option::Option<::std::string::String>,
     },
@@ -322,8 +324,9 @@ pub struct AppPolicyV1OutboundHttpItem {
 
     Default: empty (no replacement, deny by default).*/
     pub replace_in: ::std::vec::Vec<AppPolicyV1OutboundHttpItemReplaceInItem>,
-    /**Optional regex restriction checked against `METHOD URL` with query params removed.
-    For example, `GET https://api.example.com/v1/items`.
+    /**Optional regex restriction checked against `METHOD URL` with the query string removed.
+    For example, `GET https://api.example.com/v1/items`, so a `?` never matches.
+    Unanchored: use ^ and $ to match the whole text.
     Supports `${VAR}` and `${VAR:-default}` env var interpolation.
     Env var values are interpreted as regex syntax; use regex-escaped values when precision matters.
     Omit to allow all paths accepted by the host and method restrictions.*/
@@ -337,7 +340,8 @@ pub struct AppPolicyV1OutboundHttpItem {
     ///HTTP(S) URL prefix, mutually exclusive with pattern and `request_url_regex`.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub url_prefix: ::std::option::Option<::std::string::String>,
-    ///Regex fragment appended to the escaped URL prefix; leading ^ is forbidden.
+    /**Regex appended to the literal URL prefix; leading ^ is forbidden, end with $ for an exact path.
+    Matched without the query string, so a `?` never matches.*/
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub url_regex_suffix: ::std::option::Option<::std::string::String>,
 }
