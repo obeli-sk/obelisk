@@ -559,15 +559,47 @@ pub struct IdleState {
 }
 
 impl SqlitePool {
-    pub async fn idle_state(&self) -> Result<IdleState, DbErrorGeneric> {
+    pub async fn idle_state(
+        &self,
+        executors: Vec<concepts::storage::PendingExecutionFilter>,
+    ) -> Result<IdleState, DbErrorGeneric> {
         self.transaction(
-            |tx| {
-                Ok::<_, RusqliteError>(tx.query_row(polling::IDLE_STATE, [], |row| {
+            move |tx| {
+                let mut state = tx.query_row(polling::IDLE_STATE, [], |row| {
                     Ok(IdleState {
                         busy: row.get(0)?,
                         next_run_at: row.get(1)?,
                     })
-                })?)
+                })?;
+                let mut include = |at: Option<DateTime<Utc>>| {
+                    if let Some(at) = at {
+                        state.next_run_at = Some(state.next_run_at.map_or(at, |next| next.min(at)));
+                    }
+                };
+                for executor in &executors {
+                    use concepts::storage::PendingExecutionFilter;
+                    match executor {
+                        PendingExecutionFilter::ByComponentDigest(digest) => {
+                            include(tx.prepare_cached(polling::IDLE_PENDING_BY_COMPONENT)?.query_row(
+                                named_params! { ":component_id_input_digest": digest },
+                                |row| row.get(0),
+                            )?);
+                        }
+                        PendingExecutionFilter::ByFfqns(ffqns) => {
+                            let mut stmt = tx.prepare_cached(polling::IDLE_PENDING_BY_FFQN)?;
+                            for ffqn in ffqns.iter() {
+                                include(stmt.query_row(named_params! { ":ffqn": ffqn.to_string() }, |row| row.get(0))?);
+                            }
+                        }
+                        PendingExecutionFilter::Auto { ffqns, current_digest } => {
+                            let mut stmt = tx.prepare_cached(polling::IDLE_PENDING_BY_FFQN_AUTO)?;
+                            for ffqn in ffqns.iter() {
+                                include(stmt.query_row(named_params! { ":ffqn": ffqn.to_string(), ":current_digest": current_digest }, |row| row.get(0))?);
+                            }
+                        }
+                    }
+                }
+                Ok::<_, RusqliteError>(state)
             },
             TxType::Other,
             "idle_state",
@@ -7686,9 +7718,85 @@ mod tests {
                 })?;
             Ok::<_, super::RusqliteError>(())
         }, TxType::Other, "idle_state_fixture").await.unwrap();
-        let actual = pool.idle_state().await.unwrap();
+        let executors = if component_type == "activity_stub" {
+            Vec::new()
+        } else {
+            vec![concepts::storage::PendingExecutionFilter::ByFfqns(
+                std::sync::Arc::from([FunctionFqn::new_static("missing:component/ifc", "fn")]),
+            )]
+        };
+        let actual = pool.idle_state(executors).await.unwrap();
         assert_eq!(actual.busy, busy);
         assert_eq!(actual.next_run_at, pending.then_some(at));
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn idle_state_tracks_current_executor_rules() {
+        use concepts::{
+            component_id::{ComponentDigest, Digest},
+            storage::PendingExecutionFilter,
+        };
+        use std::sync::Arc;
+
+        let (pool, _file) = sqlite_pool().await;
+        let old_digest = ComponentDigest(Digest([1; 32]));
+        let current_digest = ComponentDigest(Digest([2; 32]));
+        let at = chrono::Utc::now();
+        let old = old_digest.clone();
+        let current = current_digest.clone();
+        pool.transaction(move |tx| {
+            for (id, ffqn, component_type, digest, incompatible, when) in [
+                ("incompatible", "ns:pkg/ifc.fn", "workflow", &old, Some(&current), at),
+                ("removed", "removed:pkg/ifc.fn", "activity", &old, None, at),
+                ("old_cron", "cron:pkg/ifc.fn", "cron", &old, None, at),
+                ("current_cron", "cron:pkg/ifc.fn", "cron", &current, None, at + std::time::Duration::from_secs(300)),
+            ] {
+                tx.execute("INSERT INTO t_state (
+                    execution_id, is_top_level, corresponding_version, ffqn, created_at,
+                    component_id_input_digest, component_type, first_scheduled_at, deployment_id,
+                    pending_expires_finished, state, updated_at, intermittent_event_count, incompatible_digest
+                ) VALUES (:id, TRUE, 0, :ffqn, :at, :digest, :component_type, :at,
+                    'Dep_00000000000000000000000000', :when, 'pending_at', :at, 0, :incompatible)",
+                    named_params! { ":id": id, ":ffqn": ffqn, ":at": at, ":digest": digest,
+                        ":component_type": component_type, ":when": when, ":incompatible": incompatible })?;
+            }
+            Ok::<_, RusqliteError>(())
+        }, TxType::Other, "idle_executor_fixture").await.unwrap();
+        let ffqns = Arc::from([SOME_FFQN]);
+        let auto = |digest| PendingExecutionFilter::Auto {
+            ffqns: Arc::clone(&ffqns),
+            current_digest: digest,
+        };
+        let next = pool
+            .idle_state(vec![
+                auto(current_digest.clone()),
+                PendingExecutionFilter::ByComponentDigest(current_digest.clone()),
+            ])
+            .await
+            .unwrap();
+        assert!(!next.busy);
+        assert_eq!(
+            next.next_run_at,
+            Some(at + std::time::Duration::from_secs(300))
+        );
+        assert!(
+            pool.idle_state(vec![auto(current_digest)])
+                .await
+                .unwrap()
+                .next_run_at
+                .is_none()
+        );
+        for filter in [
+            auto(old_digest.clone()),
+            PendingExecutionFilter::ByFfqns(ffqns),
+            PendingExecutionFilter::ByComponentDigest(old_digest),
+        ] {
+            assert_eq!(
+                pool.idle_state(vec![filter]).await.unwrap().next_run_at,
+                Some(at)
+            );
+        }
         pool.close().await;
     }
 
@@ -7707,7 +7815,10 @@ mod tests {
             tx.execute("INSERT INTO t_delay VALUES ('Execution_root.child', 'join-set', 'delay', :at, FALSE)", named_params! { ":at": at })?;
             Ok::<_, super::RusqliteError>(())
         }, TxType::Other, "idle_delay_fixture").await.unwrap();
-        assert_eq!(pool.idle_state().await.unwrap().next_run_at, Some(at));
+        assert_eq!(
+            pool.idle_state(Vec::new()).await.unwrap().next_run_at,
+            Some(at)
+        );
         for sql in [
             "UPDATE t_delay SET is_paused = TRUE",
             "UPDATE t_delay SET is_paused = FALSE; UPDATE t_state SET tombstoned = TRUE",
@@ -7719,7 +7830,13 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(pool.idle_state().await.unwrap().next_run_at.is_none());
+            assert!(
+                pool.idle_state(Vec::new())
+                    .await
+                    .unwrap()
+                    .next_run_at
+                    .is_none()
+            );
         }
         pool.close().await;
     }

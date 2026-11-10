@@ -53,6 +53,17 @@ pub const LIFECYCLE_ACTIVE: &str = "active";
 pub const LIFECYCLE_PAUSED: &str = "paused";
 pub const LIFECYCLE_CANCELLING: &str = "cancelling";
 
+/// Pending work an active executor can lock.
+#[derive(Debug, Clone)]
+pub enum PendingExecutionFilter {
+    ByFfqns(Arc<[FunctionFqn]>),
+    ByComponentDigest(ComponentDigest),
+    Auto {
+        ffqns: Arc<[FunctionFqn]>,
+        current_digest: ComponentDigest,
+    },
+}
+
 /// Typed view of the `t_state.lifecycle` column. Mutually exclusive by
 /// construction (single column), so pause and cancellation cannot coexist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

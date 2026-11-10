@@ -37,12 +37,22 @@ pub(crate) const EXPIRED_LOCKS: &str = "
 pub(crate) const IDLE_STATE: &str = "
     SELECT EXISTS(SELECT 1 FROM t_state WHERE state = 'locked' AND lifecycle <> 'paused')
         OR EXISTS(SELECT 1 FROM t_state WHERE lifecycle = 'cancelling'),
-        (SELECT MIN(run_at) FROM (
-            SELECT MIN(pending_expires_finished) AS run_at FROM t_state
-            WHERE state = 'pending_at' AND lifecycle = 'active' AND tombstoned = FALSE
-            AND component_type <> 'activity_stub'
-            UNION ALL
-            SELECT MIN(d.expires_at) AS run_at FROM t_delay d WHERE NOT d.is_paused
+        (SELECT MIN(d.expires_at) FROM t_delay d WHERE NOT d.is_paused
             AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE
                 AND root.tombstoned = TRUE AND root.execution_id = substr(d.execution_id, 1, instr(d.execution_id || '.', '.') - 1))
-        ))";
+        )";
+
+pub(crate) const IDLE_PENDING_BY_FFQN: &str = "
+    SELECT MIN(pending_expires_finished) FROM t_state
+    WHERE state = 'pending_at' AND lifecycle = 'active' AND tombstoned = FALSE
+    AND ffqn = :ffqn";
+
+pub(crate) const IDLE_PENDING_BY_FFQN_AUTO: &str = "
+    SELECT MIN(pending_expires_finished) FROM t_state
+    WHERE state = 'pending_at' AND lifecycle = 'active' AND tombstoned = FALSE
+    AND ffqn = :ffqn AND (incompatible_digest IS NULL OR incompatible_digest <> :current_digest)";
+
+pub(crate) const IDLE_PENDING_BY_COMPONENT: &str = "
+    SELECT MIN(pending_expires_finished) FROM t_state
+    WHERE state = 'pending_at' AND lifecycle = 'active' AND tombstoned = FALSE
+    AND component_id_input_digest = :component_id_input_digest";

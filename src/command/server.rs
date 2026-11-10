@@ -2519,12 +2519,24 @@ pub(crate) async fn run_internal(
     let http_activity = server_init.server_verified.http_activity.clone();
     let _idle_task = if idle_config.url.is_some() {
         let db = idle_db.expect("idle configuration requires SQLite");
+        let deployment_ctx = server_init.deployment_ctx.clone();
         Some(AbortOnDropHandle::new(
             utils::spawn::spawn_named(
                 "idle_detector",
                 crate::server::request_cancellation::until_terminated(
                     termination_watcher.clone(),
-                    crate::server::idle::run(idle_config, db, http_activity.clone()),
+                    crate::server::idle::run(idle_config, db, http_activity.clone(), move || {
+                        let deployment_ctx = deployment_ctx.clone();
+                        async move {
+                            deployment_ctx
+                                .read()
+                                .await
+                                .exec_task_handles
+                                .iter()
+                                .map(|executor| executor.pending_execution_filter().clone())
+                                .collect()
+                        }
+                    }),
                 ),
             )
             .abort_handle(),
