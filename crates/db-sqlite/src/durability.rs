@@ -183,7 +183,11 @@ impl Durability {
         let wal = self.wal.clone();
         match tokio::task::spawn_blocking(move || {
             // Write access: `FlushFileBuffers` on Windows requires it.
-            match std::fs::OpenOptions::new().read(true).write(true).open(&wal) {
+            match std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&wal)
+            {
                 Ok(file) => file.sync_data(),
                 // Not created yet, or removed after a checkpoint, which synced the database file.
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -310,7 +314,10 @@ mod litestream {
             if status.is_success() {
                 Ok(())
             } else {
-                Err(format!("{status}: {}", String::from_utf8_lossy(&body).trim()))
+                Err(format!(
+                    "{status}: {}",
+                    String::from_utf8_lossy(&body).trim()
+                ))
             }
         }
         .await;
@@ -442,7 +449,10 @@ mod tests {
         let bodies = bodies.lock().unwrap();
         assert_eq!(2, bodies.len());
         for body in bodies.iter() {
-            assert_eq!(expected, serde_json::from_str::<serde_json::Value>(body).unwrap());
+            assert_eq!(
+                expected,
+                serde_json::from_str::<serde_json::Value>(body).unwrap()
+            );
         }
     }
 }
