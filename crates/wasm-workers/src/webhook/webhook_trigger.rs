@@ -5548,27 +5548,59 @@ pub(crate) mod tests {
         #[case::v8(WebhookJsRuntime::V8)]
         #[tokio::test]
         async fn webhook_js_stream_error_aborts_body(#[case] runtime: WebhookJsRuntime) {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
             test_utils::set_up();
-            let js_source = r"
-                export default function handle() {
-                    const stream = new ReadableStream({
-                        start(controller) {
-                            controller.enqueue('partial');
-                            setTimeout(() => controller.error(new Error('boom')), 10);
-                        },
-                    });
-                    return new Response(stream);
+            let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let upstream_addr = upstream.local_addr().unwrap();
+            let (release_error, error_released) = tokio::sync::oneshot::channel();
+            let mut upstream_task = tokio::task::JoinSet::new();
+            upstream_task.spawn(async move {
+                let (mut socket, _) = upstream.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0; 1];
+                    socket.read_exact(&mut byte).await.unwrap();
+                    request.push(byte[0]);
                 }
-            ";
-            let (_server, server_addr, _termination_sender) =
-                start_js_webhook_server_with_runtime(js_source, runtime).await;
-            let resp = reqwest::get(format!("http://{server_addr}/"))
+                error_released.await.unwrap();
+                socket
+                    .write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+                    .await
+                    .unwrap();
+            });
+            let js_source = format!(
+                r"
+                export default function handle() {{
+                    const stream = new ReadableStream({{
+                        async start(controller) {{
+                            controller.enqueue('partial');
+                            await fetch('http://{upstream_addr}/');
+                            controller.error(new Error('boom'));
+                        }},
+                    }});
+                    return new Response(stream);
+                }}
+            "
+            );
+            let (_server, server_addr, _termination_sender) = start_js_webhook_server_with_http(
+                &js_source,
+                &format!("http://{upstream_addr}"),
+                None,
+                runtime,
+            )
+            .await;
+            let mut resp = reqwest::get(format!("http://{server_addr}/"))
                 .await
                 .unwrap();
             assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!(resp.chunk().await.unwrap().unwrap(), "partial");
+            // Hyper must flush the response before the producer errors the body.
+            release_error.send(()).unwrap();
             resp.text()
                 .await
                 .expect_err("an errored stream must not end the body cleanly");
+            upstream_task.join_next().await.unwrap().unwrap();
         }
 
         /// Reading bodies through the stream API, for buffered, streamed and fetched responses.
