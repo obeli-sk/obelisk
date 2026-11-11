@@ -99,7 +99,7 @@ use concepts::cas::Cas;
 use concepts::cas::InMemoryCas;
 use concepts::component_id::ComponentDigest;
 use concepts::component_id::Digest;
-use concepts::prefixed_ulid::{DeploymentId, SystemEventId};
+use concepts::prefixed_ulid::{DeploymentId, NodeRunId, SystemEventId};
 use concepts::storage::CreateRequest;
 use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbErrorWrite;
@@ -145,7 +145,9 @@ use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -268,6 +270,8 @@ struct DeploymentSwitchManager {
     submit_concurrency: u32,
     /// Deployment ID of the submit holding the submit lane, so a retry of it can wait instead of failing with `Busy`.
     in_flight_submit: Arc<std::sync::Mutex<Option<DeploymentId>>>,
+    /// Successful switches since startup, changed only while holding the switch lane.
+    switch_count: Arc<AtomicU64>,
     latest_prepared: Mutex<Option<PreparedDeploymentSwitch>>,
     server_verified: ServerVerified,
     prepared_dirs: PreparedDirs,
@@ -298,6 +302,7 @@ impl DeploymentSwitchManagerHandle {
                 switch_gate: Arc::new(Semaphore::new(1)), // at most 1
                 submit_concurrency,
                 in_flight_submit: Arc::default(),
+                switch_count: Arc::default(),
                 latest_prepared: Mutex::new(None),
                 server_verified,
                 prepared_dirs,
@@ -308,6 +313,23 @@ impl DeploymentSwitchManagerHandle {
                 cancel_registry,
                 log_forwarder_sender,
             }),
+        }
+    }
+
+    pub(crate) fn switch_count(&self) -> u64 {
+        self.inner.switch_count.load(Ordering::SeqCst)
+    }
+
+    /// A switch that changes state checks this while holding the switch permit, so the count cannot change in between.
+    fn check_switch_precondition(&self, expected: SwitchPrecondition) -> Result<(), SwitchError> {
+        let current = SwitchPrecondition {
+            node_run_id: concepts::storage::initialize_node_run_id(),
+            switch_count: self.switch_count(),
+        };
+        if expected == current {
+            Ok(())
+        } else {
+            Err(SwitchError::PreconditionFailed { current })
         }
     }
 
@@ -446,6 +468,7 @@ impl DeploymentSwitchManagerHandle {
         };
         let server_configuration_event_id =
             self.inner.server_verified.server_configuration_event_id;
+        let switch_count = self.inner.switch_count.clone();
         // Keep the checkpoint commit and worker swap alive if the request is cancelled.
         utils::spawn::spawn_named("deployment_switch", async move {
             let _switch_permit = switch_permit;
@@ -463,6 +486,7 @@ impl DeploymentSwitchManagerHandle {
                         .commit_app_checkpoint(checkpoint, chrono::Utc::now(), app_config_digest)
                         .await
                         .map_err(|err| SwitchError::Other(err.into()))?;
+                    switch_count.fetch_add(1, Ordering::SeqCst);
                     switch_hot_redeploy(
                         prepared.compiled_linked,
                         deployment_id,
@@ -3876,6 +3900,8 @@ pub(crate) enum SwitchError {
     NotFound,
     /// Public environment variables or secrets required by the deployment are undeclared.
     MissingRuntimeConfig(Box<MissingRuntimeConfigError>),
+    /// The `If-Match` precondition does not match the current server run and switch count.
+    PreconditionFailed { current: SwitchPrecondition },
     /// Any other failure (verification, compilation, DB write, etc.).
     Other(anyhow::Error),
 }
@@ -3883,6 +3909,28 @@ pub(crate) enum SwitchError {
 impl From<anyhow::Error> for SwitchError {
     fn from(err: anyhow::Error) -> Self {
         Self::Other(err)
+    }
+}
+
+/// Server run and switch count a switch request expects, carried in `If-Match` as `"<node_run_id>:<switch_count>"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+#[display("\"{node_run_id}:{switch_count}\"")]
+pub(crate) struct SwitchPrecondition {
+    pub(crate) node_run_id: NodeRunId,
+    pub(crate) switch_count: u64,
+}
+impl FromStr for SwitchPrecondition {
+    type Err = ();
+    fn from_str(etag: &str) -> Result<Self, ()> {
+        let (node_run_id, switch_count) = etag
+            .strip_prefix('"')
+            .and_then(|etag| etag.strip_suffix('"'))
+            .and_then(|etag| etag.split_once(':'))
+            .ok_or(())?;
+        Ok(Self {
+            node_run_id: node_run_id.parse().map_err(|_| ())?,
+            switch_count: switch_count.parse().map_err(|_| ())?,
+        })
     }
 }
 
@@ -3917,6 +3965,10 @@ async fn enqueue_deployment_and_release(
         .enqueue_deployment(deployment_id, chrono::Utc::now())
         .await
         .map_err(|e| SwitchError::Other(e.into()))?;
+    deployment_switch_manager
+        .inner
+        .switch_count
+        .fetch_add(1, Ordering::SeqCst);
     drop(switch_permit);
     Ok(outcome)
 }
@@ -3926,6 +3978,7 @@ pub(crate) async fn switch_deployment(
     deployment_switch_manager: DeploymentSwitchManagerHandle,
     deployment_id: DeploymentId,
     action: SwitchDeploymentAction,
+    precondition: SwitchPrecondition,
 ) -> Result<SwitchOutcome, SwitchError> {
     let db_pool = deployment_switch_manager.inner.db_pool.clone();
     crate::server::system_event_writer::record(
@@ -3936,7 +3989,13 @@ pub(crate) async fn switch_deployment(
         serde_json::json!({"action": format!("{action:?}")}),
     )
     .await;
-    let result = switch_deployment_inner(deployment_switch_manager, deployment_id, action).await;
+    let result = switch_deployment_inner(
+        deployment_switch_manager,
+        deployment_id,
+        action,
+        precondition,
+    )
+    .await;
     let (code, details) = match &result {
         Ok(outcome) => (
             concepts::storage::SystemEventCode::DeploymentSwitchCompleted,
@@ -3964,6 +4023,10 @@ pub(crate) async fn switch_deployment(
                         "another deployment submit or switch is running".to_string(),
                     ),
                     SwitchError::NotFound => ("not_found", "deployment not found".to_string()),
+                    SwitchError::PreconditionFailed { current } => (
+                        "precondition_failed",
+                        format!("precondition does not match the current {current}"),
+                    ),
                     SwitchError::MissingRuntimeConfig(_) => unreachable!(),
                     SwitchError::Other(source) => ("validation", format!("{source:#}")),
                 };
@@ -4000,6 +4063,7 @@ async fn switch_deployment_inner(
     deployment_switch_manager: DeploymentSwitchManagerHandle,
     deployment_id: DeploymentId,
     action: SwitchDeploymentAction,
+    precondition: SwitchPrecondition,
 ) -> Result<SwitchOutcome, SwitchError> {
     let deployment_already_active = deployment_switch_manager
         .inner
@@ -4012,6 +4076,7 @@ async fn switch_deployment_inner(
     match action {
         SwitchDeploymentAction::Enqueue(_) => {
             let switch_permit = deployment_switch_manager.try_acquire_switch_permit()?;
+            deployment_switch_manager.check_switch_precondition(precondition)?;
             if !deployment_already_active {
                 // Validate (compile + link) so the queued deployment is known-good against
                 // the current host before enqueuing. An already-active deployment is already
@@ -4047,10 +4112,12 @@ async fn switch_deployment_inner(
         }
         SwitchDeploymentAction::Activate => {
             if deployment_already_active {
+                deployment_switch_manager.check_switch_precondition(precondition)?;
                 info!(%deployment_id, "Deployment switch no-op: deployment already active");
                 return Ok(SwitchOutcome::Switched);
             }
             let switch_permit = deployment_switch_manager.try_acquire_switch_permit()?;
+            deployment_switch_manager.check_switch_precondition(precondition)?;
             let mut termination_watcher =
                 deployment_switch_manager.inner.termination_watcher.clone();
             // Cancellable: validation only. The durable commit and critical swap are owned by

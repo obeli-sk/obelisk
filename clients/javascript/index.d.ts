@@ -22,6 +22,10 @@ export interface ServerInfoResponse {
   node_run_id: string;
   obelisk_version: string;
   started_at: string;
+  /**
+   * Deployment switches since this server run started. A switch request must send `If-Match: "<node_run_id>:<switch_count>"`.
+   */
+  switch_count: number;
   [k: string]: unknown;
 }
 /**

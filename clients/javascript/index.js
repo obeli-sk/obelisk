@@ -608,7 +608,7 @@ function validate22(data, { instancePath = "", parentData, parentDataProperty, r
   if (errors === 0) {
     if (data && typeof data == "object" && !Array.isArray(data)) {
       let missing0;
-      if (data.app_name === void 0 && (missing0 = "app_name") || data.app_env_prefix === void 0 && (missing0 = "app_env_prefix") || data.obelisk_version === void 0 && (missing0 = "obelisk_version") || data.deployment_id === void 0 && (missing0 = "deployment_id") || data.node_run_id === void 0 && (missing0 = "node_run_id") || data.app_config_digest === void 0 && (missing0 = "app_config_digest") || data.started_at === void 0 && (missing0 = "started_at")) {
+      if (data.app_name === void 0 && (missing0 = "app_name") || data.app_env_prefix === void 0 && (missing0 = "app_env_prefix") || data.obelisk_version === void 0 && (missing0 = "obelisk_version") || data.deployment_id === void 0 && (missing0 = "deployment_id") || data.node_run_id === void 0 && (missing0 = "node_run_id") || data.switch_count === void 0 && (missing0 = "switch_count") || data.app_config_digest === void 0 && (missing0 = "app_config_digest") || data.started_at === void 0 && (missing0 = "started_at")) {
         validate22.errors = [{ instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
         return false;
       } else {
@@ -709,6 +709,27 @@ function validate22(data, { instancePath = "", parentData, parentDataProperty, r
                       } else {
                         var valid0 = true;
                       }
+                      if (valid0) {
+                        if (data.switch_count !== void 0) {
+                          let data8 = data.switch_count;
+                          const _errs16 = errors;
+                          if (!(typeof data8 == "number" && (!(data8 % 1) && !isNaN(data8)))) {
+                            validate22.errors = [{ instancePath: instancePath + "/switch_count", schemaPath: "#/properties/switch_count/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+                            return false;
+                          }
+                          if (errors === _errs16) {
+                            if (typeof data8 == "number") {
+                              if (data8 < 0 || isNaN(data8)) {
+                                validate22.errors = [{ instancePath: instancePath + "/switch_count", schemaPath: "#/properties/switch_count/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                                return false;
+                              }
+                            }
+                          }
+                          var valid0 = _errs16 === errors;
+                        } else {
+                          var valid0 = true;
+                        }
+                      }
                     }
                   }
                 }
@@ -725,7 +746,7 @@ function validate22(data, { instancePath = "", parentData, parentDataProperty, r
   validate22.errors = vErrors;
   return errors === 0;
 }
-validate22.evaluated = { "props": { "app_config_digest": true, "app_env_prefix": true, "app_name": true, "deployment_id": true, "gc": true, "node_run_id": true, "obelisk_version": true, "started_at": true }, "dynamicProps": false, "dynamicItems": false };
+validate22.evaluated = { "props": { "app_config_digest": true, "app_env_prefix": true, "app_name": true, "deployment_id": true, "gc": true, "node_run_id": true, "obelisk_version": true, "started_at": true, "switch_count": true }, "dynamicProps": false, "dynamicItems": false };
 function validate20(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
@@ -744,7 +765,7 @@ function validate20(data, { instancePath = "", parentData, parentDataProperty, r
   validate20.errors = vErrors;
   return errors === 0;
 }
-validate20.evaluated = { "props": { "app_config_digest": true, "app_env_prefix": true, "app_name": true, "deployment_id": true, "gc": true, "node_run_id": true, "obelisk_version": true, "started_at": true }, "dynamicProps": false, "dynamicItems": false };
+validate20.evaluated = { "props": { "app_config_digest": true, "app_env_prefix": true, "app_name": true, "deployment_id": true, "gc": true, "node_run_id": true, "obelisk_version": true, "started_at": true, "switch_count": true }, "dynamicProps": false, "dynamicItems": false };
 var validateServerInfoGc = validate28;
 function validate29(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;

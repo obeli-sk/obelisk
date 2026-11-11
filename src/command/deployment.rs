@@ -7,7 +7,7 @@ use crate::config::deployment::{
 };
 use anyhow::{Context as _, bail};
 use concepts::prefixed_ulid::DeploymentId;
-use http::header::{ACCEPT, CONTENT_TYPE};
+use http::header::{ACCEPT, CONTENT_TYPE, IF_MATCH};
 use rest_types::deployment::{
     DeploymentByDigestResponse, DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer,
     DeploymentSubmitPayload, DeploymentSwitchPayload, MissingRuntimeConfigErrorBody,
@@ -649,10 +649,22 @@ async fn switch_deployment(
         ok: String,
     }
     let client = client_startup.web_api_client()?;
+    // Pin the switch to the state observed now so that a repeated request cannot override a
+    // switch made in the meantime.
+    let info: ServerInfoResponse = send_json(
+        client
+            .get(format!("{api_url}/v1/info"))
+            .header(ACCEPT, "application/json"),
+    )
+    .await?;
     let response: SwitchResponse = send_json(
         client
             .put(format!("{api_url}/v1/deployments/{id}/switch"))
             .header(ACCEPT, "application/json")
+            .header(
+                IF_MATCH,
+                format!("\"{}:{}\"", info.node_run_id, info.switch_count),
+            )
             .json(&DeploymentSwitchPayload {
                 allow_unavailable_runtime_config,
                 apply: command == SwitchCommand::Apply,

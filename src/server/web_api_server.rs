@@ -580,6 +580,7 @@ pub(crate) mod server_info {
             obelisk_version: PKG_VERSION.to_string(),
             deployment_id: state.deployment_ctx.read().await.deployment_id.to_string(),
             node_run_id: node_run_id.to_string(),
+            switch_count: state.deployment_switch_manager.switch_count(),
             app_config_digest: state.server_verified.app_config_digest.to_string(),
             gc: Some(state.gc_info.clone()),
             started_at,
@@ -4046,7 +4047,9 @@ mod functions {
 
 pub(crate) mod deployment {
     use crate::{
-        command::server::{self, RuntimeConfigAvailability, SwitchDeploymentAction},
+        command::server::{
+            self, RuntimeConfigAvailability, SwitchDeploymentAction, SwitchPrecondition,
+        },
         config::deployment::strip_generated_deployment_metadata,
         server::{
             deployment_summary,
@@ -4056,7 +4059,7 @@ pub(crate) mod deployment {
             },
         },
     };
-    use http::header;
+    use http::{HeaderMap, header};
     use rest_types::deployment::{
         DeploymentByDigestResponse, DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer,
         DeploymentSubmitErrorBody, DeploymentSubmitPayload, DeploymentSubmitResponse,
@@ -4750,9 +4753,21 @@ pub(crate) mod deployment {
         Path(deployment_id): Path<DeploymentId>,
         state: State<Arc<WebApiState>>,
         accept: AcceptHeader,
+        headers: HeaderMap,
         Json(payload): Json<DeploymentSwitchPayload>,
     ) -> Result<Response, HttpResponse> {
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
+        let precondition = headers
+            .get(header::IF_MATCH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<SwitchPrecondition>().ok())
+            .ok_or_else(|| HttpResponse {
+                status: StatusCode::PRECONDITION_REQUIRED,
+                message: "`If-Match: \"<node_run_id>:<switch_count>\"` is required, \
+                    read both values from `GET /v1/info`"
+                    .to_string(),
+                accept,
+            })?;
         let action = if payload.apply {
             if payload.allow_unavailable_runtime_config {
                 return Err(HttpResponse::bad_request(
@@ -4771,9 +4786,15 @@ pub(crate) mod deployment {
             state.deployment_switch_manager.clone(),
             deployment_id,
             action,
+            precondition,
         )
         .await
         .map_err(|err| match err {
+            crate::command::server::SwitchError::PreconditionFailed { current } => HttpResponse {
+                status: StatusCode::PRECONDITION_FAILED,
+                message: format!("`If-Match` does not match the current {current}"),
+                accept,
+            },
             crate::command::server::SwitchError::Busy => HttpResponse {
                 status: StatusCode::SERVICE_UNAVAILABLE,
                 message: "another deployment submit or switch is already running".to_string(),

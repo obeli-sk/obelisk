@@ -8,6 +8,7 @@ fn response() -> Value {
         "obelisk_version": "0.43.0",
         "deployment_id": "Dep_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "node_run_id": "Run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "switch_count": 0,
         "app_config_digest": "sha256:example",
         "started_at": "2026-10-25T00:00:00Z"
     })
@@ -21,7 +22,12 @@ fn server_info_rejects_missing_and_malformed_required_fields() {
         let error = serde_json::from_value::<ServerInfoResponse>(missing).unwrap_err();
         assert!(error.to_string().contains(field), "{error}");
 
-        for value in [Value::Null, json!(42), json!({})] {
+        let wrong_scalar = if field == "switch_count" {
+            json!("42")
+        } else {
+            json!(42)
+        };
+        for value in [Value::Null, wrong_scalar, json!({})] {
             let mut malformed = response();
             malformed[field] = value;
             assert!(
@@ -42,5 +48,6 @@ fn server_info_accepts_additive_fields() {
     let info: ServerInfoResponse = serde_json::from_value(value.clone()).unwrap();
     assert_eq!(info.deployment_id, value["deployment_id"]);
     assert_eq!(info.node_run_id, value["node_run_id"]);
+    assert_eq!(info.switch_count, 0);
     assert_eq!(info.app_env_prefix, value["app_env_prefix"]);
 }
