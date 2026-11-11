@@ -4261,6 +4261,60 @@ async fn hot_redeploy_activity(#[case] runtime: JsRuntime) {
     server.shutdown().await;
 }
 
+/// A hot redeploy interrupting a running activity consumes a retry, so `max_retries = 0`
+/// finishes it instead of running it again.
+#[tokio::test]
+async fn hot_redeploy_interrupted_activity_consumes_retry() {
+    const FFQN: &str = "testing:integration/activity-spin.spin";
+    let server = TestServer::start(test_addr!(254)).await;
+    server
+        .submit_and_hot_redeploy(|doc| {
+            let mut table = toml_edit::Table::new();
+            table["name"] = value("test_spin_activity");
+            table["ffqn"] = value(FFQN);
+            table["content"] = value("export default function spin() { while (true) {} }\n");
+            table["params"] = toml_edit::Item::Value(toml_edit::Array::new().into());
+            table["return_type"] = value("result");
+            table["max_retries"] = value(0);
+            doc["activity_js"]
+                .as_array_of_tables_mut()
+                .expect("activity_js must be an array of tables")
+                .push(table);
+        })
+        .await;
+
+    let exec_id = server.generate_execution_id().await;
+    let resp = server
+        .client
+        .put(format!("{}/v1/executions/{exec_id}", server.base_url))
+        .header("Accept", "application/json")
+        .json(&json!({ "ffqn": FFQN, "params": [] }))
+        .send()
+        .await
+        .expect("submit request failed");
+    assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
+    while server.get_status(&exec_id).await["pending_state"]["status"] != "locked" {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    server
+        .submit_and_hot_redeploy(|doc| {
+            append_inline_stub(doc, "redeploy", "testing:integration/stubs.redeploy");
+        })
+        .await;
+
+    let status = server.get_status(&exec_id).await;
+    assert_eq!(
+        status["pending_state"]["status"], "finished",
+        "interrupted activity must not run again: {status}"
+    );
+    assert_eq!(
+        status["pending_state"]["result_kind"],
+        json!({ "err": { "execution_failure": "uncategorized" } })
+    );
+    server.shutdown().await;
+}
+
 /// After a hot redeploy, the web API server must expose the updated component registry.
 ///
 /// A new inline stub `testing:integration/stubs.new-hot-stub` is added only in

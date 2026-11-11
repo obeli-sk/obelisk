@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- *(executor)* An activity run interrupted by a deployment switch or server shutdown consumes a
+  retry, so `max_retries` is respected. Previously the execution was unlocked and ran again
+  without counting the attempt; with no retries left it now finishes as an execution failure.
+
 ## [0.43.0-rc.17](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.16...v0.43.0-rc.17)
 
 This release candidate adds verified PostgreSQL TLS, uses the system's certificates for outbound

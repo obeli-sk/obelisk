@@ -394,10 +394,7 @@ impl Worker for ActivityExecWorker {
                 debug!("Executor closing, killing child");
                 return kill_and_reap(
                     &mut child,
-                    WorkerError::ExecutionYielded {
-                        version,
-                        reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
-                    },
+                    WorkerError::ActivityInterrupted { http_client_traces: None, version },
                 ).await;
             }
             result = async {
