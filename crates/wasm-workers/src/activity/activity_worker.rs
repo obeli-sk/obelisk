@@ -395,9 +395,9 @@ impl ActivityWorker {
                         version,
                     }),
                     End::Cancelled => Err(WorkerError::FatalError(FatalError::Cancelled, version)),
-                    End::Closing => Err(WorkerError::ExecutionYielded {
+                    End::Closing => Err(WorkerError::ActivityInterrupted {
+                        http_client_traces: Some(traces),
                         version,
-                        reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
                     }),
                     End::Complete(_) => unreachable!(),
                 };
@@ -540,10 +540,9 @@ impl Worker for ActivityWorker {
             }
             _ = execution_interrupt_watcher.changed() => {
                 debug!("Executor closing");
-                // Executor will append the Unlocked event.
-                return WorkerResult::Err(WorkerError::ExecutionYielded {
+                return WorkerResult::Err(WorkerError::ActivityInterrupted {
+                    http_client_traces: None,
                     version: version.clone(),
-                    reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
                 })
             }
         }

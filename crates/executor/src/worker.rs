@@ -96,6 +96,12 @@ pub enum WorkerError {
         http_client_traces: Option<Vec<HttpClientTrace>>,
         version: Version,
     },
+    /// A started activity run was interrupted by the executor closing; consumes a retry.
+    #[error("activity interrupted: executor closing")]
+    ActivityInterrupted {
+        http_client_traces: Option<Vec<HttpClientTrace>>,
+        version: Version,
+    },
     #[error("execution yielded: {reason}")]
     ExecutionYielded {
         version: Version,

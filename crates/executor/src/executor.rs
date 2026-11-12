@@ -18,7 +18,7 @@ use concepts::{ExecutionFailureKind, JoinSetId};
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use concepts::{
     FinishedExecutionFailure,
-    storage::{ExecutionRequest, Version},
+    storage::{ExecutionRequest, Version, http_client_trace::HttpClientTrace},
 };
 use std::{
     sync::{
@@ -762,6 +762,55 @@ impl ExecTask {
         })
     }
 
+    fn retry_or_finish_activity(
+        reason: String,
+        detail: Option<String>,
+        http_client_traces: Option<Vec<HttpClientTrace>>,
+        version: Version,
+        can_be_retried: Option<Duration>,
+        result_obtained_at: DateTime<Utc>,
+        parent: Option<(ExecutionId, JoinSetId)>,
+    ) -> (ExecutionRequest, Option<ChildFinishedResponse>, Version) {
+        if let Some(duration) = can_be_retried {
+            let expires_at = result_obtained_at + duration;
+            debug!("Retrying activity after {duration:?} at {expires_at} - {reason}");
+            (
+                ExecutionRequest::TemporarilyFailed {
+                    reason: StrVariant::from(reason),
+                    backoff_expires_at: expires_at,
+                    detail,
+                    http_client_traces,
+                },
+                None,
+                version,
+            )
+        } else {
+            info!("Activity marked as permanent failure - {reason}");
+            let result = SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
+                reason: Some(reason),
+                kind: ExecutionFailureKind::Uncategorized,
+                detail,
+            });
+            let child_finished =
+                parent.map(
+                    |(parent_execution_id, parent_join_set)| ChildFinishedResponse {
+                        parent_execution_id,
+                        parent_join_set,
+                        result: result.clone(),
+                    },
+                );
+            (
+                ExecutionRequest::Finished {
+                    retval: result,
+                    http_client_traces,
+                    http_response: None,
+                },
+                child_finished,
+                version,
+            )
+        }
+    }
+
     /// Map the `WorkerError` to an optional append event
     fn worker_result_to_execution_event(
         component_type: ComponentType,
@@ -905,58 +954,33 @@ impl ExecTask {
                     WorkerError::DbError(db_error) => {
                         return Err(db_error);
                     }
+                    // reason_generic contains trap_kind + reason
                     WorkerError::ActivityTrap {
-                        reason: _, // reason_generic contains trap_kind + reason
-                        trap_kind,
                         detail,
                         version,
                         http_client_traces,
-                    } => {
-                        if let Some(duration) = can_be_retried {
-                            let expires_at = result_obtained_at + duration;
-                            debug!(
-                                "Retrying activity with `{trap_kind}` execution after {duration:?} at {expires_at}"
-                            );
-                            (
-                                ExecutionRequest::TemporarilyFailed {
-                                    reason: StrVariant::from(reason_generic),
-                                    backoff_expires_at: expires_at,
-                                    detail,
-                                    http_client_traces,
-                                },
-                                None,
-                                version,
-                            )
-                        } else {
-                            info!(
-                                "Activity with `{trap_kind}` marked as permanent failure - {reason_generic}"
-                            );
-                            let result = SupportedFunctionReturnValue::ExecutionFailure(
-                                FinishedExecutionFailure {
-                                    reason: Some(reason_generic),
-                                    kind: ExecutionFailureKind::Uncategorized,
-                                    detail,
-                                },
-                            );
-                            let child_finished =
-                                parent.map(|(parent_execution_id, parent_join_set)| {
-                                    ChildFinishedResponse {
-                                        parent_execution_id,
-                                        parent_join_set,
-                                        result: result.clone(),
-                                    }
-                                });
-                            (
-                                ExecutionRequest::Finished {
-                                    retval: result,
-                                    http_client_traces,
-                                    http_response: None,
-                                },
-                                child_finished,
-                                version,
-                            )
-                        }
-                    }
+                        ..
+                    } => Self::retry_or_finish_activity(
+                        reason_generic,
+                        detail,
+                        http_client_traces,
+                        version,
+                        can_be_retried,
+                        result_obtained_at,
+                        parent,
+                    ),
+                    WorkerError::ActivityInterrupted {
+                        version,
+                        http_client_traces,
+                    } => Self::retry_or_finish_activity(
+                        reason_generic,
+                        None,
+                        http_client_traces,
+                        version,
+                        can_be_retried,
+                        result_obtained_at,
+                        parent,
+                    ),
                     WorkerError::LimitReached {
                         reason,
                         version: new_version,
