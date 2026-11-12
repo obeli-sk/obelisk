@@ -336,6 +336,7 @@ mod tests {
                 obelisk_version: "0.0.0".to_owned(),
                 deployment_id: state.active.to_string(),
                 node_run_id: concepts::prefixed_ulid::NodeRunId::generate().to_string(),
+                switch_count: 0,
                 app_config_digest: "digest".to_owned(),
                 gc: None,
                 started_at: chrono::Utc::now(),

@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** *(deployment)* `PUT /v1/deployments/{id}/switch` requires
+  `If-Match: "<node_run_id>:<switch_count>"`, both read from `GET /v1/info`, which now reports
+  `switch_count`. The count grows with every applied or enqueued switch, including enqueueing the
+  active deployment (it replaces any queued one), but not with activating the active deployment. It
+  resets on restart along with the node run ID. A retried request whose value is stale gets `412`
+  instead of overriding a later switch, also when an earlier attempt succeeded, so check
+  `deployment_id` in `GET /v1/info` on `412`. A request without the header gets `428`.
+  `deployment apply` and `deployment enqueue` send it.
+
 ### Fixed
 
 - *(executor)* An activity run interrupted by a deployment switch or server shutdown consumes a

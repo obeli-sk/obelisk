@@ -1495,6 +1495,8 @@ pub struct ServerInfoResponse {
     pub node_run_id: ::std::string::String,
     pub obelisk_version: ::std::string::String,
     pub started_at: ::chrono::DateTime<::chrono::offset::Utc>,
+    ///Deployment switches since this server run started. A switch request must send `If-Match: "<node_run_id>:<switch_count>"`.
+    pub switch_count: u64,
 }
 ///`WebuiUrlSource`
 #[derive(

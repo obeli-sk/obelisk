@@ -106,6 +106,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "`\"<node_run_id>:<switch_count>\"` from `GET /v1/info`, read before the first attempt and reused on retries",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -166,6 +175,42 @@
               "text/plain": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "`If-Match` does not match the current server run and switch count. A retry gets this also when an earlier attempt succeeded, so check `deployment_id` in `GET /v1/info` before treating it as a failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "err"
+                  ],
+                  "properties": {
+                    "err": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "`If-Match` header is missing or malformed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "err"
+                  ],
+                  "properties": {
+                    "err": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
@@ -232,6 +277,7 @@
           "obelisk_version",
           "deployment_id",
           "node_run_id",
+          "switch_count",
           "app_config_digest",
           "started_at"
         ],
@@ -260,6 +306,12 @@
           "started_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "switch_count": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Deployment switches since this server run started. A switch request must send `If-Match: \"<node_run_id>:<switch_count>\"`."
           }
         }
       },

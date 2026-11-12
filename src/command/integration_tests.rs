@@ -1396,8 +1396,24 @@ impl TestServer {
         .expect("cannot submit deployment")
     }
 
+    /// `If-Match` value pinning a switch to the current server run and switch count.
+    async fn switch_if_match(&self) -> String {
+        let info: rest_types::lifecycle::ServerInfoResponse = self
+            .client
+            .get(format!("{}/v1/info", self.base_url))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .expect("webapi info request failed")
+            .json()
+            .await
+            .unwrap();
+        format!("\"{}:{}\"", info.node_run_id, info.switch_count)
+    }
+
     /// Hot-redeploy to the given deployment via the Web API.
     async fn webapi_switch_hot_redeploy(&self, deployment_id: DeploymentId) {
+        let if_match = self.switch_if_match().await;
         let resp = self
             .client
             .put(format!(
@@ -1405,6 +1421,7 @@ impl TestServer {
                 self.base_url
             ))
             .header("Accept", "application/json")
+            .header("If-Match", if_match)
             .json(&json!({ "apply": true }))
             .send()
             .await
@@ -1518,6 +1535,7 @@ routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
             "{}/v1/deployments/{deployment_id}/switch",
             server.base_url
         ))
+        .header("If-Match", server.switch_if_match().await)
         .json(&json!({}))
         .send()
         .await
@@ -2218,10 +2236,12 @@ async fn app_policy_webapi_reports_running_policy() {
         server.base_url,
         info["deployment_id"].as_str().unwrap()
     );
+    let if_match = server.switch_if_match().await;
     for payload in [json!({"apply": null}), json!({"apply": "true"})] {
         let response = server
             .client
             .put(&switch_url)
+            .header("If-Match", &if_match)
             .json(&payload)
             .send()
             .await
@@ -2237,6 +2257,7 @@ async fn app_policy_webapi_reports_running_policy() {
     let response = server
         .client
         .put(&switch_url)
+        .header("If-Match", &if_match)
         .body("{}")
         .send()
         .await
@@ -2252,6 +2273,7 @@ async fn app_policy_webapi_reports_running_policy() {
         let response = server
             .client
             .put(&switch_url)
+            .header("If-Match", &if_match)
             .header("Accept", accept)
             .json(&json!({"apply": true, "allow_unavailable_runtime_config": true}))
             .send()
@@ -2271,6 +2293,7 @@ async fn app_policy_webapi_reports_running_policy() {
                 server.base_url,
                 DeploymentId::generate()
             ))
+            .header("If-Match", &if_match)
             .header("Accept", accept)
             .json(&json!({}))
             .send()
@@ -2281,6 +2304,7 @@ async fn app_policy_webapi_reports_running_policy() {
     let response = server
         .client
         .put(&switch_url)
+        .header("If-Match", &if_match)
         .header("Accept", "text/plain")
         .json(&json!({}))
         .send()
@@ -2293,6 +2317,66 @@ async fn app_policy_webapi_reports_running_policy() {
         reqwest::StatusCode::NOT_ACCEPTABLE,
     )
     .await;
+    // `If-Match` is mandatory and must name the current server run and switch count.
+    for if_match in [None, Some("garbage")] {
+        let mut request = server
+            .client
+            .put(&switch_url)
+            .header("Accept", "application/json")
+            .json(&json!({"apply": true}));
+        if let Some(if_match) = if_match {
+            request = request.header("If-Match", if_match);
+        }
+        lifecycle_response(
+            request.send().await.unwrap(),
+            switch_path,
+            "put",
+            reqwest::StatusCode::PRECONDITION_REQUIRED,
+        )
+        .await;
+    }
+    let parsed_info: rest_types::lifecycle::ServerInfoResponse =
+        serde_json::from_value(info.clone()).unwrap();
+    let response = server
+        .client
+        .put(&switch_url)
+        .header("Accept", "application/json")
+        .header(
+            "If-Match",
+            format!("\"{}:{}\"", parsed_info.node_run_id, u64::MAX),
+        )
+        .json(&json!({"apply": true}))
+        .send()
+        .await
+        .unwrap();
+    let body = lifecycle_response(
+        response,
+        switch_path,
+        "put",
+        reqwest::StatusCode::PRECONDITION_FAILED,
+    )
+    .await;
+    assert!(
+        body["err"].as_str().unwrap().contains(&if_match),
+        "412 must report the current value, got: {body}"
+    );
+    // A no-op activation keeps the switch count, enqueueing bumps it so a retry is refused.
+    for (payload, expected) in [
+        (json!({"apply": true}), reqwest::StatusCode::OK),
+        (json!({}), reqwest::StatusCode::OK),
+        (json!({}), reqwest::StatusCode::PRECONDITION_FAILED),
+    ] {
+        let response = server
+            .client
+            .put(&switch_url)
+            .header("Accept", "application/json")
+            .header("If-Match", &if_match)
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        lifecycle_response(response, switch_path, "put", expected).await;
+    }
     let response = server
         .client
         .get(format!("{}/v1/app-policy", server.base_url))
@@ -2943,6 +3027,7 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
 "#;
 
     let deployment_id = DeploymentId::generate();
+    let if_match = server.switch_if_match().await;
     let switch = |allow_unavailable: bool| {
         server
             .client
@@ -2951,6 +3036,7 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
                 server.base_url
             ))
             .header("Accept", "application/json")
+            .header("If-Match", &if_match)
             .json(&json!({
                 "apply": true,
                 "allow_unavailable_runtime_config": allow_unavailable,
