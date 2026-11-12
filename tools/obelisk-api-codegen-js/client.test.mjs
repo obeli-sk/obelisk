@@ -4,7 +4,7 @@ import { parseServerInfoResponse, parseAppPolicyV1, parseDeploymentSwitchRespons
 
 const info = {
     app_name: "test", app_env_prefix: "TEST_", obelisk_version: "0.43.0",
-    deployment_id: "Dep_example", node_run_id: "Run_example", app_config_digest: "digest",
+    deployment_id: "Dep_example", node_run_id: "Run_example", switch_count: 0, app_config_digest: "digest",
     started_at: "2026-10-25T12:00:00Z",
 };
 
