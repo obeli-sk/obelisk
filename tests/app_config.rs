@@ -208,7 +208,7 @@ async fn cloud_new_and_stage_load_local_policy() {
         json!({"app_toml":app_toml,"env":{"REGION":"eu"},"secrets":{}})
     );
     assert_eq!(requests[1].0, "PUT");
-    assert_eq!(requests[1].1, "/v1/apps/local-app/config");
+    assert_eq!(requests[1].1, "/v1/apps/local-app/drafts/default/config");
     assert_eq!(requests[1].2, app_toml);
     task.abort();
 }

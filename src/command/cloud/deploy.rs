@@ -21,8 +21,8 @@ impl CloudArgs {
                 CloudApp::Deploy {
                     selected: SelectedApp { app },
                     deployment,
-                    fill: interactive,
-                    fill_non_interactive,
+                    values,
+                    draft,
                     description,
                     ..
                 },
@@ -43,33 +43,88 @@ impl CloudArgs {
         let (config, app_config) = config_for_app(&name, config.zip(config_path), true)?
             .expect("deploy requires an app config");
         let save_name = app.is_none();
-        let desired = desired_config(&config);
+        let explicit = explicit_values(&values)?;
         let prepared = prepare_deployment_manifest_from_disk(&deployment).await?;
         eprintln!("Deploying {name}");
         let step =
             |command: &str| crate::client::step(format_args!("→ obelisk cloud app {command}"));
+        let fill = values.fill || values.fill_non_interactive;
         let existing = client.lookup_app(&name).await?;
-        let is_new = existing.is_none();
-        let mut current = if existing.is_some() {
-            step("stage");
-            client
-                .app_toml(
+        // Existing apps stage into a draft; `None` re-applies the applied revision.
+        let (current, staged) = if let Some(current) = existing {
+            let generated = draft.is_none();
+            let key = draft.unwrap_or_else(|| {
+                let id = ExecutionIdTopLevel::generate().to_string();
+                let ulid = id.split_once('_').map_or(id.as_str(), |(_, ulid)| ulid);
+                format!("deploy-{}", ulid.to_ascii_lowercase())
+            });
+            let resume = |error: anyhow::Error| {
+                error.context(format!(
+                    "Draft `{key}` keeps the staged changes; retry with `obelisk cloud app deploy --app {name} --draft {key}` or discard it with `obelisk cloud app unstage --app {name} --draft {key}`"
+                ))
+            };
+            step(&format!("stage --draft {key}"));
+            let staged = client
+                .draft(
                     &name,
+                    &key,
                     Method::PUT,
                     &["config"],
-                    &config.text,
-                    Kind::Command(None),
+                    Some(Body::Toml(config.text.clone())),
                 )
-                .await?
+                .await?;
+            if fill {
+                step("fill");
+            }
+            let (staged, filled) = stage_values(
+                &client,
+                &name,
+                &key,
+                Some(staged),
+                explicit,
+                Values::new(
+                    values.fill,
+                    values.fill_non_interactive,
+                    prompt.as_mut().map(|p| p as Prompt),
+                )
+                .map_err(&resume)?,
+            )
+            .await
+            .map_err(&resume)?;
+            let staged = staged.expect("draft was staged");
+            let missing = output::draft_values(&staged, "missing");
+            if !missing.is_empty() {
+                return Err(resume(anyhow::anyhow!(
+                    "Missing values: {}. Pass them with `--env NAME[=VALUE]` or `--secret NAME`, or retry with `--fill` or `--fill-non-interactive`",
+                    missing.join(", ")
+                )));
+            }
+            optional_unset(&filled, values.fill);
+            if let Ok(drafts) = client
+                .app(&name, Method::GET, &["drafts"], None, Kind::Read)
+                .await
+            {
+                for other in drafts["drafts"].as_array().into_iter().flatten() {
+                    if other["key"] != key.as_str() && other["summary"]["changed"] == true {
+                        eprintln!(
+                            "Draft `{}` ({}) will be discarded when this deploy is applied",
+                            other["key"].as_str().unwrap_or_default(),
+                            output::draft_changes(other)
+                        );
+                    }
+                }
+            }
+            (current, Some((key, staged, generated)))
         } else {
-            if interactive || fill_non_interactive {
+            if fill {
                 step("fill");
             }
             let values = initial_values(
-                &user_supplied_policy(&desired),
+                &user_supplied_policy(&desired_config(&config)),
+                explicit,
                 Values::new(
-                    interactive,
-                    fill_non_interactive,
+                    values.fill,
+                    values.fill_non_interactive,
                     prompt.as_mut().map(|p| p as Prompt),
                 )?,
             )?;
@@ -109,9 +164,8 @@ impl CloudArgs {
                 )?;
                 eprintln!("Updated app_name to {name} in {}", app_config.display());
             }
-            current
+            (current, None)
         };
-        let revision = staged_revision(&current)?;
         let api_url = api_origin(
             current["endpoints"]["api"]
                 .as_str()
@@ -123,68 +177,62 @@ impl CloudArgs {
             self.verbose,
         );
         step("deployment submit");
-        let id = crate::command::deployment::submit_prepared(
+        let submitted = crate::command::deployment::submit_prepared(
             &startup,
             startup.api_url(),
             prepared,
             true,
             description,
             None,
-        ).await
-            .with_context(|| format!("Deployment staging failed; inspect `obelisk cloud app status --app {name}` and retry deploy"))?;
-        let filled = if is_new {
-            json!({"declarations":[]})
-        } else {
-            if interactive || fill_non_interactive {
-                step("fill");
+        )
+        .await
+        .with_context(|| format!("Deployment staging failed; inspect `obelisk cloud app status --app {name}` and retry deploy"));
+        let id = match (submitted, &staged) {
+            (Ok(id), _) => id,
+            (Err(error), Some((key, ..))) => {
+                return Err(error.context(format!("Draft `{key}` keeps the staged changes; retry with `obelisk cloud app deploy --app {name} --draft {key}`")));
             }
-            fill_values(
-                &client,
-                &name,
-                &user_supplied_policy(&desired),
-                Values::new(
-                    interactive,
-                    fill_non_interactive,
-                    prompt.as_mut().map(|p| p as Prompt),
-                )?,
-            )
-            .await?
+            (Err(error), None) => return Err(error),
         };
-        let unset = filled["declarations"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|declaration| declaration["action"] == "unset")
-            .map(|declaration| {
-                format!(
-                    "{} {}",
-                    kind_label(declaration["kind"].as_str().unwrap_or_default()),
-                    declaration["name"].as_str().unwrap_or_default()
-                )
-            })
-            .collect::<Vec<_>>();
-        if !interactive && !unset.is_empty() {
-            eprintln!(
-                "Optional configuration not set: {}. Run `obelisk cloud app fill --app {name}` or `deploy --fill` to set it.",
-                unset.join(", ")
-            );
-        }
+        let key = staged
+            .as_ref()
+            .map_or(DEFAULT_DRAFT, |(key, ..)| key.as_str());
+        let body = apply_request(
+            &name,
+            key,
+            staged.as_ref().map(|(_, draft, _)| draft),
+            &current,
+            &id.to_string(),
+            false,
+            self.json,
+        )?;
         let mut outcomes = Vec::new();
-        {
-            step("apply");
-            current = client
-                .app(
-                    &name,
-                    Method::POST,
-                    &["apply"],
-                    Some(json!({"force":false,"revision":revision,"deployment_id":id})),
-                    Kind::Command(None),
-                )
-                .await?;
-            eprintln!("{}", output::lifecycle_outcome(&current));
-            if let Some(outcome) = current.get("outcome") {
-                outcomes.push(outcome.clone());
+        step("apply");
+        let current = client
+            .app(
+                &name,
+                Method::POST,
+                &["apply"],
+                Some(body),
+                Kind::Command(None),
+            )
+            .await;
+        let current = match (current, &staged) {
+            (Ok(current), _) => current,
+            (Err(error), Some((key, ..))) => {
+                return Err(error.context(format!("Draft `{key}` keeps the staged changes; retry with `obelisk cloud app deploy --app {name} --draft {key}`")));
             }
+            (Err(error), None) => return Err(error),
+        };
+        // An unchanged generated draft was not applied and would linger.
+        if let Some((key, draft, true)) = &staged
+            && draft["summary"]["changed"] != true
+        {
+            let _ = client.draft(&name, key, Method::DELETE, &[], None).await;
+        }
+        eprintln!("{}", output::lifecycle_outcome(&current));
+        if let Some(outcome) = current.get("outcome") {
+            outcomes.push(outcome.clone());
         }
         ensure!(
             current["status"] == "running",
@@ -200,6 +248,29 @@ impl CloudArgs {
             eprint!("{out}");
             Ok(())
         }
+    }
+}
+
+/// Reports optional declarations left unset by a non-interactive fill.
+fn optional_unset(filled: &Value, interactive: bool) {
+    let unset = filled["declarations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|declaration| declaration["action"] == "unset")
+        .map(|declaration| {
+            format!(
+                "{} {}",
+                kind_label(declaration["kind"].as_str().unwrap_or_default()),
+                declaration["name"].as_str().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>();
+    if !interactive && !unset.is_empty() {
+        eprintln!(
+            "Optional configuration not set: {}. Pass them with `--env` or `--secret`, or deploy with `--fill`.",
+            unset.join(", ")
+        );
     }
 }
 
@@ -233,7 +304,7 @@ fn choose_app_name(
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{request_body, staged_config};
+    use super::super::tests::{MockDrafts, request_body, staged_config};
     use super::*;
     use axum::{
         Router,
@@ -247,6 +318,7 @@ mod tests {
 
     struct Server {
         app: Option<Value>,
+        drafts: MockDrafts,
         calls: Vec<String>,
         api_url: String,
         reject_deployment: bool,
@@ -267,6 +339,14 @@ mod tests {
         let routed_path = uri.path().replace("/v1/apps/renamed", "/v1/apps/demo");
         let path = routed_path.as_str();
         let body = request_body(&headers, &body);
+        if let Some(rest) = path.strip_prefix("/v1/apps/demo/")
+            && let Some(result) = state.drafts.route(&method, rest, &body)
+        {
+            return match result {
+                Ok(view) => axum::Json(view).into_response(),
+                Err(status) => status.into_response(),
+            };
+        }
         let mut value = match (method, path) {
             (Method::GET, "/v1/apps/demo") => match &state.app {
                 Some(app) => app.clone(),
@@ -288,6 +368,8 @@ mod tests {
                     assert_eq!(body["secrets"]["INITIAL_KEY"], "initial-value");
                 }
                 app["env"] = body["env"].clone();
+                state.drafts = MockDrafts::new(body["app_toml"].as_str().unwrap(), 1);
+                state.drafts.applied["env"] = body["env"].clone();
                 app["status"] = json!("running");
                 app["potentially_stale"] = json!(false);
                 app["revision"] = json!(1);
@@ -296,25 +378,17 @@ mod tests {
                 state.app = Some(app.clone());
                 app
             }
-            (Method::PUT, "/v1/apps/demo/config") => {
-                let body = staged_config(body.as_str().unwrap());
-                let app = state.app.as_mut().unwrap();
-                let changed = app["policy"] != body["policy"] || app["cloud"] != body["cloud"];
-                if changed {
-                    app["policy"] = body["policy"].clone();
-                    app["cloud"] = body["cloud"].clone();
-                    app["revision"] = json!(app["revision"].as_u64().unwrap() + 1);
-                    app["potentially_stale"] = json!(true);
-                }
-                let mut value = app.clone();
-                value["changed"] = json!(changed);
-                value
-            }
             (Method::POST, "/v1/apps/demo/apply") => {
                 assert_eq!(body["deployment_id"].as_str(), state.submitted.as_deref());
                 assert!(body.get("config").is_none());
+                state.drafts.apply(&body).unwrap();
+                let (revision, applied) = (state.drafts.revision, state.drafts.applied_revision);
+                let applied_config = staged_config(state.drafts.app_toml(""));
                 let app = state.app.as_mut().unwrap();
-                assert_eq!(body["revision"], app["revision"]);
+                app["revision"] = json!(revision);
+                app["applied_revision"] = json!(applied);
+                app["policy"] = applied_config["policy"].clone();
+                app["cloud"] = applied_config["cloud"].clone();
                 if path.ends_with("/apply") {
                     app["desired_state"] = json!("running");
                 }
@@ -325,11 +399,8 @@ mod tests {
                     app["outcome"]["configuration"] = json!("applied");
                 }
                 app["potentially_stale"] = json!(false);
-                app["applied_revision"] = app["revision"].clone();
                 app.clone()
             }
-            (Method::GET, "/v1/apps/demo/env") => json!({"env":{}}),
-            (Method::GET, "/v1/apps/demo/secrets") => json!({"secrets":[]}),
             (Method::GET, "/tenant/v1/info") => json!(rest_types::server::ServerInfoResponse {
                 app_name: "demo".to_owned(),
                 app_env_prefix: String::new(),
@@ -413,6 +484,12 @@ mod tests {
             let desired = policy(&app_path).await.unwrap();
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", listener.local_addr().unwrap());
+            // The applied app.toml differs from the local one only in the config scenarios.
+            let applied_toml = if matches!(scenario, "config" | "stopped-config") {
+                "app_name='demo'\n[cloud]\nmemory_mb=512\n"
+            } else {
+                config
+            };
             let mut app = json!({"policy":desired.policy(),"cloud":{},"status":"running","desired_state":"running","potentially_stale":false,"revision":1,"applied_revision":1,"endpoints":{"api":format!("{origin}/tenant")}});
             if matches!(scenario, "config" | "stopped-config") {
                 app["cloud"] = json!({"memory_mb":512});
@@ -436,6 +513,7 @@ mod tests {
                         | "rename-override"
                 ))
                 .then_some(app),
+                drafts: MockDrafts::new(applied_toml, 1),
                 calls: Vec::new(),
                 api_url: format!("{origin}/tenant"),
                 reject_deployment: scenario == "deployment-error",
@@ -468,10 +546,10 @@ mod tests {
                 let Cloud::App(target) = &mut args.command else {
                     unreachable!()
                 };
-                let CloudApp::Deploy { fill, .. } = &mut target.command else {
+                let CloudApp::Deploy { values, .. } = &mut target.command else {
                     unreachable!()
                 };
-                *fill = true;
+                values.fill = true;
                 args.deploy_with_prompt(Some(|q: &Question| {
                     Ok(match q {
                         Question::Value { .. } => "initial-value",
@@ -518,23 +596,25 @@ mod tests {
                 );
                 assert!(state.calls.last().unwrap().ends_with("/apply"));
             } else if matches!(scenario, "missing" | "invalid") {
-                let error = result.unwrap_err().to_string();
-                if scenario == "missing" {
-                    assert!(error.contains("PATH"));
-                }
+                let error = format!("{:#}", result.unwrap_err());
                 if scenario == "invalid" {
                     assert!(state.calls.is_empty());
                 } else {
-                    assert!(state.submitted.is_some());
-                    assert!(!state.calls.contains(&"POST /v1/apps/demo/apply".to_owned()));
+                    // Missing values fail before the deployment is submitted and keep the draft.
+                    assert!(error.contains("Missing values: env PATH"), "{error}");
+                    assert!(
+                        error.contains(
+                            "retry with `obelisk cloud app deploy --app demo --draft deploy-"
+                        ),
+                        "{error}"
+                    );
+                    assert!(state.submitted.is_none());
+                    assert_eq!(state.drafts.drafts.len(), 1);
                 }
             } else if scenario == "deployment-error" {
-                assert!(
-                    result
-                        .unwrap_err()
-                        .to_string()
-                        .contains("Deployment staging failed")
-                );
+                let error = format!("{:#}", result.unwrap_err());
+                assert!(error.contains("Deployment staging failed"), "{error}");
+                assert!(error.contains("--draft deploy-"), "{error}");
                 assert!(
                     state
                         .calls
@@ -549,9 +629,29 @@ mod tests {
                     state.calls.contains(&"POST /v1/apps".to_owned()),
                     matches!(scenario, "new" | "new-values" | "new-integration")
                 );
+                let new = matches!(scenario, "new" | "new-values" | "new-integration");
                 assert_eq!(
-                    state.calls.contains(&"PUT /v1/apps/demo/config".to_owned()),
-                    !matches!(scenario, "new" | "new-values" | "new-integration")
+                    state
+                        .calls
+                        .iter()
+                        .any(|call| call.starts_with("PUT /v1/apps/demo/drafts/deploy-")
+                            && call.ends_with("/config")),
+                    !new
+                );
+                // Changed drafts are applied; unchanged generated drafts are discarded.
+                assert!(state.drafts.drafts.is_empty());
+                let changed = matches!(scenario, "config" | "stopped-config");
+                assert_eq!(
+                    state.drafts.applied_revision,
+                    if changed { 3 } else { 1 },
+                    "{scenario}"
+                );
+                assert_eq!(
+                    state
+                        .calls
+                        .iter()
+                        .any(|call| call.starts_with("DELETE /v1/apps/demo/drafts/deploy-")),
+                    !new && !changed
                 );
                 if scenario == "new-integration" {
                     assert_eq!(state.app.as_ref().unwrap()["env"], json!({}));
@@ -576,7 +676,11 @@ mod tests {
                     .position(|call| call == "POST /v1/apps/demo/apply")
                     .unwrap();
                 assert!(submit < apply);
-                assert!(state.calls.last().unwrap().ends_with("/apply"));
+                assert!(
+                    state.calls[apply..]
+                        .iter()
+                        .all(|call| !call.starts_with("PUT "))
+                );
             }
             task.abort();
         }

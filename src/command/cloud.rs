@@ -2,8 +2,8 @@ use super::output::print_json;
 use crate::args::CloudToken;
 use crate::args::{
     AdminArgs, App, AppArgs, ClientConnection, Cloud, CloudApp, CloudAppTarget, CloudArgs,
-    CloudCommandId, CloudEnv, CloudSecrets, ComponentArgs, Deployment, DeploymentArgs,
-    ExecutionArgs, SelectedApp, Subcommand,
+    CloudCommandId, CloudDraft, CloudEnv, CloudSecrets, CloudValues, ComponentArgs, Deployment,
+    DeploymentArgs, ExecutionArgs, SelectedApp, Subcommand,
 };
 use crate::client::ClientStartup;
 use crate::config::app::{AppConfigToml, generate_app_name_hint, with_app_name};
@@ -223,9 +223,13 @@ impl Client {
         self.response(response, kind, command_id).await
     }
     async fn lookup_app(&self, name: &str) -> anyhow::Result<Option<Value>> {
+        self.optional(&["v1", "apps", name]).await
+    }
+    /// GET that maps 404 to `None`.
+    async fn optional(&self, path: &[&str]) -> anyhow::Result<Option<Value>> {
         let response = self
             .http
-            .get(self.url(&["v1", "apps", name])?)
+            .get(self.url(path)?)
             .send()
             .await
             .map_err(reqwest::Error::without_url)?;
@@ -283,6 +287,24 @@ impl Client {
         let mut path = vec!["v1", "apps", name];
         path.extend_from_slice(suffix);
         self.request(method, &path, body, kind).await
+    }
+    /// Reads or edits draft `key`; edits are not lifecycle commands and take no idempotency key.
+    async fn draft(
+        &self,
+        name: &str,
+        key: &str,
+        method: Method,
+        suffix: &[&str],
+        body: Option<Body>,
+    ) -> anyhow::Result<Value> {
+        let mut path = vec!["v1", "apps", name, "drafts", key];
+        path.extend_from_slice(suffix);
+        let kind = if method == Method::PUT && suffix.first() == Some(&"secrets") {
+            Kind::Secret
+        } else {
+            Kind::Read
+        };
+        self.send(method, &path, body, kind).await
     }
     async fn events(&self, name: &str, limit: u8) -> anyhow::Result<Value> {
         let mut url = self.url(&["v1", "apps", name, "events"])?;
@@ -650,8 +672,7 @@ impl CloudArgs {
                     CloudApp::New {
                         selected: SelectedApp { app },
                         app_config,
-                        fill,
-                        fill_non_interactive,
+                        values,
                         command_id,
                     },
                 ..
@@ -668,9 +689,11 @@ impl CloudArgs {
                 .await?;
                 let config = config_for_app(&name, config.zip(config_path), false)?
                     .map(|(config, _)| config);
+                let explicit = explicit_values(&values)?;
                 ensure!(
-                    !(fill || fill_non_interactive) || config.is_some(),
-                    "`--fill` requires an app config"
+                    !(values.fill || values.fill_non_interactive || !explicit.is_empty())
+                        || config.is_some(),
+                    "Initial values require an app config"
                 );
                 let mut body = json!({"app_toml":with_app_name("", &name)?});
                 if let Some(config) = config {
@@ -678,7 +701,12 @@ impl CloudArgs {
                     let mut ask = ask;
                     let values = initial_values(
                         &user_supplied_policy(&desired_config(&config)),
-                        Values::new(fill, fill_non_interactive, terminal().then_some(&mut ask))?,
+                        explicit,
+                        Values::new(
+                            values.fill,
+                            values.fill_non_interactive,
+                            terminal().then_some(&mut ask),
+                        )?,
                     )?;
                     body["env"] = values["env"].clone();
                     body["secrets"] = values["secrets"].clone();
@@ -724,6 +752,13 @@ impl CloudArgs {
                         let mut value = client
                             .app(name, Method::GET, &["status"], None, Kind::Read)
                             .await?;
+                        // Older provisioners have no drafts.
+                        if let Ok(drafts) = client
+                            .app(name, Method::GET, &["drafts"], None, Kind::Read)
+                            .await
+                        {
+                            value["drafts"] = drafts["drafts"].clone();
+                        }
                         if let Some((config, path)) = local {
                             let comparison = compare_config(&client, name, &config.text).await;
                             value["local_config"] = json!({
@@ -735,44 +770,58 @@ impl CloudArgs {
                         Ok(value)
                     }
                     CloudApp::Events { limit, .. } => client.events(name, limit).await,
-                    CloudApp::Stage { command_id, .. } => {
+                    CloudApp::Stage {
+                        draft: CloudDraft { key },
+                        ..
+                    } => {
                         let (config, _) = local.expect("stage requires an app config");
                         client
-                            .app_toml(
+                            .draft(
                                 name,
+                                &key,
                                 Method::PUT,
                                 &["config"],
-                                &config.text,
-                                command_id.into(),
+                                Some(Body::Toml(config.text)),
                             )
                             .await
                     }
+                    CloudApp::Unstage {
+                        draft: CloudDraft { key },
+                        ..
+                    } => client.draft(name, &key, Method::DELETE, &[], None).await,
                     CloudApp::Apply {
                         force,
                         staged,
-                        fill,
-                        fill_non_interactive,
+                        values,
+                        draft: CloudDraft { key },
                         command_id,
                         ..
                     } => {
                         let current = client.app(name, Method::GET, &[], None, Kind::Read).await?;
+                        let explicit = explicit_values(&values)?;
                         let mut ask = ask;
-                        let interactive = terminal() && !self.json && !fill_non_interactive;
-                        let (desired, revision) = staged_or_local(
+                        let interactive = terminal() && !self.json && !values.fill_non_interactive;
+                        let draft = draft_or_local(
                             &client,
                             name,
-                            &current,
+                            &key,
                             local.filter(|_| !staged),
                             interactive.then_some(&mut ask),
                         )
                         .await?;
-                        fill_values(
+                        ensure!(
+                            draft.is_some() || key == DEFAULT_DRAFT || !explicit.is_empty(),
+                            "Draft `{key}` not found"
+                        );
+                        let (draft, _) = stage_values(
                             &client,
                             name,
-                            &user_supplied_policy(&desired),
+                            &key,
+                            draft,
+                            explicit,
                             Values::new(
-                                fill,
-                                fill_non_interactive,
+                                values.fill,
+                                values.fill_non_interactive,
                                 interactive.then_some(&mut ask),
                             )?,
                         )
@@ -795,13 +844,21 @@ impl CloudArgs {
                                     .header(header::ACCEPT, "application/json"),
                             )
                             .await?;
-                        let deployment_id = info.deployment_id;
+                        let body = apply_request(
+                            name,
+                            &key,
+                            draft.as_ref(),
+                            &current,
+                            &info.deployment_id,
+                            force,
+                            self.json,
+                        )?;
                         client
                             .app(
                                 name,
                                 Method::POST,
                                 &["apply"],
-                                Some(json!({"force":force,"revision":revision,"deployment_id":deployment_id})),
+                                Some(body),
                                 command_id.into(),
                             )
                             .await
@@ -824,14 +881,14 @@ impl CloudArgs {
                     CloudApp::Fill {
                         non_interactive,
                         staged,
+                        draft: CloudDraft { key },
                         ..
                     } => {
-                        let current = client.app(name, Method::GET, &[], None, Kind::Read).await?;
                         let mut ask = ask;
-                        let (desired, _) = staged_or_local(
+                        let draft = draft_or_local(
                             &client,
                             name,
-                            &current,
+                            &key,
                             local.filter(|_| !staged),
                             (!non_interactive && terminal()).then_some(&mut ask),
                         )
@@ -845,7 +902,14 @@ impl CloudArgs {
                             );
                             Values::Prompt(&mut ask)
                         };
-                        fill_values(&client, name, &user_supplied_policy(&desired), values).await
+                        let (_, mut filled) =
+                            stage_values(&client, name, &key, draft, Vec::new(), values).await?;
+                        filled["apply_required"] = json!(
+                            filled["staged"]
+                                .as_array()
+                                .is_some_and(|staged| !staged.is_empty())
+                        );
+                        Ok(filled)
                     }
                     CloudApp::Env {
                         command: CloudEnv::List,
@@ -858,40 +922,34 @@ impl CloudArgs {
                     CloudApp::Env {
                         command:
                             CloudEnv::Set {
-                                name: key,
+                                name: variable,
                                 value,
-                                command_id,
+                                draft: CloudDraft { key },
                             },
                         ..
                     } => {
-                        config_name(&key)?;
+                        config_name(&variable)?;
                         client
-                            .app(
+                            .draft(
                                 name,
+                                &key,
                                 Method::PUT,
-                                &["env", &key],
-                                Some(json!({"value":value})),
-                                command_id.into(),
+                                &["env", &variable],
+                                Some(Body::Json(json!({"value":value}))),
                             )
                             .await
                     }
                     CloudApp::Env {
                         command:
                             CloudEnv::Unset {
-                                name: key,
-                                command_id,
+                                name: variable,
+                                draft: CloudDraft { key },
                             },
                         ..
                     } => {
-                        config_name(&key)?;
+                        config_name(&variable)?;
                         client
-                            .app(
-                                name,
-                                Method::DELETE,
-                                &["env", &key],
-                                None,
-                                command_id.into(),
-                            )
+                            .draft(name, &key, Method::DELETE, &["env", &variable], None)
                             .await
                     }
                     CloudApp::Secrets {
@@ -905,13 +963,14 @@ impl CloudArgs {
                     CloudApp::Secrets {
                         command:
                             CloudSecrets::Set {
-                                name: key,
+                                name: secret,
                                 from_env,
                                 stdin,
+                                draft: CloudDraft { key },
                             },
                         ..
                     } => {
-                        config_name(&key)?;
+                        config_name(&secret)?;
                         let value = if stdin {
                             let mut value = String::new();
                             std::io::stdin()
@@ -927,25 +986,27 @@ impl CloudArgs {
                                 })?
                         };
                         client
-                            .app(
+                            .draft(
                                 name,
+                                &key,
                                 Method::PUT,
-                                &["secrets", &key],
-                                Some(json!({"value":value})),
-                                Kind::Secret,
+                                &["secrets", &secret],
+                                Some(Body::Json(json!({"value":value}))),
                             )
-                            .await?;
-                        Ok(json!({"staged_secret":key}))
+                            .await
                     }
                     CloudApp::Secrets {
-                        command: CloudSecrets::Unset { name: key },
+                        command:
+                            CloudSecrets::Unset {
+                                name: secret,
+                                draft: CloudDraft { key },
+                            },
                         ..
                     } => {
-                        config_name(&key)?;
+                        config_name(&secret)?;
                         client
-                            .app(name, Method::DELETE, &["secrets", &key], None, Kind::Secret)
-                            .await?;
-                        Ok(json!({"deleted_secret":key}))
+                            .draft(name, &key, Method::DELETE, &["secrets", &secret], None)
+                            .await
                     }
                     CloudApp::New { .. } => unreachable!(),
                     CloudApp::Deploy { .. } => unreachable!("deploy has its own output"),
@@ -977,50 +1038,38 @@ async fn compare_config(client: &Client, name: &str, app_toml: &str) -> anyhow::
         .await
 }
 
-fn staged_revision(value: &Value) -> anyhow::Result<u64> {
-    value["revision"]
-        .as_u64()
-        .context("Cloud response is missing the staged configuration revision")
-}
+const DEFAULT_DRAFT: &str = "default";
 
-/// Returns the staged configuration and its revision, unless `local` differs and the user chooses to stage it.
-async fn staged_or_local(
+/// Returns draft `key`, first staging `local` into it when it differs and the user agrees.
+async fn draft_or_local(
     client: &Client,
     name: &str,
-    current: &Value,
+    key: &str,
     local: Option<(LocalConfig, std::path::PathBuf)>,
     prompt: Option<Prompt<'_>>,
-) -> anyhow::Result<(Value, u64)> {
+) -> anyhow::Result<Option<Value>> {
     #[derive(Clone, Copy, PartialEq)]
     enum Use {
         Local,
         Staged,
         Cancel,
     }
-    let staged = json!({"policy":current["policy"],"cloud":current["cloud"]});
     let Some((config, path)) = local else {
-        return Ok((staged, staged_revision(current)?));
+        return client.optional(&["v1", "apps", name, "drafts", key]).await;
     };
-    let desired = desired_config(&config);
-    let comparison = compare_config(client, name, &config.text).await?;
-    let revision = staged_revision(&comparison)?;
-    let changes = comparison["changes"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    if changes.is_empty() {
-        return Ok((staged, revision));
+    let draft = client.draft(name, key, Method::POST, &[], None).await?;
+    if draft["app_toml"] == config.text {
+        return Ok(Some(draft));
     }
     let path = path.display();
-    let changes = changes
-        .iter()
-        .filter_map(Value::as_str)
-        .collect::<Vec<_>>()
-        .join(", ");
-    let text = format!("{path} differs from staged configuration revision {revision}: {changes}\n");
+    let text = format!(
+        "{path} differs from the app.toml in draft `{key}` (revision {})\n",
+        draft["revision"]
+    );
     let Some(prompt) = prompt else {
         bail!(
-            "{text}Run `obelisk cloud app stage --app {name} -a {path}`, or pass `--staged` to use the staged configuration"
+            "{text}Run `obelisk cloud app stage --app {name}{} -a {path}`, or pass `--staged` to use the draft's app.toml",
+            output::draft_arg(key)
         );
     };
     let choices = [
@@ -1029,21 +1078,66 @@ async fn staged_or_local(
         ("cancel", Use::Cancel),
     ];
     match choose(prompt, &text, &choices, Use::Local)? {
-        Use::Local => {
-            let staged = client
-                .app_toml(
-                    name,
-                    Method::PUT,
-                    &["config"],
-                    &config.text,
-                    Kind::Command(None),
-                )
-                .await?;
-            Ok((desired, staged_revision(&staged)?))
-        }
-        Use::Staged => Ok((staged, revision)),
+        Use::Local => client
+            .draft(
+                name,
+                key,
+                Method::PUT,
+                &["config"],
+                Some(Body::Toml(config.text.clone())),
+            )
+            .await
+            .map(Some),
+        Use::Staged => Ok(Some(draft)),
         Use::Cancel => bail!("Cancelled; nothing was staged"),
     }
+}
+
+/// Builds the apply request for draft `key` when it has changes, otherwise re-applies the applied revision.
+fn apply_request(
+    name: &str,
+    key: &str,
+    draft: Option<&Value>,
+    current: &Value,
+    deployment_id: &str,
+    force: bool,
+    quiet: bool,
+) -> anyhow::Result<Value> {
+    let mut body = json!({"force":force,"deployment_id":deployment_id});
+    let applied = &current["applied_revision"];
+    let Some(draft) = draft.filter(|draft| draft["summary"]["changed"] == true) else {
+        if !quiet {
+            eprintln!("Re-applying revision {applied}");
+        }
+        body["revision"] = applied.clone();
+        return Ok(body);
+    };
+    ensure!(
+        draft["stale"] != true,
+        "Draft `{key}` was opened on revision {}, but revision {applied} was applied since; discard it with `obelisk cloud app unstage --app {name}{}`",
+        draft["parent_revision"],
+        output::draft_arg(key)
+    );
+    let missing = output::draft_values(draft, "missing");
+    ensure!(
+        missing.is_empty(),
+        "Missing values in draft `{key}`: {}. Pass them with `--env NAME[=VALUE]` or `--secret NAME`, or retry with `--fill` or `--fill-non-interactive`",
+        missing.join(", ")
+    );
+    if !quiet {
+        eprintln!(
+            "Applying draft `{key}` revision {} over revision {applied}: {}",
+            draft["revision"],
+            output::draft_changes(draft)
+        );
+        let unused = output::draft_values(draft, "unused");
+        if !unused.is_empty() {
+            eprintln!("Not declared in app.toml: {}", unused.join(", "));
+        }
+    }
+    body["revision"] = draft["revision"].clone();
+    body["draft"] = json!(key);
+    Ok(body)
 }
 
 fn terminal() -> bool {
@@ -1146,55 +1240,122 @@ fn user_supplied_policy(config: &Value) -> Value {
     policy
 }
 
-async fn fill_values(
+/// Reads `--env` and `--secret` values; a bare name reads the same-named environment variable.
+fn explicit_values(values: &CloudValues) -> anyhow::Result<Vec<PendingValue>> {
+    let read = |name: &str| {
+        std::env::var(name)
+            .map_err(|_| anyhow::anyhow!("Environment variable {name} is missing or not UTF-8"))
+    };
+    let mut pending = Vec::new();
+    for item in &values.env {
+        let (name, value, origin) = match item.split_once('=') {
+            Some((name, value)) => (name, Some(value.to_owned()), "given"),
+            None => (item.as_str(), None, "from environment"),
+        };
+        config_name(name)?;
+        let value = match value {
+            Some(value) => value,
+            None => read(name)?,
+        };
+        pending.push(("env", name.to_owned(), value, origin));
+    }
+    for name in &values.secrets {
+        if let Some((name, _)) = name.split_once('=') {
+            bail!(
+                "`--secret` takes only a name and reads the same-named environment variable, e.g. `{name}=... obelisk cloud app apply --secret {name}`"
+            );
+        }
+        config_name(name)?;
+        pending.push(("secrets", name.clone(), read(name)?, "from environment"));
+    }
+    Ok(pending)
+}
+
+/// Drops declarations of `explicit` values, which are not collected again.
+fn without(mut policy: Value, explicit: &[PendingValue]) -> Value {
+    let given = |kind: &str, name: Option<&str>| {
+        explicit
+            .iter()
+            .any(|(k, n, _, _)| *k == kind && Some(n.as_str()) == name)
+    };
+    if let Some(declarations) = policy["public_env"].as_array_mut() {
+        declarations.retain(|declaration| {
+            !given(
+                "env",
+                declaration
+                    .as_str()
+                    .or_else(|| declaration["name"].as_str()),
+            )
+        });
+    }
+    if let Some(declarations) = policy["secrets"].as_object_mut() {
+        declarations.retain(|name, _| !given("secrets", Some(name)));
+    }
+    policy
+}
+
+/// Stages `explicit` values into draft `key`, then the remaining declared values taken from `values`.
+async fn stage_values(
     client: &Client,
     app: &str,
-    policy: &Value,
+    key: &str,
+    mut draft: Option<Value>,
+    explicit: Vec<PendingValue>,
     values: Values<'_>,
-) -> anyhow::Result<Value> {
-    let env = client
-        .app(app, Method::GET, &["env"], None, Kind::Read)
-        .await?;
-    let secrets = client
-        .app(app, Method::GET, &["secrets"], None, Kind::Secret)
-        .await?;
-    let env_values = env["env"]
-        .as_object()
-        .context("Invalid cloud environment response")?;
-    let secret_values = secrets["secrets"]
-        .as_array()
-        .context("Invalid cloud secrets response")?;
-    let (report, pending) = collect_values(
-        &format!(
-            "Run `obelisk cloud app fill --app {app}`, or retry with `--fill` or `--fill-non-interactive`"
-        ),
-        policy,
-        env_values,
-        secret_values,
-        values,
-    )?;
+) -> anyhow::Result<(Option<Value>, Value)> {
     let mut staged = Vec::new();
-    for (kind, name, value, _) in pending {
-        client
-            .app(
+    let mut put = async |kind: &'static str, name: String, value: String| {
+        let view = client
+            .draft(
                 app,
+                key,
                 Method::PUT,
                 &[kind, &name],
-                Some(json!({"value":value})),
-                if kind == "secrets" {
-                    Kind::Secret
-                } else {
-                    Kind::Command(None)
-                },
+                Some(Body::Json(json!({"value":value}))),
             )
             .await
             .with_context(|| {
-                format!("Could not stage {kind} {name}; earlier values may already be staged")
+                format!(
+                    "Could not stage {} {name} in draft `{key}`; earlier values may already be staged",
+                    kind_label(kind)
+                )
             })?;
         staged.push(json!({"kind":kind,"name":name}));
+        anyhow::Ok(view)
+    };
+    for (kind, name, value, _) in explicit.iter().cloned() {
+        draft = Some(put(kind, name, value).await?);
     }
-    let apply_required = !staged.is_empty();
-    Ok(json!({"staged":staged,"declarations":report,"apply_required":apply_required}))
+    let mut report = Vec::new();
+    if !matches!(values, Values::Check) {
+        let base = match draft {
+            Some(draft) => draft,
+            None => client.draft(app, key, Method::POST, &[], None).await?,
+        };
+        let pending;
+        (report, pending) = collect_values(
+            &format!(
+                "Run `obelisk cloud app fill --app {app}{}`, or retry with `--fill` or `--fill-non-interactive`",
+                output::draft_arg(key)
+            ),
+            &without(user_supplied_policy(&base), &explicit),
+            base["env"]
+                .as_object()
+                .context("Invalid cloud draft environment")?,
+            base["secrets"]
+                .as_array()
+                .context("Invalid cloud draft secrets")?,
+            values,
+        )?;
+        draft = Some(base);
+        for (kind, name, value, _) in pending {
+            draft = Some(put(kind, name, value).await?);
+        }
+    }
+    Ok((
+        draft,
+        json!({"draft":key,"staged":staged,"declarations":report}),
+    ))
 }
 
 type PendingValue = (&'static str, String, String, &'static str);
@@ -1225,7 +1386,7 @@ fn collect_values(
     fill_hint: &str,
     policy: &Value,
     env_values: &serde_json::Map<String, Value>,
-    secret_values: &[Value],
+    secret_names: &[Value],
     mut values: Values,
 ) -> anyhow::Result<(Vec<Value>, Vec<PendingValue>)> {
     // (kind, name, optional, set in cloud, cloud value if readable)
@@ -1260,7 +1421,7 @@ fn collect_values(
                 "secrets",
                 name.as_str(),
                 declaration["optional"] == true,
-                secret_values.iter().any(|s| s["name"] == *name),
+                secret_names.iter().any(|s| s == name),
                 None,
             ));
         }
@@ -1371,16 +1532,20 @@ fn collect_values(
     Ok((report, pending))
 }
 
-fn initial_values(policy: &Value, values: Values) -> anyhow::Result<Value> {
+fn initial_values(
+    policy: &Value,
+    explicit: Vec<PendingValue>,
+    values: Values,
+) -> anyhow::Result<Value> {
     let (_, pending) = collect_values(
         "Retry with `--fill`, or `--fill-non-interactive` to read same-named environment variables",
-        policy,
+        &without(policy.clone(), &explicit),
         &serde_json::Map::new(),
         &[],
         values,
     )?;
     let mut values = json!({"env":{},"secrets":{}});
-    for (kind, name, value, _) in pending {
+    for (kind, name, value, _) in explicit.into_iter().chain(pending) {
         values[kind][name] = json!(value);
     }
     Ok(values)
@@ -1411,10 +1576,8 @@ mod tests {
         received: Vec<(String, Value)>,
         error: bool,
         redirect: bool,
-        existing_config: bool,
         api_url: Option<String>,
-        staged: Value,
-        revision: u64,
+        drafts: MockDrafts,
     }
     #[tokio::test]
     async fn cloud_token_saves_server_secret_and_rejects_existing_file() {
@@ -1544,6 +1707,7 @@ mod tests {
             .push((format!("{method} {uri}"), body.clone()));
         if method != Method::GET
             && uri.path().starts_with("/prefix/v1/apps")
+            && !uri.path().contains("/drafts")
             && !uri.path().contains("/secrets/")
             && !uri.path().ends_with("/config/compare")
         {
@@ -1565,31 +1729,40 @@ mod tests {
         if state.error {
             return (axum::http::StatusCode::CONFLICT, "DO-NOT-ECHO-SECRET").into_response();
         }
+        if let Some(path) = uri.path().strip_prefix("/prefix/v1/apps/demo/")
+            && let Some(result) = state.drafts.route(&method, path, &body)
+        {
+            return match result {
+                Ok(view) => axum::Json(view).into_response(),
+                Err(status) => status.into_response(),
+            };
+        }
         let result = match uri.path() {
-            "/prefix/v1/apps/demo/config" if method == Method::PUT => {
-                let desired = staged_config(body.as_str().unwrap());
-                let changed = state.staged != desired;
-                if changed {
-                    state.staged = desired;
-                    state.revision += 1;
+            "/prefix/v1/apps/demo/apply" => {
+                if let Err(error) = state.drafts.apply(&body) {
+                    return (axum::http::StatusCode::CONFLICT, error).into_response();
                 }
-                json!({"revision":state.revision,"changed":changed})
+                json!({"ok":true})
             }
             "/prefix/v1/apps/demo/config/compare" => {
                 let desired = staged_config(body.as_str().unwrap());
+                let staged = staged_config(state.drafts.app_toml(DEFAULT_DRAFT));
                 let changes: Vec<_> = ["policy", "cloud"]
                     .into_iter()
-                    .filter(|key| state.staged[key] != desired[key])
+                    .filter(|key| staged[key] != desired[key])
                     .map(|key| format!("/{key}"))
                     .collect();
-                json!({"changes":changes,"revision":state.revision})
+                json!({"changes":changes,"revision":state.drafts.revision})
             }
             "/prefix/v1/apps/demo" => {
+                let applied = staged_config(state.drafts.app_toml(""));
                 json!({
                     "endpoints":{"api":state.api_url.clone().unwrap_or_else(||format!("http://{}/prefix/tenant",headers["host"].to_str().unwrap()))},
-                    "policy":state.staged["policy"],
-                    "cloud":state.staged["cloud"],
-                    "revision":state.revision,
+                    "policy":applied["policy"],
+                    "cloud":applied["cloud"],
+                    "app_toml":state.drafts.applied["app_toml"],
+                    "revision":state.drafts.revision,
+                    "applied_revision":state.drafts.applied_revision,
                 })
             }
             path if path.starts_with("/prefix/tenant/v1/executions/")
@@ -1615,13 +1788,7 @@ mod tests {
             "/prefix/v1/apps/demo/policy" if method == Method::GET => {
                 json!({"public_env":["CLOUD_TEST_MISSING_REQUIRED"],"secrets":{}})
             }
-            "/prefix/v1/apps/demo/env" if state.existing_config => {
-                json!({"env":{"ALREADY_SET":"stored","HOME":std::env::var("HOME").unwrap()}})
-            }
             "/prefix/v1/apps/demo/env" => json!({"env":{}}),
-            "/prefix/v1/apps/demo/secrets" if state.existing_config => {
-                json!({"secrets":[{"name":"ALREADY_SET"}]})
-            }
             "/prefix/v1/apps/demo/secrets" => json!({"secrets":[]}),
             _ => json!({"ok":true}),
         };
@@ -1638,6 +1805,194 @@ mod tests {
             Value::Null
         } else {
             serde_json::from_slice(body).unwrap()
+        }
+    }
+    /// Drafts of the mock app, following the provisioner's draft API.
+    pub(super) struct MockDrafts {
+        /// `{app_toml, env, secrets}` of the applied revision; secrets map names to values.
+        pub(super) applied: Value,
+        pub(super) applied_revision: u64,
+        pub(super) revision: u64,
+        pub(super) drafts: std::collections::BTreeMap<String, Value>,
+    }
+    impl Default for MockDrafts {
+        fn default() -> Self {
+            Self::new("app_name='demo'\n", 1)
+        }
+    }
+    impl MockDrafts {
+        pub(super) fn new(app_toml: &str, revision: u64) -> Self {
+            Self {
+                applied: json!({"app_toml":app_toml,"env":{},"secrets":{}}),
+                applied_revision: revision,
+                revision,
+                drafts: std::collections::BTreeMap::new(),
+            }
+        }
+        /// app.toml of draft `key`, or the applied one when there is no such draft.
+        pub(super) fn app_toml(&self, key: &str) -> &str {
+            self.drafts.get(key).unwrap_or(&self.applied)["app_toml"]
+                .as_str()
+                .unwrap()
+        }
+        fn view(&self, key: &str) -> Value {
+            let draft = &self.drafts[key];
+            let config = staged_config(draft["app_toml"].as_str().unwrap());
+            let applied = staged_config(self.applied["app_toml"].as_str().unwrap());
+            let diff = |kind: &str| {
+                let (new, old) = (
+                    draft[kind].as_object().unwrap(),
+                    self.applied[kind].as_object().unwrap(),
+                );
+                json!({
+                    "added":new.keys().filter(|name| !old.contains_key(*name)).collect::<Vec<_>>(),
+                    "removed":old.keys().filter(|name| !new.contains_key(*name)).collect::<Vec<_>>(),
+                    "changed":new.iter().filter(|(name, value)| old.get(*name).is_some_and(|old| old != *value)).map(|(name, _)| name).collect::<Vec<_>>(),
+                })
+            };
+            let policy = user_supplied_policy(&config);
+            let declared_env = policy["public_env"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|declaration| declaration["type"] != "internal")
+                .map(|declaration| {
+                    let name = declaration
+                        .as_str()
+                        .or_else(|| declaration["name"].as_str())
+                        .unwrap();
+                    (name.to_owned(), declaration["optional"] == true)
+                })
+                .collect::<Vec<_>>();
+            let declared_secrets = policy["secrets"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(_, declaration)| declaration["type"] != "internal")
+                .map(|(name, declaration)| (name.clone(), declaration["optional"] == true))
+                .collect::<Vec<_>>();
+            let values = |kind: &str, declared: &[(String, bool)]| {
+                let set = draft[kind].as_object().unwrap();
+                (
+                    declared
+                        .iter()
+                        .filter(|(name, optional)| !optional && !set.contains_key(name))
+                        .map(|(name, _)| name.clone())
+                        .collect::<Vec<_>>(),
+                    set.keys()
+                        .filter(|name| !declared.iter().any(|(declared, _)| declared == *name))
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                )
+            };
+            let (missing_env, unused_env) = values("env", &declared_env);
+            let (missing_secrets, unused_secrets) = values("secrets", &declared_secrets);
+            let (env, secrets) = (diff("env"), diff("secrets"));
+            let app_toml = draft["app_toml"] != self.applied["app_toml"];
+            let changed = app_toml
+                || [&env, &secrets].iter().any(|diff| {
+                    ["added", "removed", "changed"]
+                        .iter()
+                        .any(|key| !diff[key].as_array().unwrap().is_empty())
+                });
+            json!({
+                "key":key,"parent_revision":draft["parent_revision"],"revision":draft["revision"],
+                "applied_revision":self.applied_revision,
+                "stale":draft["parent_revision"] != self.applied_revision,
+                "app_toml":draft["app_toml"],"policy":config["policy"],"cloud":config["cloud"],
+                "env":draft["env"],"secrets":draft["secrets"].as_object().unwrap().keys().collect::<Vec<_>>(),
+                "summary":{"changed":changed,"app_toml":app_toml,"policy":config["policy"] != applied["policy"],"cloud":config["cloud"] != applied["cloud"],"env":env,"secrets":secrets},
+                "values":{"missing_env":missing_env,"missing_secrets":missing_secrets,"unused_env":unused_env,"unused_secrets":unused_secrets},
+            })
+        }
+        fn open(&mut self, key: &str) {
+            if !self.drafts.contains_key(key) {
+                self.revision += 1;
+                let mut draft = self.applied.clone();
+                draft["parent_revision"] = json!(self.applied_revision);
+                draft["revision"] = json!(self.revision);
+                self.drafts.insert(key.to_owned(), draft);
+            }
+        }
+        /// Serves `/drafts...` below the app path; `None` for other paths.
+        pub(super) fn route(
+            &mut self,
+            method: &Method,
+            path: &str,
+            body: &Value,
+        ) -> Option<Result<Value, axum::http::StatusCode>> {
+            let rest = path.strip_prefix("drafts")?;
+            let segments: Vec<&str> = rest.split('/').skip(1).collect();
+            let key = match segments.first() {
+                None => {
+                    let drafts = self
+                        .drafts
+                        .keys()
+                        .map(|key| self.view(key))
+                        .collect::<Vec<_>>();
+                    return Some(Ok(
+                        json!({"drafts":drafts,"applied_revision":self.applied_revision}),
+                    ));
+                }
+                Some(key) => *key,
+            };
+            Some(match (method, &segments[1..]) {
+                (&Method::GET, []) => {
+                    if self.drafts.contains_key(key) {
+                        Ok(self.view(key))
+                    } else {
+                        Err(axum::http::StatusCode::NOT_FOUND)
+                    }
+                }
+                (&Method::POST, []) => {
+                    self.open(key);
+                    Ok(self.view(key))
+                }
+                (&Method::DELETE, []) => Ok(json!({"discarded":self.drafts.remove(key).is_some()})),
+                (method, edit) => {
+                    self.open(key);
+                    let draft = self.drafts.get_mut(key).unwrap();
+                    let before = draft.clone();
+                    match (method, edit) {
+                        (&Method::PUT, ["config"]) => draft["app_toml"] = body.clone(),
+                        (&Method::PUT, [kind, name]) => draft[*kind][*name] = body["value"].clone(),
+                        (&Method::DELETE, [kind, name]) => {
+                            draft[*kind].as_object_mut().unwrap().remove(*name);
+                        }
+                        _ => panic!("unexpected draft request: {method} {path}"),
+                    }
+                    let changed = *draft != before;
+                    if changed {
+                        self.revision += 1;
+                        self.drafts.get_mut(key).unwrap()["revision"] = json!(self.revision);
+                    }
+                    let mut view = self.view(key);
+                    view["changed"] = json!(changed);
+                    Ok(view)
+                }
+            })
+        }
+        /// Applies like the provisioner: a draft by key and revision, or the applied revision again.
+        pub(super) fn apply(&mut self, body: &Value) -> Result<(), String> {
+            let revision = body["revision"].as_u64().unwrap();
+            let Some(key) = body["draft"].as_str() else {
+                return if revision == self.applied_revision {
+                    Ok(())
+                } else {
+                    Err(format!("revision {revision} is not applied"))
+                };
+            };
+            let draft = self.drafts.get(key).ok_or("draft not found")?.clone();
+            if draft["revision"] != revision || draft["parent_revision"] != self.applied_revision {
+                return Err(format!("draft {key} changed"));
+            }
+            self.applied =
+                json!({"app_toml":draft["app_toml"],"env":draft["env"],"secrets":draft["secrets"]});
+            self.applied_revision = revision;
+            let parent = draft["parent_revision"].clone();
+            self.drafts
+                .retain(|_, draft| draft["parent_revision"] != parent);
+            Ok(())
         }
     }
     /// What the provisioner stages from an app.toml.
@@ -1800,34 +2155,40 @@ mod tests {
         assert_eq!(with_app_name("", "demo").unwrap(), "app_name = \"demo\"\n");
     }
     #[tokio::test]
-    async fn local_config_differing_from_staged_needs_a_choice() {
+    async fn local_config_differing_from_draft_needs_a_choice() {
         let (origin, state, task) = server().await;
         let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
+        let applied = "app_name='demo'\n[cloud]\nmemory_mb=512\n";
+        state.lock().unwrap().drafts = MockDrafts::new(applied, 4);
         let config =
             LocalConfig::parse("app_name='demo'\n[public_env]\nREGION={optional=true}\n".into())
                 .unwrap();
-        let staged = json!({"policy":{"public_env":[]},"cloud":{"memory_mb":512}});
-        state.lock().unwrap().staged = staged.clone();
-        state.lock().unwrap().revision = 4;
-        let current = json!({"policy":staged["policy"],"cloud":staged["cloud"],"revision":4});
         let local = || Some((config.clone(), std::path::PathBuf::from("app.toml")));
         let pick = async |answer: &str| {
             let mut prompt = |_: &Question| Ok(answer.to_owned());
-            staged_or_local(&client, "demo", &current, local(), Some(&mut prompt)).await
+            draft_or_local(&client, "demo", "default", local(), Some(&mut prompt))
+                .await
+                .map(|draft| draft.unwrap())
         };
-        let error = staged_or_local(&client, "demo", &current, local(), None)
+        assert!(
+            draft_or_local(&client, "demo", "ci", None, None)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let error = draft_or_local(&client, "demo", "default", local(), None)
             .await
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("differs from staged configuration revision 4: /policy, /cloud"),
+            error.contains("app.toml differs from the app.toml in draft `default` (revision 5)"),
             "{error}"
         );
         assert!(
             error.contains("stage --app demo -a app.toml`, or pass `--staged`"),
             "{error}"
         );
-        assert_eq!(pick("u").await.unwrap(), (staged, 4));
+        assert_eq!(pick("u").await.unwrap()["app_toml"], applied);
         assert!(
             pick("c")
                 .await
@@ -1846,23 +2207,25 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert!(puts().is_empty());
-        let desired = desired_config(&config);
-        assert_eq!(pick("").await.unwrap(), (desired.clone(), 5));
+        let staged = pick("").await.unwrap();
+        assert_eq!(
+            (&staged["app_toml"], &staged["revision"]),
+            (&json!(config.text), &json!(6))
+        );
         assert_eq!(
             puts(),
             [(
-                "PUT /prefix/v1/apps/demo/config".to_owned(),
+                "PUT /prefix/v1/apps/demo/drafts/default/config".to_owned(),
                 json!(config.text)
             )]
         );
         let mut unexpected = |_: &Question| -> anyhow::Result<String> { unreachable!() };
-        let current = json!({"policy":desired["policy"],"cloud":desired["cloud"],"revision":5});
         assert_eq!(
-            staged_or_local(&client, "demo", &current, local(), Some(&mut unexpected))
+            draft_or_local(&client, "demo", "default", local(), Some(&mut unexpected))
                 .await
                 .unwrap()
-                .1,
-            5
+                .unwrap()["revision"],
+            6
         );
         task.abort();
     }
@@ -1899,15 +2262,23 @@ mod tests {
         assert_eq!(received[0].0, "POST /prefix/v1/apps");
         assert_eq!(received[0].1["app_toml"], app_toml);
         assert!(received[0].1.get("policy").is_none());
-        assert_eq!(received[1].0, "PUT /prefix/v1/apps/demo/config");
+        assert_eq!(
+            received[1].0,
+            "PUT /prefix/v1/apps/demo/drafts/default/config"
+        );
         assert_eq!(received[1].1, app_toml);
         let applies: Vec<_> = received
             .iter()
             .filter(|(path, _)| path.ends_with("/apply"))
             .collect();
         assert_eq!(applies.len(), 2);
-        for (request, force) in applies.iter().zip([false, true]) {
+        // The second apply has no draft left and re-applies the applied revision.
+        for (request, (force, draft)) in applies
+            .iter()
+            .zip([(false, json!("default")), (true, Value::Null)])
+        {
             assert_eq!(request.1["force"], force);
+            assert_eq!(request.1["draft"], draft);
             assert!(
                 request.1["deployment_id"]
                     .as_str()
@@ -1915,13 +2286,84 @@ mod tests {
                     .parse::<concepts::prefixed_ulid::DeploymentId>()
                     .is_ok()
             );
-            assert_eq!(request.1["revision"], 1);
+            assert_eq!(request.1["revision"], 3);
             assert!(request.1.get("config").is_none());
         }
         assert_eq!(
             received.last().unwrap().0,
-            "PUT /prefix/v1/apps/demo/env/OBELISK_API_URL"
+            "PUT /prefix/v1/apps/demo/drafts/default/env/OBELISK_API_URL"
         );
+        task.abort();
+    }
+    #[test]
+    fn explicit_values_read_bare_names_from_environment() {
+        let values = |env: &[&str], secrets: &[&str]| CloudValues {
+            env: env.iter().map(|value| (*value).to_owned()).collect(),
+            secrets: secrets.iter().map(|value| (*value).to_owned()).collect(),
+            fill: false,
+            fill_non_interactive: false,
+        };
+        let path = std::env::var("PATH").unwrap();
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(
+            explicit_values(&values(&["PATH", "REGION=eu=1"], &["HOME"])).unwrap(),
+            [
+                ("env", "PATH".to_owned(), path, "from environment"),
+                ("env", "REGION".to_owned(), "eu=1".to_owned(), "given"),
+                ("secrets", "HOME".to_owned(), home, "from environment"),
+            ]
+        );
+        let error = explicit_values(&values(&[], &["KEY=value"]))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("`--secret` takes only a name"), "{error}");
+        assert!(!error.contains("value"), "{error}");
+        let unset: &[&str] = &["OBELISK_CLOUD_TEST_UNSET"];
+        for (env, secrets) in [(unset, &[][..]), (&[][..], unset)] {
+            assert!(
+                explicit_values(&values(env, secrets))
+                    .unwrap_err()
+                    .to_string()
+                    .contains("OBELISK_CLOUD_TEST_UNSET is missing")
+            );
+        }
+        let policy =
+            json!({"public_env":["PATH",{"name":"REGION"}],"secrets":{"HOME":{},"KEY":{}}});
+        let explicit = explicit_values(&values(&["PATH"], &["HOME"])).unwrap();
+        assert_eq!(
+            without(policy, &explicit),
+            json!({"public_env":[{"name":"REGION"}],"secrets":{"KEY":{}}})
+        );
+    }
+    #[tokio::test]
+    async fn cloud_apply_stages_explicit_values_into_new_draft() {
+        let (origin, state, task) = server().await;
+        state.lock().unwrap().drafts =
+            MockDrafts::new("app_name='demo'\n[public_env]\nPATH={}\n", 3);
+        let error = args(&origin, &["app", "apply", "--draft", "ci"])
+            .execute()
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("Draft `ci` not found"),
+            "{error}"
+        );
+        args(&origin, &["app", "apply", "--draft", "ci", "--env", "PATH"])
+            .execute()
+            .await
+            .unwrap();
+        let state = state.lock().unwrap();
+        let path = std::env::var("PATH").unwrap();
+        assert!(state.received.iter().any(|(route, body)| route
+            == "PUT /prefix/v1/apps/demo/drafts/ci/env/PATH"
+            && body["value"] == path));
+        let (_, apply) = state.received.last().unwrap();
+        assert_eq!(
+            (&apply["draft"], &apply["revision"]),
+            (&json!("ci"), &json!(5))
+        );
+        assert_eq!(state.drafts.applied["env"]["PATH"], path);
+        assert!(state.drafts.drafts.is_empty());
         task.abort();
     }
     #[tokio::test]
@@ -1970,17 +2412,15 @@ mod tests {
                 .unwrap()
                 .received
                 .iter()
-                .any(
-                    |(route, body)| route == "PUT /prefix/v1/apps/demo/secrets/OBELISK_API_TOKEN"
-                        && body["value"] == path_value
-                )
+                .any(|(route, body)| route
+                    == "PUT /prefix/v1/apps/demo/drafts/default/secrets/OBELISK_API_TOKEN"
+                    && body["value"] == path_value)
         );
         task.abort();
     }
     #[tokio::test]
     async fn cloud_fill_asks_per_value_and_collects_before_writing() {
         let (origin, state, task) = server().await;
-        state.lock().unwrap().existing_config = true;
         let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
         let policy = json!({
             "public_env":["PATH", "ALREADY_SET", {"name":"HOME", "optional":true}, {"name":"OBELISK_CLOUD_TEST_EMPTY", "optional":true}, {"name":"SELF_API", "type":"internal", "source":"api-url"}, {"name":"BROWSER_UI", "type":"internal", "source":"webui-url"}],
@@ -2036,11 +2476,18 @@ mod tests {
                 "",
             ),
         ];
+        let draft = json!({
+            "policy":policy,"cloud":{},
+            "env":{"ALREADY_SET":"stored","HOME":home_value},
+            "secrets":["ALREADY_SET"],
+        });
         let mut answers = script.iter();
-        let result = fill_values(
+        let (_, result) = stage_values(
             &client,
             "demo",
-            &policy,
+            "default",
+            Some(draft.clone()),
+            Vec::new(),
             Values::Prompt(&mut |question: &Question| {
                 let (expected, secret, answer) = answers.next().expect("unexpected question");
                 match question {
@@ -2076,22 +2523,30 @@ mod tests {
         assert_eq!(
             staged,
             [
-                ("PUT /prefix/v1/apps/demo/env/ALREADY_SET", "replaced"),
-                ("PUT /prefix/v1/apps/demo/env/OBELISK_CLOUD_TEST_EMPTY", ""),
-                ("PUT /prefix/v1/apps/demo/env/PATH", path_value.as_str()),
-                ("PUT /prefix/v1/apps/demo/secrets/HOME", home_value.as_str()),
+                ("PUT /prefix/v1/apps/demo/drafts/default/env/ALREADY_SET", "replaced"),
                 (
-                    "PUT /prefix/v1/apps/demo/secrets/OBELISK_CLOUD_TEST_PROMPT_SECRET",
+                    "PUT /prefix/v1/apps/demo/drafts/default/env/OBELISK_CLOUD_TEST_EMPTY",
+                    ""
+                ),
+                ("PUT /prefix/v1/apps/demo/drafts/default/env/PATH", path_value.as_str()),
+                (
+                    "PUT /prefix/v1/apps/demo/drafts/default/secrets/HOME",
+                    home_value.as_str()
+                ),
+                (
+                    "PUT /prefix/v1/apps/demo/drafts/default/secrets/OBELISK_CLOUD_TEST_PROMPT_SECRET",
                     "typed-secret"
                 ),
             ]
             .map(|(route, value)| (route.to_owned(), value.to_owned()))
         );
         state.lock().unwrap().received.clear();
-        let error = fill_values(
+        let error = stage_values(
             &client,
             "demo",
-            &policy,
+            "default",
+            Some(draft),
+            Vec::new(),
             Values::Prompt(&mut |question: &Question| {
                 Ok(match question {
                     Question::Value { .. } => "value".to_owned(),
@@ -2103,28 +2558,34 @@ mod tests {
         .await
         .unwrap_err();
         assert!(error.to_string().contains("nothing was staged"));
-        assert!(
-            state
-                .lock()
-                .unwrap()
-                .received
-                .iter()
-                .all(|(route, _)| route.starts_with("GET"))
-        );
+        assert!(state.lock().unwrap().received.is_empty());
         task.abort();
     }
     #[tokio::test]
     async fn cloud_fill_validates_before_mutation_and_secret_errors_are_redacted() {
         let (origin, state, task) = server().await;
         let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
-        let policy = client
-            .app("demo", Method::GET, &["policy"], None, Kind::Read)
-            .await
-            .unwrap();
-        let error = fill_values(&client, "demo", &policy, Values::Check)
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("CLOUD_TEST_MISSING_REQUIRED"));
+        let draft = json!({
+            "policy":{"public_env":["CLOUD_TEST_MISSING_REQUIRED"],"secrets":{}},
+            "cloud":{},"env":{},"secrets":[],
+        });
+        let error = stage_values(
+            &client,
+            "demo",
+            "default",
+            Some(draft),
+            Vec::new(),
+            Values::Env,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Missing required configuration: env CLOUD_TEST_MISSING_REQUIRED"),
+            "{error}"
+        );
+        assert!(state.lock().unwrap().received.is_empty());
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("app.toml");
         tokio::fs::write(&path, "app_name='demo'\n[public_env]\nREGION={}\n")
@@ -2146,7 +2607,8 @@ mod tests {
                 .unwrap()
                 .received
                 .iter()
-                .all(|(route, _)| route.starts_with("GET") || route.ends_with("/config/compare"))
+                .all(|(route, _)| route.starts_with("GET")
+                    || route == "POST /prefix/v1/apps/demo/drafts/default")
         );
         state.lock().unwrap().error = true;
         let error = client

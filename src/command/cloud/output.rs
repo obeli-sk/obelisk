@@ -16,6 +16,7 @@ pub(super) enum Summary {
     Secrets,
     Message(&'static str),
     Staged(&'static str, String),
+    Unstaged(String),
     Fill(String),
 }
 
@@ -44,9 +45,26 @@ impl From<&Cloud> for Summary {
                 ..
             }) => Self::Apps,
             Cloud::App(CloudAppTarget { command, .. }) => {
-                let apply = command.selected_app().map_or_else(
-                    || "obelisk cloud app apply".to_owned(),
-                    |app| format!("obelisk cloud app apply --app {app}"),
+                let key = match command {
+                    CloudApp::Stage { draft, .. }
+                    | CloudApp::Unstage { draft, .. }
+                    | CloudApp::Fill { draft, .. }
+                    | CloudApp::Env {
+                        command: CloudEnv::Set { draft, .. } | CloudEnv::Unset { draft, .. },
+                        ..
+                    }
+                    | CloudApp::Secrets {
+                        command: CloudSecrets::Set { draft, .. } | CloudSecrets::Unset { draft, .. },
+                        ..
+                    } => draft.key.as_str(),
+                    _ => "default",
+                };
+                let apply = format!(
+                    "obelisk cloud app apply{}{}",
+                    command
+                        .selected_app()
+                        .map_or_else(String::new, |app| format!(" --app {app}")),
+                    draft_arg(key)
                 );
                 match command {
                     CloudApp::Status { .. } => Self::Status,
@@ -57,6 +75,7 @@ impl From<&Cloud> for Summary {
                     }
                     CloudApp::Delete { .. } => Self::Message("App deleted."),
                     CloudApp::Stage { .. } => Self::Staged("Configuration staged.", apply),
+                    CloudApp::Unstage { .. } => Self::Unstaged(key.to_owned()),
                     CloudApp::Env {
                         command: CloudEnv::List,
                         ..
@@ -219,15 +238,21 @@ impl Summary {
                         "Configuration unchanged at staged revision {}.",
                         value["revision"]
                     );
-                } else if let Some(revision) = value["revision"].as_u64()
-                    && value.get("changed").is_some()
-                {
+                } else if let Some(revision) = value["revision"].as_u64() {
                     let _ = writeln!(
                         out,
-                        "Configuration staged as revision {revision}. Run `{apply}` to apply changes."
+                        "{message} Staged revision {revision}; run `{apply}` to apply changes."
                     );
                 } else {
                     let _ = writeln!(out, "{message} Run `{apply}` to apply changes.");
+                }
+                draft_notes(&mut out, value);
+            }
+            Self::Unstaged(key) => {
+                if value["discarded"] == true {
+                    let _ = writeln!(out, "Draft `{key}` discarded.");
+                } else {
+                    let _ = writeln!(out, "No draft `{key}`.");
                 }
             }
             Self::Fill(apply) => {
@@ -246,6 +271,72 @@ impl Summary {
             }
         }
         out
+    }
+}
+
+/// ` --draft KEY` for a key other than the default.
+pub(super) fn draft_arg(key: &str) -> String {
+    if key == "default" {
+        String::new()
+    } else {
+        format!(" --draft {key}")
+    }
+}
+
+/// `missing` or `unused` values of a draft, as `env NAME` and `secret NAME`.
+pub(super) fn draft_values(draft: &Value, which: &str) -> Vec<String> {
+    let names = |kind: &str| {
+        draft["values"][format!("{which}_{kind}")]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(|name| format!("{} {name}", if kind == "env" { "env" } else { "secret" }))
+            .collect::<Vec<_>>()
+    };
+    let mut values = names("env");
+    values.extend(names("secrets"));
+    values
+}
+
+/// A draft's changes against the applied revision, by name only.
+pub(super) fn draft_changes(draft: &Value) -> String {
+    let summary = &draft["summary"];
+    let mut changes = Vec::new();
+    for (key, label) in [
+        ("app_toml", "app.toml"),
+        ("policy", "policy"),
+        ("cloud", "cloud"),
+    ] {
+        if summary[key] == true {
+            changes.push(label.to_owned());
+        }
+    }
+    for (kind, label) in [("env", "env"), ("secrets", "secret")] {
+        for (diff, sign) in [("added", '+'), ("removed", '-'), ("changed", '~')] {
+            for name in summary[kind][diff].as_array().into_iter().flatten() {
+                changes.push(format!(
+                    "{label} {sign}{}",
+                    name.as_str().unwrap_or_default()
+                ));
+            }
+        }
+    }
+    if changes.is_empty() {
+        "no changes".to_owned()
+    } else {
+        changes.join(", ")
+    }
+}
+
+fn draft_notes(out: &mut String, draft: &Value) {
+    let missing = draft_values(draft, "missing");
+    if !missing.is_empty() {
+        let _ = writeln!(out, "Missing values: {}", missing.join(", "));
+    }
+    let unused = draft_values(draft, "unused");
+    if !unused.is_empty() {
+        let _ = writeln!(out, "Not declared in app.toml: {}", unused.join(", "));
     }
 }
 
@@ -382,7 +473,34 @@ fn app_with_note(out: &mut String, value: &Value, note: Option<&str>) {
 
 fn config_revisions(out: &mut String, value: &Value) {
     let app = &value["app"];
-    if let Some(revision) = app["revision"].as_u64() {
+    if let Some(drafts) = value["drafts"].as_array() {
+        let _ = writeln!(
+            out,
+            "Configuration: applied revision {}",
+            app["applied_revision"]
+        );
+        for draft in drafts {
+            let key = text(draft, "key", "default");
+            if draft["stale"] == true {
+                let _ = writeln!(
+                    out,
+                    "Draft `{key}`: opened on revision {}, superseded",
+                    draft["parent_revision"]
+                );
+            } else if draft["summary"]["changed"] == true {
+                let _ = writeln!(
+                    out,
+                    "Draft `{key}`: revision {}: {}. Run `obelisk cloud app apply --app {}{}` to apply it.",
+                    draft["revision"],
+                    draft_changes(draft),
+                    text(app, "app_name", ""),
+                    draft_arg(key)
+                );
+                draft_notes(out, draft);
+            }
+        }
+    // backcompat: provisioners without drafts report one staged revision.
+    } else if let Some(revision) = app["revision"].as_u64() {
         let applied = app["applied_revision"].as_u64();
         let _ = writeln!(
             out,
@@ -606,10 +724,12 @@ mod tests {
             staged.render(&json!({"revision":4,"changed":false})),
             "Configuration unchanged at staged revision 4.\n"
         );
-        assert!(
-            staged
-                .render(&json!({"revision":5,"changed":true}))
-                .starts_with("Configuration staged as revision 5.")
+        assert_eq!(
+            staged.render(&json!({
+                "revision":5,"changed":true,
+                "values":{"missing_env":["REGION"],"missing_secrets":[],"unused_env":[],"unused_secrets":["OLD"]},
+            })),
+            "Configuration staged. Staged revision 5; run `apply` to apply changes.\nMissing values: env REGION\nNot declared in app.toml: secret OLD\n"
         );
         assert!(
             staged

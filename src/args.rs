@@ -1857,6 +1857,42 @@ pub(crate) struct CloudCommandId {
     pub(crate) id: Option<ExecutionIdTopLevel>,
 }
 
+fn parse_draft_key(value: &str) -> Result<String, &'static str> {
+    if (1..=64).contains(&value.len())
+        && value.bytes().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-')
+        })
+    {
+        Ok(value.to_owned())
+    } else {
+        Err("draft key must be 1-64 characters a-z, 0-9, '.', '_' or '-'")
+    }
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct CloudDraft {
+    /// Draft holding the staged changes; the CLI and dashboard share `default`.
+    #[arg(long = "draft", value_name = "KEY", default_value = "default", value_parser = parse_draft_key)]
+    pub(crate) key: String,
+}
+
+/// Values staged into the draft before applying.
+#[derive(Debug, clap::Args)]
+pub(crate) struct CloudValues {
+    /// Set an env var to VALUE, or to the same-named environment variable when only NAME is given.
+    #[arg(long = "env", value_name = "NAME[=VALUE]")]
+    pub(crate) env: Vec<String>,
+    /// Set a secret from the same-named environment variable.
+    #[arg(long = "secret", value_name = "NAME")]
+    pub(crate) secrets: Vec<String>,
+    /// Prompt for the remaining declared env vars and secrets; requires a terminal.
+    #[arg(long)]
+    pub(crate) fill: bool,
+    /// Read the remaining declared env vars and secrets from same-named environment variables.
+    #[arg(long, conflicts_with = "fill")]
+    pub(crate) fill_non_interactive: bool,
+}
+
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Cloud {
     /// Log in through a browser and manage the saved logins.
@@ -1970,12 +2006,8 @@ pub(crate) enum CloudApp {
         /// App config path; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
-        /// Prompt for initial env vars and secrets; requires a terminal.
-        #[arg(long)]
-        fill: bool,
-        /// Read initial env vars and secrets from same-named environment variables.
-        #[arg(long, conflicts_with = "fill")]
-        fill_non_interactive: bool,
+        #[command(flatten)]
+        values: CloudValues,
         #[command(flatten)]
         command_id: CloudCommandId,
     },
@@ -1995,7 +2027,7 @@ pub(crate) enum CloudApp {
         #[arg(short = 'n', long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=50))]
         limit: u8,
     },
-    /// Stage app policy and cloud settings without restarting the VM.
+    /// Stage app.toml in a draft without restarting the VM.
     Stage {
         #[command(flatten)]
         selected: SelectedApp,
@@ -2003,7 +2035,14 @@ pub(crate) enum CloudApp {
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
         #[command(flatten)]
-        command_id: CloudCommandId,
+        draft: CloudDraft,
+    },
+    /// Discard a draft and its staged changes.
+    Unstage {
+        #[command(flatten)]
+        selected: SelectedApp,
+        #[command(flatten)]
+        draft: CloudDraft,
     },
     /// Publish the local project, creating or configuring the app and activating its deployment.
     Deploy {
@@ -2015,33 +2054,30 @@ pub(crate) enum CloudApp {
         /// Deployment manifest path.
         #[arg(short = 'd', long, default_value = "deployment.toml")]
         deployment: PathBuf,
-        /// Run `fill` first; otherwise missing required env vars and secrets are an error.
-        #[arg(long)]
-        fill: bool,
-        /// Run `fill --non-interactive` first.
-        #[arg(long, conflicts_with = "fill")]
-        fill_non_interactive: bool,
+        #[command(flatten)]
+        values: CloudValues,
+        /// Resume this draft; defaults to a new `deploy-<id>` draft per run.
+        #[arg(long = "draft", value_name = "KEY", value_parser = parse_draft_key)]
+        draft: Option<String>,
         /// Human-readable description. For already stored content, omitting it keeps the current
         /// one and an empty string clears it.
         #[arg(long)]
         description: Option<String>,
     },
-    /// Apply the staged configuration with the currently active deployment.
+    /// Apply a draft with the currently active deployment, or re-apply the applied revision.
     Apply {
         #[command(flatten)]
         selected: SelectedApp,
-        /// App config path compared with the staged configuration; defaults to ./app.toml if present.
+        /// App config path compared with the draft; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
-        /// Use the staged configuration even when the local app config differs.
+        /// Use the draft's app.toml even when the local app config differs.
         #[arg(long, conflicts_with = "app_config")]
         staged: bool,
-        /// Run `fill` first; otherwise missing required env vars and secrets are an error.
-        #[arg(long)]
-        fill: bool,
-        /// Run `fill --non-interactive` first.
-        #[arg(long, conflicts_with = "fill")]
-        fill_non_interactive: bool,
+        #[command(flatten)]
+        values: CloudValues,
+        #[command(flatten)]
+        draft: CloudDraft,
         /// Reapply even with a clear stale flag, including uncertain secret changes.
         #[arg(long)]
         force: bool,
@@ -2070,15 +2106,17 @@ pub(crate) enum CloudApp {
     Fill {
         #[command(flatten)]
         selected: SelectedApp,
-        /// App config path compared with the staged configuration; defaults to ./app.toml if present.
+        /// App config path compared with the draft; defaults to ./app.toml if present.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
-        /// Use the staged configuration even when the local app config differs.
+        /// Use the draft's app.toml even when the local app config differs.
         #[arg(long, conflicts_with = "app_config")]
         staged: bool,
         /// Stage values of same-named environment variables without prompting.
         #[arg(long)]
         non_interactive: bool,
+        #[command(flatten)]
+        draft: CloudDraft,
     },
     Env {
         #[command(flatten)]
@@ -2108,6 +2146,7 @@ macro_rules! cloud_app_selected {
             | CloudApp::Status { selected, .. }
             | CloudApp::Events { selected, .. }
             | CloudApp::Stage { selected, .. }
+            | CloudApp::Unstage { selected, .. }
             | CloudApp::Deploy { selected, .. }
             | CloudApp::Apply { selected, .. }
             | CloudApp::Enable { selected, .. }
@@ -2136,12 +2175,12 @@ pub(crate) enum CloudEnv {
         name: String,
         value: String,
         #[command(flatten)]
-        command_id: CloudCommandId,
+        draft: CloudDraft,
     },
     Unset {
         name: String,
         #[command(flatten)]
-        command_id: CloudCommandId,
+        draft: CloudDraft,
     },
 }
 
@@ -2157,8 +2196,12 @@ pub(crate) enum CloudSecrets {
         /// Read the exact value from stdin, including trailing newlines.
         #[arg(long, conflicts_with = "from_env")]
         stdin: bool,
+        #[command(flatten)]
+        draft: CloudDraft,
     },
     Unset {
         name: String,
+        #[command(flatten)]
+        draft: CloudDraft,
     },
 }
