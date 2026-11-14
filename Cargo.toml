@@ -309,7 +309,7 @@ insta = { version = "1.49.0", features = ["json"] }
 itertools = "0.15"
 jsonwebtoken = { version = "10", default-features = false } # keep in sync with oci-client's jsonwebtoken
 lazy_static = "1.5"
-rpassword = "7.5.4"
+rpassword = "7.5.5"
 libc = "0.2.191"
 oci-client = { version = "0.17.0", default-features = false }
 oci-wasm = { version = "0.6.0", default-features = false } # Dependent on matching oci-client
