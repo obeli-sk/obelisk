@@ -368,7 +368,6 @@ mod tests {
                 state.drafts = MockDrafts::new(body["app_toml"].as_str().unwrap(), 1);
                 state.drafts.applied["env"] = body["env"].clone();
                 app["status"] = json!("running");
-                app["potentially_stale"] = json!(false);
                 app["revision"] = json!(1);
                 app["applied_revision"] = json!(1);
                 app["desired_state"] = json!("running");
@@ -395,7 +394,6 @@ mod tests {
                 if path.ends_with("/apply") {
                     app["outcome"]["configuration"] = json!("applied");
                 }
-                app["potentially_stale"] = json!(false);
                 app.clone()
             }
             (Method::GET, "/tenant/v1/info") => json!(rest_types::server::ServerInfoResponse {
@@ -448,7 +446,6 @@ mod tests {
             "config",
             "stopped",
             "stopped-config",
-            "pending",
             "missing",
             "invalid",
             "deployment-error",
@@ -487,16 +484,13 @@ mod tests {
             } else {
                 config
             };
-            let mut app = json!({"policy":desired.policy(),"cloud":{},"status":"running","desired_state":"running","potentially_stale":false,"revision":1,"applied_revision":1,"endpoints":{"api":format!("{origin}/tenant")}});
+            let mut app = json!({"policy":desired.policy(),"cloud":{},"status":"running","desired_state":"running","revision":1,"applied_revision":1,"endpoints":{"api":format!("{origin}/tenant")}});
             if matches!(scenario, "config" | "stopped-config") {
                 app["cloud"] = json!({"memory_mb":512});
             }
             if matches!(scenario, "stopped" | "stopped-config") {
                 app["status"] = json!("stopped");
                 app["desired_state"] = json!("stopped");
-            }
-            if scenario == "pending" {
-                app["potentially_stale"] = json!(true);
             }
             let state = Arc::new(Mutex::new(Server {
                 app: (!matches!(

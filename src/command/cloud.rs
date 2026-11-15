@@ -759,13 +759,10 @@ impl CloudArgs {
                         let mut value = client
                             .app(name, Method::GET, &["status"], None, Kind::Read)
                             .await?;
-                        // Older provisioners have no drafts.
-                        if let Ok(drafts) = client
+                        let drafts = client
                             .app(name, Method::GET, &["drafts"], None, Kind::Read)
-                            .await
-                        {
-                            value["drafts"] = drafts["drafts"].clone();
-                        }
+                            .await?;
+                        value["drafts"] = drafts["drafts"].clone();
                         if let Some((config, path)) = local {
                             let comparison = compare_config(&client, name, &config.text).await;
                             value["local_config"] = json!({
