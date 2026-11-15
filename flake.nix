@@ -211,7 +211,6 @@
                 nativeBuildInputs = with pkgs; [
                   rustToolchain
                   pkg-config
-                  findutils # for installPhase
                 ]
                 # Add Zig when cross compiling
                 ++ pkgs.lib.optionals (customTarget != null) [
@@ -230,9 +229,7 @@
 
                 installPhase = ''
                   runHook preInstall
-                  BINARY=$(find target -name obelisk)
-                  mkdir -p $out/bin/
-                  cp $BINARY $out/bin/
+                  install -Dm755 "target/${rustyV8Target}/${if buildType == "dev" then "debug" else buildType}/obelisk" "$out/bin/obelisk"
                   runHook postInstall
                 '';
 
