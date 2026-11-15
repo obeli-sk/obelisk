@@ -436,13 +436,6 @@ fn app_with_note(out: &mut String, value: &Value, note: Option<&str>) {
             let _ = writeln!(out, "Intended state: {desired}");
         }
     }
-    if value["potentially_stale"] == true {
-        let name = text(value, "app_name", "");
-        let _ = writeln!(
-            out,
-            "Pending changes. Run `obelisk cloud app apply --app {name} --reapply` to apply them."
-        );
-    }
     if let Some(failure) = value["state"]["failure"].as_str() {
         let _ = writeln!(out, "Error: {failure}");
     }
@@ -456,44 +449,30 @@ fn app_with_note(out: &mut String, value: &Value, note: Option<&str>) {
 
 fn config_revisions(out: &mut String, value: &Value) {
     let app = &value["app"];
-    if let Some(drafts) = value["drafts"].as_array() {
-        let _ = writeln!(
-            out,
-            "Configuration: applied revision {}",
-            app["applied_revision"]
-        );
-        for draft in drafts {
-            let key = text(draft, "key", "default");
-            if draft["stale"] == true {
-                let _ = writeln!(
-                    out,
-                    "Draft `{key}`: opened on revision {}, superseded",
-                    draft["parent_revision"]
-                );
-            } else if draft["summary"]["changed"] == true {
-                let _ = writeln!(
-                    out,
-                    "Draft `{key}`: revision {}: {}. Run `obelisk cloud app apply --app {}{}` to apply it.",
-                    draft["revision"],
-                    draft_changes(draft),
-                    text(app, "app_name", ""),
-                    draft_arg(key)
-                );
-                draft_notes(out, draft);
-            }
+    let _ = writeln!(
+        out,
+        "Configuration: applied revision {}",
+        app["applied_revision"]
+    );
+    for draft in value["drafts"].as_array().into_iter().flatten() {
+        let key = text(draft, "key", "default");
+        if draft["stale"] == true {
+            let _ = writeln!(
+                out,
+                "Draft `{key}`: opened on revision {}, superseded",
+                draft["parent_revision"]
+            );
+        } else if draft["summary"]["changed"] == true {
+            let _ = writeln!(
+                out,
+                "Draft `{key}`: revision {}: {}. Run `obelisk cloud app apply --app {}{}` to apply it.",
+                draft["revision"],
+                draft_changes(draft),
+                text(app, "app_name", ""),
+                draft_arg(key)
+            );
+            draft_notes(out, draft);
         }
-    // backcompat: provisioners without drafts report one staged revision.
-    } else if let Some(revision) = app["revision"].as_u64() {
-        let applied = app["applied_revision"].as_u64();
-        let _ = writeln!(
-            out,
-            "Configuration: staged revision {revision}, {}",
-            match applied {
-                Some(applied) if applied == revision => format!("applied revision {applied}"),
-                Some(applied) => format!("applied revision {applied} (apply pending)"),
-                None => "not applied yet".to_owned(),
-            }
-        );
     }
     let local = &value["local_config"];
     let path = text(local, "path", "app.toml");
@@ -589,38 +568,25 @@ mod tests {
 
     #[test]
     fn status_shows_revisions_and_local_differences() {
-        let status = |applied: Value, local: Value| {
+        let status = |local: Value| {
             Summary::Status.render(&json!({
-                "app":{"app_name":"demo","status":"running","revision":3,"applied_revision":applied},
+                "app":{"app_name":"demo","status":"running","revision":3,"applied_revision":2},
+                "drafts":[],
                 "local_config":local,
             }))
         };
-        let out = status(
-            json!(2),
-            json!({"path":"app.toml","comparison":{"changes":["/cloud/memory_mb"]}}),
-        );
-        assert!(
-            out.contains("staged revision 3, applied revision 2 (apply pending)"),
-            "{out}"
-        );
+        let out = status(json!({"path":"app.toml","comparison":{"changes":["/cloud/memory_mb"]}}));
+        assert!(out.contains("Configuration: applied revision 2\n"), "{out}");
         assert!(
             out.contains("app.toml: differs from the staged configuration: /cloud/memory_mb"),
             "{out}"
         );
-        let out = status(
-            json!(3),
-            json!({"path":"app.toml","comparison":{"changes":[]}}),
-        );
-        assert!(
-            out.contains("staged revision 3, applied revision 3\n"),
-            "{out}"
-        );
+        let out = status(json!({"path":"app.toml","comparison":{"changes":[]}}));
         assert!(
             out.contains("app.toml: matches the staged configuration"),
             "{out}"
         );
-        let out = status(Value::Null, Value::Null);
-        assert!(out.contains("not applied yet"), "{out}");
+        let out = status(Value::Null);
         assert!(!out.contains("app.toml"), "{out}");
     }
 
