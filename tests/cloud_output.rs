@@ -90,10 +90,7 @@ async fn cloud_output() {
         assert!(status.contains(line), "{status}");
     }
     assert!(!status.contains("External webhooks"), "{status}");
-    assert!(
-        status.contains(&format!("Intended state: running")),
-        "{status}"
-    );
+    assert!(status.contains("Intended state: running"), "{status}");
     assert!(
         status.contains("VM is started although the app is stopped."),
         "{status}"
