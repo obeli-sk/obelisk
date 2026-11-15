@@ -1876,7 +1876,7 @@ pub(crate) struct CloudDraft {
     pub(crate) key: String,
 }
 
-/// Values staged into the draft before applying.
+/// Values supplied to a new or deployed app.
 #[derive(Debug, clap::Args)]
 pub(crate) struct CloudValues {
     /// Set an env var to VALUE, or to the same-named environment variable when only NAME is given.
@@ -2056,28 +2056,20 @@ pub(crate) enum CloudApp {
         deployment: PathBuf,
         #[command(flatten)]
         values: CloudValues,
-        /// Resume this draft; defaults to a new `deploy-<id>` draft per run.
-        #[arg(long = "draft", value_name = "KEY", value_parser = parse_draft_key)]
-        draft: Option<String>,
         /// Human-readable description. For already stored content, omitting it keeps the current
         /// one and an empty string clears it.
         #[arg(long)]
         description: Option<String>,
     },
-    /// Apply a draft with the currently active deployment, or re-apply the applied revision.
+    /// Apply the staged changes of a draft with the currently active deployment.
     Apply {
         #[command(flatten)]
         selected: SelectedApp,
-        /// App config path compared with the draft; defaults to ./app.toml if present.
-        #[arg(short = 'a', long)]
-        app_config: Option<PathBuf>,
-        /// Use the draft's app.toml even when the local app config differs.
-        #[arg(long, conflicts_with = "app_config")]
-        staged: bool,
-        #[command(flatten)]
-        values: CloudValues,
         #[command(flatten)]
         draft: CloudDraft,
+        /// Re-apply the applied revision instead of a draft, reconciling the app with its intended state.
+        #[arg(long, conflicts_with = "key")]
+        reapply: bool,
         /// Reapply even with a clear stale flag, including uncertain secret changes.
         #[arg(long)]
         force: bool,
@@ -2101,22 +2093,6 @@ pub(crate) enum CloudApp {
         selected: SelectedApp,
         #[command(flatten)]
         command_id: CloudCommandId,
-    },
-    /// Interactively stage declared env vars and secrets, offering process environment values.
-    Fill {
-        #[command(flatten)]
-        selected: SelectedApp,
-        /// App config path compared with the draft; defaults to ./app.toml if present.
-        #[arg(short = 'a', long)]
-        app_config: Option<PathBuf>,
-        /// Use the draft's app.toml even when the local app config differs.
-        #[arg(long, conflicts_with = "app_config")]
-        staged: bool,
-        /// Stage values of same-named environment variables without prompting.
-        #[arg(long)]
-        non_interactive: bool,
-        #[command(flatten)]
-        draft: CloudDraft,
     },
     Env {
         #[command(flatten)]
@@ -2152,7 +2128,6 @@ macro_rules! cloud_app_selected {
             | CloudApp::Enable { selected, .. }
             | CloudApp::Disable { selected, .. }
             | CloudApp::Delete { selected, .. }
-            | CloudApp::Fill { selected, .. }
             | CloudApp::Env { selected, .. }
             | CloudApp::Secrets { selected, .. } => Some(selected),
         }

@@ -17,7 +17,6 @@ pub(super) enum Summary {
     Message(&'static str),
     Staged(&'static str, String),
     Unstaged(String),
-    Fill(String),
 }
 
 impl From<&Cloud> for Summary {
@@ -48,7 +47,6 @@ impl From<&Cloud> for Summary {
                 let key = match command {
                     CloudApp::Stage { draft, .. }
                     | CloudApp::Unstage { draft, .. }
-                    | CloudApp::Fill { draft, .. }
                     | CloudApp::Env {
                         command: CloudEnv::Set { draft, .. } | CloudEnv::Unset { draft, .. },
                         ..
@@ -92,7 +90,6 @@ impl From<&Cloud> for Summary {
                         command: CloudSecrets::Set { .. } | CloudSecrets::Unset { .. },
                         ..
                     } => Self::Staged("Secret change staged.", apply),
-                    CloudApp::Fill { .. } => Self::Fill(apply),
                     CloudApp::Deploy { .. }
                     | CloudApp::Deployment { .. }
                     | CloudApp::Execution { .. }
@@ -140,7 +137,7 @@ impl Summary {
                 {
                     let _ = writeln!(
                         out,
-                        "VM is {machine} although the app is {status}. Run `obelisk cloud app apply` to reconcile it.",
+                        "VM is {machine} although the app is {status}. Run `obelisk cloud app apply --reapply` to reconcile it.",
                         status = text(&value["app"], "status", "")
                     );
                 }
@@ -253,20 +250,6 @@ impl Summary {
                     let _ = writeln!(out, "Draft `{key}` discarded.");
                 } else {
                     let _ = writeln!(out, "No draft `{key}`.");
-                }
-            }
-            Self::Fill(apply) => {
-                for declaration in value["declarations"].as_array().into_iter().flatten() {
-                    let kind = if declaration["kind"] == "secrets" {
-                        "secret"
-                    } else {
-                        "env"
-                    };
-                    let action = declaration["action"].as_str().unwrap_or("not set");
-                    let _ = writeln!(out, "{kind} {}: {action}", text(declaration, "name", ""));
-                }
-                if value["apply_required"] == true {
-                    let _ = writeln!(out, "Run `{apply}` to apply changes.");
                 }
             }
         }
@@ -446,7 +429,7 @@ fn app_with_note(out: &mut String, value: &Value, note: Option<&str>) {
         if matches!(value["status"].as_str(), Some("running" | "stopped")) {
             let _ = writeln!(
                 out,
-                "Intended state: {desired}. Run `obelisk cloud app apply --app {}` to reach it.",
+                "Intended state: {desired}. Run `obelisk cloud app apply --app {} --reapply` to reach it.",
                 text(value, "app_name", "")
             );
         } else {
@@ -457,7 +440,7 @@ fn app_with_note(out: &mut String, value: &Value, note: Option<&str>) {
         let name = text(value, "app_name", "");
         let _ = writeln!(
             out,
-            "Pending changes. Run `obelisk cloud app apply --app {name}` to apply them."
+            "Pending changes. Run `obelisk cloud app apply --app {name} --reapply` to apply them."
         );
     }
     if let Some(failure) = value["state"]["failure"].as_str() {
