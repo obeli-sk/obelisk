@@ -1852,7 +1852,8 @@ pub(crate) struct SelectedApp {
 
 #[derive(Debug, clap::Args)]
 pub(crate) struct CloudCommandId {
-    /// Reuse this root execution ID when retrying the command.
+    /// Reuse this root execution ID when retrying the command; a command the cloud already accepted
+    /// reports its result without being sent again.
     #[arg(long = "command-id", value_name = "EXECUTION_ID")]
     pub(crate) id: Option<ExecutionIdTopLevel>,
 }

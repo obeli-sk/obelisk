@@ -240,6 +240,43 @@ impl Client {
             self.response(response, Kind::Read, None).await.map(Some)
         }
     }
+    /// Result of a command the provisioner already accepted under `--command-id`, so a retry
+    /// reports it instead of re-reading inputs that the first attempt may have changed.
+    async fn accepted(&self, command_id: &CloudCommandId) -> anyhow::Result<Option<Value>> {
+        let Some(id) = command_id.id else {
+            return Ok(None);
+        };
+        let response = self
+            .http
+            .get(self.url(&["v1", "commands", &id.to_string()])?)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .with_context(|| {
+                format!("Cloud request failed; retry the same command with --command-id {id}")
+            })?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        crate::client::trace(format_args!("Cloud command {id} was already accepted"));
+        self.response(response, Kind::Command(Some(id)), Some(id))
+            .await
+            .map(Some)
+    }
+    /// Bodiless app lifecycle command, reporting an already accepted `--command-id`.
+    async fn command(
+        &self,
+        name: &str,
+        method: Method,
+        suffix: &[&str],
+        command_id: CloudCommandId,
+    ) -> anyhow::Result<Value> {
+        if let Some(result) = self.accepted(&command_id).await? {
+            return Ok(result);
+        }
+        self.app(name, method, suffix, None, command_id.into())
+            .await
+    }
     async fn response(
         &self,
         response: reqwest::Response,
@@ -805,6 +842,9 @@ impl CloudArgs {
                         command_id,
                         ..
                     } => {
+                        if let Some(result) = client.accepted(&command_id).await? {
+                            return Ok(result);
+                        }
                         let current = client.app(name, Method::GET, &[], None, Kind::Read).await?;
                         let draft = if reapply {
                             None
@@ -860,18 +900,16 @@ impl CloudArgs {
                     }
                     CloudApp::Enable { command_id, .. } => {
                         client
-                            .app(name, Method::POST, &["enable"], None, command_id.into())
+                            .command(name, Method::POST, &["enable"], command_id)
                             .await
                     }
                     CloudApp::Disable { command_id, .. } => {
                         client
-                            .app(name, Method::POST, &["disable"], None, command_id.into())
+                            .command(name, Method::POST, &["disable"], command_id)
                             .await
                     }
                     CloudApp::Delete { command_id, .. } => {
-                        client
-                            .app(name, Method::DELETE, &[], None, command_id.into())
-                            .await
+                        client.command(name, Method::DELETE, &[], command_id).await
                     }
                     CloudApp::Env {
                         command: CloudEnv::List,
@@ -1489,6 +1527,8 @@ mod tests {
         redirect: bool,
         api_url: Option<String>,
         drafts: MockDrafts,
+        /// Results of accepted commands by execution ID.
+        commands: std::collections::BTreeMap<String, Value>,
     }
     #[tokio::test]
     async fn cloud_token_saves_server_secret_and_rejects_existing_file() {
@@ -1686,6 +1726,12 @@ mod tests {
                 && path.ends_with("/cancel") =>
             {
                 json!({"ok":"cancelled"})
+            }
+            path if let Some(id) = path.strip_prefix("/prefix/v1/commands/") => {
+                match state.commands.get(id) {
+                    Some(result) => result.clone(),
+                    None => return axum::http::StatusCode::NOT_FOUND.into_response(),
+                }
             }
             "/prefix/tenant/v1/components" => json!([]),
             "/prefix/tenant/v1/info" => json!(rest_types::server::ServerInfoResponse {
@@ -2231,6 +2277,52 @@ mod tests {
         assert!(apply.get("revision").is_none());
         assert_eq!(state.drafts.applied["env"]["PATH"], "/bin");
         assert!(state.drafts.drafts.is_empty());
+        task.abort();
+    }
+    #[tokio::test]
+    async fn cloud_command_id_reports_accepted_command() {
+        let (origin, state, task) = server().await;
+        let accepted = concepts::prefixed_ulid::ExecutionIdTopLevel::generate().to_string();
+        let unknown = concepts::prefixed_ulid::ExecutionIdTopLevel::generate().to_string();
+        state.lock().unwrap().commands.insert(
+            accepted.clone(),
+            json!({"revision":7,"execution_id":accepted}),
+        );
+        // Nothing is staged, so only the recorded result lets the retry succeed.
+        for command in ["apply", "enable", "disable", "delete"] {
+            let result = args(&origin, &["app", command, "--command-id", &accepted])
+                .execute()
+                .await
+                .unwrap();
+            assert_eq!(result["revision"], 7, "{command}");
+        }
+        assert!(
+            state
+                .lock()
+                .unwrap()
+                .received
+                .iter()
+                .all(|(route, _)| route == &format!("GET /prefix/v1/commands/{accepted}"))
+        );
+        state.lock().unwrap().received.clear();
+        args(&origin, &["app", "enable", "--command-id", &unknown])
+            .execute()
+            .await
+            .unwrap();
+        let routes: Vec<_> = state
+            .lock()
+            .unwrap()
+            .received
+            .iter()
+            .map(|(route, _)| route.clone())
+            .collect();
+        assert_eq!(
+            routes,
+            [
+                format!("GET /prefix/v1/commands/{unknown}"),
+                "POST /prefix/v1/apps/demo/enable".to_owned()
+            ]
+        );
         task.abort();
     }
     #[tokio::test]
