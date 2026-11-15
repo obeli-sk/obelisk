@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.18](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.17...v0.43.0-rc.18)
+
+This release candidate adds group fsync and synchronous Litestream replication for SQLite, and
+guards deployment switches with `If-Match`, which every API client calling
+`PUT /v1/deployments/{id}/switch` must now send. Cloud configuration is staged in named drafts,
+and `cloud app` commands select the app per subcommand.
+
+### Added
+
+- *(sqlite)* `database.sqlite.fsync = "group"` runs SQLite with `synchronous = NORMAL` and lets a
+  single fsync of the WAL cover all earlier commits. It runs before a commit is revealed outside of
+  the server: before an API call or webhook responds, an activity runs, or an external read
+  returns. The default stays `commit`; combining `group` with `pragma.synchronous` is rejected.
+  [#1346](https://github.com/obeli-sk/obelisk/pull/1346)
+- *(sqlite)* `database.sqlite.litestream.socket` replicates synchronously: every durability sync
+  also waits for Litestream to upload the WAL, so a commit is revealed only after it is
+  replicated. Litestream must be replicating the database before the server starts.
+  [#1347](https://github.com/obeli-sk/obelisk/pull/1347)
+
 ### Changed
 
 - **Breaking:** *(deployment)* `PUT /v1/deployments/{id}/switch` requires
@@ -18,16 +37,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value gets `412` instead of overriding a later switch; its body reports `if_match`,
   `deployment_id` and `enqueued_deployment_id`. A request without the header gets `428`.
   `deployment apply` and `deployment enqueue` send it.
-- *(cli)* `cloud app apply`, `enable`, `disable` and `delete` with `--command-id` first ask the
+  [#1352](https://github.com/obeli-sk/obelisk/pull/1352)
+  [#1363](https://github.com/obeli-sk/obelisk/pull/1363)
+- **Breaking (RC):** *(cloud)* `stage`, `env` and `secrets` `set`/`unset` edit a named draft
+  (`--draft`, default `default`), and `unstage` discards one. `apply` applies a draft's staged
+  changes and fails when nothing is staged; `--reapply` re-applies the applied revision. `apply`
+  and `deploy` accept `--env NAME[=VALUE]` and `--secret NAME`, read from the same-named
+  environment variable when no value is given. `deploy` stages into a temporary draft and discards
+  it on failure. The `fill` subcommand and `deploy --command-id` are removed; use `deploy --fill` or
+  `--fill-non-interactive`. `status` lists drafts and requires a provisioner that serves them.
+  [#1353](https://github.com/obeli-sk/obelisk/pull/1353)
+  [#1357](https://github.com/obeli-sk/obelisk/pull/1357)
+  [#1359](https://github.com/obeli-sk/obelisk/pull/1359)
+- **Breaking (RC):** *(cloud)* `cloud apps list` becomes `cloud app list`, and `--app`
+  (`OBELISK_APP_NAME`) moves from the `cloud app` group onto each subcommand, e.g.
+  `cloud app status --app NAME`. `cloud app status` and `deploy` print the endpoints the applied
+  configuration serves; `cloud app get` and `cloud app endpoint` are removed.
+  [#1342](https://github.com/obeli-sk/obelisk/pull/1342)
+- *(cloud)* `cloud app apply`, `enable`, `disable` and `delete` with `--command-id` first ask the
   cloud for that command's result and report it when the command was already accepted. A retried
   `apply` no longer rebuilds its request from drafts and app state that the first attempt may have
-  changed.
+  changed. [#1362](https://github.com/obeli-sk/obelisk/pull/1362)
+- *(cloud)* `cloud app status` shows reconciliation attempts, the next attempt time and errors,
+  and no longer suggests `apply --reapply` to reach the intended state; the provisioner retries
+  automatically. [#1361](https://github.com/obeli-sk/obelisk/pull/1361)
+- *(build)* Migrated to Rust 1.100.0 and updated Rust dependencies, JS runtimes and the Web UI.
+  [#1343](https://github.com/obeli-sk/obelisk/pull/1343)
+  [#1344](https://github.com/obeli-sk/obelisk/pull/1344)
+  [#1355](https://github.com/obeli-sk/obelisk/pull/1355)
+  [#1360](https://github.com/obeli-sk/obelisk/pull/1360)
 
 ### Fixed
 
 - *(executor)* An activity run interrupted by a deployment switch or server shutdown consumes a
   retry, so `max_retries` is respected. Previously the execution was unlocked and ran again
   without counting the attempt; with no retries left it now finishes as an execution failure.
+  [#1351](https://github.com/obeli-sk/obelisk/pull/1351)
+- *(deployment)* Deployment WASM blobs are written to the cache atomically. A full disk
+  previously left a truncated blob that failed every later deployment with a content digest
+  mismatch; an existing corrupt blob is now replaced.
+  [#1348](https://github.com/obeli-sk/obelisk/pull/1348)
+- *(server)* `idle_report` ignores pending executions no active executor can run, such as
+  workflows rejected by automatic upgrade or trackers of obsolete crons, which kept the server
+  from reporting idle. [#1345](https://github.com/obeli-sk/obelisk/pull/1345)
+- *(nix)* The Nix package builds vendored zstd and SQLite again with the updated nixpkgs.
+  [#1358](https://github.com/obeli-sk/obelisk/pull/1358)
 
 ## [0.43.0-rc.17](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.16...v0.43.0-rc.17)
 
