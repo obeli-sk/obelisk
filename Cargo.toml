@@ -212,7 +212,7 @@ license = "AGPL-3.0-only"
 repository = "https://github.com/obeli-sk/obelisk"
 authors = ["Project Developers"]
 edition = "2024"
-rust-version = "1.98.1"
+rust-version = "1.100.0"
 
 [workspace.dependencies]
 activity-js-runtime-builder = { path = "crates/activity-js-runtime/builder" }
@@ -464,6 +464,7 @@ clippy.unnecessary_debug_formatting = "allow"
 clippy.too_many_lines = "allow"
 clippy.map_unwrap_or = "allow" # More readable than .map_or_else with reverse parameters.
 clippy.items_after_statements = "allow" # keep nested types near to their usage
+clippy.assert_is_empty = "allow" # Rust 1.100 suggestions use unresolved paths for renamed crates.
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(tokio_unstable)'] }
