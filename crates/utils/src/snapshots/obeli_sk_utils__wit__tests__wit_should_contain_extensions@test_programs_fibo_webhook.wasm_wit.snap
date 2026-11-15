@@ -13,6 +13,7 @@ world root {
     import testing:fibo-workflow-obelisk-schedule/workflow;
     import wasi:io/poll@0.2.12;
     import wasi:clocks/monotonic-clock@0.2.12;
+    import wasi:clocks/wall-clock@0.2.12;
     import wasi:io/error@0.2.12;
     import wasi:io/streams@0.2.12;
     import wasi:cli/stdout@0.2.12;
@@ -288,7 +289,19 @@ package wasi:clocks@0.2.12 {
 
         type duration = u64;
 
+        type instant = u64;
+
+        now: func() -> instant;
+
         subscribe-duration: func(when: duration) -> pollable;
+    }
+    interface wall-clock {
+        record datetime {
+            seconds: u64,
+            nanoseconds: u32,
+        }
+
+        now: func() -> datetime;
     }
 }
 
@@ -314,6 +327,8 @@ package wasi:cli@0.2.12 {
     }
     interface exit {
         exit: func(status: result);
+
+        exit-with-code: func(status-code: u8);
     }
     interface terminal-input {
         resource terminal-input;
