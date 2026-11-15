@@ -29,6 +29,10 @@ async fn cloud_output() {
             }),
         )
         .route(
+            "/v1/apps/demo/drafts",
+            get(|| async { Json(json!({"drafts":[], "applied_revision":null})) }),
+        )
+        .route(
             "/v1/apps/demo/events",
             get(|Query(query): Query<std::collections::HashMap<String, String>>| async move {
                 Json(json!({"events":[{
