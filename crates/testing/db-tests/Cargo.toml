@@ -16,7 +16,6 @@ test = ["concepts/test", "db-sqlite/test", "db-postgres/test"]
 concepts.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
 db-postgres.workspace = true
-test-utils.workspace = true
 utils.workspace = true
 val-json.workspace = true
 
@@ -32,6 +31,7 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+test-utils.workspace = true
 rstest.workspace = true
 test-db-macro.workspace = true
 

@@ -3,4 +3,4 @@
 set -exuo pipefail
 cd "$(dirname "$0")/.."
 
-cargo check --workspace --all-targets "$@"
+cargo check --config 'build.warnings="deny"' --workspace --all-targets "$@"

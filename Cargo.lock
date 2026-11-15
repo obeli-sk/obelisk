@@ -14,7 +14,6 @@ dependencies = [
  "obeli-sk-boa-engine",
  "obeli-sk-boa-runtime",
  "serde_json",
- "tracing",
  "wit-bindgen 0.62.0",
  "wit-bindgen-rust",
  "wstd",
@@ -4082,7 +4081,6 @@ dependencies = [
  "oci-wasm",
  "opentelemetry",
  "opentelemetry-otlp",
- "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
  "paste",
  "rand 0.9.5",
@@ -4120,7 +4118,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "utoipa",
- "utoipa-axum",
  "wasmtime",
  "webhook-js-runtime-builder",
  "wiremock",
@@ -4318,12 +4315,6 @@ dependencies = [
  "tonic",
  "tonic-prost",
 ]
-
-[[package]]
-name = "opentelemetry-semantic-conventions"
-version = "0.33.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a3cf639fefd3e852869114f9925b578da6dd8e99281a2089bb0e773ead46962"
 
 [[package]]
 name = "opentelemetry_sdk"
@@ -6932,19 +6923,6 @@ dependencies = [
  "serde",
  "serde_json",
  "utoipa-gen",
-]
-
-[[package]]
-name = "utoipa-axum"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "865319162dc3d0032e1e40ed11bd49d5b78e8ef576740589fd6823e2e9977423"
-dependencies = [
- "axum",
- "pastey",
- "tower-layer",
- "tower-service",
- "utoipa",
 ]
 
 [[package]]

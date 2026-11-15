@@ -81,7 +81,6 @@ tracing-appender.workspace = true
 tracing-error.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
-utoipa-axum.workspace = true
 utoipa.workspace = true
 wasmtime.workspace = true
 wit-component.workspace = true
@@ -93,7 +92,6 @@ wit-parser.workspace = true
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
-opentelemetry-semantic-conventions = { workspace = true, optional = true }
 tracing-opentelemetry.workspace = true
 
 ## tokio-console
@@ -131,7 +129,6 @@ otlp = [
     "dep:opentelemetry",
     "dep:opentelemetry_sdk",
     "dep:opentelemetry-otlp",
-    "dep:opentelemetry-semantic-conventions",
 ]
 "activity-js-local" = ["dep:activity-js-runtime-builder"]
 "webhook-js-local" = ["dep:webhook-js-runtime-builder"]
@@ -207,7 +204,6 @@ members = [
 
 [workspace.package]
 version = "0.43.0-rc.17"
-description = "Deterministic workflow runtime"
 license = "AGPL-3.0-only"
 repository = "https://github.com/obeli-sk/obelisk"
 authors = ["Project Developers"]
@@ -276,8 +272,6 @@ config = { version = "0.15.27", default-features = false, features = [
 console-subscriber = "0.5.0"
 const_format = "0.2.37"
 croner = "4"
-criterion = "0.8"
-crossterm = "0.29.0"
 deadpool-postgres = "0.14.2"
 derive_more = { version = "2.1.1", features = [
     "debug",
@@ -296,7 +290,6 @@ futures = { version = "0.3.34", default-features = false }
 futures-concurrency = "7.7.1"
 futures-lite = "2.6.1"
 futures-util = "0.3.34"
-getrandom = "0.4"
 hashbrown = { version = "0.17.1", features = ["serde"] }
 hdrhistogram = { version = "7.6.0", default-features = false }
 http = "1.5.0"
@@ -308,7 +301,6 @@ indexmap = { version = "2.14", features = ["serde"] }
 insta = { version = "1.49.0", features = ["json"] }
 itertools = "0.15"
 jsonwebtoken = { version = "10", default-features = false } # keep in sync with oci-client's jsonwebtoken
-lazy_static = "1.5"
 rpassword = "7.5.5"
 libc = "0.2.191"
 oci-client = { version = "0.17.0", default-features = false }
@@ -316,7 +308,6 @@ oci-wasm = { version = "0.6.0", default-features = false } # Dependent on matchi
 paste = "1.0"
 quote = "1"
 rand = "0.9" # postgres-protocol pulls rand 0.10; obelisk stays on 0.9 (0.10 reorganized the Rng traits)
-rcgen = "0.14"
 regex = "1.13"
 refinery = { version = "0.10.0", default-features = false, features = ["rusqlite", "tokio-postgres-rustls"] }
 reqwest = { version = "0.13", default-features = false, features = [
@@ -379,7 +370,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 ulid = { version = "3.0", features = ["serde"] }
 url = "2.5.8"
 utoipa = { version = "6.0.0", features = ["chrono"] }
-utoipa-axum = "0.3.0"
 wiremock = "0.6"
 
 # wasmtime
@@ -410,7 +400,6 @@ boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.15", de
 # boa_runtime = { git = "https://github.com/obeli-sk/boa", package = "boa_runtime", rev = "9b145317", default-features = false, features = ["fetch"] }
 
 # testing components
-wasip2 = "2.0.1"
 wit-bindgen = "0.62.0"
 wit-bindgen-rust = "0.62.0"
 wstd = "0.6.8"
@@ -426,7 +415,6 @@ opentelemetry-otlp = { version = "0.33.1", default-features = false, features = 
     "logs",
     "metrics",
 ] }
-opentelemetry-semantic-conventions = "0.33.1"
 tracing-opentelemetry = "0.34"
 
 [workspace.lints]

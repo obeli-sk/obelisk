@@ -17,3 +17,5 @@ futures-concurrency.workspace = true
 futures-lite.workspace = true
 http.workspace = true
 wstd.workspace = true
+
+[lints]

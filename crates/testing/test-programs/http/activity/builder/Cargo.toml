@@ -10,3 +10,5 @@ version.workspace = true
 
 [build-dependencies]
 obelisk-component-builder.workspace = true
+
+[lints]
