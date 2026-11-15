@@ -1298,10 +1298,6 @@
                   "help": "Read the remaining declared env vars and secrets from same-named environment variables"
                 },
                 {
-                  "name": "--draft",
-                  "help": "Resume this draft; defaults to a new `deploy-<id>` draft per run"
-                },
-                {
                   "name": "--description",
                   "help": "Human-readable description. For already stored content, omitting it keeps the current one and an empty string clears it"
                 }
@@ -1309,43 +1305,19 @@
             },
             {
               "name": "apply",
-              "about": "Apply a draft with the currently active deployment, or re-apply the applied revision",
+              "about": "Apply the staged changes of a draft with the currently active deployment",
               "options": [
                 {
                   "name": "--app",
                   "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
                 },
                 {
-                  "name": "--app-config",
-                  "short": "a",
-                  "help": "App config path compared with the draft; defaults to ./app.toml if present",
-                  "accepts": {
-                    "path": true
-                  }
-                },
-                {
-                  "name": "--staged",
-                  "help": "Use the draft's app.toml even when the local app config differs"
-                },
-                {
-                  "name": "--env",
-                  "help": "Set an env var to VALUE, or to the same-named environment variable when only NAME is given"
-                },
-                {
-                  "name": "--secret",
-                  "help": "Set a secret from the same-named environment variable"
-                },
-                {
-                  "name": "--fill",
-                  "help": "Prompt for the remaining declared env vars and secrets; requires a terminal"
-                },
-                {
-                  "name": "--fill-non-interactive",
-                  "help": "Read the remaining declared env vars and secrets from same-named environment variables"
-                },
-                {
                   "name": "--draft",
                   "help": "Draft holding the staged changes; the CLI and dashboard share `default`"
+                },
+                {
+                  "name": "--reapply",
+                  "help": "Re-apply the applied revision instead of a draft, reconciling the app with its intended state"
                 },
                 {
                   "name": "--force",
@@ -1393,36 +1365,6 @@
                 {
                   "name": "--command-id",
                   "help": "Reuse this root execution ID when retrying the command"
-                }
-              ]
-            },
-            {
-              "name": "fill",
-              "about": "Interactively stage declared env vars and secrets, offering process environment values",
-              "options": [
-                {
-                  "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
-                },
-                {
-                  "name": "--app-config",
-                  "short": "a",
-                  "help": "App config path compared with the draft; defaults to ./app.toml if present",
-                  "accepts": {
-                    "path": true
-                  }
-                },
-                {
-                  "name": "--staged",
-                  "help": "Use the draft's app.toml even when the local app config differs"
-                },
-                {
-                  "name": "--non-interactive",
-                  "help": "Stage values of same-named environment variables without prompting"
-                },
-                {
-                  "name": "--draft",
-                  "help": "Draft holding the staged changes; the CLI and dashboard share `default`"
                 }
               ]
             },

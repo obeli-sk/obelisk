@@ -22,7 +22,6 @@ impl CloudArgs {
                     selected: SelectedApp { app },
                     deployment,
                     values,
-                    draft,
                     description,
                     ..
                 },
@@ -50,56 +49,54 @@ impl CloudArgs {
             |command: &str| crate::client::step(format_args!("→ obelisk cloud app {command}"));
         let fill = values.fill || values.fill_non_interactive;
         let existing = client.lookup_app(&name).await?;
-        // Existing apps stage into a draft; `None` re-applies the applied revision.
+        // Existing apps stage into a fresh draft; `None` re-applies the applied revision.
         let (current, staged) = if let Some(current) = existing {
-            let generated = draft.is_none();
-            let key = draft.unwrap_or_else(|| {
-                let id = ExecutionIdTopLevel::generate().to_string();
-                let ulid = id.split_once('_').map_or(id.as_str(), |(_, ulid)| ulid);
-                format!("deploy-{}", ulid.to_ascii_lowercase())
-            });
-            let resume = |error: anyhow::Error| {
-                error.context(format!(
-                    "Draft `{key}` keeps the staged changes; retry with `obelisk cloud app deploy --app {name} --draft {key}` or discard it with `obelisk cloud app unstage --app {name} --draft {key}`"
-                ))
-            };
-            step(&format!("stage --draft {key}"));
-            let staged = client
-                .draft(
-                    &name,
-                    &key,
-                    Method::PUT,
-                    &["config"],
-                    Some(Body::Toml(config.text.clone())),
-                )
+            let interactive = values.fill;
+            let values = Values::new(
+                values.fill,
+                values.fill_non_interactive,
+                prompt.as_mut().map(|p| p as Prompt),
+            )?;
+            let id = ExecutionIdTopLevel::generate().to_string();
+            let ulid = id.split_once('_').map_or(id.as_str(), |(_, ulid)| ulid);
+            let key = format!("deploy-{}", ulid.to_ascii_lowercase());
+            step("stage");
+            client
+                .draft(&name, &key, Method::POST, &[], None, false)
                 .await?;
-            if fill {
-                step("fill");
-            }
-            let (staged, filled) = stage_values(
-                &client,
-                &name,
-                &key,
-                Some(staged),
-                explicit,
-                Values::new(
-                    values.fill,
-                    values.fill_non_interactive,
-                    prompt.as_mut().map(|p| p as Prompt),
-                )
-                .map_err(&resume)?,
-            )
-            .await
-            .map_err(&resume)?;
-            let staged = staged.expect("draft was staged");
-            let missing = output::draft_values(&staged, "missing");
-            if !missing.is_empty() {
-                return Err(resume(anyhow::anyhow!(
+            let staged = async {
+                let staged = client
+                    .draft(
+                        &name,
+                        &key,
+                        Method::PUT,
+                        &["config"],
+                        Some(Body::Toml(config.text.clone())),
+                        false,
+                    )
+                    .await?;
+                if fill {
+                    step("fill");
+                }
+                let (staged, filled) =
+                    stage_values(&client, &name, &key, staged, explicit, values).await?;
+                let missing = output::draft_values(&staged, "missing");
+                ensure!(
+                    missing.is_empty(),
                     "Missing values: {}. Pass them with `--env NAME[=VALUE]` or `--secret NAME`, or retry with `--fill` or `--fill-non-interactive`",
                     missing.join(", ")
-                )));
+                );
+                optional_unset(&filled, interactive);
+                anyhow::Ok(staged)
             }
-            optional_unset(&filled, values.fill);
+            .await;
+            let staged = match staged {
+                Ok(staged) => staged,
+                Err(error) => {
+                    discard(&client, &name, &key).await;
+                    return Err(error);
+                }
+            };
             if let Ok(drafts) = client
                 .app(&name, Method::GET, &["drafts"], None, Kind::Read)
                 .await
@@ -114,7 +111,7 @@ impl CloudArgs {
                     }
                 }
             }
-            (current, Some((key, staged, generated)))
+            (current, Some((key, staged)))
         } else {
             if fill {
                 step("fill");
@@ -190,7 +187,8 @@ impl CloudArgs {
         let id = match (submitted, &staged) {
             (Ok(id), _) => id,
             (Err(error), Some((key, ..))) => {
-                return Err(error.context(format!("Draft `{key}` keeps the staged changes; retry with `obelisk cloud app deploy --app {name} --draft {key}`")));
+                discard(&client, &name, key).await;
+                return Err(error);
             }
             (Err(error), None) => return Err(error),
         };
@@ -200,7 +198,7 @@ impl CloudArgs {
         let body = apply_request(
             &name,
             key,
-            staged.as_ref().map(|(_, draft, _)| draft),
+            staged.as_ref().map(|(_, draft)| draft),
             &current,
             &id.to_string(),
             false,
@@ -217,19 +215,9 @@ impl CloudArgs {
                 Kind::Command(None),
             )
             .await;
-        let current = match (current, &staged) {
-            (Ok(current), _) => current,
-            (Err(error), Some((key, ..))) => {
-                return Err(error.context(format!("Draft `{key}` keeps the staged changes; retry with `obelisk cloud app deploy --app {name} --draft {key}`")));
-            }
-            (Err(error), None) => return Err(error),
-        };
-        // An unchanged generated draft was not applied and would linger.
-        if let Some((key, draft, true)) = &staged
-            && draft["summary"]["changed"] != true
-        {
-            let _ = client.draft(&name, key, Method::DELETE, &[], None).await;
-        }
+        // A draft left by a failed apply is discarded by the next successful one.
+        let current = current
+            .with_context(|| format!("Retry with `obelisk cloud app deploy --app {name}`"))?;
         eprintln!("{}", output::lifecycle_outcome(&current));
         if let Some(outcome) = current.get("outcome") {
             outcomes.push(outcome.clone());
@@ -249,6 +237,13 @@ impl CloudArgs {
             Ok(())
         }
     }
+}
+
+/// Best-effort cleanup of a deploy's draft that was never applied.
+async fn discard(client: &Client, name: &str, key: &str) {
+    let _ = client
+        .draft(name, key, Method::DELETE, &[], None, false)
+        .await;
 }
 
 /// Reports optional declarations left unset by a non-interactive fill.
@@ -336,11 +331,13 @@ mod tests {
     ) -> axum::response::Response {
         let mut state = state.lock().unwrap();
         state.calls.push(format!("{method} {}", uri.path()));
+        // Deploy edits only the draft it created.
+        assert_eq!(uri.query(), None);
         let routed_path = uri.path().replace("/v1/apps/renamed", "/v1/apps/demo");
         let path = routed_path.as_str();
         let body = request_body(&headers, &body);
         if let Some(rest) = path.strip_prefix("/v1/apps/demo/")
-            && let Some(result) = state.drafts.route(&method, rest, &body)
+            && let Some(result) = state.drafts.route(&method, rest, false, &body)
         {
             return match result {
                 Ok(view) => axum::Json(view).into_response(),
@@ -600,27 +597,28 @@ mod tests {
                 if scenario == "invalid" {
                     assert!(state.calls.is_empty());
                 } else {
-                    // Missing values fail before the deployment is submitted and keep the draft.
+                    // Missing values fail before the deployment is submitted and discard the draft.
                     assert!(error.contains("Missing values: env PATH"), "{error}");
-                    assert!(
-                        error.contains(
-                            "retry with `obelisk cloud app deploy --app demo --draft deploy-"
-                        ),
-                        "{error}"
-                    );
                     assert!(state.submitted.is_none());
-                    assert_eq!(state.drafts.drafts.len(), 1);
+                    assert!(state.drafts.drafts.is_empty());
+                    assert!(
+                        state
+                            .calls
+                            .last()
+                            .unwrap()
+                            .starts_with("DELETE /v1/apps/demo/drafts/deploy-")
+                    );
                 }
             } else if scenario == "deployment-error" {
                 let error = format!("{:#}", result.unwrap_err());
                 assert!(error.contains("Deployment staging failed"), "{error}");
-                assert!(error.contains("--draft deploy-"), "{error}");
+                assert!(state.drafts.drafts.is_empty());
                 assert!(
                     state
                         .calls
                         .last()
                         .unwrap()
-                        .starts_with("PUT /tenant/v1/deployments/")
+                        .starts_with("DELETE /v1/apps/demo/drafts/deploy-")
                 );
                 assert!(!state.calls.contains(&"POST /v1/apps/demo/apply".to_owned()));
             } else {
@@ -638,20 +636,18 @@ mod tests {
                             && call.ends_with("/config")),
                     !new
                 );
-                // Changed drafts are applied; unchanged generated drafts are discarded.
+                // Applying consumes the proposal even when its contents are unchanged.
                 assert!(state.drafts.drafts.is_empty());
-                let changed = matches!(scenario, "config" | "stopped-config");
                 assert_eq!(
                     state.drafts.applied_revision,
-                    if changed { 3 } else { 1 },
+                    if new { 1 } else { 2 },
                     "{scenario}"
                 );
-                assert_eq!(
-                    state
+                assert!(
+                    !state
                         .calls
                         .iter()
-                        .any(|call| call.starts_with("DELETE /v1/apps/demo/drafts/deploy-")),
-                    !new && !changed
+                        .any(|call| call.starts_with("DELETE /v1/apps/demo/drafts/"))
                 );
                 if scenario == "new-integration" {
                     assert_eq!(state.app.as_ref().unwrap()["env"], json!({}));

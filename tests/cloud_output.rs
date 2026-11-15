@@ -86,14 +86,14 @@ async fn cloud_output() {
         assert!(status.contains(line), "{status}");
     }
     assert!(!status.contains("External webhooks"), "{status}");
-    let apply = "Run `obelisk cloud app apply --app demo`";
+    let apply = "Run `obelisk cloud app apply --app demo --reapply`";
     assert!(
         status.contains(&format!("Intended state: running. {apply} to reach it.")),
         "{status}"
     );
     assert!(
         status.contains(
-            "VM is started although the app is stopped. Run `obelisk cloud app apply` to reconcile it."
+            "VM is started although the app is stopped. Run `obelisk cloud app apply --reapply` to reconcile it."
         ),
         "{status}"
     );

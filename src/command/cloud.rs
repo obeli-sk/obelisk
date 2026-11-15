@@ -179,16 +179,17 @@ impl Client {
         body: Option<Value>,
         kind: Kind,
     ) -> anyhow::Result<Value> {
-        self.send(method, path, body.map(Body::Json), kind).await
+        self.send(method, self.url(path)?, body.map(Body::Json), kind)
+            .await
     }
     async fn send(
         &self,
         method: Method,
-        path: &[&str],
+        url: Url,
         body: Option<Body>,
         kind: Kind,
     ) -> anyhow::Result<Value> {
-        let mut request = self.http.request(method, self.url(path)?);
+        let mut request = self.http.request(method, url);
         let command_id = if let Kind::Command(id) | Kind::SecretCommand(id) = kind {
             let id = id.unwrap_or_else(ExecutionIdTopLevel::generate);
             crate::client::trace(format_args!("Cloud command execution ID: {id}"));
@@ -288,7 +289,8 @@ impl Client {
         path.extend_from_slice(suffix);
         self.request(method, &path, body, kind).await
     }
-    /// Reads or edits draft `key`; edits are not lifecycle commands and take no idempotency key.
+    /// Opens, discards or edits draft `key`; `reuse` lets an edit create a missing draft.
+    /// Edits are not lifecycle commands and take no idempotency key.
     async fn draft(
         &self,
         name: &str,
@@ -296,15 +298,20 @@ impl Client {
         method: Method,
         suffix: &[&str],
         body: Option<Body>,
+        reuse: bool,
     ) -> anyhow::Result<Value> {
         let mut path = vec!["v1", "apps", name, "drafts", key];
         path.extend_from_slice(suffix);
+        let mut url = self.url(&path)?;
+        if reuse && !suffix.is_empty() {
+            url.query_pairs_mut().append_pair("create_or_reuse", "true");
+        }
         let kind = if method == Method::PUT && suffix.first() == Some(&"secrets") {
             Kind::Secret
         } else {
             Kind::Read
         };
-        self.send(method, &path, body, kind).await
+        self.send(method, url, body, kind).await
     }
     async fn events(&self, name: &str, limit: u8) -> anyhow::Result<Value> {
         let mut url = self.url(&["v1", "apps", name, "events"])?;
@@ -329,8 +336,13 @@ impl Client {
     ) -> anyhow::Result<Value> {
         let mut path = vec!["v1", "apps", name];
         path.extend_from_slice(suffix);
-        self.send(method, &path, Some(Body::Toml(app_toml.to_owned())), kind)
-            .await
+        self.send(
+            method,
+            self.url(&path)?,
+            Some(Body::Toml(app_toml.to_owned())),
+            kind,
+        )
+        .await
     }
 }
 async fn app_name(name: Option<&str>) -> anyhow::Result<String> {
@@ -401,9 +413,7 @@ fn app_config_path(command: &CloudApp) -> anyhow::Result<Option<(PathBuf, bool)>
     let (CloudApp::New { app_config, .. }
     | CloudApp::Status { app_config, .. }
     | CloudApp::Stage { app_config, .. }
-    | CloudApp::Deploy { app_config, .. }
-    | CloudApp::Apply { app_config, .. }
-    | CloudApp::Fill { app_config, .. }) = command
+    | CloudApp::Deploy { app_config, .. }) = command
     else {
         return Ok(None);
     };
@@ -627,10 +637,7 @@ impl CloudArgs {
         }
         if let Cloud::App(CloudAppTarget { command, .. }) = &mut self.command
             && command.selected_app().is_none()
-            && matches!(
-                command,
-                CloudApp::Stage { .. } | CloudApp::Fill { .. } | CloudApp::Apply { .. }
-            )
+            && matches!(command, CloudApp::Stage { .. })
             && let Some((path, _)) = app_config_path(command)?
         {
             let app_name = policy(&path).await?.config.app_name;
@@ -782,50 +789,41 @@ impl CloudArgs {
                                 Method::PUT,
                                 &["config"],
                                 Some(Body::Toml(config.text)),
+                                true,
                             )
                             .await
                     }
                     CloudApp::Unstage {
                         draft: CloudDraft { key },
                         ..
-                    } => client.draft(name, &key, Method::DELETE, &[], None).await,
+                    } => {
+                        client
+                            .draft(name, &key, Method::DELETE, &[], None, false)
+                            .await
+                    }
                     CloudApp::Apply {
                         force,
-                        staged,
-                        values,
+                        reapply,
                         draft: CloudDraft { key },
                         command_id,
                         ..
                     } => {
                         let current = client.app(name, Method::GET, &[], None, Kind::Read).await?;
-                        let explicit = explicit_values(&values)?;
-                        let mut ask = ask;
-                        let interactive = terminal() && !self.json && !values.fill_non_interactive;
-                        let draft = draft_or_local(
-                            &client,
-                            name,
-                            &key,
-                            local.filter(|_| !staged),
-                            interactive.then_some(&mut ask),
-                        )
-                        .await?;
-                        ensure!(
-                            draft.is_some() || key == DEFAULT_DRAFT || !explicit.is_empty(),
-                            "Draft `{key}` not found"
-                        );
-                        let (draft, _) = stage_values(
-                            &client,
-                            name,
-                            &key,
-                            draft,
-                            explicit,
-                            Values::new(
-                                values.fill,
-                                values.fill_non_interactive,
-                                interactive.then_some(&mut ask),
-                            )?,
-                        )
-                        .await?;
+                        let draft = if reapply {
+                            None
+                        } else {
+                            Some(
+                                client
+                                    .optional(&["v1", "apps", name, "drafts", &key])
+                                    .await?
+                                    .with_context(|| {
+                                        format!(
+                                            "Nothing staged in draft `{key}`; stage changes with `obelisk cloud app stage`, `env set` or `secrets set`{}, or reconcile the applied revision with `--reapply`",
+                                            output::draft_arg(&key)
+                                        )
+                                    })?,
+                            )
+                        };
                         let origin = api_origin(
                             current["endpoints"]["api"]
                                 .as_str()
@@ -878,39 +876,6 @@ impl CloudArgs {
                             .app(name, Method::DELETE, &[], None, command_id.into())
                             .await
                     }
-                    CloudApp::Fill {
-                        non_interactive,
-                        staged,
-                        draft: CloudDraft { key },
-                        ..
-                    } => {
-                        let mut ask = ask;
-                        let draft = draft_or_local(
-                            &client,
-                            name,
-                            &key,
-                            local.filter(|_| !staged),
-                            (!non_interactive && terminal()).then_some(&mut ask),
-                        )
-                        .await?;
-                        let values = if non_interactive {
-                            Values::Env
-                        } else {
-                            ensure!(
-                                terminal(),
-                                "`fill` requires a terminal; use `fill --non-interactive` to read same-named environment variables"
-                            );
-                            Values::Prompt(&mut ask)
-                        };
-                        let (_, mut filled) =
-                            stage_values(&client, name, &key, draft, Vec::new(), values).await?;
-                        filled["apply_required"] = json!(
-                            filled["staged"]
-                                .as_array()
-                                .is_some_and(|staged| !staged.is_empty())
-                        );
-                        Ok(filled)
-                    }
                     CloudApp::Env {
                         command: CloudEnv::List,
                         ..
@@ -936,6 +901,7 @@ impl CloudArgs {
                                 Method::PUT,
                                 &["env", &variable],
                                 Some(Body::Json(json!({"value":value}))),
+                                true,
                             )
                             .await
                     }
@@ -949,7 +915,7 @@ impl CloudArgs {
                     } => {
                         config_name(&variable)?;
                         client
-                            .draft(name, &key, Method::DELETE, &["env", &variable], None)
+                            .draft(name, &key, Method::DELETE, &["env", &variable], None, true)
                             .await
                     }
                     CloudApp::Secrets {
@@ -992,6 +958,7 @@ impl CloudArgs {
                                 Method::PUT,
                                 &["secrets", &secret],
                                 Some(Body::Json(json!({"value":value}))),
+                                true,
                             )
                             .await
                     }
@@ -1005,7 +972,14 @@ impl CloudArgs {
                     } => {
                         config_name(&secret)?;
                         client
-                            .draft(name, &key, Method::DELETE, &["secrets", &secret], None)
+                            .draft(
+                                name,
+                                &key,
+                                Method::DELETE,
+                                &["secrets", &secret],
+                                None,
+                                true,
+                            )
                             .await
                     }
                     CloudApp::New { .. } => unreachable!(),
@@ -1040,60 +1014,7 @@ async fn compare_config(client: &Client, name: &str, app_toml: &str) -> anyhow::
 
 const DEFAULT_DRAFT: &str = "default";
 
-/// Returns draft `key`, first staging `local` into it when it differs and the user agrees.
-async fn draft_or_local(
-    client: &Client,
-    name: &str,
-    key: &str,
-    local: Option<(LocalConfig, std::path::PathBuf)>,
-    prompt: Option<Prompt<'_>>,
-) -> anyhow::Result<Option<Value>> {
-    #[derive(Clone, Copy, PartialEq)]
-    enum Use {
-        Local,
-        Staged,
-        Cancel,
-    }
-    let Some((config, path)) = local else {
-        return client.optional(&["v1", "apps", name, "drafts", key]).await;
-    };
-    let draft = client.draft(name, key, Method::POST, &[], None).await?;
-    if draft["app_toml"] == config.text {
-        return Ok(Some(draft));
-    }
-    let path = path.display();
-    let text = format!(
-        "{path} differs from the app.toml in draft `{key}` (revision {})\n",
-        draft["revision"]
-    );
-    let Some(prompt) = prompt else {
-        bail!(
-            "{text}Run `obelisk cloud app stage --app {name}{} -a {path}`, or pass `--staged` to use the draft's app.toml",
-            output::draft_arg(key)
-        );
-    };
-    let choices = [
-        ("stage", Use::Local),
-        ("use staged", Use::Staged),
-        ("cancel", Use::Cancel),
-    ];
-    match choose(prompt, &text, &choices, Use::Local)? {
-        Use::Local => client
-            .draft(
-                name,
-                key,
-                Method::PUT,
-                &["config"],
-                Some(Body::Toml(config.text.clone())),
-            )
-            .await
-            .map(Some),
-        Use::Staged => Ok(Some(draft)),
-        Use::Cancel => bail!("Cancelled; nothing was staged"),
-    }
-}
-
-/// Builds the apply request for draft `key` when it has changes, otherwise re-applies the applied revision.
+/// Applies the current labeled proposal, or re-applies the installed revision without one.
 fn apply_request(
     name: &str,
     key: &str,
@@ -1105,7 +1026,7 @@ fn apply_request(
 ) -> anyhow::Result<Value> {
     let mut body = json!({"force":force,"deployment_id":deployment_id});
     let applied = &current["applied_revision"];
-    let Some(draft) = draft.filter(|draft| draft["summary"]["changed"] == true) else {
+    let Some(draft) = draft else {
         if !quiet {
             eprintln!("Re-applying revision {applied}");
         }
@@ -1121,8 +1042,9 @@ fn apply_request(
     let missing = output::draft_values(draft, "missing");
     ensure!(
         missing.is_empty(),
-        "Missing values in draft `{key}`: {}. Pass them with `--env NAME[=VALUE]` or `--secret NAME`, or retry with `--fill` or `--fill-non-interactive`",
-        missing.join(", ")
+        "Missing values in draft `{key}`: {}. Stage them with `obelisk cloud app env set` or `obelisk cloud app secrets set`{}",
+        missing.join(", "),
+        output::draft_arg(key)
     );
     if !quiet {
         eprintln!(
@@ -1135,7 +1057,6 @@ fn apply_request(
             eprintln!("Not declared in app.toml: {}", unused.join(", "));
         }
     }
-    body["revision"] = draft["revision"].clone();
     body["draft"] = json!(key);
     Ok(body)
 }
@@ -1262,7 +1183,7 @@ fn explicit_values(values: &CloudValues) -> anyhow::Result<Vec<PendingValue>> {
     for name in &values.secrets {
         if let Some((name, _)) = name.split_once('=') {
             bail!(
-                "`--secret` takes only a name and reads the same-named environment variable, e.g. `{name}=... obelisk cloud app apply --secret {name}`"
+                "`--secret` takes only a name and reads the same-named environment variable, e.g. `{name}=... obelisk cloud app deploy --secret {name}`"
             );
         }
         config_name(name)?;
@@ -1294,15 +1215,15 @@ fn without(mut policy: Value, explicit: &[PendingValue]) -> Value {
     policy
 }
 
-/// Stages `explicit` values into draft `key`, then the remaining declared values taken from `values`.
+/// Stages `explicit` values into the existing draft `key`, then the remaining declared values taken from `values`.
 async fn stage_values(
     client: &Client,
     app: &str,
     key: &str,
-    mut draft: Option<Value>,
+    mut draft: Value,
     explicit: Vec<PendingValue>,
     values: Values<'_>,
-) -> anyhow::Result<(Option<Value>, Value)> {
+) -> anyhow::Result<(Value, Value)> {
     let mut staged = Vec::new();
     let mut put = async |kind: &'static str, name: String, value: String| {
         let view = client
@@ -1312,6 +1233,7 @@ async fn stage_values(
                 Method::PUT,
                 &[kind, &name],
                 Some(Body::Json(json!({"value":value}))),
+                false,
             )
             .await
             .with_context(|| {
@@ -1324,32 +1246,24 @@ async fn stage_values(
         anyhow::Ok(view)
     };
     for (kind, name, value, _) in explicit.iter().cloned() {
-        draft = Some(put(kind, name, value).await?);
+        draft = put(kind, name, value).await?;
     }
     let mut report = Vec::new();
     if !matches!(values, Values::Check) {
-        let base = match draft {
-            Some(draft) => draft,
-            None => client.draft(app, key, Method::POST, &[], None).await?,
-        };
         let pending;
         (report, pending) = collect_values(
-            &format!(
-                "Run `obelisk cloud app fill --app {app}{}`, or retry with `--fill` or `--fill-non-interactive`",
-                output::draft_arg(key)
-            ),
-            &without(user_supplied_policy(&base), &explicit),
-            base["env"]
+            "Retry with `--fill` or `--fill-non-interactive`",
+            &without(user_supplied_policy(&draft), &explicit),
+            draft["env"]
                 .as_object()
                 .context("Invalid cloud draft environment")?,
-            base["secrets"]
+            draft["secrets"]
                 .as_array()
                 .context("Invalid cloud draft secrets")?,
             values,
         )?;
-        draft = Some(base);
         for (kind, name, value, _) in pending {
-            draft = Some(put(kind, name, value).await?);
+            draft = put(kind, name, value).await?;
         }
     }
     Ok((
@@ -1702,9 +1616,15 @@ mod tests {
         assert!(!headers.contains_key("x-obelisk-user"));
         let body = request_body(&headers, &body);
         let mut state = state.lock().unwrap();
+        let reuse = uri.query() == Some("create_or_reuse=true");
+        let route = if reuse {
+            uri.path().to_owned()
+        } else {
+            uri.to_string()
+        };
         state
             .received
-            .push((format!("{method} {uri}"), body.clone()));
+            .push((format!("{method} {route}"), body.clone()));
         if method != Method::GET
             && uri.path().starts_with("/prefix/v1/apps")
             && !uri.path().contains("/drafts")
@@ -1730,7 +1650,7 @@ mod tests {
             return (axum::http::StatusCode::CONFLICT, "DO-NOT-ECHO-SECRET").into_response();
         }
         if let Some(path) = uri.path().strip_prefix("/prefix/v1/apps/demo/")
-            && let Some(result) = state.drafts.route(&method, path, &body)
+            && let Some(result) = state.drafts.route(&method, path, reuse, &body)
         {
             return match result {
                 Ok(view) => axum::Json(view).into_response(),
@@ -1919,6 +1839,7 @@ mod tests {
             &mut self,
             method: &Method,
             path: &str,
+            reuse: bool,
             body: &Value,
         ) -> Option<Result<Value, axum::http::StatusCode>> {
             let rest = path.strip_prefix("drafts")?;
@@ -1944,11 +1865,17 @@ mod tests {
                         Err(axum::http::StatusCode::NOT_FOUND)
                     }
                 }
+                (&Method::POST, []) if self.drafts.contains_key(key) => {
+                    Err(axum::http::StatusCode::CONFLICT)
+                }
                 (&Method::POST, []) => {
                     self.open(key);
                     Ok(self.view(key))
                 }
                 (&Method::DELETE, []) => Ok(json!({"discarded":self.drafts.remove(key).is_some()})),
+                (_, _) if !reuse && !self.drafts.contains_key(key) => {
+                    Err(axum::http::StatusCode::NOT_FOUND)
+                }
                 (method, edit) => {
                     self.open(key);
                     let draft = self.drafts.get_mut(key).unwrap();
@@ -1962,20 +1889,16 @@ mod tests {
                         _ => panic!("unexpected draft request: {method} {path}"),
                     }
                     let changed = *draft != before;
-                    if changed {
-                        self.revision += 1;
-                        self.drafts.get_mut(key).unwrap()["revision"] = json!(self.revision);
-                    }
                     let mut view = self.view(key);
                     view["changed"] = json!(changed);
                     Ok(view)
                 }
             })
         }
-        /// Applies like the provisioner: a draft by key and revision, or the applied revision again.
+        /// Applies the current proposal by label, or the applied revision again.
         pub(super) fn apply(&mut self, body: &Value) -> Result<(), String> {
-            let revision = body["revision"].as_u64().unwrap();
             let Some(key) = body["draft"].as_str() else {
+                let revision = body["revision"].as_u64().unwrap();
                 return if revision == self.applied_revision {
                     Ok(())
                 } else {
@@ -1983,12 +1906,12 @@ mod tests {
                 };
             };
             let draft = self.drafts.get(key).ok_or("draft not found")?.clone();
-            if draft["revision"] != revision || draft["parent_revision"] != self.applied_revision {
+            if draft["parent_revision"] != self.applied_revision {
                 return Err(format!("draft {key} changed"));
             }
             self.applied =
                 json!({"app_toml":draft["app_toml"],"env":draft["env"],"secrets":draft["secrets"]});
-            self.applied_revision = revision;
+            self.applied_revision = draft["revision"].as_u64().unwrap();
             let parent = draft["parent_revision"].clone();
             self.drafts
                 .retain(|_, draft| draft["parent_revision"] != parent);
@@ -2155,81 +2078,6 @@ mod tests {
         assert_eq!(with_app_name("", "demo").unwrap(), "app_name = \"demo\"\n");
     }
     #[tokio::test]
-    async fn local_config_differing_from_draft_needs_a_choice() {
-        let (origin, state, task) = server().await;
-        let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
-        let applied = "app_name='demo'\n[cloud]\nmemory_mb=512\n";
-        state.lock().unwrap().drafts = MockDrafts::new(applied, 4);
-        let config =
-            LocalConfig::parse("app_name='demo'\n[public_env]\nREGION={optional=true}\n".into())
-                .unwrap();
-        let local = || Some((config.clone(), std::path::PathBuf::from("app.toml")));
-        let pick = async |answer: &str| {
-            let mut prompt = |_: &Question| Ok(answer.to_owned());
-            draft_or_local(&client, "demo", "default", local(), Some(&mut prompt))
-                .await
-                .map(|draft| draft.unwrap())
-        };
-        assert!(
-            draft_or_local(&client, "demo", "ci", None, None)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        let error = draft_or_local(&client, "demo", "default", local(), None)
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("app.toml differs from the app.toml in draft `default` (revision 5)"),
-            "{error}"
-        );
-        assert!(
-            error.contains("stage --app demo -a app.toml`, or pass `--staged`"),
-            "{error}"
-        );
-        assert_eq!(pick("u").await.unwrap()["app_toml"], applied);
-        assert!(
-            pick("c")
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("Cancelled")
-        );
-        let puts = || {
-            state
-                .lock()
-                .unwrap()
-                .received
-                .iter()
-                .filter(|(route, _)| route.starts_with("PUT "))
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        assert!(puts().is_empty());
-        let staged = pick("").await.unwrap();
-        assert_eq!(
-            (&staged["app_toml"], &staged["revision"]),
-            (&json!(config.text), &json!(6))
-        );
-        assert_eq!(
-            puts(),
-            [(
-                "PUT /prefix/v1/apps/demo/drafts/default/config".to_owned(),
-                json!(config.text)
-            )]
-        );
-        let mut unexpected = |_: &Question| -> anyhow::Result<String> { unreachable!() };
-        assert_eq!(
-            draft_or_local(&client, "demo", "default", local(), Some(&mut unexpected))
-                .await
-                .unwrap()
-                .unwrap()["revision"],
-            6
-        );
-        task.abort();
-    }
-    #[tokio::test]
     async fn cloud_commands_keep_policy_staged_and_force_explicit() {
         let (origin, state, task) = server().await;
         let directory = tempfile::tempdir().unwrap();
@@ -2249,15 +2097,26 @@ mod tests {
             .await
             .unwrap();
         args(&origin, &["app", "apply"]).execute().await.unwrap();
-        args(&origin, &["app", "apply", "--force"])
+        let error = args(&origin, &["app", "apply", "--force"])
+            .execute()
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("Nothing staged in draft `default`"),
+            "{error}"
+        );
+        args(&origin, &["app", "apply", "--reapply", "--force"])
             .execute()
             .await
             .unwrap();
+        let before_env = state.lock().unwrap().received.len();
         args(&origin, &["app", "env", "set", "OBELISK_API_URL", "value"])
             .execute()
             .await
             .unwrap();
         let received = &state.lock().unwrap().received;
+        assert_eq!(received.len(), before_env + 1);
         let app_toml = std::fs::read_to_string(&path).unwrap();
         assert_eq!(received[0].0, "POST /prefix/v1/apps");
         assert_eq!(received[0].1["app_toml"], app_toml);
@@ -2272,7 +2131,7 @@ mod tests {
             .filter(|(path, _)| path.ends_with("/apply"))
             .collect();
         assert_eq!(applies.len(), 2);
-        // The second apply has no draft left and re-applies the applied revision.
+        // The second apply has no draft left and re-applies the applied revision explicitly.
         for (request, (force, draft)) in applies
             .iter()
             .zip([(false, json!("default")), (true, Value::Null)])
@@ -2286,7 +2145,11 @@ mod tests {
                     .parse::<concepts::prefixed_ulid::DeploymentId>()
                     .is_ok()
             );
-            assert_eq!(request.1["revision"], 3);
+            if draft.is_null() {
+                assert_eq!(request.1["revision"], 2);
+            } else {
+                assert!(request.1.get("revision").is_none());
+            }
             assert!(request.1.get("config").is_none());
         }
         assert_eq!(
@@ -2336,7 +2199,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn cloud_apply_stages_explicit_values_into_new_draft() {
+    async fn cloud_apply_applies_only_staged_draft() {
         let (origin, state, task) = server().await;
         state.lock().unwrap().drafts =
             MockDrafts::new("app_name='demo'\n[public_env]\nPATH={}\n", 3);
@@ -2345,24 +2208,31 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            error.to_string().contains("Draft `ci` not found"),
+            error
+                .to_string()
+                .contains("Nothing staged in draft `ci`; stage changes with"),
             "{error}"
         );
-        args(&origin, &["app", "apply", "--draft", "ci", "--env", "PATH"])
+        args(
+            &origin,
+            &["app", "env", "set", "PATH", "/bin", "--draft", "ci"],
+        )
+        .execute()
+        .await
+        .unwrap();
+        args(&origin, &["app", "apply", "--draft", "ci"])
             .execute()
             .await
             .unwrap();
         let state = state.lock().unwrap();
-        let path = std::env::var("PATH").unwrap();
+        // The unprefixed route records that the write created the draft via `create_or_reuse`.
         assert!(state.received.iter().any(|(route, body)| route
             == "PUT /prefix/v1/apps/demo/drafts/ci/env/PATH"
-            && body["value"] == path));
+            && body["value"] == "/bin"));
         let (_, apply) = state.received.last().unwrap();
-        assert_eq!(
-            (&apply["draft"], &apply["revision"]),
-            (&json!("ci"), &json!(5))
-        );
-        assert_eq!(state.drafts.applied["env"]["PATH"], path);
+        assert_eq!(apply["draft"], "ci");
+        assert!(apply.get("revision").is_none());
+        assert_eq!(state.drafts.applied["env"]["PATH"], "/bin");
         assert!(state.drafts.drafts.is_empty());
         task.abort();
     }
@@ -2373,7 +2243,7 @@ mod tests {
         let path = directory.path().join("app.toml");
         tokio::fs::write(&path, "app_name='other'\n").await.unwrap();
         let path = path.to_str().unwrap();
-        for command in ["new", "status", "stage", "apply", "fill"] {
+        for command in ["new", "status", "stage"] {
             let error = args(&origin, &["app", command, "-a", path])
                 .execute()
                 .await
@@ -2481,12 +2351,13 @@ mod tests {
             "env":{"ALREADY_SET":"stored","HOME":home_value},
             "secrets":["ALREADY_SET"],
         });
+        state.lock().unwrap().drafts.open("default");
         let mut answers = script.iter();
         let (_, result) = stage_values(
             &client,
             "demo",
             "default",
-            Some(draft.clone()),
+            draft.clone(),
             Vec::new(),
             Values::Prompt(&mut |question: &Question| {
                 let (expected, secret, answer) = answers.next().expect("unexpected question");
@@ -2545,7 +2416,7 @@ mod tests {
             &client,
             "demo",
             "default",
-            Some(draft),
+            draft,
             Vec::new(),
             Values::Prompt(&mut |question: &Question| {
                 Ok(match question {
@@ -2569,16 +2440,9 @@ mod tests {
             "policy":{"public_env":["CLOUD_TEST_MISSING_REQUIRED"],"secrets":{}},
             "cloud":{},"env":{},"secrets":[],
         });
-        let error = stage_values(
-            &client,
-            "demo",
-            "default",
-            Some(draft),
-            Vec::new(),
-            Values::Env,
-        )
-        .await
-        .unwrap_err();
+        let error = stage_values(&client, "demo", "default", draft, Vec::new(), Values::Env)
+            .await
+            .unwrap_err();
         assert!(
             error
                 .to_string()
@@ -2586,30 +2450,6 @@ mod tests {
             "{error}"
         );
         assert!(state.lock().unwrap().received.is_empty());
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("app.toml");
-        tokio::fs::write(&path, "app_name='demo'\n[public_env]\nREGION={}\n")
-            .await
-            .unwrap();
-        let error = args(&origin, &["app", "fill", "-a", path.to_str().unwrap()])
-            .execute()
-            .await
-            .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Run `obelisk cloud app stage --app demo -a"),
-            "{error}"
-        );
-        assert!(
-            state
-                .lock()
-                .unwrap()
-                .received
-                .iter()
-                .all(|(route, _)| route.starts_with("GET")
-                    || route == "POST /prefix/v1/apps/demo/drafts/default")
-        );
         state.lock().unwrap().error = true;
         let error = client
             .app(
