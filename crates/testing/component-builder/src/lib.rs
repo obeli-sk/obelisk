@@ -44,6 +44,12 @@ pub fn build_activity(conf: BuildConfig) -> PathBuf {
     build_internal(WASI_P2, ComponentType::Activity, conf).into_std_path_buf()
 }
 
+/// Build a native `WASIp3` activity component.
+#[expect(clippy::must_use_candidate)]
+pub fn build_activity_wasi_p3(conf: BuildConfig) -> PathBuf {
+    build_internal("wasm32-wasip3", ComponentType::Activity, conf).into_std_path_buf()
+}
+
 /// Build the parent webhook endpoint WASM component and place it into the `target` directory.
 ///
 /// This function must be called from `build.rs`. It reads the current package
@@ -53,6 +59,12 @@ pub fn build_activity(conf: BuildConfig) -> PathBuf {
 #[expect(clippy::must_use_candidate)]
 pub fn build_webhook_endpoint(conf: BuildConfig) -> PathBuf {
     build_internal(WASI_P2, ComponentType::WebhookEndpoint, conf).into_std_path_buf()
+}
+
+/// Build a native `WASIp3` webhook component.
+#[expect(clippy::must_use_candidate)]
+pub fn build_webhook_endpoint_wasi_p3(conf: BuildConfig) -> PathBuf {
+    build_internal("wasm32-wasip3", ComponentType::WebhookEndpoint, conf).into_std_path_buf()
 }
 
 /// Build the parent workflow WASM component and place it into the `target` directory.
