@@ -137,7 +137,7 @@ impl Summary {
                 {
                     let _ = writeln!(
                         out,
-                        "VM is {machine} although the app is {status}. Run `obelisk cloud app apply --reapply` to reconcile it.",
+                        "VM is {machine} although the app is {status}.",
                         status = text(&value["app"], "status", "")
                     );
                 }
@@ -426,14 +426,26 @@ fn app_with_note(out: &mut String, value: &Value, note: Option<&str>) {
     if let Some(desired) = value["desired_state"].as_str()
         && value["status"] != desired
     {
-        if matches!(value["status"].as_str(), Some("running" | "stopped")) {
+        let _ = writeln!(out, "Intended state: {desired}");
+    }
+    // The provisioner retries reaching the intended state on its own.
+    let reconciliation = &value["reconciliation"];
+    if let Some(attempts) = reconciliation["attempts"].as_u64().filter(|a| *a > 0) {
+        if value["status"] == "failed" {
+            // The failure, reported below, carries the last error.
+            let _ = writeln!(out, "Reconciliation gave up after {attempts} attempts");
+        } else {
             let _ = writeln!(
                 out,
-                "Intended state: {desired}. Run `obelisk cloud app apply --app {} --reapply` to reach it.",
-                text(value, "app_name", "")
+                "Reconciling: attempt {attempts}, next at {}",
+                time(&reconciliation["next_attempt_at"])
             );
-        } else {
-            let _ = writeln!(out, "Intended state: {desired}");
+            // A startup failure is reported below with its reason.
+            if let Some(error) = reconciliation["error"].as_str()
+                && value["state"]["startup_failure"].is_null()
+            {
+                let _ = writeln!(out, "Reconciliation error: {error}");
+            }
         }
     }
     if let Some(failure) = value["state"]["failure"].as_str() {
