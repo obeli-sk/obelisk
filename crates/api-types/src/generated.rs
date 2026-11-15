@@ -1042,6 +1042,18 @@ pub struct DeploymentSwitchPayload {
     #[serde(default)]
     pub apply: bool,
 }
+///`DeploymentSwitchPreconditionFailed`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct DeploymentSwitchPreconditionFailed {
+    ///Deployment the server is running
+    pub deployment_id: ::std::string::String,
+    ///Deployment that becomes active on the next restart, if any
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub enqueued_deployment_id: ::std::option::Option<::std::string::String>,
+    pub err: ::std::string::String,
+    ///Current `"<node_run_id>:<switch_count>"` to send in `If-Match` when retrying
+    pub if_match: ::std::string::String,
+}
 ///`DeploymentSwitchResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct DeploymentSwitchResponse {

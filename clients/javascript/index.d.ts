@@ -12,6 +12,7 @@ export interface LifecycleModels {
   DeploymentSwitchPayload: DeploymentSwitchPayload;
   DeploymentSwitchResponse: DeploymentSwitchResponse;
   DeploymentSwitchOutcome: DeploymentSwitchOutcome;
+  DeploymentSwitchPreconditionFailed: DeploymentSwitchPreconditionFailed;
 }
 export interface ServerInfoResponse {
   app_config_digest: string;
@@ -186,6 +187,22 @@ export interface DeploymentSwitchResponse {
   ok: DeploymentSwitchOutcome;
   [k: string]: unknown;
 }
+export interface DeploymentSwitchPreconditionFailed {
+  err: string;
+  /**
+   * Current `"<node_run_id>:<switch_count>"` to send in `If-Match` when retrying
+   */
+  if_match: string;
+  /**
+   * Deployment the server is running
+   */
+  deployment_id: string;
+  /**
+   * Deployment that becomes active on the next restart, if any
+   */
+  enqueued_deployment_id?: string;
+  [k: string]: unknown;
+}
 
 export function parseServerInfoResponse(value: unknown): ServerInfoResponse;
 export function parseServerInfoGc(value: unknown): ServerInfoGc;
@@ -196,4 +213,5 @@ export function parseAppPolicyV1(value: unknown): AppPolicyV1;
 export function parseDeploymentSwitchPayload(value: unknown): DeploymentSwitchPayload;
 export function parseDeploymentSwitchResponse(value: unknown): DeploymentSwitchResponse;
 export function parseDeploymentSwitchOutcome(value: unknown): DeploymentSwitchOutcome;
+export function parseDeploymentSwitchPreconditionFailed(value: unknown): DeploymentSwitchPreconditionFailed;
 export function parseApiResponse(method: string, path: string, value: unknown): unknown;

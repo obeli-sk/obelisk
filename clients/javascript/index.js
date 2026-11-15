@@ -2882,6 +2882,82 @@ function validate42(data, { instancePath = "", parentData, parentDataProperty, r
   return errors === 0;
 }
 validate42.evaluated = { "dynamicProps": false, "dynamicItems": false };
+var validateDeploymentSwitchPreconditionFailed = validate43;
+function validate43(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  ;
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate43.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  const _errs0 = errors;
+  if (errors === _errs0) {
+    if (data && typeof data == "object" && !Array.isArray(data)) {
+      let missing0;
+      if (data.err === void 0 && (missing0 = "err") || data.if_match === void 0 && (missing0 = "if_match") || data.deployment_id === void 0 && (missing0 = "deployment_id")) {
+        validate43.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
+        return false;
+      } else {
+        if (data.err !== void 0) {
+          const _errs2 = errors;
+          if (typeof data.err !== "string") {
+            validate43.errors = [{ instancePath: instancePath + "/err", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/err/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+            return false;
+          }
+          var valid1 = _errs2 === errors;
+        } else {
+          var valid1 = true;
+        }
+        if (valid1) {
+          if (data.if_match !== void 0) {
+            const _errs4 = errors;
+            if (typeof data.if_match !== "string") {
+              validate43.errors = [{ instancePath: instancePath + "/if_match", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/if_match/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+              return false;
+            }
+            var valid1 = _errs4 === errors;
+          } else {
+            var valid1 = true;
+          }
+          if (valid1) {
+            if (data.deployment_id !== void 0) {
+              const _errs6 = errors;
+              if (typeof data.deployment_id !== "string") {
+                validate43.errors = [{ instancePath: instancePath + "/deployment_id", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/deployment_id/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                return false;
+              }
+              var valid1 = _errs6 === errors;
+            } else {
+              var valid1 = true;
+            }
+            if (valid1) {
+              if (data.enqueued_deployment_id !== void 0) {
+                const _errs8 = errors;
+                if (typeof data.enqueued_deployment_id !== "string") {
+                  validate43.errors = [{ instancePath: instancePath + "/enqueued_deployment_id", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/enqueued_deployment_id/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                  return false;
+                }
+                var valid1 = _errs8 === errors;
+              } else {
+                var valid1 = true;
+              }
+            }
+          }
+        }
+      }
+    } else {
+      validate43.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+      return false;
+    }
+  }
+  validate43.errors = vErrors;
+  return errors === 0;
+}
+validate43.evaluated = { "props": { "err": true, "if_match": true, "deployment_id": true, "enqueued_deployment_id": true }, "dynamicProps": false, "dynamicItems": false };
 function parseServerInfoResponse(value) {
   if (!validateServerInfoResponse(value)) {
     const error = validateServerInfoResponse.errors[0];
@@ -2945,6 +3021,13 @@ function parseDeploymentSwitchOutcome(value) {
   }
   return value;
 }
+function parseDeploymentSwitchPreconditionFailed(value) {
+  if (!validateDeploymentSwitchPreconditionFailed(value)) {
+    const error = validateDeploymentSwitchPreconditionFailed.errors[0];
+    throw new TypeError("Invalid DeploymentSwitchPreconditionFailed at " + (error.instancePath || "/") + ": " + error.message);
+  }
+  return value;
+}
 function parseApiResponse(method, path, value) {
   path = path.split("?")[0];
   if (method === "GET" && new RegExp("^/v1/info$").test(path)) return parseServerInfoResponse(value);
@@ -2957,6 +3040,7 @@ export {
   parseAppPolicyV1,
   parseDeploymentSwitchOutcome,
   parseDeploymentSwitchPayload,
+  parseDeploymentSwitchPreconditionFailed,
   parseDeploymentSwitchResponse,
   parseServerInfoGc,
   parseServerInfoGcCountedRetention,
@@ -2966,6 +3050,7 @@ export {
   validateAppPolicyV1,
   validateDeploymentSwitchOutcome,
   validateDeploymentSwitchPayload,
+  validateDeploymentSwitchPreconditionFailed,
   validateDeploymentSwitchResponse,
   validateServerInfoGc,
   validateServerInfoGcCountedRetention,

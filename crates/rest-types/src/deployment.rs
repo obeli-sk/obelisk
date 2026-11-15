@@ -237,5 +237,6 @@ pub enum DeploymentSubmitErrorBody {
 }
 
 pub use crate::lifecycle::{
-    DeploymentSwitchOutcome, DeploymentSwitchPayload, DeploymentSwitchResponse,
+    DeploymentSwitchOutcome, DeploymentSwitchPayload, DeploymentSwitchPreconditionFailed,
+    DeploymentSwitchResponse,
 };
