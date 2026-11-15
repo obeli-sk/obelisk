@@ -237,6 +237,8 @@
                 '';
 
                 doCheck = false;
+                # nixpkgs' cargoSetupHook would force system zstd and SQLite via pkg-config; build the vendored sources instead.
+                dontCargoUseSystemLibs = true;
                 disallowedReferences = [ rustToolchain ];
 
                 # Only used when not cross compiling.
