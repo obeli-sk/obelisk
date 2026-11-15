@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of overriding a later switch, also when an earlier attempt succeeded, so check
   `deployment_id` in `GET /v1/info` on `412`. A request without the header gets `428`.
   `deployment apply` and `deployment enqueue` send it.
+- *(cli)* `cloud app apply`, `enable`, `disable` and `delete` with `--command-id` first ask the
+  cloud for that command's result and report it when the command was already accepted. A retried
+  `apply` no longer rebuilds its request from drafts and app state that the first attempt may have
+  changed.
 
 ### Fixed
 
