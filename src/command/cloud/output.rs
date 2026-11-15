@@ -72,7 +72,6 @@ impl From<&Cloud> for Summary {
                         Self::Lifecycle
                     }
                     CloudApp::Delete { .. } => Self::Message("App deleted."),
-                    CloudApp::Stage { .. } => Self::Staged("Configuration staged.", apply),
                     CloudApp::Unstage { .. } => Self::Unstaged(key.to_owned()),
                     CloudApp::Env {
                         command: CloudEnv::List,
@@ -91,6 +90,7 @@ impl From<&Cloud> for Summary {
                         ..
                     } => Self::Staged("Secret change staged.", apply),
                     CloudApp::Deploy { .. }
+                    | CloudApp::Stage { .. }
                     | CloudApp::Deployment { .. }
                     | CloudApp::Execution { .. }
                     | CloudApp::Component { .. }
@@ -294,6 +294,9 @@ pub(super) fn draft_changes(draft: &Value) -> String {
         if summary[key] == true {
             changes.push(label.to_owned());
         }
+    }
+    if let Some(deployment) = draft["deployment_id"].as_str() {
+        changes.push(format!("deployment {deployment}"));
     }
     for (kind, label) in [("env", "env"), ("secrets", "secret")] {
         for (diff, sign) in [("added", '+'), ("removed", '-'), ("changed", '~')] {

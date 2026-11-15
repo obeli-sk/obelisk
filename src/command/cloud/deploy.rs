@@ -126,6 +126,7 @@ impl CloudArgs {
                 )?,
             )?;
             let original_name = name.clone();
+            eprintln!("App {name} does not exist; creating it");
             let current = loop {
                 step("new");
                 let mut body = json!({"app_toml":with_app_name(&config.text, &name)?});

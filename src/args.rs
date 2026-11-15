@@ -2028,7 +2028,7 @@ pub(crate) enum CloudApp {
         #[arg(short = 'n', long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=50))]
         limit: u8,
     },
-    /// Stage app.toml in a draft without restarting the VM.
+    /// Stage app.toml, values and optionally a deployment in a draft, creating a missing app; never applies.
     Stage {
         #[command(flatten)]
         selected: SelectedApp,
@@ -2037,6 +2037,18 @@ pub(crate) enum CloudApp {
         app_config: Option<PathBuf>,
         #[command(flatten)]
         draft: CloudDraft,
+        /// Submit this deployment manifest and stage it; otherwise the draft's deployment is kept.
+        #[arg(short = 'd', long)]
+        deployment: Option<PathBuf>,
+        /// Submit an empty deployment with no components and stage it.
+        #[arg(long, conflicts_with = "deployment")]
+        empty_deployment: bool,
+        #[command(flatten)]
+        values: CloudValues,
+        /// Human-readable description of the submitted deployment. For already stored content,
+        /// omitting it keeps the current one and an empty string clears it.
+        #[arg(long)]
+        description: Option<String>,
     },
     /// Discard a draft and its staged changes.
     Unstage {
@@ -2062,7 +2074,7 @@ pub(crate) enum CloudApp {
         #[arg(long)]
         description: Option<String>,
     },
-    /// Apply the staged changes of a draft with the currently active deployment.
+    /// Apply the staged changes of a draft with its staged deployment, else the active one.
     Apply {
         #[command(flatten)]
         selected: SelectedApp,

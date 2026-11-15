@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- *(cli)* `cloud app stage` creates a missing app with a bare app.toml and says so, accepts
+  `--env`, `--secret`, `--fill` and `--fill-non-interactive`, and with `-d/--deployment` or
+  `--empty-deployment` submits a deployment and stages its ID in the draft. It never applies, so
+  a human can set the remaining secrets and run `cloud app apply`. `cloud app apply` activates the
+  draft's staged deployment, else the active one. `cloud app deploy` announces when it creates
+  the app.
+
 ## [0.43.0-rc.18](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.17...v0.43.0-rc.18)
 
 This release candidate adds group fsync and synchronous Litestream replication for SQLite, and
