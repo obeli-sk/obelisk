@@ -32,7 +32,7 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Populate the nix store
-        run: nix develop .#wasip3-components --command echo
+        run: nix develop --command echo
 
       - name: Log in to Docker Hub
         run: |
@@ -43,7 +43,7 @@ jobs:
 
       - name: Push test components
         run: |
-          nix develop .#wasip3-components --command ./scripts/push-test-components.sh "$TAG"
+          nix develop --command ./scripts/push-test-components.sh "$TAG"
         env:
           TAG: ${{ github.event.inputs.tag }}
 

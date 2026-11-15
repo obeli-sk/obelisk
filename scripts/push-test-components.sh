@@ -21,7 +21,7 @@ cargo check \
     --package test-programs-sleep-activity-builder \
     --package test-programs-sleep-workflow-builder
 
-# Build native P3 fixtures with the pinned nightly from the wasip3-components shell.
+# Build native P3 fixtures with the pinned toolchain from the default shell.
 cargo build \
     --locked \
     --profile release_testprograms \

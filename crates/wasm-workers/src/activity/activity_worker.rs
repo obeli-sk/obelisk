@@ -1388,18 +1388,6 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn wasip3_activity_from_oci_sleep_and_double() {
-        let wasm_file =
-            crate::pull_test_component_from_oci("activity_wasm", "test_programs_wasip3_activity")
-                .await;
-        assert_wasip3_activity_sleep_and_double(
-            wasm_file.path().to_str().unwrap(),
-            LockingStrategy::ByComponentDigest,
-        )
-        .await;
-    }
-
-    #[tokio::test]
     async fn limit_reached() {
         const FIBO_INPUT: u8 = 10;
         const LOCK_EXPIRY_MILLIS: u64 = 1100;

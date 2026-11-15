@@ -86,7 +86,7 @@
           };
           embeddedJsRuntimes = fetchOciAssets {
             pname = "obelisk-embedded-js-runtimes";
-            outputHash = "sha256-1fyKpsEL1ZwX/5MGqnt2ckQ6YIqO9EAu2vPuP8257WA=";
+            outputHash = "sha256-EvdK+QXlC5ww0eZiTZgSAhbKDzgu39QMspIFBmVVewQ=";
             assets = [
               { name = "activity"; versionFile = "activity-js-runtime-version.txt"; }
               { name = "workflow"; versionFile = "workflow-js-runtime-version.txt"; }
@@ -312,20 +312,6 @@
                 sqlite
                 wasm-tools
                 yq-go # scripts/sync-branch-protection.sh
-              ];
-          };
-          # Builds the native WASIp3 fixtures published by push-test-components.
-          # Keep this separate from the stable toolchain used for Obelisk releases.
-          devShells.wasip3-components = pkgs.mkShell {
-            nativeBuildInputs = with pkgs;
-              [
-                (rust-bin.nightly."2026-09-12".default.override {
-                  targets = [ "wasm32-unknown-unknown" "wasm32-wasip2" "wasm32-wasip3" ];
-                })
-                jq
-                oras
-                pkg-config
-                wasm-tools
               ];
           };
           devShells.cargo-zigbuild = pkgs.mkShell {

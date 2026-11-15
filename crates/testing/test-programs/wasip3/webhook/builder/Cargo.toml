@@ -16,3 +16,5 @@ default = ["obelisk-component-builder/genrs"]
 
 [lib]
 doctest = false
+
+[lints]

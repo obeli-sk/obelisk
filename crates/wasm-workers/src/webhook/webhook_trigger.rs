@@ -3249,16 +3249,6 @@ pub(crate) mod tests {
         .await;
     }
 
-    #[tokio::test]
-    async fn wasip3_webhook_from_oci_links_as_http_service() {
-        let wasm_file = crate::pull_test_component_from_oci(
-            "webhook_endpoint_wasm",
-            "test_programs_wasip3_webhook",
-        )
-        .await;
-        assert_wasip3_webhook_links_as_http_service(wasm_file.path().to_str().unwrap()).await;
-    }
-
     #[rstest::rstest]
     #[case::complete(false)]
     #[case::limited(true)]

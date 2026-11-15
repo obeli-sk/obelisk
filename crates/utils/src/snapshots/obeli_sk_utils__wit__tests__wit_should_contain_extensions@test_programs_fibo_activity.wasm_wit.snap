@@ -5,20 +5,20 @@ expression: wit
 package root:component;
 
 world root {
-    import wasi:io/poll@0.2.9;
-    import wasi:clocks/monotonic-clock@0.2.9;
-    import wasi:io/error@0.2.9;
-    import wasi:io/streams@0.2.9;
-    import wasi:cli/stdout@0.2.9;
-    import wasi:cli/stderr@0.2.9;
-    import wasi:cli/stdin@0.2.9;
-    import wasi:cli/environment@0.2.9;
-    import wasi:cli/exit@0.2.9;
-    import wasi:cli/terminal-input@0.2.9;
-    import wasi:cli/terminal-output@0.2.9;
-    import wasi:cli/terminal-stdin@0.2.9;
-    import wasi:cli/terminal-stdout@0.2.9;
-    import wasi:cli/terminal-stderr@0.2.9;
+    import wasi:io/poll@0.2.12;
+    import wasi:clocks/monotonic-clock@0.2.12;
+    import wasi:io/error@0.2.12;
+    import wasi:io/streams@0.2.12;
+    import wasi:cli/stdout@0.2.12;
+    import wasi:cli/stderr@0.2.12;
+    import wasi:cli/stdin@0.2.12;
+    import wasi:cli/environment@0.2.12;
+    import wasi:cli/exit@0.2.12;
+    import wasi:cli/terminal-input@0.2.12;
+    import wasi:cli/terminal-output@0.2.12;
+    import wasi:cli/terminal-stdin@0.2.12;
+    import wasi:cli/terminal-stdout@0.2.12;
+    import wasi:cli/terminal-stderr@0.2.12;
 
     export testing:fibo/fibo;
     export testing:fibo-obelisk-ext/fibo;
@@ -211,7 +211,7 @@ package obelisk:types@6.1.0 {
 }
 
 
-package wasi:io@0.2.9 {
+package wasi:io@0.2.12 {
     interface poll {
         resource pollable {
             block: func();
@@ -243,9 +243,9 @@ package wasi:io@0.2.9 {
 }
 
 
-package wasi:clocks@0.2.9 {
+package wasi:clocks@0.2.12 {
     interface monotonic-clock {
-        use wasi:io/poll@0.2.9.{pollable};
+        use wasi:io/poll@0.2.12.{pollable};
 
         type duration = u64;
 
@@ -254,19 +254,19 @@ package wasi:clocks@0.2.9 {
 }
 
 
-package wasi:cli@0.2.9 {
+package wasi:cli@0.2.12 {
     interface stdout {
-        use wasi:io/streams@0.2.9.{output-stream};
+        use wasi:io/streams@0.2.12.{output-stream};
 
         get-stdout: func() -> output-stream;
     }
     interface stderr {
-        use wasi:io/streams@0.2.9.{output-stream};
+        use wasi:io/streams@0.2.12.{output-stream};
 
         get-stderr: func() -> output-stream;
     }
     interface stdin {
-        use wasi:io/streams@0.2.9.{input-stream};
+        use wasi:io/streams@0.2.12.{input-stream};
 
         get-stdin: func() -> input-stream;
     }
@@ -275,6 +275,8 @@ package wasi:cli@0.2.9 {
     }
     interface exit {
         exit: func(status: result);
+
+        exit-with-code: func(status-code: u8);
     }
     interface terminal-input {
         resource terminal-input;

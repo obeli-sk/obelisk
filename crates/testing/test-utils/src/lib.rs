@@ -115,7 +115,6 @@ pub fn env_or_default<T: FromStr>(env_var: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
-#[must_use]
 pub fn get_seed() -> Box<dyn Iterator<Item = u64>> {
     match std::env::var("TEST_SEED") {
         Ok(seed) => Box::new(std::iter::once(seed.parse().unwrap())),
