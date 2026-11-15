@@ -314,19 +314,6 @@
                 yq-go # scripts/sync-branch-protection.sh
               ];
           };
-          # Builds the native WASIp3 fixtures published by push-test-components.
-          devShells.wasip3-components = pkgs.mkShell {
-            nativeBuildInputs = with pkgs;
-              [
-                ((rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
-                  targets = [ "wasm32-unknown-unknown" "wasm32-wasip2" "wasm32-wasip3" ];
-                })
-                jq
-                oras
-                pkg-config
-                wasm-tools
-              ];
-          };
           devShells.cargo-zigbuild = pkgs.mkShell {
             nativeBuildInputs = with pkgs;
               [
