@@ -4048,7 +4048,8 @@ mod functions {
 pub(crate) mod deployment {
     use crate::{
         command::server::{
-            self, RuntimeConfigAvailability, SwitchDeploymentAction, SwitchPrecondition,
+            self, RuntimeConfigAvailability, SwitchDeploymentAction, SwitchError,
+            SwitchPrecondition,
         },
         config::deployment::strip_generated_deployment_metadata,
         server::{
@@ -4063,8 +4064,9 @@ pub(crate) mod deployment {
     use rest_types::deployment::{
         DeploymentByDigestResponse, DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer,
         DeploymentSubmitErrorBody, DeploymentSubmitPayload, DeploymentSubmitResponse,
-        DeploymentSwitchOutcome, DeploymentSwitchPayload, DeploymentSwitchResponse, DigestMismatch,
-        FileIssue, MissingRuntimeConfigErrorBody, SubmitPackageErrorBody,
+        DeploymentSwitchOutcome, DeploymentSwitchPayload, DeploymentSwitchPreconditionFailed,
+        DeploymentSwitchResponse, DigestMismatch, FileIssue, MissingRuntimeConfigErrorBody,
+        SubmitPackageErrorBody,
     };
 
     /// Map the REST `allow_unavailable_runtime_config` flag to the runtime config policy.
@@ -4782,38 +4784,48 @@ pub(crate) mod deployment {
                 payload.allow_unavailable_runtime_config,
             ))
         };
-        let outcome = crate::command::server::switch_deployment(
+        let outcome = match crate::command::server::switch_deployment(
             state.deployment_switch_manager.clone(),
             deployment_id,
             action,
             precondition,
         )
         .await
-        .map_err(|err| match err {
-            crate::command::server::SwitchError::PreconditionFailed { current } => HttpResponse {
-                status: StatusCode::PRECONDITION_FAILED,
-                message: format!("`If-Match` does not match the current {current}"),
-                accept,
-            },
-            crate::command::server::SwitchError::Busy => HttpResponse {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                message: "another deployment submit or switch is already running".to_string(),
-                accept,
-            },
-            crate::command::server::SwitchError::NotFound => {
-                HttpResponse::not_found(accept, Some("deployment"))
+        {
+            Ok(outcome) => outcome,
+            Err(SwitchError::PreconditionFailed(current)) => {
+                return Ok(pretty_json_response(
+                    StatusCode::PRECONDITION_FAILED,
+                    &DeploymentSwitchPreconditionFailed {
+                        err: format!(
+                            "`If-Match` does not match the current {}",
+                            current.precondition
+                        ),
+                        if_match: current.precondition.to_string(),
+                        deployment_id: current.deployment_id.to_string(),
+                        enqueued_deployment_id: current
+                            .enqueued_deployment_id
+                            .map(|id| id.to_string()),
+                    },
+                ));
             }
-            crate::command::server::SwitchError::MissingRuntimeConfig(e) => HttpResponse {
-                status: StatusCode::BAD_REQUEST,
-                message: e.to_string(),
-                accept,
-            },
-            crate::command::server::SwitchError::Other(e) => HttpResponse {
-                status: StatusCode::BAD_REQUEST,
-                message: format!("{e:#}"),
-                accept,
-            },
-        })?;
+            Err(SwitchError::Busy) => {
+                return Err(HttpResponse {
+                    status: StatusCode::SERVICE_UNAVAILABLE,
+                    message: "another deployment submit or switch is already running".to_string(),
+                    accept,
+                });
+            }
+            Err(SwitchError::NotFound) => {
+                return Err(HttpResponse::not_found(accept, Some("deployment")));
+            }
+            Err(SwitchError::MissingRuntimeConfig(e)) => {
+                return Err(HttpResponse::bad_request(accept, e.to_string()));
+            }
+            Err(SwitchError::Other(e)) => {
+                return Err(HttpResponse::bad_request(accept, format!("{e:#}")));
+            }
+        };
         info!(%deployment_id, "Deployment switch outcome: {outcome}");
         let ok = match outcome {
             crate::command::server::SwitchOutcome::Switched => DeploymentSwitchOutcome::Switched,

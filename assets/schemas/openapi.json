@@ -1085,7 +1085,7 @@
           {
             "name": "If-Match",
             "in": "header",
-            "description": "`\"<node_run_id>:<switch_count>\"` from `GET /v1/info`, read before the first attempt and reused on retries",
+            "description": "`\"<node_run_id>:<switch_count>\"` from `GET /v1/info` or from a 412 response, read before the first attempt and reused on retries",
             "required": true,
             "schema": {
               "type": "string"
@@ -1104,7 +1104,7 @@
         },
         "responses": {
           "200": {
-            "description": "Deployment switched or enqueued",
+            "description": "Deployment switched or enqueued, or the requested deployment is already active or enqueued. The latter succeeds whatever `If-Match` says, so a retry after a lost response gets 200",
             "content": {
               "application/json": {
                 "schema": {
@@ -1165,19 +1165,11 @@
             }
           },
           "412": {
-            "description": "`If-Match` does not match the current server run and switch count. A retry gets this also when an earlier attempt succeeded, so check `deployment_id` in `GET /v1/info` before treating it as a failure",
+            "description": "`If-Match` does not match the current server run and switch count, and the request would change the active or enqueued deployment. The body carries the current state",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "err"
-                  ],
-                  "properties": {
-                    "err": {
-                      "type": "string"
-                    }
-                  }
+                  "$ref": "#/components/schemas/DeploymentSwitchPreconditionFailed"
                 }
               }
             }
@@ -4068,6 +4060,31 @@
             "type": "boolean",
             "description": "Apply deployment without restart",
             "default": false
+          }
+        }
+      },
+      "DeploymentSwitchPreconditionFailed": {
+        "type": "object",
+        "required": [
+          "err",
+          "if_match",
+          "deployment_id"
+        ],
+        "properties": {
+          "deployment_id": {
+            "type": "string",
+            "description": "Deployment the server is running"
+          },
+          "enqueued_deployment_id": {
+            "type": "string",
+            "description": "Deployment that becomes active on the next restart, if any"
+          },
+          "err": {
+            "type": "string"
+          },
+          "if_match": {
+            "type": "string",
+            "description": "Current `\"<node_run_id>:<switch_count>\"` to send in `If-Match` when retrying"
           }
         }
       },

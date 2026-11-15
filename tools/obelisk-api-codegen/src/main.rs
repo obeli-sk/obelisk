@@ -8,6 +8,7 @@ const ENDPOINT_SCHEMAS: &[&str] = &[
     "/paths/~1v1~1app-policy/get/responses/200/content/application~1json/schema",
     "/paths/~1v1~1deployments~1{deployment_id}~1switch/put/requestBody/content/application~1json/schema",
     "/paths/~1v1~1deployments~1{deployment_id}~1switch/put/responses/200/content/application~1json/schema",
+    "/paths/~1v1~1deployments~1{deployment_id}~1switch/put/responses/412/content/application~1json/schema",
 ];
 
 fn references(value: &mut Value, pending: &mut Vec<String>) -> Result<()> {

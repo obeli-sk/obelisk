@@ -2337,14 +2337,42 @@ async fn app_policy_webapi_reports_running_policy() {
     }
     let parsed_info: rest_types::lifecycle::ServerInfoResponse =
         serde_json::from_value(info.clone()).unwrap();
+    let stale_if_match = format!("\"{}:{}\"", parsed_info.node_run_id, u64::MAX);
+    // Requesting what is already in effect succeeds whatever `If-Match` says, without
+    // bumping the switch count.
+    for payload in [json!({"apply": true}), json!({})] {
+        let response = server
+            .client
+            .put(&switch_url)
+            .header("Accept", "application/json")
+            .header("If-Match", &stale_if_match)
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        let body = lifecycle_response(response, switch_path, "put", reqwest::StatusCode::OK).await;
+        assert_eq!(body["ok"], "switched");
+    }
+    assert_eq!(server.switch_if_match().await, if_match);
+    // A request that changes state is refused, reporting the current state.
+    let other_deployment = server
+        .submit_modified_deployment(|doc| {
+            append_inline_stub(
+                doc,
+                "switch-precondition",
+                "testing:integration/stubs.switch-precondition",
+            );
+        })
+        .await;
+    let other_switch_url = format!(
+        "{}/v1/deployments/{other_deployment}/switch",
+        server.base_url
+    );
     let response = server
         .client
-        .put(&switch_url)
+        .put(&other_switch_url)
         .header("Accept", "application/json")
-        .header(
-            "If-Match",
-            format!("\"{}:{}\"", parsed_info.node_run_id, u64::MAX),
-        )
+        .header("If-Match", &stale_if_match)
         .json(&json!({"apply": true}))
         .send()
         .await
@@ -2356,27 +2384,50 @@ async fn app_policy_webapi_reports_running_policy() {
         reqwest::StatusCode::PRECONDITION_FAILED,
     )
     .await;
-    assert!(
-        body["err"].as_str().unwrap().contains(&if_match),
-        "412 must report the current value, got: {body}"
-    );
-    // A no-op activation keeps the switch count, enqueueing bumps it so a retry is refused.
-    for (payload, expected) in [
-        (json!({"apply": true}), reqwest::StatusCode::OK),
-        (json!({}), reqwest::StatusCode::OK),
-        (json!({}), reqwest::StatusCode::PRECONDITION_FAILED),
-    ] {
+    let refused: rest_types::lifecycle::DeploymentSwitchPreconditionFailed =
+        serde_json::from_value(body).unwrap();
+    assert_eq!(refused.if_match, if_match);
+    assert_eq!(refused.deployment_id, parsed_info.deployment_id);
+    assert_eq!(refused.enqueued_deployment_id, None);
+    // Enqueueing bumps the switch count; a retry with the old value sees the enqueued
+    // deployment as already in effect.
+    for _ in 0..2 {
         let response = server
             .client
-            .put(&switch_url)
+            .put(&other_switch_url)
             .header("Accept", "application/json")
             .header("If-Match", &if_match)
-            .json(&payload)
+            .json(&json!({}))
             .send()
             .await
             .unwrap();
-        lifecycle_response(response, switch_path, "put", expected).await;
+        let body = lifecycle_response(response, switch_path, "put", reqwest::StatusCode::OK).await;
+        assert_eq!(body["ok"], "restart_required");
     }
+    // Re-enqueueing the active deployment changes state, so the stale value is refused.
+    let response = server
+        .client
+        .put(&switch_url)
+        .header("Accept", "application/json")
+        .header("If-Match", &if_match)
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    let body = lifecycle_response(
+        response,
+        switch_path,
+        "put",
+        reqwest::StatusCode::PRECONDITION_FAILED,
+    )
+    .await;
+    let refused: rest_types::lifecycle::DeploymentSwitchPreconditionFailed =
+        serde_json::from_value(body).unwrap();
+    assert_ne!(refused.if_match, if_match);
+    assert_eq!(
+        refused.enqueued_deployment_id,
+        Some(other_deployment.to_string())
+    );
     let response = server
         .client
         .get(format!("{}/v1/app-policy", server.base_url))

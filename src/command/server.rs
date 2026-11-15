@@ -321,16 +321,39 @@ impl DeploymentSwitchManagerHandle {
     }
 
     /// A switch that changes state checks this while holding the switch permit, so the count cannot change in between.
-    fn check_switch_precondition(&self, expected: SwitchPrecondition) -> Result<(), SwitchError> {
-        let current = SwitchPrecondition {
+    async fn check_switch_precondition(
+        &self,
+        expected: SwitchPrecondition,
+    ) -> Result<(), SwitchError> {
+        let precondition = SwitchPrecondition {
             node_run_id: concepts::storage::initialize_node_run_id(),
             switch_count: self.switch_count(),
         };
-        if expected == current {
-            Ok(())
-        } else {
-            Err(SwitchError::PreconditionFailed { current })
+        if expected == precondition {
+            return Ok(());
         }
+        let enqueued_deployment_id = self
+            .current_deployment()
+            .await?
+            .filter(|record| record.status == DeploymentStatus::Enqueued)
+            .map(|record| record.deployment_id);
+        Err(SwitchError::PreconditionFailed(Box::new(SwitchState {
+            precondition,
+            deployment_id: self.inner.deployment_ctx.read().await.deployment_id,
+            enqueued_deployment_id,
+        })))
+    }
+
+    /// The Enqueued deployment if present, otherwise the Active one.
+    async fn current_deployment(&self) -> Result<Option<DeploymentRecord>, SwitchError> {
+        self.inner
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| SwitchError::Other(e.into()))?
+            .get_current_deployment()
+            .await
+            .map_err(|e| SwitchError::Other(e.into()))
     }
 
     fn try_acquire_switch_permit(&self) -> Result<SwitchPermit, SwitchError> {
@@ -3901,7 +3924,7 @@ pub(crate) enum SwitchError {
     /// Public environment variables or secrets required by the deployment are undeclared.
     MissingRuntimeConfig(Box<MissingRuntimeConfigError>),
     /// The `If-Match` precondition does not match the current server run and switch count.
-    PreconditionFailed { current: SwitchPrecondition },
+    PreconditionFailed(Box<SwitchState>),
     /// Any other failure (verification, compilation, DB write, etc.).
     Other(anyhow::Error),
 }
@@ -3910,6 +3933,16 @@ impl From<anyhow::Error> for SwitchError {
     fn from(err: anyhow::Error) -> Self {
         Self::Other(err)
     }
+}
+
+/// State a client needs to retry a refused switch or to see that it is no longer needed.
+#[derive(Debug)]
+pub(crate) struct SwitchState {
+    pub(crate) precondition: SwitchPrecondition,
+    /// Deployment the server is running.
+    pub(crate) deployment_id: DeploymentId,
+    /// Deployment that becomes active on the next restart.
+    pub(crate) enqueued_deployment_id: Option<DeploymentId>,
 }
 
 /// Server run and switch count a switch request expects, carried in `If-Match` as `"<node_run_id>:<switch_count>"`.
@@ -4023,9 +4056,12 @@ pub(crate) async fn switch_deployment(
                         "another deployment submit or switch is running".to_string(),
                     ),
                     SwitchError::NotFound => ("not_found", "deployment not found".to_string()),
-                    SwitchError::PreconditionFailed { current } => (
+                    SwitchError::PreconditionFailed(current) => (
                         "precondition_failed",
-                        format!("precondition does not match the current {current}"),
+                        format!(
+                            "precondition does not match the current {}",
+                            current.precondition
+                        ),
                     ),
                     SwitchError::MissingRuntimeConfig(_) => unreachable!(),
                     SwitchError::Other(source) => ("validation", format!("{source:#}")),
@@ -4075,8 +4111,21 @@ async fn switch_deployment_inner(
 
     match action {
         SwitchDeploymentAction::Enqueue(_) => {
+            // A request for the state already in effect succeeds whatever `If-Match` says
+            // (RFC 9110 section 13.1.1), so a retry after a lost response sees the outcome.
+            if let Some(current) = deployment_switch_manager.current_deployment().await?
+                && current.deployment_id == deployment_id
+            {
+                info!(%deployment_id, "Deployment enqueue no-op: already {}", current.status.as_str());
+                return Ok(match current.status {
+                    DeploymentStatus::Enqueued => SwitchOutcome::RestartRequired,
+                    _ => SwitchOutcome::Switched,
+                });
+            }
             let switch_permit = deployment_switch_manager.try_acquire_switch_permit()?;
-            deployment_switch_manager.check_switch_precondition(precondition)?;
+            deployment_switch_manager
+                .check_switch_precondition(precondition)
+                .await?;
             if !deployment_already_active {
                 // Validate (compile + link) so the queued deployment is known-good against
                 // the current host before enqueuing. An already-active deployment is already
@@ -4111,13 +4160,15 @@ async fn switch_deployment_inner(
             })
         }
         SwitchDeploymentAction::Activate => {
+            // Like enqueue, an already active deployment succeeds whatever `If-Match` says.
             if deployment_already_active {
-                deployment_switch_manager.check_switch_precondition(precondition)?;
                 info!(%deployment_id, "Deployment switch no-op: deployment already active");
                 return Ok(SwitchOutcome::Switched);
             }
             let switch_permit = deployment_switch_manager.try_acquire_switch_permit()?;
-            deployment_switch_manager.check_switch_precondition(precondition)?;
+            deployment_switch_manager
+                .check_switch_precondition(precondition)
+                .await?;
             let mut termination_watcher =
                 deployment_switch_manager.inner.termination_watcher.clone();
             // Cancellable: validation only. The durable commit and critical swap are owned by
