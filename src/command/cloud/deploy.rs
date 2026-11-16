@@ -67,7 +67,7 @@ impl CloudArgs {
             let id = ExecutionIdTopLevel::generate().to_string();
             let ulid = id.split_once('_').map_or(id.as_str(), |(_, ulid)| ulid);
             let key = format!("deploy-{}", ulid.to_ascii_lowercase());
-            step("stage");
+            step(&format!("stage --draft {key}"));
             client
                 .draft(&name, &key, Method::POST, &[], None, false)
                 .await?;
@@ -213,7 +213,11 @@ impl CloudArgs {
             self.json,
         )?;
         let mut outcomes = Vec::new();
-        step("apply");
+        step(&if staged.is_some() {
+            format!("apply --draft {key}")
+        } else {
+            "apply --reapply".to_string()
+        });
         let current = client
             .app(
                 &name,
