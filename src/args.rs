@@ -367,7 +367,7 @@ pub(crate) enum Deployment {
         )]
         file: Option<PathBuf>,
         /// Submit an empty deployment with no components.
-        #[arg(long)]
+        #[arg(long = "empty-deployment", alias = "empty")]
         empty: bool,
         /// Store a verified deployment while app or platform approval is pending.
         /// Allows unavailable values and approvals; activation still checks strictly.
@@ -400,7 +400,7 @@ pub(crate) enum Deployment {
         )]
         source: Option<DeploymentSource>,
         /// Enqueue an empty deployment with no components.
-        #[arg(long)]
+        #[arg(long = "empty-deployment", alias = "empty")]
         empty: bool,
         /// Submit and enqueue while app or platform approval is pending.
         /// Activation still checks strictly.
@@ -433,7 +433,7 @@ pub(crate) enum Deployment {
         )]
         source: Option<DeploymentSource>,
         /// Apply an empty deployment with no components.
-        #[arg(long)]
+        #[arg(long = "empty-deployment", alias = "empty")]
         empty: bool,
         /// Human-readable description. For already stored content, omitting it keeps the current
         /// one and an empty string clears it.
@@ -710,9 +710,9 @@ pub(crate) enum Server {
         deployment_id: Option<DeploymentId>,
         /// Start with an empty deployment, ignoring any Enqueued or Active deployment in the database.
         /// Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via the API.
-        #[arg(long)]
+        #[arg(long = "empty-deployment", alias = "empty")]
         empty: bool,
-        /// Human-readable description for the --deployment or --empty deployment. For already
+        /// Human-readable description for the --deployment or --empty-deployment deployment. For already
         /// stored content, omitting it keeps the current one and an empty string clears it.
         #[arg(long)]
         description: Option<String>,
@@ -1377,7 +1377,12 @@ mod tests {
             vec!["obelisk", "cloud", "app", "deployment"],
         ] {
             for action in ["submit", "enqueue", "apply"] {
-                for suffix in [vec![], vec!["--empty"], vec!["other.toml"]] {
+                for suffix in [
+                    vec![],
+                    vec!["--empty-deployment"],
+                    vec!["--empty"],
+                    vec!["other.toml"],
+                ] {
                     let command = parse(&prefix, action, &suffix);
                     let (path, empty) = match command {
                         Deployment::Submit { file, empty, .. } => (file, empty),
@@ -1391,7 +1396,7 @@ mod tests {
                         ),
                         _ => panic!("expected submission"),
                     };
-                    assert_eq!(empty, suffix == ["--empty"]);
+                    assert_eq!(empty, suffix.first().is_some_and(|s| s.starts_with("--")));
                     assert_eq!(
                         path,
                         if empty {
@@ -1407,7 +1412,7 @@ mod tests {
                     Args::try_parse_from(prefix.iter().copied().chain([
                         action,
                         "other.toml",
-                        "--empty"
+                        "--empty-deployment"
                     ]))
                     .is_err()
                 );
@@ -2065,8 +2070,16 @@ pub(crate) enum CloudApp {
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
         /// Deployment manifest path.
-        #[arg(short = 'd', long, default_value = "deployment.toml")]
+        #[arg(
+            short = 'd',
+            long,
+            default_value = "deployment.toml",
+            conflicts_with = "empty_deployment"
+        )]
         deployment: PathBuf,
+        /// Deploy an empty deployment with no components.
+        #[arg(long)]
+        empty_deployment: bool,
         #[command(flatten)]
         values: CloudValues,
         /// Human-readable description. For already stored content, omitting it keeps the current
@@ -2151,6 +2164,7 @@ impl CloudApp {
     pub(crate) fn selected_app(&self) -> Option<&str> {
         cloud_app_selected!(self).and_then(|selected| selected.app.as_deref())
     }
+    #[cfg(test)]
     pub(crate) fn selected_mut(&mut self) -> Option<&mut SelectedApp> {
         cloud_app_selected!(self)
     }

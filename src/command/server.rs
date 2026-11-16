@@ -786,7 +786,7 @@ pub(crate) async fn run(
         None
     };
     if description.is_some() && deployment.is_none() {
-        anyhow::bail!("--description requires --deployment or --empty");
+        anyhow::bail!("--description requires --deployment or --empty-deployment");
     }
 
     let (termination_sender, termination_watcher) = watch::channel(());
@@ -1827,7 +1827,7 @@ async fn get_deployment_resolved_from_db(
     Ok((deployment, record.deployment_id))
 }
 
-/// A deployment authored locally and passed via `server run -d <toml>` / `--empty`.
+/// A deployment authored locally and passed via `server run -d <toml>` / `--empty-deployment`.
 pub(crate) struct LocalDeployment {
     processed_deployment_toml: String,
     files: Vec<DeploymentManifestFile>,

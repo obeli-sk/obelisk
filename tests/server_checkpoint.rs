@@ -184,7 +184,7 @@ fn assert_success(output: &Output) {
 fn checkpoint_moves_only_on_activation() {
     let fixture = Fixture::new();
     let server_toml = fixture.path("server.toml");
-    let server = fixture.server(&server_toml, &["--empty"]);
+    let server = fixture.server(&server_toml, &["--empty-deployment"]);
     let initial = fixture.checkpoint().unwrap();
     assert_eq!(initial["app_env_prefix"], "V1_");
     assert!(
@@ -252,7 +252,7 @@ fn checkpoint_moves_only_on_activation() {
 fn server_starts_on_full_database() {
     let fixture = Fixture::new();
     let server_toml = fixture.path("server.toml");
-    fixture.server(&server_toml, &["--empty"]).stop();
+    fixture.server(&server_toml, &["--empty-deployment"]).stop();
 
     // A limit below the current page count is clamped to it, so no new page can be allocated.
     let policy = (0..200).fold(
@@ -264,7 +264,7 @@ fn server_starts_on_full_database() {
     let config = std::fs::read_to_string(&server_toml).unwrap()
         + "database.sqlite.pragma = { max_page_count = '1' }\n";
     std::fs::write(&server_toml, config).unwrap();
-    let server = fixture.server(&server_toml, &["--empty"]);
+    let server = fixture.server(&server_toml, &["--empty-deployment"]);
 
     let file = "full.toml";
     std::fs::write(
@@ -333,7 +333,8 @@ async fn dev_controls_token_disclosure_and_internal_without_disabling_api_auth()
         );
         std::fs::write(config_path, config).unwrap();
         let stderr_path = fixture.path("stderr.log");
-        let mut command = fixture.command(&["server", "run", "--empty", "-s", "server.toml"]);
+        let mut command =
+            fixture.command(&["server", "run", "--empty-deployment", "-s", "server.toml"]);
         if dev {
             command.arg("--dev");
         }

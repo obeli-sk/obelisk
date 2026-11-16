@@ -1,5 +1,7 @@
 use super::*;
-use crate::config::deployment::prepare_deployment_manifest_from_disk;
+use crate::config::deployment::{
+    PreparedDeploymentManifest, prepare_deployment_manifest_from_disk,
+};
 
 impl CloudArgs {
     pub(super) async fn deploy(self) -> anyhow::Result<()> {
@@ -21,6 +23,7 @@ impl CloudArgs {
                 CloudApp::Deploy {
                     selected: SelectedApp { app },
                     deployment,
+                    empty_deployment,
                     values,
                     description,
                     ..
@@ -43,7 +46,11 @@ impl CloudArgs {
             .expect("deploy requires an app config");
         let save_name = app.is_none();
         let explicit = explicit_values(&values)?;
-        let prepared = prepare_deployment_manifest_from_disk(&deployment).await?;
+        let prepared = if empty_deployment {
+            PreparedDeploymentManifest::empty()
+        } else {
+            prepare_deployment_manifest_from_disk(&deployment).await?
+        };
         eprintln!("Deploying {name}");
         let step =
             |command: &str| crate::client::step(format_args!("→ obelisk cloud app {command}"));
@@ -444,6 +451,7 @@ mod tests {
             "new-integration",
             "integration",
             "code-only",
+            "empty",
             "config",
             "stopped",
             "stopped-config",
@@ -469,7 +477,8 @@ mod tests {
             std::fs::write(&app_path, config).unwrap();
             std::fs::write(
                 &deployment_path,
-                if scenario == "invalid" {
+                // `--empty-deployment` never reads the manifest.
+                if matches!(scenario, "invalid" | "empty") {
                     "invalid TOML"
                 } else {
                     ""
@@ -517,17 +526,13 @@ mod tests {
                 .fallback(any(handle))
                 .with_state(state.clone());
             let task = tokio::spawn(async move { axum::serve(listener, service).await.unwrap() });
-            let mut args = super::super::tests::args(
-                &origin,
-                &[
-                    "app",
-                    "deploy",
-                    "-a",
-                    app_path.to_str().unwrap(),
-                    "-d",
-                    deployment_path.to_str().unwrap(),
-                ],
-            );
+            let mut command = vec!["app", "deploy", "-a", app_path.to_str().unwrap()];
+            if scenario == "empty" {
+                command.push("--empty-deployment");
+            } else {
+                command.extend(["-d", deployment_path.to_str().unwrap()]);
+            }
+            let mut args = super::super::tests::args(&origin, &command);
             if scenario == "rename" {
                 let Cloud::App(target) = &mut args.command else {
                     unreachable!()

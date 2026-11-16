@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a human can set the remaining secrets and run `cloud app apply`. `cloud app apply` activates the
   draft's staged deployment, else the active one. `cloud app deploy` announces when it creates
   the app.
+- *(cli)* `--empty` is renamed to `--empty-deployment` in `server run` and `deployment
+  submit|enqueue|apply`; `--empty` remains an alias. `cloud app deploy --empty-deployment` deploys
+  an empty deployment without reading deployment.toml.
 
 ## [0.43.0-rc.18](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.17...v0.43.0-rc.18)
 

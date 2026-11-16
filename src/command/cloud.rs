@@ -2047,11 +2047,14 @@ mod tests {
     async fn cloud_deployment_activation_requires_provisioner_apply() {
         let (origin, state, task) = server().await;
         for command in ["enqueue", "apply"] {
-            let error = args(&origin, &["app", "deployment", command, "--empty"])
-                .run()
-                .await
-                .unwrap_err()
-                .to_string();
+            let error = args(
+                &origin,
+                &["app", "deployment", command, "--empty-deployment"],
+            )
+            .run()
+            .await
+            .unwrap_err()
+            .to_string();
             assert!(error.contains("use `obelisk cloud app deploy`"), "{error}");
             assert!(error.contains("`obelisk cloud app apply`"), "{error}");
         }
