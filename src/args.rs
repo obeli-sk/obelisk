@@ -706,7 +706,9 @@ pub(crate) enum Server {
         #[arg(short, long, conflicts_with = "empty")]
         deployment: Option<PathBuf>,
         /// Select an existing deployment from the database and verify it before activation.
-        #[arg(long, conflicts_with_all = ["deployment", "empty", "description"])]
+        /// With --empty-deployment, the empty deployment is stored under this ID unless it exists
+        /// already; an existing deployment with this ID must be empty.
+        #[arg(long, conflicts_with_all = ["deployment", "description"])]
         deployment_id: Option<DeploymentId>,
         /// Start with an empty deployment, ignoring any Enqueued or Active deployment in the database.
         /// Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via the API.

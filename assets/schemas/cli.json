@@ -1555,7 +1555,7 @@
             },
             {
               "name": "--deployment-id",
-              "help": "Select an existing deployment from the database and verify it before activation"
+              "help": "Select an existing deployment from the database and verify it before activation. With --empty-deployment, the empty deployment is stored under this ID unless it exists already; an existing deployment with this ID must be empty"
             },
             {
               "name": "--empty-deployment",

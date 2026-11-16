@@ -247,6 +247,47 @@ fn checkpoint_moves_only_on_activation() {
     server.stop();
 }
 
+// Supervisors name the empty deployment up front, so its ID is known before the first start.
+#[test]
+fn empty_deployment_under_selected_id() {
+    const EMPTY: &str = "Dep_00000000000000000000000001";
+    const OTHER: &str = "Dep_00000000000000000000000004";
+    let fixture = Fixture::new();
+    let server_toml = fixture.path("server.toml");
+    let args = ["--empty-deployment", "--deployment-id", EMPTY];
+    let server = fixture.server(&server_toml, &args);
+    assert_eq!(fixture.checkpoint().unwrap()["deployment_id"], EMPTY);
+    assert_eq!(fixture.status(EMPTY), "active");
+    fixture.submit(HOT);
+    server.stop();
+
+    // Reused when stored and empty.
+    fixture.server(&server_toml, &args).stop();
+    assert_eq!(fixture.status(EMPTY), "active");
+
+    let refused = |deployment_id: &str, expected: &str| {
+        let output = fixture.run(&[
+            "server",
+            "run",
+            "-s",
+            "server.toml",
+            "-a",
+            "app.toml",
+            "--empty-deployment",
+            "--deployment-id",
+            deployment_id,
+        ]);
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{stderr}");
+    };
+    refused(HOT, &format!("deployment {HOT} is not empty"));
+    refused(
+        OTHER,
+        &format!("the empty deployment is already stored as {EMPTY}, not {OTHER}"),
+    );
+}
+
 // Freeing space takes a running server, so a full database must not stop it from starting.
 #[test]
 fn server_starts_on_full_database() {
