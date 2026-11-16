@@ -149,11 +149,16 @@ async fn cloud_new_and_stage_load_local_policy() {
                 } else {
                     serde_json::from_slice::<Value>(&body).unwrap()
                 };
-                received
-                    .lock()
-                    .unwrap()
-                    .push((method.to_string(), uri.to_string(), body));
-                Json(json!({"ok":true}))
+                let if_match = headers
+                    .get("if-match")
+                    .map(|value| value.to_str().unwrap().to_owned());
+                received.lock().unwrap().push((
+                    method.to_string(),
+                    uri.to_string(),
+                    body,
+                    if_match,
+                ));
+                Json(json!({"ok":true,"draft_id":7}))
             }
         },
     ));
@@ -202,7 +207,7 @@ async fn cloud_new_and_stage_load_local_policy() {
     .await
     .unwrap();
     let requests = requests.lock().unwrap();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 4);
     assert_eq!(requests[0].0, "POST");
     assert_eq!(requests[0].1, "/v1/apps");
     assert_eq!(
@@ -212,11 +217,12 @@ async fn cloud_new_and_stage_load_local_policy() {
     // Stage looks the app up first; the mock answers, so it is not created again.
     assert_eq!(requests[1].0, "GET");
     assert_eq!(requests[1].1, "/v1/apps/local-app");
-    assert_eq!(requests[2].0, "PUT");
-    assert_eq!(
-        requests[2].1,
-        "/v1/apps/local-app/drafts/default/config?create_or_reuse=true"
-    );
-    assert_eq!(requests[2].2, app_toml);
+    // The mock answers the draft lookup, so stage edits that draft without opening one.
+    assert_eq!(requests[2].0, "GET");
+    assert_eq!(requests[2].1, "/v1/apps/local-app/drafts/default");
+    assert_eq!(requests[3].0, "PUT");
+    assert_eq!(requests[3].1, "/v1/apps/local-app/drafts/default/config");
+    assert_eq!(requests[3].2, app_toml);
+    assert_eq!(requests[3].3.as_deref(), Some("\"draft-7\""));
     task.abort();
 }
