@@ -6731,12 +6731,12 @@ impl DbAdmin for PostgresConnection {
                 } else {
                     "(updated_at, deployment_id) < (
                                SELECT updated_at, deployment_id FROM t_deployment
-                               WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id)
+                               WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1)
                                ORDER BY updated_at DESC, deployment_id DESC LIMIT 1 OFFSET GREATEST($1::bigint - 1, 0))".to_string()
                 };
                 tx.query(
                 &format!("SELECT deployment_id, updated_at FROM t_deployment
-                         WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id)
+                         WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1)
                            AND ({before_retained})
                            AND ({after})
                          ORDER BY updated_at, deployment_id LIMIT $2"),
@@ -6744,7 +6744,7 @@ impl DbAdmin for PostgresConnection {
             ).await?
             },
             RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
-                &format!("SELECT deployment_id, updated_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) AND updated_at < $1 AND ({after}) ORDER BY updated_at ASC, deployment_id ASC LIMIT $2"),
+                &format!("SELECT deployment_id, updated_at FROM t_deployment WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1) AND updated_at < $1 AND ({after}) ORDER BY updated_at ASC, deployment_id ASC LIMIT $2"),
                 &[&cutoff, &(i64::from(batch_size) + 1), &cursor.map(|c| c.timestamp), &cursor.map(|c| c.deployment_id.to_string())],
             ).await?,
         };

@@ -6779,12 +6779,12 @@ impl DbAdmin for SqlitePool {
                         } else {
                             "(updated_at, deployment_id) < (
                                SELECT updated_at, deployment_id FROM t_deployment
-                               WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id)
+                               WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1)
                                ORDER BY updated_at DESC, deployment_id DESC LIMIT 1 OFFSET MAX(?1 - 1, 0))".to_string()
                         };
                         tx.prepare(
                         &format!("SELECT deployment_id, updated_at FROM t_deployment
-                         WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id)
+                         WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1)
                            AND ({before_retained})
                            AND ({after})
                          ORDER BY updated_at, deployment_id LIMIT ?2"),
@@ -6795,7 +6795,7 @@ impl DbAdmin for SqlitePool {
                     .collect::<Result<Vec<_>, _>>()?
                     },
                     RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
-                        &format!("SELECT deployment_id, updated_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) AND updated_at < ?1 AND ({after}) ORDER BY updated_at ASC, deployment_id ASC LIMIT ?2"),
+                        &format!("SELECT deployment_id, updated_at FROM t_deployment WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1) AND updated_at < ?1 AND ({after}) ORDER BY updated_at ASC, deployment_id ASC LIMIT ?2"),
                     )?.query_map(rusqlite::params![cutoff, i64::from(batch_size) + 1, cursor.map(|c| c.timestamp), cursor.map(|c| c.deployment_id.to_string())], |row| Ok(DeploymentRetentionCursor { deployment_id: row.get(0)?, timestamp: row.get(1)? }))?
                     .collect::<Result<Vec<_>, _>>()?,
                 };

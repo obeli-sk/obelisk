@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an empty deployment without reading deployment.toml.
 - *(cli)* `server run --empty-deployment --deployment-id <id>` stores the empty deployment under
   that ID, or reuses it when stored and empty, so a supervisor knows the ID before the first start.
+- *(deployment)* Deployment retention keeps the most recently deactivated deployment instead of the
+  checkpointed one.
 
 ## [0.43.0-rc.18](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.17...v0.43.0-rc.18)
 
