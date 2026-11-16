@@ -181,10 +181,7 @@ impl AppConfigToml {
     pub(crate) fn validate_cloud_integrations(&self) -> anyhow::Result<()> {
         let mut supplied = std::collections::BTreeSet::new();
         for (name, integration) in &self.cloud.integrations {
-            ensure!(
-                !name.is_empty(),
-                "Cloud integration name must not be empty"
-            );
+            ensure!(!name.is_empty(), "Cloud integration name must not be empty");
             ensure!(
                 matches!(
                     self.public_env.get(&integration.env),

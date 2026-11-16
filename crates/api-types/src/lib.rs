@@ -49,10 +49,7 @@ impl AppConfigToml {
     pub fn validate_cloud_integrations(&self) -> Result<(), AppConfigError> {
         let mut supplied = BTreeSet::new();
         for (name, integration) in &self.cloud.integrations {
-            ensure!(
-                !name.is_empty(),
-                "Cloud integration name must not be empty"
-            );
+            ensure!(!name.is_empty(), "Cloud integration name must not be empty");
             ensure!(
                 matches!(
                     self.public_env.get(&integration.env),
