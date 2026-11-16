@@ -80,12 +80,12 @@ pub(crate) struct CloudConfigToml {
     pub(crate) integrations: std::collections::BTreeMap<String, CloudIntegrationToml>,
 }
 
+/// Obelisk reads only `env`; the other keys (`type` and its settings) belong to the cloud.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct CloudIntegrationToml {
-    #[serde(rename = "type")]
-    pub(crate) kind: String,
     pub(crate) env: String,
+    #[serde(flatten)]
+    pub(crate) settings: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Default, Clone, JsonSchema, Serialize)]
@@ -181,10 +181,7 @@ impl AppConfigToml {
     pub(crate) fn validate_cloud_integrations(&self) -> anyhow::Result<()> {
         let mut supplied = std::collections::BTreeSet::new();
         for (name, integration) in &self.cloud.integrations {
-            ensure!(
-                !name.is_empty() && !integration.kind.is_empty(),
-                "Cloud integration name and type must not be empty"
-            );
+            ensure!(!name.is_empty(), "Cloud integration name must not be empty");
             ensure!(
                 matches!(
                     self.public_env.get(&integration.env),
@@ -351,8 +348,12 @@ mod tests {
 
     #[test]
     fn cloud_integrations_are_open_typed_bindings_with_local_required_values() {
-        let app: AppConfigToml = toml::from_str("app_name='test-app'\n[cloud.integrations]\nlimited={type='future-llm',env='OBELISK_TEST_INTEGRATION_URL_UNSET'}\n[public_env]\nOBELISK_TEST_INTEGRATION_URL_UNSET={}\n").unwrap();
+        let app: AppConfigToml = toml::from_str("app_name='test-app'\n[cloud.integrations]\nlimited={type='future-llm',env='OBELISK_TEST_INTEGRATION_URL_UNSET',max_sessions=1,allowed_hosts=['https://example.com']}\n[public_env]\nOBELISK_TEST_INTEGRATION_URL_UNSET={}\n").unwrap();
         app.validate_cloud_integrations().unwrap();
+        assert_eq!(
+            serde_json::to_value(&app.cloud.integrations["limited"].settings).unwrap(),
+            serde_json::json!({"type": "future-llm", "max_sessions": 1, "allowed_hosts": ["https://example.com"]})
+        );
         let error = app
             .validate_local_integrations(&super::StartupEnvVars::capture())
             .unwrap_err()

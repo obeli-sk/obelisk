@@ -76,20 +76,17 @@
       "additionalProperties": false
     },
     "CloudIntegrationToml": {
+      "description": "Obelisk reads only `env`; the other keys (`type` and its settings) belong to the cloud.",
       "type": "object",
       "properties": {
-        "type": {
-          "type": "string"
-        },
         "env": {
           "type": "string"
         }
       },
-      "additionalProperties": false,
       "required": [
-        "type",
         "env"
-      ]
+      ],
+      "additionalProperties": true
     },
     "SecretConfigToml": {
       "description": "Source and exposure authorization for a secret in the `[secrets]` table.",
