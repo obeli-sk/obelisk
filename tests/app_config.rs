@@ -144,6 +144,8 @@ async fn cloud_new_and_stage_load_local_policy() {
                     .is_some_and(|value| value == "application/toml")
                 {
                     Value::String(String::from_utf8(body.to_vec()).unwrap())
+                } else if body.is_empty() {
+                    Value::Null
                 } else {
                     serde_json::from_slice::<Value>(&body).unwrap()
                 };
@@ -200,18 +202,21 @@ async fn cloud_new_and_stage_load_local_policy() {
     .await
     .unwrap();
     let requests = requests.lock().unwrap();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 3);
     assert_eq!(requests[0].0, "POST");
     assert_eq!(requests[0].1, "/v1/apps");
     assert_eq!(
         requests[0].2,
         json!({"app_toml":app_toml,"env":{"REGION":"eu"},"secrets":{}})
     );
-    assert_eq!(requests[1].0, "PUT");
+    // Stage looks the app up first; the mock answers, so it is not created again.
+    assert_eq!(requests[1].0, "GET");
+    assert_eq!(requests[1].1, "/v1/apps/local-app");
+    assert_eq!(requests[2].0, "PUT");
     assert_eq!(
-        requests[1].1,
+        requests[2].1,
         "/v1/apps/local-app/drafts/default/config?create_or_reuse=true"
     );
-    assert_eq!(requests[1].2, app_toml);
+    assert_eq!(requests[2].2, app_toml);
     task.abort();
 }
