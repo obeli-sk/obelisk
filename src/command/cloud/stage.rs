@@ -99,14 +99,15 @@ impl CloudArgs {
         } else {
             None
         };
+        let id = client.resolve_draft(&name, &key).await?;
         let staged = client
-            .draft(
+            .fenced(
                 &name,
                 &key,
+                id,
                 Method::PUT,
                 &["config"],
                 Some(Body::Toml(config.text)),
-                true,
             )
             .await?;
         let values = Values::new(
@@ -117,13 +118,13 @@ impl CloudArgs {
         let (mut staged, _) = stage_values(&client, &name, &key, staged, explicit, values).await?;
         if let Some(deployment_id) = deployment_id {
             staged = client
-                .draft(
+                .fenced(
                     &name,
                     &key,
+                    id,
                     Method::PUT,
                     &["deployment"],
                     Some(Body::Json(json!({"deployment_id":deployment_id}))),
-                    true,
                 )
                 .await?;
         }
@@ -149,7 +150,7 @@ impl CloudArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{MockDrafts, request_body, staged_config};
+    use super::super::tests::{MockDrafts, if_match, request_body, staged_config};
     use super::*;
     use axum::{
         Router,
@@ -181,9 +182,9 @@ mod tests {
         state.calls.push(format!("{method} {}", uri.path()));
         let path = uri.path().to_owned();
         let body = request_body(&headers, &body);
-        let reuse = uri.query() == Some("create_or_reuse=true");
+        assert_eq!(uri.query(), None);
         if let Some(rest) = path.strip_prefix("/v1/apps/demo/")
-            && let Some(result) = state.drafts.route(&method, rest, reuse, &body)
+            && let Some(result) = state.drafts.route(&method, rest, if_match(&headers), &body)
         {
             return match result {
                 Ok(view) => axum::Json(view).into_response(),
@@ -214,7 +215,7 @@ mod tests {
                     .and_then(|key| state.drafts.drafts.get(key))
                     .and_then(|draft| draft["deployment_id"].as_str())
                     .map(str::to_owned);
-                state.drafts.apply(&body).unwrap();
+                state.drafts.apply(&body, if_match(&headers)).unwrap();
                 state.applied_deployment = staged;
                 let mut app = state.app.clone().unwrap();
                 app["applied_revision"] = json!(state.drafts.applied_revision);
