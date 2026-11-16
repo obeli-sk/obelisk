@@ -1,4 +1,5 @@
 use super::*;
+use crate::args::DeploymentSource;
 use crate::config::deployment::{
     PreparedDeploymentManifest, prepare_deployment_manifest_from_disk,
 };
@@ -35,8 +36,10 @@ impl CloudArgs {
             unreachable!()
         };
         ensure!(
-            description.is_none() || deployment.is_some() || empty_deployment,
-            "`--description` requires `--deployment` or `--empty-deployment`"
+            description.is_none()
+                || matches!(deployment, Some(DeploymentSource::File(_)))
+                || empty_deployment,
+            "`--description` requires a deployment manifest or `--empty-deployment`"
         );
         let config = match &config_path {
             Some((path, _)) => Some(policy(path).await?),
@@ -47,19 +50,35 @@ impl CloudArgs {
                 .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
         )
         .await?;
-        let (config, _) = config_for_app(&name, config.zip(config_path), true)?
-            .expect("stage requires an app config");
+        let config = config_for_app(&name, config.zip(config_path), false)?;
         let explicit = explicit_values(&values)?;
-        let prepared = match (&deployment, empty_deployment) {
-            (Some(path), _) => Some(prepare_deployment_manifest_from_disk(path).await?),
-            (None, true) => Some(PreparedDeploymentManifest::empty()),
-            (None, false) => None,
+        ensure!(
+            config.is_some()
+                || deployment.is_some()
+                || empty_deployment
+                || values.fill
+                || values.fill_non_interactive
+                || !explicit.is_empty(),
+            "Nothing to stage: ./app.toml not found; pass --app-config, --deployment or values"
+        );
+        let (prepared, existing) = match (deployment, empty_deployment) {
+            (Some(DeploymentSource::Id(id)), _) => (None, Some(id.to_string())),
+            (Some(DeploymentSource::File(path)), _) => (
+                Some(prepare_deployment_manifest_from_disk(&path).await?),
+                None,
+            ),
+            (None, true) => (Some(PreparedDeploymentManifest::empty()), None),
+            (None, false) => (None, None),
         };
         let step =
             |command: &str| crate::client::step(format_args!("→ obelisk cloud app {command}"));
         let current = if let Some(current) = client.lookup_app(&name).await? {
             current
         } else {
+            ensure!(
+                existing.is_none(),
+                "App {name} does not exist, so it has no deployment to stage"
+            );
             // A bare app runs an empty deployment, so its API can receive the submission.
             eprintln!("App {name} does not exist; creating it");
             step("new");
@@ -97,19 +116,22 @@ impl CloudArgs {
             .context("The deployment was not submitted, nothing was staged")?;
             Some(id.to_string())
         } else {
-            None
+            existing
         };
-        let id = client.resolve_draft(&name, &key).await?;
-        let staged = client
-            .fenced(
-                &name,
-                &key,
-                id,
-                Method::PUT,
-                &["config"],
-                Some(Body::Toml(config.text)),
-            )
-            .await?;
+        let mut staged = client.resolve_draft(&name, &key).await?;
+        let id = draft_id(&staged)?;
+        if let Some((config, _)) = config {
+            staged = client
+                .fenced(
+                    &name,
+                    &key,
+                    id,
+                    Method::PUT,
+                    &["config"],
+                    Some(Body::Toml(config.text)),
+                )
+                .await?;
+        }
         let values = Values::new(
             values.fill,
             values.fill_non_interactive,
@@ -244,10 +266,12 @@ mod tests {
         axum::Json(value).into_response()
     }
 
+    const EXISTING: &str = "Dep_01M7K4M11EH34V1WVJYFZ4JSS2";
+
     #[tokio::test]
     async fn stage_creates_a_missing_app_and_stages_its_deployment() {
         test_utils::set_up();
-        for scenario in ["new", "config-only", "empty"] {
+        for scenario in ["new", "config-only", "empty", "id", "manifest-only"] {
             let directory = tempfile::tempdir().unwrap();
             let app_path = directory.path().join("app.toml");
             let deployment_path = directory.path().join("deployment.toml");
@@ -278,10 +302,18 @@ mod tests {
                 .fallback(any(handle))
                 .with_state(state.clone());
             let task = tokio::spawn(async move { axum::serve(listener, service).await.unwrap() });
-            let mut command = vec!["app", "stage", "-a", app_path.to_str().unwrap()];
+            // Without app.toml, stage keeps the draft's config.
+            let without_config = matches!(scenario, "id" | "manifest-only");
+            let mut command = vec!["app", "stage"];
+            if !without_config {
+                command.extend(["-a", app_path.to_str().unwrap()]);
+            }
             match scenario {
-                "new" => command.extend(["-d", deployment_path.to_str().unwrap()]),
+                "new" | "manifest-only" => {
+                    command.extend(["-d", deployment_path.to_str().unwrap()]);
+                }
                 "empty" => command.push("--empty-deployment"),
+                "id" => command.extend(["-d", EXISTING]),
                 _ => {}
             }
             super::super::tests::args(&origin, &command)
@@ -297,13 +329,25 @@ mod tests {
                 assert!(!state.calls.iter().any(|call| call.ends_with("/apply")));
                 assert!(!state.calls.iter().any(|call| call.ends_with("/switch")));
                 let draft = state.drafts.drafts.get("default").unwrap();
-                assert_eq!(draft["app_toml"], config);
+                if without_config {
+                    assert!(!state.calls.iter().any(|call| call.ends_with("/config")));
+                } else {
+                    assert_eq!(draft["app_toml"], config);
+                }
+                let expected = if scenario == "id" {
+                    Some(EXISTING)
+                } else {
+                    state.submitted.as_deref()
+                };
                 assert_eq!(
                     draft.get("deployment_id").and_then(Value::as_str),
-                    state.submitted.as_deref(),
+                    expected,
                     "{scenario}"
                 );
-                assert_eq!(state.submitted.is_some(), scenario != "config-only");
+                assert_eq!(
+                    state.submitted.is_some(),
+                    !matches!(scenario, "config-only" | "id")
+                );
                 // The deployment is submitted before anything is staged.
                 let position =
                     |prefix: &str| state.calls.iter().position(|call| call.starts_with(prefix));

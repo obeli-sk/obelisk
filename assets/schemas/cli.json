@@ -1232,7 +1232,7 @@
                 {
                   "name": "--app-config",
                   "short": "a",
-                  "help": "App config path; defaults to ./app.toml",
+                  "help": "App config path; defaults to ./app.toml if present, otherwise the draft's config is kept",
                   "accepts": {
                     "path": true
                   }
@@ -1244,10 +1244,7 @@
                 {
                   "name": "--deployment",
                   "short": "d",
-                  "help": "Submit this deployment manifest and stage it; otherwise the draft's deployment is kept",
-                  "accepts": {
-                    "path": true
-                  }
+                  "help": "Stage an existing deployment ID, or submit a deployment manifest and stage it; otherwise the draft's deployment is kept"
                 },
                 {
                   "name": "--empty-deployment",
