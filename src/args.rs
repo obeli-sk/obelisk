@@ -367,7 +367,7 @@ pub(crate) enum Deployment {
         )]
         file: Option<PathBuf>,
         /// Submit an empty deployment with no components.
-        #[arg(long)]
+        #[arg(long = "empty-deployment", alias = "empty")]
         empty: bool,
         /// Store a verified deployment while app or platform approval is pending.
         /// Allows unavailable values and approvals; activation still checks strictly.
@@ -400,7 +400,7 @@ pub(crate) enum Deployment {
         )]
         source: Option<DeploymentSource>,
         /// Enqueue an empty deployment with no components.
-        #[arg(long)]
+        #[arg(long = "empty-deployment", alias = "empty")]
         empty: bool,
         /// Submit and enqueue while app or platform approval is pending.
         /// Activation still checks strictly.
@@ -433,7 +433,7 @@ pub(crate) enum Deployment {
         )]
         source: Option<DeploymentSource>,
         /// Apply an empty deployment with no components.
-        #[arg(long)]
+        #[arg(long = "empty-deployment", alias = "empty")]
         empty: bool,
         /// Human-readable description. For already stored content, omitting it keeps the current
         /// one and an empty string clears it.
@@ -706,13 +706,15 @@ pub(crate) enum Server {
         #[arg(short, long, conflicts_with = "empty")]
         deployment: Option<PathBuf>,
         /// Select an existing deployment from the database and verify it before activation.
-        #[arg(long, conflicts_with_all = ["deployment", "empty", "description"])]
+        /// With --empty-deployment, the empty deployment is stored under this ID unless it exists
+        /// already; an existing deployment with this ID must be empty.
+        #[arg(long, conflicts_with_all = ["deployment", "description"])]
         deployment_id: Option<DeploymentId>,
         /// Start with an empty deployment, ignoring any Enqueued or Active deployment in the database.
         /// Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via the API.
-        #[arg(long)]
+        #[arg(long = "empty-deployment", alias = "empty")]
         empty: bool,
-        /// Human-readable description for the --deployment or --empty deployment. For already
+        /// Human-readable description for the --deployment or --empty-deployment deployment. For already
         /// stored content, omitting it keeps the current one and an empty string clears it.
         #[arg(long)]
         description: Option<String>,
@@ -1377,7 +1379,12 @@ mod tests {
             vec!["obelisk", "cloud", "app", "deployment"],
         ] {
             for action in ["submit", "enqueue", "apply"] {
-                for suffix in [vec![], vec!["--empty"], vec!["other.toml"]] {
+                for suffix in [
+                    vec![],
+                    vec!["--empty-deployment"],
+                    vec!["--empty"],
+                    vec!["other.toml"],
+                ] {
                     let command = parse(&prefix, action, &suffix);
                     let (path, empty) = match command {
                         Deployment::Submit { file, empty, .. } => (file, empty),
@@ -1391,7 +1398,7 @@ mod tests {
                         ),
                         _ => panic!("expected submission"),
                     };
-                    assert_eq!(empty, suffix == ["--empty"]);
+                    assert_eq!(empty, suffix.first().is_some_and(|s| s.starts_with("--")));
                     assert_eq!(
                         path,
                         if empty {
@@ -1407,7 +1414,7 @@ mod tests {
                     Args::try_parse_from(prefix.iter().copied().chain([
                         action,
                         "other.toml",
-                        "--empty"
+                        "--empty-deployment"
                     ]))
                     .is_err()
                 );
@@ -2028,7 +2035,7 @@ pub(crate) enum CloudApp {
         #[arg(short = 'n', long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=50))]
         limit: u8,
     },
-    /// Stage app.toml in a draft without restarting the VM.
+    /// Stage app.toml, values and optionally a deployment in a draft, creating a missing app; never applies.
     Stage {
         #[command(flatten)]
         selected: SelectedApp,
@@ -2037,6 +2044,18 @@ pub(crate) enum CloudApp {
         app_config: Option<PathBuf>,
         #[command(flatten)]
         draft: CloudDraft,
+        /// Submit this deployment manifest and stage it; otherwise the draft's deployment is kept.
+        #[arg(short = 'd', long)]
+        deployment: Option<PathBuf>,
+        /// Submit an empty deployment with no components and stage it.
+        #[arg(long, conflicts_with = "deployment")]
+        empty_deployment: bool,
+        #[command(flatten)]
+        values: CloudValues,
+        /// Human-readable description of the submitted deployment. For already stored content,
+        /// omitting it keeps the current one and an empty string clears it.
+        #[arg(long)]
+        description: Option<String>,
     },
     /// Discard a draft and its staged changes.
     Unstage {
@@ -2053,8 +2072,16 @@ pub(crate) enum CloudApp {
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
         /// Deployment manifest path.
-        #[arg(short = 'd', long, default_value = "deployment.toml")]
+        #[arg(
+            short = 'd',
+            long,
+            default_value = "deployment.toml",
+            conflicts_with = "empty_deployment"
+        )]
         deployment: PathBuf,
+        /// Deploy an empty deployment with no components.
+        #[arg(long)]
+        empty_deployment: bool,
         #[command(flatten)]
         values: CloudValues,
         /// Human-readable description. For already stored content, omitting it keeps the current
@@ -2062,7 +2089,7 @@ pub(crate) enum CloudApp {
         #[arg(long)]
         description: Option<String>,
     },
-    /// Apply the staged changes of a draft with the currently active deployment.
+    /// Apply the staged changes of a draft with its staged deployment, else the active one.
     Apply {
         #[command(flatten)]
         selected: SelectedApp,
@@ -2139,6 +2166,7 @@ impl CloudApp {
     pub(crate) fn selected_app(&self) -> Option<&str> {
         cloud_app_selected!(self).and_then(|selected| selected.app.as_deref())
     }
+    #[cfg(test)]
     pub(crate) fn selected_mut(&mut self) -> Option<&mut SelectedApp> {
         cloud_app_selected!(self)
     }

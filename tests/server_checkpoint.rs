@@ -184,7 +184,7 @@ fn assert_success(output: &Output) {
 fn checkpoint_moves_only_on_activation() {
     let fixture = Fixture::new();
     let server_toml = fixture.path("server.toml");
-    let server = fixture.server(&server_toml, &["--empty"]);
+    let server = fixture.server(&server_toml, &["--empty-deployment"]);
     let initial = fixture.checkpoint().unwrap();
     assert_eq!(initial["app_env_prefix"], "V1_");
     assert!(
@@ -247,12 +247,53 @@ fn checkpoint_moves_only_on_activation() {
     server.stop();
 }
 
+// Supervisors name the empty deployment up front, so its ID is known before the first start.
+#[test]
+fn empty_deployment_under_selected_id() {
+    const EMPTY: &str = "Dep_00000000000000000000000001";
+    const OTHER: &str = "Dep_00000000000000000000000004";
+    let fixture = Fixture::new();
+    let server_toml = fixture.path("server.toml");
+    let args = ["--empty-deployment", "--deployment-id", EMPTY];
+    let server = fixture.server(&server_toml, &args);
+    assert_eq!(fixture.checkpoint().unwrap()["deployment_id"], EMPTY);
+    assert_eq!(fixture.status(EMPTY), "active");
+    fixture.submit(HOT);
+    server.stop();
+
+    // Reused when stored and empty.
+    fixture.server(&server_toml, &args).stop();
+    assert_eq!(fixture.status(EMPTY), "active");
+
+    let refused = |deployment_id: &str, expected: &str| {
+        let output = fixture.run(&[
+            "server",
+            "run",
+            "-s",
+            "server.toml",
+            "-a",
+            "app.toml",
+            "--empty-deployment",
+            "--deployment-id",
+            deployment_id,
+        ]);
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{stderr}");
+    };
+    refused(HOT, &format!("deployment {HOT} is not empty"));
+    refused(
+        OTHER,
+        &format!("the empty deployment is already stored as {EMPTY}, not {OTHER}"),
+    );
+}
+
 // Freeing space takes a running server, so a full database must not stop it from starting.
 #[test]
 fn server_starts_on_full_database() {
     let fixture = Fixture::new();
     let server_toml = fixture.path("server.toml");
-    fixture.server(&server_toml, &["--empty"]).stop();
+    fixture.server(&server_toml, &["--empty-deployment"]).stop();
 
     // A limit below the current page count is clamped to it, so no new page can be allocated.
     let policy = (0..200).fold(
@@ -264,7 +305,7 @@ fn server_starts_on_full_database() {
     let config = std::fs::read_to_string(&server_toml).unwrap()
         + "database.sqlite.pragma = { max_page_count = '1' }\n";
     std::fs::write(&server_toml, config).unwrap();
-    let server = fixture.server(&server_toml, &["--empty"]);
+    let server = fixture.server(&server_toml, &["--empty-deployment"]);
 
     let file = "full.toml";
     std::fs::write(
@@ -333,7 +374,8 @@ async fn dev_controls_token_disclosure_and_internal_without_disabling_api_auth()
         );
         std::fs::write(config_path, config).unwrap();
         let stderr_path = fixture.path("stderr.log");
-        let mut command = fixture.command(&["server", "run", "--empty", "-s", "server.toml"]);
+        let mut command =
+            fixture.command(&["server", "run", "--empty-deployment", "-s", "server.toml"]);
         if dev {
             command.arg("--dev");
         }

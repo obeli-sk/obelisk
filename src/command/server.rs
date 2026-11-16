@@ -786,7 +786,7 @@ pub(crate) async fn run(
         None
     };
     if description.is_some() && deployment.is_none() {
-        anyhow::bail!("--description requires --deployment or --empty");
+        anyhow::bail!("--description requires --deployment or --empty-deployment");
     }
 
     let (termination_sender, termination_watcher) = watch::channel(());
@@ -1827,7 +1827,7 @@ async fn get_deployment_resolved_from_db(
     Ok((deployment, record.deployment_id))
 }
 
-/// A deployment authored locally and passed via `server run -d <toml>` / `--empty`.
+/// A deployment authored locally and passed via `server run -d <toml>` / `--empty-deployment`.
 pub(crate) struct LocalDeployment {
     processed_deployment_toml: String,
     files: Vec<DeploymentManifestFile>,
@@ -2131,6 +2131,51 @@ async fn resolve_startup_deployment(
 ) -> Result<(DeploymentId, DeploymentResolved, DeploymentPersist), anyhow::Error> {
     if let Some(deployment) = deployment {
         // --deployment or `--deployment-empty` provided: prepare, insert+activate after verify.
+        if let Some(id) = selected {
+            // `--empty-deployment --deployment-id`: reuse or create the empty deployment under `id`.
+            assert!(
+                deployment.processed_deployment_toml.is_empty(),
+                "--deployment-id conflicts with --deployment"
+            );
+            span.record("deployment_id", tracing::field::display(&id));
+            let existing = db_pool
+                .external_api_conn()
+                .await
+                .context("cannot get db connection for deployment lookup")?
+                .get_deployment(id)
+                .await?;
+            if let Some(record) = existing {
+                ensure!(
+                    record.deployment_toml.is_empty(),
+                    "deployment {id} is not empty"
+                );
+                info!("Empty deployment already stored, reusing it");
+                return Ok((
+                    id,
+                    DeploymentResolved::default(),
+                    DeploymentPersist::Refresh { description },
+                ));
+            }
+            if let Some(stored_id) = stored_deployment_id(db_pool, "").await? {
+                bail!("the empty deployment is already stored as {stored_id}, not {id}");
+            }
+            let (record, component_files) = write_to_cas_prepare_deployment_record(
+                db_pool,
+                id,
+                String::new(),
+                Vec::new(),
+                description,
+            )
+            .await?;
+            return Ok((
+                id,
+                DeploymentResolved::default(),
+                DeploymentPersist::Insert {
+                    record: Box::new(record),
+                    component_files,
+                },
+            ));
+        }
         if let Some(stored_id) =
             stored_deployment_id(db_pool, &deployment.processed_deployment_toml).await?
         {

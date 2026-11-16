@@ -22,6 +22,7 @@ use std::{
 mod auth;
 mod deploy;
 mod output;
+mod stage;
 use output::Summary;
 
 const DEFAULT_API_URL: &str = "https://cloud.obeli.sk/api";
@@ -659,6 +660,15 @@ impl CloudArgs {
             return self.deploy().await;
         }
         if matches!(
+            &self.command,
+            Cloud::App(CloudAppTarget {
+                command: CloudApp::Stage { .. },
+                ..
+            })
+        ) {
+            return self.stage().await;
+        }
+        if matches!(
             self.command,
             Cloud::App(CloudAppTarget {
                 command: CloudApp::Deployment { .. }
@@ -671,14 +681,6 @@ impl CloudArgs {
         ) {
             let api_url = self.direct_api_url().await?;
             return self.run_app_api(api_url).await;
-        }
-        if let Cloud::App(CloudAppTarget { command, .. }) = &mut self.command
-            && command.selected_app().is_none()
-            && matches!(command, CloudApp::Stage { .. })
-            && let Some((path, _)) = app_config_path(command)?
-        {
-            let app_name = policy(&path).await?.config.app_name;
-            command.selected_mut().expect("command selects an app").app = Some(app_name);
         }
         let json = self.json;
         let verbose = self.verbose;
@@ -780,11 +782,7 @@ impl CloudArgs {
                         .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
                 )
                 .await?;
-                let local = config_for_app(
-                    name,
-                    config.zip(config_path),
-                    matches!(command, CloudApp::Stage { .. }),
-                )?;
+                let local = config_for_app(name, config.zip(config_path), false)?;
                 match command {
                     CloudApp::Deployment { .. }
                     | CloudApp::Execution { .. }
@@ -811,22 +809,6 @@ impl CloudArgs {
                         Ok(value)
                     }
                     CloudApp::Events { limit, .. } => client.events(name, limit).await,
-                    CloudApp::Stage {
-                        draft: CloudDraft { key },
-                        ..
-                    } => {
-                        let (config, _) = local.expect("stage requires an app config");
-                        client
-                            .draft(
-                                name,
-                                &key,
-                                Method::PUT,
-                                &["config"],
-                                Some(Body::Toml(config.text)),
-                                true,
-                            )
-                            .await
-                    }
                     CloudApp::Unstage {
                         draft: CloudDraft { key },
                         ..
@@ -861,33 +843,8 @@ impl CloudArgs {
                                     })?,
                             )
                         };
-                        let origin = api_origin(
-                            current["endpoints"]["api"]
-                                .as_str()
-                                .context("Missing endpoints.api")?,
-                        )?;
-                        let startup = ClientStartup::cloud(
-                            origin.as_str().trim_end_matches('/').to_owned(),
-                            self.api_token.clone(),
-                            self.verbose,
-                        );
-                        let info: rest_types::server::ServerInfoResponse =
-                            crate::client::send_json(
-                                startup
-                                    .web_api_client()?
-                                    .get(format!("{}/v1/info", startup.api_url()))
-                                    .header(header::ACCEPT, "application/json"),
-                            )
-                            .await?;
-                        let body = apply_request(
-                            name,
-                            &key,
-                            draft.as_ref(),
-                            &current,
-                            &info.deployment_id,
-                            force,
-                            self.json,
-                        )?;
+                        let body =
+                            apply_request(name, &key, draft.as_ref(), &current, force, self.json)?;
                         client
                             .app(
                                 name,
@@ -1018,7 +975,9 @@ impl CloudArgs {
                             .await
                     }
                     CloudApp::New { .. } => unreachable!(),
-                    CloudApp::Deploy { .. } => unreachable!("deploy has its own output"),
+                    CloudApp::Deploy { .. } | CloudApp::Stage { .. } => {
+                        unreachable!("command has its own output")
+                    }
                 }
             }
         }
@@ -1047,6 +1006,7 @@ async fn compare_config(client: &Client, name: &str, app_toml: &str) -> anyhow::
         .await
 }
 
+#[cfg(test)]
 const DEFAULT_DRAFT: &str = "default";
 
 /// Applies the current labeled proposal, or re-applies the installed revision without one.
@@ -1055,11 +1015,10 @@ fn apply_request(
     key: &str,
     draft: Option<&Value>,
     current: &Value,
-    deployment_id: &str,
     force: bool,
     quiet: bool,
 ) -> anyhow::Result<Value> {
-    let mut body = json!({"force":force,"deployment_id":deployment_id});
+    let mut body = json!({"force":force});
     let applied = &current["applied_revision"];
     let Some(draft) = draft else {
         if !quiet {
@@ -1852,7 +1811,9 @@ mod tests {
             let (missing_secrets, unused_secrets) = values("secrets", &declared_secrets);
             let (env, secrets) = (diff("env"), diff("secrets"));
             let app_toml = draft["app_toml"] != self.applied["app_toml"];
+            let deployment_id = draft.get("deployment_id").cloned().unwrap_or(Value::Null);
             let changed = app_toml
+                || !deployment_id.is_null()
                 || [&env, &secrets].iter().any(|diff| {
                     ["added", "removed", "changed"]
                         .iter()
@@ -1864,7 +1825,8 @@ mod tests {
                 "stale":draft["parent_revision"] != self.applied_revision,
                 "app_toml":draft["app_toml"],"policy":config["policy"],"cloud":config["cloud"],
                 "env":draft["env"],"secrets":draft["secrets"].as_object().unwrap().keys().collect::<Vec<_>>(),
-                "summary":{"changed":changed,"app_toml":app_toml,"policy":config["policy"] != applied["policy"],"cloud":config["cloud"] != applied["cloud"],"env":env,"secrets":secrets},
+                "deployment_id":deployment_id,
+                "summary":{"changed":changed,"deployment":!deployment_id.is_null(),"app_toml":app_toml,"policy":config["policy"] != applied["policy"],"cloud":config["cloud"] != applied["cloud"],"env":env,"secrets":secrets},
                 "values":{"missing_env":missing_env,"missing_secrets":missing_secrets,"unused_env":unused_env,"unused_secrets":unused_secrets},
             })
         }
@@ -1925,6 +1887,10 @@ mod tests {
                     let before = draft.clone();
                     match (method, edit) {
                         (&Method::PUT, ["config"]) => draft["app_toml"] = body.clone(),
+                        (&Method::PUT, ["deployment"]) => {
+                            draft["deployment_id"] = body["deployment_id"].clone();
+                        }
+                        (&Method::DELETE, ["deployment"]) => draft["deployment_id"] = Value::Null,
                         (&Method::PUT, [kind, name]) => draft[*kind][*name] = body["value"].clone(),
                         (&Method::DELETE, [kind, name]) => {
                             draft[*kind].as_object_mut().unwrap().remove(*name);
@@ -2042,11 +2008,14 @@ mod tests {
     async fn cloud_deployment_activation_requires_provisioner_apply() {
         let (origin, state, task) = server().await;
         for command in ["enqueue", "apply"] {
-            let error = args(&origin, &["app", "deployment", command, "--empty"])
-                .run()
-                .await
-                .unwrap_err()
-                .to_string();
+            let error = args(
+                &origin,
+                &["app", "deployment", command, "--empty-deployment"],
+            )
+            .run()
+            .await
+            .unwrap_err()
+            .to_string();
             assert!(error.contains("use `obelisk cloud app deploy`"), "{error}");
             assert!(error.contains("`obelisk cloud app apply`"), "{error}");
         }
@@ -2136,7 +2105,7 @@ mod tests {
             .await
             .unwrap();
         args(&origin, &["app", "stage", "-a", path.to_str().unwrap()])
-            .execute()
+            .stage()
             .await
             .unwrap();
         args(&origin, &["app", "apply"]).execute().await.unwrap();
@@ -2164,11 +2133,13 @@ mod tests {
         assert_eq!(received[0].0, "POST /prefix/v1/apps");
         assert_eq!(received[0].1["app_toml"], app_toml);
         assert!(received[0].1.get("policy").is_none());
+        // Stage looks the app up before staging, creating it only when missing.
+        assert_eq!(received[1].0, "GET /prefix/v1/apps/demo");
         assert_eq!(
-            received[1].0,
+            received[2].0,
             "PUT /prefix/v1/apps/demo/drafts/default/config"
         );
-        assert_eq!(received[1].1, app_toml);
+        assert_eq!(received[2].1, app_toml);
         let applies: Vec<_> = received
             .iter()
             .filter(|(path, _)| path.ends_with("/apply"))
@@ -2181,13 +2152,8 @@ mod tests {
         {
             assert_eq!(request.1["force"], force);
             assert_eq!(request.1["draft"], draft);
-            assert!(
-                request.1["deployment_id"]
-                    .as_str()
-                    .unwrap()
-                    .parse::<concepts::prefixed_ulid::DeploymentId>()
-                    .is_ok()
-            );
+            // The provisioner takes the deployment from the draft.
+            assert!(request.1.get("deployment_id").is_none());
             if draft.is_null() {
                 assert_eq!(request.1["revision"], 2);
             } else {
