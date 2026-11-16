@@ -114,19 +114,20 @@ impl CloudArgs {
         let ulid = id.split_once('_').map_or(id.as_str(), |(_, ulid)| ulid);
         let key = format!("deploy-{}", ulid.to_ascii_lowercase());
         step(&format!("stage --draft {key}"));
-        client
-            .draft(&name, &key, Method::POST, &[], None, false)
+        let opened = client
+            .open_draft(&name, &key, applied_revision(&current)?)
             .await?;
+        let draft = draft_id(&opened)?;
         // Values are checked before the upload; the deployment joins the draft once submitted.
         let staged = async {
             let staged = client
-                .draft(
+                .fenced(
                     &name,
                     &key,
+                    draft,
                     Method::PUT,
                     &["config"],
                     Some(Body::Toml(config_text)),
-                    false,
                 )
                 .await?;
             if fill {
@@ -163,13 +164,13 @@ impl CloudArgs {
             .await
             .with_context(|| format!("Deployment staging failed; inspect `obelisk cloud app status --app {name}` and retry deploy"))?;
             let staged = client
-                .draft(
+                .fenced(
                     &name,
                     &key,
+                    draft,
                     Method::PUT,
                     &["deployment"],
                     Some(Body::Json(json!({"deployment_id":id.to_string()}))),
-                    false,
                 )
                 .await?;
             anyhow::Ok((id, staged))
@@ -178,7 +179,7 @@ impl CloudArgs {
         let (id, staged) = match staged {
             Ok(staged) => staged,
             Err(error) => {
-                discard(&client, &name, &key).await;
+                discard(&client, &name, &key, draft).await;
                 return Err(error);
             }
         };
@@ -200,13 +201,7 @@ impl CloudArgs {
         let mut outcomes = Vec::new();
         step(&format!("apply --draft {key}"));
         let current = client
-            .app(
-                &name,
-                Method::POST,
-                &["apply"],
-                Some(body),
-                Kind::Command(None),
-            )
+            .apply(&name, body, Some(draft), Kind::Command(None))
             .await;
         // A draft left by a failed apply is discarded by the next successful one.
         let current = current
@@ -233,9 +228,9 @@ impl CloudArgs {
 }
 
 /// Best-effort cleanup of a deploy's draft that was never applied.
-async fn discard(client: &Client, name: &str, key: &str) {
+async fn discard(client: &Client, name: &str, key: &str, id: u64) {
     let _ = client
-        .draft(name, key, Method::DELETE, &[], None, false)
+        .fenced(name, key, id, Method::DELETE, &[], None)
         .await;
 }
 
@@ -292,7 +287,7 @@ fn choose_app_name(
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{MockDrafts, request_body, staged_config};
+    use super::super::tests::{MockDrafts, if_match, request_body, staged_config};
     use super::*;
     use axum::{
         Router,
@@ -329,7 +324,7 @@ mod tests {
         let path = routed_path.as_str();
         let body = request_body(&headers, &body);
         if let Some(rest) = path.strip_prefix("/v1/apps/demo/")
-            && let Some(result) = state.drafts.route(&method, rest, false, &body)
+            && let Some(result) = state.drafts.route(&method, rest, if_match(&headers), &body)
         {
             return match result {
                 Ok(view) => axum::Json(view).into_response(),
@@ -372,7 +367,7 @@ mod tests {
                     state.submitted.as_deref()
                 );
                 assert!(body.get("config").is_none());
-                state.drafts.apply(&body).unwrap();
+                state.drafts.apply(&body, if_match(&headers)).unwrap();
                 let (revision, applied) = (state.drafts.revision, state.drafts.applied_revision);
                 let applied_config = staged_config(state.drafts.app_toml(""));
                 let app = state.app.as_mut().unwrap();

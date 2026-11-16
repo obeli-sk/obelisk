@@ -180,17 +180,22 @@ impl Client {
         body: Option<Value>,
         kind: Kind,
     ) -> anyhow::Result<Value> {
-        self.send(method, self.url(path)?, body.map(Body::Json), kind)
+        self.send(method, self.url(path)?, body.map(Body::Json), kind, None)
             .await
     }
+    /// `draft_id` is sent as `If-Match`, failing with 412 when the label names another draft.
     async fn send(
         &self,
         method: Method,
         url: Url,
         body: Option<Body>,
         kind: Kind,
+        draft_id: Option<u64>,
     ) -> anyhow::Result<Value> {
         let mut request = self.http.request(method, url);
+        if let Some(id) = draft_id {
+            request = request.header(header::IF_MATCH, format!("\"draft-{id}\""));
+        }
         let command_id = if let Kind::Command(id) | Kind::SecretCommand(id) = kind {
             let id = id.unwrap_or_else(ExecutionIdTopLevel::generate);
             crate::client::trace(format_args!("Cloud command execution ID: {id}"));
@@ -327,8 +332,52 @@ impl Client {
         path.extend_from_slice(suffix);
         self.request(method, &path, body, kind).await
     }
-    /// Opens, discards or edits draft `key`; `reuse` lets an edit create a missing draft.
+    /// Opens draft `key` on `parent_revision`, or returns the existing draft with that parent.
+    async fn open_draft(
+        &self,
+        name: &str,
+        key: &str,
+        parent_revision: u64,
+    ) -> anyhow::Result<Value> {
+        let url = self.url(&["v1", "apps", name, "drafts", key])?;
+        let body = Body::Json(json!({"parent_revision":parent_revision}));
+        self.send(Method::PUT, url, Some(body), Kind::Read, None)
+            .await
+    }
+    /// ID of draft `key`, opening it on the applied revision when missing.
+    async fn resolve_draft(&self, name: &str, key: &str) -> anyhow::Result<u64> {
+        if let Some(draft) = self.optional(&["v1", "apps", name, "drafts", key]).await? {
+            return draft_id(&draft);
+        }
+        let current = self.app(name, Method::GET, &[], None, Kind::Read).await?;
+        draft_id(
+            &self
+                .open_draft(name, key, applied_revision(&current)?)
+                .await?,
+        )
+    }
+    /// Discards or edits draft `id` under label `key`.
     /// Edits are not lifecycle commands and take no idempotency key.
+    async fn fenced(
+        &self,
+        name: &str,
+        key: &str,
+        id: u64,
+        method: Method,
+        suffix: &[&str],
+        body: Option<Body>,
+    ) -> anyhow::Result<Value> {
+        let mut path = vec!["v1", "apps", name, "drafts", key];
+        path.extend_from_slice(suffix);
+        let kind = if method == Method::PUT && suffix.first() == Some(&"secrets") {
+            Kind::Secret
+        } else {
+            Kind::Read
+        };
+        self.send(method, self.url(&path)?, body, kind, Some(id))
+            .await
+    }
+    /// Edits draft `key`, opening it when missing.
     async fn draft(
         &self,
         name: &str,
@@ -336,20 +385,21 @@ impl Client {
         method: Method,
         suffix: &[&str],
         body: Option<Body>,
-        reuse: bool,
     ) -> anyhow::Result<Value> {
-        let mut path = vec!["v1", "apps", name, "drafts", key];
-        path.extend_from_slice(suffix);
-        let mut url = self.url(&path)?;
-        if reuse && !suffix.is_empty() {
-            url.query_pairs_mut().append_pair("create_or_reuse", "true");
-        }
-        let kind = if method == Method::PUT && suffix.first() == Some(&"secrets") {
-            Kind::Secret
-        } else {
-            Kind::Read
-        };
-        self.send(method, url, body, kind).await
+        let id = self.resolve_draft(name, key).await?;
+        self.fenced(name, key, id, method, suffix, body).await
+    }
+    /// Applies `body`; `draft_id` pins a draft apply to the draft that was checked.
+    async fn apply(
+        &self,
+        name: &str,
+        body: Value,
+        draft_id: Option<u64>,
+        kind: Kind,
+    ) -> anyhow::Result<Value> {
+        let url = self.url(&["v1", "apps", name, "apply"])?;
+        self.send(Method::POST, url, Some(Body::Json(body)), kind, draft_id)
+            .await
     }
     async fn events(&self, name: &str, limit: u8) -> anyhow::Result<Value> {
         let mut url = self.url(&["v1", "apps", name, "events"])?;
@@ -379,9 +429,20 @@ impl Client {
             self.url(&path)?,
             Some(Body::Toml(app_toml.to_owned())),
             kind,
+            None,
         )
         .await
     }
+}
+fn draft_id(draft: &Value) -> anyhow::Result<u64> {
+    draft["draft_id"]
+        .as_u64()
+        .context("Cloud draft response is missing draft_id")
+}
+fn applied_revision(app: &Value) -> anyhow::Result<u64> {
+    app["applied_revision"]
+        .as_u64()
+        .context("Cloud app response is missing applied_revision")
 }
 async fn app_name(name: Option<&str>) -> anyhow::Result<String> {
     let name = match name {
@@ -812,11 +873,17 @@ impl CloudArgs {
                     CloudApp::Unstage {
                         draft: CloudDraft { key },
                         ..
-                    } => {
-                        client
-                            .draft(name, &key, Method::DELETE, &[], None, false)
-                            .await
-                    }
+                    } => match client
+                        .optional(&["v1", "apps", name, "drafts", &key])
+                        .await?
+                    {
+                        Some(draft) => {
+                            client
+                                .fenced(name, &key, draft_id(&draft)?, Method::DELETE, &[], None)
+                                .await
+                        }
+                        None => Ok(json!({"discarded":false})),
+                    },
                     CloudApp::Apply {
                         force,
                         reapply,
@@ -845,15 +912,8 @@ impl CloudArgs {
                         };
                         let body =
                             apply_request(name, &key, draft.as_ref(), &current, force, self.json)?;
-                        client
-                            .app(
-                                name,
-                                Method::POST,
-                                &["apply"],
-                                Some(body),
-                                command_id.into(),
-                            )
-                            .await
+                        let id = draft.as_ref().map(draft_id).transpose()?;
+                        client.apply(name, body, id, command_id.into()).await
                     }
                     CloudApp::Enable { command_id, .. } => {
                         client
@@ -893,7 +953,6 @@ impl CloudArgs {
                                 Method::PUT,
                                 &["env", &variable],
                                 Some(Body::Json(json!({"value":value}))),
-                                true,
                             )
                             .await
                     }
@@ -907,7 +966,7 @@ impl CloudArgs {
                     } => {
                         config_name(&variable)?;
                         client
-                            .draft(name, &key, Method::DELETE, &["env", &variable], None, true)
+                            .draft(name, &key, Method::DELETE, &["env", &variable], None)
                             .await
                     }
                     CloudApp::Secrets {
@@ -950,7 +1009,6 @@ impl CloudArgs {
                                 Method::PUT,
                                 &["secrets", &secret],
                                 Some(Body::Json(json!({"value":value}))),
-                                true,
                             )
                             .await
                     }
@@ -964,14 +1022,7 @@ impl CloudArgs {
                     } => {
                         config_name(&secret)?;
                         client
-                            .draft(
-                                name,
-                                &key,
-                                Method::DELETE,
-                                &["secrets", &secret],
-                                None,
-                                true,
-                            )
+                            .draft(name, &key, Method::DELETE, &["secrets", &secret], None)
                             .await
                     }
                     CloudApp::New { .. } => unreachable!(),
@@ -1209,7 +1260,7 @@ fn without(mut policy: Value, explicit: &[PendingValue]) -> Value {
     policy
 }
 
-/// Stages `explicit` values into the existing draft `key`, then the remaining declared values taken from `values`.
+/// Stages `explicit` values into `draft`, then the remaining declared values taken from `values`.
 async fn stage_values(
     client: &Client,
     app: &str,
@@ -1218,16 +1269,17 @@ async fn stage_values(
     explicit: Vec<PendingValue>,
     values: Values<'_>,
 ) -> anyhow::Result<(Value, Value)> {
+    let id = draft_id(&draft)?;
     let mut staged = Vec::new();
     let mut put = async |kind: &'static str, name: String, value: String| {
         let view = client
-            .draft(
+            .fenced(
                 app,
                 key,
+                id,
                 Method::PUT,
                 &[kind, &name],
                 Some(Body::Json(json!({"value":value}))),
-                false,
             )
             .await
             .with_context(|| {
@@ -1612,15 +1664,12 @@ mod tests {
         assert!(!headers.contains_key("x-obelisk-user"));
         let body = request_body(&headers, &body);
         let mut state = state.lock().unwrap();
-        let reuse = uri.query() == Some("create_or_reuse=true");
-        let route = if reuse {
-            uri.path().to_owned()
-        } else {
-            uri.to_string()
-        };
+        if uri.path().contains("/drafts") {
+            assert_eq!(uri.query(), None);
+        }
         state
             .received
-            .push((format!("{method} {route}"), body.clone()));
+            .push((format!("{method} {uri}"), body.clone()));
         if method != Method::GET
             && uri.path().starts_with("/prefix/v1/apps")
             && !uri.path().contains("/drafts")
@@ -1646,7 +1695,7 @@ mod tests {
             return (axum::http::StatusCode::CONFLICT, "DO-NOT-ECHO-SECRET").into_response();
         }
         if let Some(path) = uri.path().strip_prefix("/prefix/v1/apps/demo/")
-            && let Some(result) = state.drafts.route(&method, path, reuse, &body)
+            && let Some(result) = state.drafts.route(&method, path, if_match(&headers), &body)
         {
             return match result {
                 Ok(view) => axum::Json(view).into_response(),
@@ -1655,7 +1704,7 @@ mod tests {
         }
         let result = match uri.path() {
             "/prefix/v1/apps/demo/apply" => {
-                if let Err(error) = state.drafts.apply(&body) {
+                if let Err(error) = state.drafts.apply(&body, if_match(&headers)) {
                     return (axum::http::StatusCode::CONFLICT, error).into_response();
                 }
                 json!({"ok":true})
@@ -1716,6 +1765,18 @@ mod tests {
         };
         axum::Json(result).into_response()
     }
+    /// Draft ID of a `"draft-<id>"` If-Match header.
+    pub(super) fn if_match(headers: &HeaderMap) -> Option<u64> {
+        let value = headers.get("if-match")?.to_str().unwrap();
+        Some(
+            value
+                .strip_prefix("\"draft-")
+                .and_then(|id| id.strip_suffix('"'))
+                .unwrap()
+                .parse()
+                .unwrap(),
+        )
+    }
     /// Request body as JSON, or as a string when it is app.toml text.
     pub(super) fn request_body(headers: &HeaderMap, body: &Bytes) -> Value {
         if headers
@@ -1736,6 +1797,7 @@ mod tests {
         pub(super) applied_revision: u64,
         pub(super) revision: u64,
         pub(super) drafts: std::collections::BTreeMap<String, Value>,
+        last_draft_id: u64,
     }
     impl Default for MockDrafts {
         fn default() -> Self {
@@ -1749,6 +1811,7 @@ mod tests {
                 applied_revision: revision,
                 revision,
                 drafts: std::collections::BTreeMap::new(),
+                last_draft_id: 0,
             }
         }
         /// app.toml of draft `key`, or the applied one when there is no such draft.
@@ -1820,7 +1883,7 @@ mod tests {
                         .any(|key| !diff[key].as_array().unwrap().is_empty())
                 });
             json!({
-                "key":key,"parent_revision":draft["parent_revision"],"revision":draft["revision"],
+                "key":key,"draft_id":draft["draft_id"],"parent_revision":draft["parent_revision"],"revision":draft["revision"],
                 "applied_revision":self.applied_revision,
                 "stale":draft["parent_revision"] != self.applied_revision,
                 "app_toml":draft["app_toml"],"policy":config["policy"],"cloud":config["cloud"],
@@ -1831,12 +1894,26 @@ mod tests {
             })
         }
         fn open(&mut self, key: &str) {
-            if !self.drafts.contains_key(key) {
-                self.revision += 1;
-                let mut draft = self.applied.clone();
-                draft["parent_revision"] = json!(self.applied_revision);
-                draft["revision"] = json!(self.revision);
-                self.drafts.insert(key.to_owned(), draft);
+            self.revision += 1;
+            self.last_draft_id += 1;
+            let mut draft = self.applied.clone();
+            draft["draft_id"] = json!(self.last_draft_id);
+            draft["parent_revision"] = json!(self.applied_revision);
+            draft["revision"] = json!(self.revision);
+            self.drafts.insert(key.to_owned(), draft);
+        }
+        /// Draft `key`, which must be `if_match` when given.
+        fn fenced(
+            &self,
+            key: &str,
+            if_match: Option<u64>,
+        ) -> Result<Option<&Value>, axum::http::StatusCode> {
+            match (self.drafts.get(key), if_match) {
+                (Some(draft), Some(id)) if draft["draft_id"] != id => {
+                    Err(axum::http::StatusCode::PRECONDITION_FAILED)
+                }
+                (None, Some(_)) => Err(axum::http::StatusCode::PRECONDITION_FAILED),
+                (draft, _) => Ok(draft),
             }
         }
         /// Serves `/drafts...` below the app path; `None` for other paths.
@@ -1844,7 +1921,7 @@ mod tests {
             &mut self,
             method: &Method,
             path: &str,
-            reuse: bool,
+            if_match: Option<u64>,
             body: &Value,
         ) -> Option<Result<Value, axum::http::StatusCode>> {
             let rest = path.strip_prefix("drafts")?;
@@ -1862,27 +1939,33 @@ mod tests {
                 }
                 Some(key) => *key,
             };
-            Some(match (method, &segments[1..]) {
-                (&Method::GET, []) => {
-                    if self.drafts.contains_key(key) {
-                        Ok(self.view(key))
-                    } else {
-                        Err(axum::http::StatusCode::NOT_FOUND)
-                    }
+            let draft = match self.fenced(key, if_match) {
+                Ok(draft) => draft.cloned(),
+                Err(status) => return Some(Err(status)),
+            };
+            let parent = body["parent_revision"].as_u64();
+            Some(match (method, &segments[1..], draft) {
+                (&Method::PUT, [], Some(draft))
+                    if parent.is_some_and(|parent| draft["parent_revision"] != parent) =>
+                {
+                    Err(axum::http::StatusCode::PRECONDITION_FAILED)
                 }
-                (&Method::POST, []) if self.drafts.contains_key(key) => {
-                    Err(axum::http::StatusCode::CONFLICT)
+                (&Method::GET | &Method::PUT, [], Some(_)) => Ok(self.view(key)),
+                (&Method::PUT, [], None)
+                    if parent.is_some_and(|parent| parent != self.applied_revision) =>
+                {
+                    Err(axum::http::StatusCode::PRECONDITION_FAILED)
                 }
-                (&Method::POST, []) => {
+                (&Method::PUT, [], None) => {
                     self.open(key);
                     Ok(self.view(key))
                 }
-                (&Method::DELETE, []) => Ok(json!({"discarded":self.drafts.remove(key).is_some()})),
-                (_, _) if !reuse && !self.drafts.contains_key(key) => {
-                    Err(axum::http::StatusCode::NOT_FOUND)
+                (&Method::DELETE, [], draft) => {
+                    self.drafts.remove(key);
+                    Ok(json!({"discarded":draft.is_some()}))
                 }
-                (method, edit) => {
-                    self.open(key);
+                (_, _, None) => Err(axum::http::StatusCode::NOT_FOUND),
+                (method, edit, Some(_)) => {
                     let draft = self.drafts.get_mut(key).unwrap();
                     let before = draft.clone();
                     match (method, edit) {
@@ -1905,7 +1988,7 @@ mod tests {
             })
         }
         /// Applies the current proposal by label, or the applied revision again.
-        pub(super) fn apply(&mut self, body: &Value) -> Result<(), String> {
+        pub(super) fn apply(&mut self, body: &Value, if_match: Option<u64>) -> Result<(), String> {
             let Some(key) = body["draft"].as_str() else {
                 let revision = body["revision"].as_u64().unwrap();
                 return if revision == self.applied_revision {
@@ -1914,7 +1997,11 @@ mod tests {
                     Err(format!("revision {revision} is not applied"))
                 };
             };
-            let draft = self.drafts.get(key).ok_or("draft not found")?.clone();
+            let draft = self
+                .fenced(key, if_match)
+                .map_err(|_| "draft identity changed".to_owned())?
+                .ok_or("draft not found")?
+                .clone();
             if draft["parent_revision"] != self.applied_revision {
                 return Err(format!("draft {key} changed"));
             }
@@ -2128,18 +2215,22 @@ mod tests {
             .await
             .unwrap();
         let received = &state.lock().unwrap().received;
-        assert_eq!(received.len(), before_env + 1);
+        // The applied draft is gone, so the edit reopens it on the applied revision.
+        assert_eq!(received.len(), before_env + 4);
         let app_toml = std::fs::read_to_string(&path).unwrap();
         assert_eq!(received[0].0, "POST /prefix/v1/apps");
         assert_eq!(received[0].1["app_toml"], app_toml);
         assert!(received[0].1.get("policy").is_none());
         // Stage looks the app up before staging, creating it only when missing.
         assert_eq!(received[1].0, "GET /prefix/v1/apps/demo");
+        assert_eq!(received[2].0, "GET /prefix/v1/apps/demo/drafts/default");
+        assert_eq!(received[4].0, "PUT /prefix/v1/apps/demo/drafts/default");
+        assert_eq!(received[4].1, json!({"parent_revision":1}));
         assert_eq!(
-            received[2].0,
+            received[5].0,
             "PUT /prefix/v1/apps/demo/drafts/default/config"
         );
-        assert_eq!(received[2].1, app_toml);
+        assert_eq!(received[5].1, app_toml);
         let applies: Vec<_> = received
             .iter()
             .filter(|(path, _)| path.ends_with("/apply"))
@@ -2404,7 +2495,7 @@ mod tests {
         let draft = json!({
             "policy":policy,"cloud":{},
             "env":{"ALREADY_SET":"stored","HOME":home_value},
-            "secrets":["ALREADY_SET"],
+            "secrets":["ALREADY_SET"],"draft_id":1,
         });
         state.lock().unwrap().drafts.open("default");
         let mut answers = script.iter();
@@ -2493,7 +2584,7 @@ mod tests {
         let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
         let draft = json!({
             "policy":{"public_env":["CLOUD_TEST_MISSING_REQUIRED"],"secrets":{}},
-            "cloud":{},"env":{},"secrets":[],
+            "cloud":{},"env":{},"secrets":[],"draft_id":1,
         });
         let error = stage_values(&client, "demo", "default", draft, Vec::new(), Values::Env)
             .await
