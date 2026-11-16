@@ -843,14 +843,8 @@ impl CloudArgs {
                                     })?,
                             )
                         };
-                        let body = apply_request(
-                            name,
-                            &key,
-                            draft.as_ref(),
-                            &current,
-                            force,
-                            self.json,
-                        )?;
+                        let body =
+                            apply_request(name, &key, draft.as_ref(), &current, force, self.json)?;
                         client
                             .app(
                                 name,

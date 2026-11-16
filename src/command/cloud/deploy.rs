@@ -353,10 +353,7 @@ mod tests {
                         .into_response();
                 }
                 // The app starts bare; its configuration and values go to the draft.
-                assert_eq!(
-                    app["policy"],
-                    staged_config("app_name='demo'\n")["policy"]
-                );
+                assert_eq!(app["policy"], staged_config("app_name='demo'\n")["policy"]);
                 assert!(body.get("env").is_none() && body.get("secrets").is_none());
                 state.drafts = MockDrafts::new(body["app_toml"].as_str().unwrap(), 1);
                 app["status"] = json!("running");
@@ -626,7 +623,10 @@ mod tests {
                     assert_eq!(state.drafts.applied["env"], json!({}));
                 }
                 if scenario == "new-values" {
-                    assert_eq!(state.drafts.applied["env"]["INITIAL_REGION"], "initial-value");
+                    assert_eq!(
+                        state.drafts.applied["env"]["INITIAL_REGION"],
+                        "initial-value"
+                    );
                     assert_eq!(
                         state.drafts.applied["secrets"]["INITIAL_KEY"],
                         "initial-value"

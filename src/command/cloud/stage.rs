@@ -304,12 +304,8 @@ mod tests {
                 );
                 assert_eq!(state.submitted.is_some(), scenario != "config-only");
                 // The deployment is submitted before anything is staged.
-                let position = |prefix: &str| {
-                    state
-                        .calls
-                        .iter()
-                        .position(|call| call.starts_with(prefix))
-                };
+                let position =
+                    |prefix: &str| state.calls.iter().position(|call| call.starts_with(prefix));
                 if let Some(submit) = position("PUT /tenant/v1/deployments/") {
                     assert!(submit < position("PUT /v1/apps/demo/drafts/").unwrap());
                 }
