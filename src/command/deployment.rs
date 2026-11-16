@@ -555,8 +555,11 @@ async fn submit_attempt(
     if status.is_success() {
         return Ok(SubmitAttempt::Stored(deployment_id));
     }
-    if status == reqwest::StatusCode::CONFLICT {
-        let detail: SubmitPackageErrorBody = response.json().await?;
+    let body = response.bytes().await.unwrap_or_default();
+    // An ID or content conflict is a `409` with generic error JSON, reported below.
+    if status == reqwest::StatusCode::CONFLICT
+        && let Ok(detail) = serde_json::from_slice::<SubmitPackageErrorBody>(&body)
+    {
         let only_missing = detail.unexpected_files.is_empty()
             && detail.digest_mismatches.is_empty()
             && detail.oversized_files.is_empty()
@@ -576,7 +579,6 @@ async fn submit_attempt(
             format_submit_detail(&detail)
         );
     }
-    let body = response.bytes().await.unwrap_or_default();
     // backcompat: 0.41 servers return generic error JSON, which falls through unchanged below.
     if let Ok(detail) = serde_json::from_slice::<MissingRuntimeConfigErrorBody>(&body)
         && matches!(

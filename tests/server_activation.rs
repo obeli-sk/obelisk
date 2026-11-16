@@ -316,6 +316,33 @@ fn server_starts_on_full_database() {
     server.stop();
 }
 
+// An ID conflict is a `409` with generic error JSON, not a package rejection.
+#[test]
+fn submit_reports_deployment_id_conflict() {
+    let fixture = Fixture::new();
+    let server_toml = fixture.path("server.toml");
+    let server = fixture.server(&server_toml, &["--empty-deployment"]);
+    fixture.submit(HOT);
+    // Same ID as `HOT`, different content.
+    fixture.submit(QUEUED);
+    let output = fixture.run(&[
+        "deployment",
+        "submit",
+        &format!("{QUEUED}.toml"),
+        "--deployment-id",
+        HOT,
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "deployment {HOT} already exists with a different content digest"
+        )),
+        "{stderr}"
+    );
+    server.stop();
+}
+
 #[test]
 fn verify_dev_resolves_internal_http_server_url() {
     let fixture = Fixture::new();
