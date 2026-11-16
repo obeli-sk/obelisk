@@ -321,6 +321,8 @@ enum TxSync {
     /// External reads of state not tracked per execution (deployments, system events, blobs):
     /// wait until everything committed before the read is durable.
     Barrier,
+    /// Like `Wait`, also waiting for Litestream to replicate the write and everything before it.
+    Replicate,
 }
 
 /// Records the given executions as changed by a write.
@@ -531,14 +533,25 @@ pub enum SqliteFsync {
     Group,
 }
 
+/// Which commits wait for Litestream to replicate them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LitestreamSync {
+    /// Every commit is revealed only after Litestream replicates it.
+    #[default]
+    All,
+    /// Only deployment inserts wait; other commits reach the replica on Litestream's schedule.
+    Deployments,
+}
+
 #[derive(Debug, Clone)]
 pub struct SqliteConfig {
     pub queue_capacity: usize,
     pub pragma_override: Option<HashMap<String, String>>,
     pub metrics_threshold: Option<Duration>,
     pub fsync: SqliteFsync,
-    /// Litestream control socket. Every commit is revealed only after Litestream replicates it.
+    /// Litestream control socket, see [`LitestreamSync`].
     pub litestream_socket: Option<PathBuf>,
+    pub litestream_sync: LitestreamSync,
 }
 impl Default for SqliteConfig {
     fn default() -> Self {
@@ -548,6 +561,7 @@ impl Default for SqliteConfig {
             metrics_threshold: None,
             fsync: SqliteFsync::default(),
             litestream_socket: None,
+            litestream_sync: LitestreamSync::default(),
         }
     }
 }
@@ -1081,11 +1095,15 @@ impl SqlitePool {
                 InitializationError
             })?;
             if let Some(socket) = &config.litestream_socket {
-                info!("Replicating commits via the Litestream socket {socket:?}");
+                info!(
+                    "Replicating {:?} commits via the Litestream socket {socket:?}",
+                    config.litestream_sync
+                );
             }
             Some(Arc::new(Durability::new(
                 &path,
                 config.litestream_socket.clone(),
+                config.litestream_sync == LitestreamSync::All,
             )))
         } else {
             None
@@ -1259,7 +1277,7 @@ impl SqlitePool {
                 let (res, changed) = std::mem::take(fn_res.lock().unwrap().deref_mut())
                     .expect("ltx must have been run at least once");
                 let wait = match sync {
-                    TxSync::Wait => changed,
+                    TxSync::Wait | TxSync::Replicate => changed,
                     TxSync::Barrier => true,
                     TxSync::Later => false,
                 };
@@ -1268,7 +1286,11 @@ impl SqlitePool {
                     && res.is_ok()
                 {
                     // Without changes `seq` is the latest commit, covering everything read.
-                    durability.wait_seq(seq).await;
+                    if matches!(sync, TxSync::Replicate) {
+                        durability.wait_replicated(seq).await;
+                    } else {
+                        durability.wait_seq(seq).await;
+                    }
                 }
                 res
             }
@@ -5869,7 +5891,8 @@ impl DbExternalApi for SqlitePool {
         deployment_component_files: Vec<DeploymentComponentFileRecord>,
     ) -> Result<(), DbErrorWrite> {
         let deployment_id = record.deployment_id;
-        self.transaction(
+        // A replica restore must keep every deployment a supervisor may fall back to.
+        self.transaction_durable(
             move |tx| {
                 // Parent row first so the t_deployment_component FK is satisfied within the tx.
                 Self::insert_deployment_tx(tx, &record)?;
@@ -5884,6 +5907,8 @@ impl DbExternalApi for SqlitePool {
             },
             TxType::MultipleWrites,
             "insert_deployment_with_components",
+            TxSync::Replicate,
+            None,
         )
         .await
     }

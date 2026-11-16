@@ -18,7 +18,7 @@ use anyhow::Context as _;
 use concepts::component_id::Digest;
 use concepts::persisted_value::DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES;
 use db_postgres::postgres_dao::{self, PostgresConfig, PostgresTls};
-use db_sqlite::sqlite_dao::{SqliteConfig, SqliteFsync};
+use db_sqlite::sqlite_dao::{LitestreamSync, SqliteConfig, SqliteFsync};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1060,7 +1060,7 @@ pub(crate) struct SqliteConfigToml {
 }
 
 /// Replicate the database with Litestream synchronously: a commit is revealed outside of the
-/// server only after Litestream uploads it. Litestream must be replicating the database file
+/// server only after Litestream uploads it, see `sync`. Litestream must be replicating the database file
 /// before the server starts; the server waits for it on startup.
 ///
 /// The server does not check that the database is consistent with the replica; the launcher
@@ -1073,6 +1073,20 @@ pub(crate) struct SqliteConfigToml {
 pub(crate) struct LitestreamConfigToml {
     /// Path to the Litestream control socket (`socket.path` in the Litestream configuration).
     socket: String,
+    #[serde(default)]
+    sync: LitestreamSyncToml,
+}
+
+/// Which commits wait for Litestream to upload them.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LitestreamSyncToml {
+    /// Every commit is revealed only after Litestream uploads it.
+    #[default]
+    All,
+    /// Only deployment inserts wait for the upload, so a restored replica holds every deployment
+    /// that was submitted. Other commits reach the replica on Litestream's own schedule.
+    Deployments,
 }
 
 /// When SQLite commits reach the disk.
@@ -1132,6 +1146,13 @@ impl SqliteConfigToml {
             .transpose()
     }
 
+    pub(crate) fn get_litestream_sync(&self) -> LitestreamSync {
+        match self.litestream.as_ref().map(|litestream| litestream.sync) {
+            None | Some(LitestreamSyncToml::All) => LitestreamSync::All,
+            Some(LitestreamSyncToml::Deployments) => LitestreamSync::Deployments,
+        }
+    }
+
     /// Litestream is not configured, see [`Self::get_litestream_socket`].
     pub(crate) fn as_sqlite_config(&self) -> SqliteConfig {
         SqliteConfig {
@@ -1143,6 +1164,7 @@ impl SqliteConfigToml {
                 SqliteFsyncToml::Group => SqliteFsync::Group,
             },
             litestream_socket: None,
+            litestream_sync: LitestreamSync::default(),
         }
     }
 }

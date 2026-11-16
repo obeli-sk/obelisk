@@ -15,7 +15,9 @@
 //! on startup, so the map starts empty.
 //!
 //! With Litestream, every sync also asks Litestream to upload the WAL to the replica and waits for
-//! it, so a commit is revealed only once it is replicated. The startup sync replicates everything
+//! it, so a commit is revealed only once it is replicated. When only deployments are replicated
+//! synchronously, syncs upload only while a replication waiter is pending; other commits reach the
+//! replica on Litestream's own schedule. The startup sync replicates everything
 //! a previous process left behind. The WAL is fsynced first, so the local database is not behind
 //! the replica after a power loss; Litestream's own monitor can still upload commits made after
 //! that fsync, which the launcher must handle by comparing the database with its local position.
@@ -39,6 +41,8 @@ const LITESTREAM_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 struct State {
     committed: u64,
     wanted: u64,
+    /// Highest commit a replication waiter needs uploaded.
+    replicate_wanted: u64,
     /// Executions written by the physical transaction being applied.
     touched: Vec<ExecutionId>,
     /// Latest commit of each execution whose state changed after the last completed sync.
@@ -50,21 +54,26 @@ pub(crate) struct Durability {
     wal: PathBuf,
     /// Litestream control socket.
     litestream: Option<PathBuf>,
+    /// Every sync uploads, rather than only those a replication waiter needs.
+    replicate_all: bool,
     state: Mutex<State>,
     synced: watch::Sender<u64>,
+    replicated: watch::Sender<u64>,
     wanted: Notify,
 }
 
 impl Durability {
-    pub(crate) fn new(database: &Path, litestream: Option<PathBuf>) -> Self {
+    pub(crate) fn new(database: &Path, litestream: Option<PathBuf>, replicate_all: bool) -> Self {
         let mut wal = database.as_os_str().to_owned();
         wal.push("-wal");
         Self {
             database: database.to_owned(),
             wal: PathBuf::from(wal),
             litestream,
+            replicate_all,
             state: Mutex::default(),
             synced: watch::Sender::new(0),
+            replicated: watch::Sender::new(0),
             wanted: Notify::new(),
         }
     }
@@ -113,6 +122,26 @@ impl Durability {
         let _ = synced.wait_for(|synced| *synced >= seq).await;
     }
 
+    /// Waits until commit `seq` is synced and, with Litestream, replicated.
+    pub(crate) async fn wait_replicated(&self, seq: u64) {
+        if self.litestream.is_none() || self.replicate_all {
+            return self.wait_seq(seq).await;
+        }
+        if *self.replicated.borrow() >= seq {
+            return;
+        }
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.replicate_wanted < seq {
+                state.replicate_wanted = seq;
+            }
+        }
+        self.wanted.notify_one();
+        let mut replicated = self.replicated.subscribe();
+        // The sender lives as long as `self`.
+        let _ = replicated.wait_for(|replicated| *replicated >= seq).await;
+    }
+
     /// Waits until the latest writes of the given executions are synced.
     pub(crate) async fn wait_executions<'a>(
         &self,
@@ -139,16 +168,17 @@ impl Durability {
         self.wait_seq(seq).await;
     }
 
-    /// Waits until a commit newer than `synced` is wanted, or until unsynced writes have sat for
-    /// `IDLE_SYNC_DELAY`. Returns the commit number the next sync will cover; the sync must start
-    /// after this returns.
-    async fn next_target(&self) -> u64 {
+    /// Waits until a commit newer than `synced` (or `replicated`) is wanted, or until unsynced
+    /// writes have sat for `IDLE_SYNC_DELAY`. Returns the commit number the next sync will cover
+    /// and whether it must upload; the sync must start after this returns.
+    async fn next_target(&self) -> (u64, bool) {
         loop {
             let notified = self.wanted.notified();
             let pending = {
                 let state = self.state.lock().unwrap();
-                if state.wanted > *self.synced.borrow() {
-                    return state.committed;
+                let replication_wanted = state.replicate_wanted > *self.replicated.borrow();
+                if replication_wanted || state.wanted > *self.synced.borrow() {
+                    return (state.committed, self.replicate_all || replication_wanted);
                 }
                 !state.unsynced.is_empty()
             };
@@ -157,7 +187,7 @@ impl Durability {
                     .await
                     .is_err()
                 {
-                    return self.state.lock().unwrap().committed;
+                    return (self.state.lock().unwrap().committed, self.replicate_all);
                 }
             } else {
                 notified.await;
@@ -166,7 +196,7 @@ impl Durability {
     }
 
     /// A sync that started after `next_target` returned `target` has completed.
-    fn synced(&self, target: u64) {
+    fn synced(&self, target: u64, replicated: bool) {
         self.state
             .lock()
             .unwrap()
@@ -174,6 +204,10 @@ impl Durability {
             .retain(|_, seq| *seq > target);
         self.synced
             .send_modify(|synced| *synced = (*synced).max(target));
+        if replicated {
+            self.replicated
+                .send_modify(|replicated| *replicated = (*replicated).max(target));
+        }
     }
 
     /// Flushes everything written to the WAL so far. Any descriptor of the file flushes all of its
@@ -201,10 +235,10 @@ impl Durability {
         }
     }
 
-    /// Fsyncs the WAL, then waits for Litestream to replicate it.
-    async fn sync(&self) -> Result<(), SyncError> {
+    /// Fsyncs the WAL, then optionally waits for Litestream to replicate it.
+    async fn sync(&self, replicate: bool) -> Result<(), SyncError> {
         self.fsync_wal().await.map_err(SyncError::Fsync)?;
-        if let Some(socket) = &self.litestream {
+        if let Some(socket) = self.litestream.as_ref().filter(|_| replicate) {
             match tokio::time::timeout(
                 LITESTREAM_SYNC_TIMEOUT,
                 litestream::sync(socket, &self.database),
@@ -227,7 +261,7 @@ impl Durability {
     pub(crate) async fn startup_sync(&self) -> std::io::Result<()> {
         let mut delay = RETRY_DELAY;
         loop {
-            match self.sync().await {
+            match self.sync(true).await {
                 Ok(()) => return Ok(()),
                 Err(SyncError::Fsync(err)) => return Err(err),
                 Err(SyncError::Litestream(err)) => {
@@ -245,18 +279,19 @@ impl Durability {
         let mut previous = 0;
         let mut delay = RETRY_DELAY;
         loop {
-            let target = self.next_target().await;
+            let (target, replicate) = self.next_target().await;
             let started = Instant::now();
-            match self.sync().await {
+            match self.sync(replicate).await {
                 Ok(()) => {
                     debug!(
                         commits = target - previous,
+                        replicate,
                         elapsed_ms = started.elapsed().as_millis(),
                         "WAL synced"
                     );
                     previous = target;
                     delay = RETRY_DELAY;
-                    self.synced(target);
+                    self.synced(target, replicate);
                 }
                 Err(err) => {
                     // Waiters keep waiting: nothing they wait for may be revealed before it is durable.
@@ -342,7 +377,7 @@ mod tests {
 
     fn durability() -> (tempfile::TempDir, Arc<Durability>) {
         let dir = tempfile::tempdir().unwrap();
-        let durability = Arc::new(Durability::new(&dir.path().join("db.sqlite"), None));
+        let durability = Arc::new(Durability::new(&dir.path().join("db.sqlite"), None, true));
         (dir, durability)
     }
 
@@ -434,11 +469,37 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn only_replication_waiters_upload() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("litestream.sock");
+        let durability = Arc::new(Durability::new(
+            &dir.path().join("db.sqlite"),
+            Some(socket.clone()),
+            false,
+        ));
+        let (server, bodies) = fake_litestream(&socket, vec![200]);
+        let syncer = tokio::spawn(durability.clone().run_syncer());
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let seq = durability.committed(true);
+            durability.wait_seq(seq).await;
+            assert!(bodies.lock().unwrap().is_empty());
+            let seq = durability.committed(true);
+            durability.wait_replicated(seq).await;
+        })
+        .await
+        .unwrap();
+        server.await.unwrap();
+        assert_eq!(1, bodies.lock().unwrap().len());
+        syncer.abort();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn litestream_sync_is_retried_until_it_succeeds() {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("litestream.sock");
         let database = dir.path().join("db.sqlite");
-        let durability = Durability::new(&database, Some(socket.clone()));
+        let durability = Durability::new(&database, Some(socket.clone()), true);
         let (server, bodies) = fake_litestream(&socket, vec![500, 200]);
         tokio::time::timeout(Duration::from_secs(5), durability.startup_sync())
             .await

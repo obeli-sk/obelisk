@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an empty deployment without reading deployment.toml.
 - *(cli)* `server run --empty-deployment --deployment-id <id>` stores the empty deployment under
   that ID, or reuses it when stored and empty, so a supervisor knows the ID before the first start.
+- *(server)* `database.sqlite.litestream.sync = "deployments"` makes only deployment inserts wait
+  for Litestream, so a restored replica holds every submitted deployment without slowing other
+  commits. The default `"all"` keeps every commit synchronous.
 - *(deployment)* Deployment retention keeps the most recently deactivated deployment instead of the
   checkpointed one.
 

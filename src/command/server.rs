@@ -2400,6 +2400,7 @@ pub(crate) async fn run_internal(
             let sqlite_config = SqliteConfig {
                 litestream_socket: sqlite_config_toml
                     .get_litestream_socket(&path_prefixes, &secret_registry)?,
+                litestream_sync: sqlite_config_toml.get_litestream_sync(),
                 ..sqlite_config_toml.as_sqlite_config()
             };
             let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
