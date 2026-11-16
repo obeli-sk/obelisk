@@ -972,13 +972,10 @@ pub struct CloudConfigToml {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub memory_mb: ::std::option::Option<::std::num::NonZeroU32>,
 }
-///`CloudIntegrationToml`
+///Obelisk reads only `env`; the other keys (`type` and its settings) belong to the cloud.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct CloudIntegrationToml {
     pub env: ::std::string::String,
-    #[serde(rename = "type")]
-    pub type_: ::std::string::String,
 }
 ///`DeploymentSwitchOutcome`
 #[derive(

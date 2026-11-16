@@ -17,7 +17,7 @@ app_name = "my-app"
 # memory_mb = 512
 
 ## Cloud bindings supply public environment values, overriding uploaded or local values.
-## Binding names and types are validated by the target cloud; local runs must set required envs.
+## Obelisk reads only `env`; types and other settings are validated by the target cloud. Local runs must set required envs.
 # [cloud.integrations]
 # llm = { type = "llm", env = "LLM_BASE_URL" }
 

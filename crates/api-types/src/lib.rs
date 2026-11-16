@@ -50,8 +50,8 @@ impl AppConfigToml {
         let mut supplied = BTreeSet::new();
         for (name, integration) in &self.cloud.integrations {
             ensure!(
-                !name.is_empty() && !integration.type_.is_empty(),
-                "Cloud integration name and type must not be empty"
+                !name.is_empty(),
+                "Cloud integration name must not be empty"
             );
             ensure!(
                 matches!(
