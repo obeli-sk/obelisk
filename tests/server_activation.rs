@@ -343,6 +343,63 @@ fn submit_reports_deployment_id_conflict() {
     server.stop();
 }
 
+// A cloud deploy submits before the app.toml that opens `external` is applied.
+#[test]
+fn submit_defers_closed_http_server_to_activation() {
+    const WEBHOOK: &str = "Dep_00000000000000000000000005";
+    let fixture = Fixture::new();
+    let server_toml = fixture.path("server.toml");
+    let config = std::fs::read_to_string(&server_toml).unwrap().replace(
+        "http_server.external.enabled = false",
+        &format!(
+            "http_server.external.listening_addr = '127.0.0.1:{}'",
+            free_port()
+        ),
+    );
+    std::fs::write(&server_toml, config).unwrap();
+    let server = fixture.server(&server_toml, &["--empty-deployment"]);
+    let webhook = |file: &str, http_server: &str| {
+        std::fs::write(
+            fixture.path(file),
+            format!("[[webhook_endpoint_js]]\nname = 'hello'\nhttp_server = '{http_server}'\nroutes = ['/hello']\ncontent = 'export default function handle() {{ return new Response(\"hello\"); }}'\n"),
+        )
+        .unwrap();
+    };
+    let failure = |args: &[&str], expected: &str| {
+        let output = fixture.run(args);
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{stderr}");
+    };
+    let closed = "No started `http_server` found for some `webhook` configurations";
+    webhook("external.toml", "external");
+    let submit = [
+        "deployment",
+        "submit",
+        "external.toml",
+        "--deployment-id",
+        WEBHOOK,
+    ];
+    failure(&submit, closed);
+    let mut deferred = submit.to_vec();
+    deferred.push("--allow-unavailable-runtime-config");
+    assert_success(&fixture.run(&deferred));
+    // Activation under the current app.toml, which does not open `external`, still fails.
+    failure(&["deployment", "apply", WEBHOOK], closed);
+    // An unknown server is not deferred.
+    webhook("unknown.toml", "unknown");
+    failure(
+        &[
+            "deployment",
+            "submit",
+            "unknown.toml",
+            "--allow-unavailable-runtime-config",
+        ],
+        closed,
+    );
+    server.stop();
+}
+
 #[test]
 fn verify_dev_resolves_internal_http_server_url() {
     let fixture = Fixture::new();

@@ -1473,6 +1473,7 @@ pub(crate) async fn deployment_verify_config(
     let mut deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
         deployment,
         server_verified.http_servers.clone(),
+        &server_verified.closed_http_servers,
         prepared_dirs.wasm_cache_dir.clone(),
         prepared_dirs.metadata_dir.clone(),
         params.runtime_config_availability,
@@ -2802,6 +2803,8 @@ pub(crate) struct ServerVerified {
     launch: ServerVerifiedLaunch,
     allowed_exec_activities: AllowExecActivities,
     http_servers: Vec<HttpServer>,
+    /// Configured servers held closed by the credential or publicity gate.
+    closed_http_servers: Vec<String>,
     ignored_public_http_servers: Vec<(String, crate::config::server::PublicHttpServerIgnored)>,
     fuel: Option<u64>,
     component_cells: ComponentCells,
@@ -2889,7 +2892,8 @@ impl ServerVerified {
                 server.name
             );
         }
-        for name in config.closed_http_servers() {
+        let closed_http_servers = config.closed_http_servers();
+        for name in &closed_http_servers {
             if name == "internal" {
                 warn!(
                     "HTTP server `internal` does not start: configure `oidc` or `api_auth` in server.toml, or use `--dev` for local development"
@@ -3019,6 +3023,7 @@ impl ServerVerified {
             },
             allowed_exec_activities: config.allowed_exec_activities,
             http_servers,
+            closed_http_servers,
             ignored_public_http_servers,
             fuel,
             component_cells,
@@ -5495,6 +5500,7 @@ impl DeploymentVerified {
     async fn fetch_and_verify_all(
         deployment: DeploymentRunnable,
         http_servers: Vec<HttpServer>,
+        closed_http_servers: &[String],
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         runtime_config_availability: RuntimeConfigAvailability,
@@ -5581,6 +5587,14 @@ impl DeploymentVerified {
                 }
                 vec
             };
+            // The app.toml activating the deployment may open a closed server, so activation checks it.
+            if runtime_config_availability == RuntimeConfigAvailability::AllowUnavailable {
+                remaining_server_names_to_webhook_names.retain(|name, _| {
+                    !closed_http_servers
+                        .iter()
+                        .any(|closed| closed.as_str() == &***name)
+                });
+            }
             // Each webhook must be associated with an `http_server`.
             if !remaining_server_names_to_webhook_names.is_empty() {
                 bail!(
@@ -8105,6 +8119,7 @@ mod tests {
         let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
             deployment,
             server_verified.http_servers,
+            &server_verified.closed_http_servers,
             prepared_dirs.wasm_cache_dir.clone(),
             prepared_dirs.metadata_dir.clone(),
             params.runtime_config_availability,
