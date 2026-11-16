@@ -843,39 +843,11 @@ impl CloudArgs {
                                     })?,
                             )
                         };
-                        let staged = draft
-                            .as_ref()
-                            .and_then(|draft| draft["deployment_id"].as_str())
-                            .map(str::to_owned);
-                        let deployment_id = if let Some(staged) = staged {
-                            staged
-                        } else {
-                            let origin = api_origin(
-                                current["endpoints"]["api"]
-                                    .as_str()
-                                    .context("Missing endpoints.api")?,
-                            )?;
-                            let startup = ClientStartup::cloud(
-                                origin.as_str().trim_end_matches('/').to_owned(),
-                                self.api_token.clone(),
-                                self.verbose,
-                            );
-                            let info: rest_types::server::ServerInfoResponse =
-                                crate::client::send_json(
-                                    startup
-                                        .web_api_client()?
-                                        .get(format!("{}/v1/info", startup.api_url()))
-                                        .header(header::ACCEPT, "application/json"),
-                                )
-                                .await?;
-                            info.deployment_id
-                        };
                         let body = apply_request(
                             name,
                             &key,
                             draft.as_ref(),
                             &current,
-                            &deployment_id,
                             force,
                             self.json,
                         )?;
@@ -1040,6 +1012,7 @@ async fn compare_config(client: &Client, name: &str, app_toml: &str) -> anyhow::
         .await
 }
 
+#[cfg(test)]
 const DEFAULT_DRAFT: &str = "default";
 
 /// Applies the current labeled proposal, or re-applies the installed revision without one.
@@ -1048,11 +1021,10 @@ fn apply_request(
     key: &str,
     draft: Option<&Value>,
     current: &Value,
-    deployment_id: &str,
     force: bool,
     quiet: bool,
 ) -> anyhow::Result<Value> {
-    let mut body = json!({"force":force,"deployment_id":deployment_id});
+    let mut body = json!({"force":force});
     let applied = &current["applied_revision"];
     let Some(draft) = draft else {
         if !quiet {
@@ -1952,11 +1924,6 @@ mod tests {
             if draft["parent_revision"] != self.applied_revision {
                 return Err(format!("draft {key} changed"));
             }
-            if let Some(staged) = draft.get("deployment_id").and_then(Value::as_str)
-                && body["deployment_id"] != staged
-            {
-                return Err(format!("draft {key} stages deployment {staged}"));
-            }
             self.applied =
                 json!({"app_toml":draft["app_toml"],"env":draft["env"],"secrets":draft["secrets"]});
             self.applied_revision = draft["revision"].as_u64().unwrap();
@@ -2191,13 +2158,8 @@ mod tests {
         {
             assert_eq!(request.1["force"], force);
             assert_eq!(request.1["draft"], draft);
-            assert!(
-                request.1["deployment_id"]
-                    .as_str()
-                    .unwrap()
-                    .parse::<concepts::prefixed_ulid::DeploymentId>()
-                    .is_ok()
-            );
+            // The provisioner takes the deployment from the draft.
+            assert!(request.1.get("deployment_id").is_none());
             if draft.is_null() {
                 assert_eq!(request.1["revision"], 2);
             } else {

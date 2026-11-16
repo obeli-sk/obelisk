@@ -72,23 +72,8 @@ impl CloudArgs {
                 )
                 .await?
         };
-        let staged = client
-            .draft(
-                &name,
-                &key,
-                Method::PUT,
-                &["config"],
-                Some(Body::Toml(config.text)),
-                true,
-            )
-            .await?;
-        let values = Values::new(
-            values.fill,
-            values.fill_non_interactive,
-            prompt.as_mut().map(|p| p as Prompt),
-        )?;
-        let (mut staged, _) = stage_values(&client, &name, &key, staged, explicit, values).await?;
-        if let Some(prepared) = prepared {
+        // Submitting first leaves nothing staged when the submission fails.
+        let deployment_id = if let Some(prepared) = prepared {
             let api_url = api_origin(
                 current["endpoints"]["api"]
                     .as_str()
@@ -109,18 +94,35 @@ impl CloudArgs {
                 None,
             )
             .await
-            .with_context(|| {
-                format!(
-                    "Configuration is staged in draft `{key}`, but the deployment was not submitted; retry stage"
-                )
-            })?;
+            .context("The deployment was not submitted, nothing was staged")?;
+            Some(id.to_string())
+        } else {
+            None
+        };
+        let staged = client
+            .draft(
+                &name,
+                &key,
+                Method::PUT,
+                &["config"],
+                Some(Body::Toml(config.text)),
+                true,
+            )
+            .await?;
+        let values = Values::new(
+            values.fill,
+            values.fill_non_interactive,
+            prompt.as_mut().map(|p| p as Prompt),
+        )?;
+        let (mut staged, _) = stage_values(&client, &name, &key, staged, explicit, values).await?;
+        if let Some(deployment_id) = deployment_id {
             staged = client
                 .draft(
                     &name,
                     &key,
                     Method::PUT,
                     &["deployment"],
-                    Some(Body::Json(json!({"deployment_id":id.to_string()}))),
+                    Some(Body::Json(json!({"deployment_id":deployment_id}))),
                     true,
                 )
                 .await?;
@@ -205,8 +207,15 @@ mod tests {
                 app
             }
             (Method::POST, "/v1/apps/demo/apply") => {
+                assert!(body.get("deployment_id").is_none());
+                // The provisioner takes the deployment from the draft.
+                let staged = body["draft"]
+                    .as_str()
+                    .and_then(|key| state.drafts.drafts.get(key))
+                    .and_then(|draft| draft["deployment_id"].as_str())
+                    .map(str::to_owned);
                 state.drafts.apply(&body).unwrap();
-                state.applied_deployment = body["deployment_id"].as_str().map(str::to_owned);
+                state.applied_deployment = staged;
                 let mut app = state.app.clone().unwrap();
                 app["applied_revision"] = json!(state.drafts.applied_revision);
                 app["outcome"] = json!({"configuration":"applied","vm":"started"});
@@ -294,9 +303,19 @@ mod tests {
                     "{scenario}"
                 );
                 assert_eq!(state.submitted.is_some(), scenario != "config-only");
+                // The deployment is submitted before anything is staged.
+                let position = |prefix: &str| {
+                    state
+                        .calls
+                        .iter()
+                        .position(|call| call.starts_with(prefix))
+                };
+                if let Some(submit) = position("PUT /tenant/v1/deployments/") {
+                    assert!(submit < position("PUT /v1/apps/demo/drafts/").unwrap());
+                }
             }
             if scenario == "empty" {
-                // Apply sends the staged deployment without asking the tenant for the active one.
+                // Apply activates the staged deployment without naming it.
                 let args = super::super::tests::args(&origin, &["app", "apply"]);
                 args.execute().await.unwrap();
                 let state = state.lock().unwrap();

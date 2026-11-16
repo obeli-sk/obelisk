@@ -9,10 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - *(cli)* `cloud app stage` creates a missing app with a bare app.toml and says so, accepts
   `--env`, `--secret`, `--fill` and `--fill-non-interactive`, and with `-d/--deployment` or
-  `--empty-deployment` submits a deployment and stages its ID in the draft. It never applies, so
-  a human can set the remaining secrets and run `cloud app apply`. `cloud app apply` activates the
-  draft's staged deployment, else the active one. `cloud app deploy` announces when it creates
-  the app.
+  `--empty-deployment` submits a deployment first and stages its ID with the configuration in the
+  draft. It never applies, so a human can set the remaining secrets and run `cloud app apply`.
+  `cloud app apply` sends no deployment ID: the provisioner activates the draft's staged
+  deployment, else keeps the active one. `cloud app deploy` creates a missing app bare, announces
+  it, and stages configuration, values and the uploaded deployment in its temporary draft before
+  applying it.
 - *(cli)* `--empty` is renamed to `--empty-deployment` in `server run` and `deployment
   submit|enqueue|apply`; `--empty` remains an alias. `cloud app deploy --empty-deployment` deploys
   an empty deployment without reading deployment.toml.
