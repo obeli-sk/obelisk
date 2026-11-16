@@ -321,6 +321,8 @@ enum TxSync {
     /// External reads of state not tracked per execution (deployments, system events, blobs):
     /// wait until everything committed before the read is durable.
     Barrier,
+    /// Like `Wait`, also waiting for Litestream to replicate the write and everything before it.
+    Replicate,
 }
 
 /// Records the given executions as changed by a write.
@@ -531,14 +533,25 @@ pub enum SqliteFsync {
     Group,
 }
 
+/// Which commits wait for Litestream to replicate them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LitestreamSync {
+    /// Every commit is revealed only after Litestream replicates it.
+    #[default]
+    All,
+    /// Only deployment inserts wait; other commits reach the replica on Litestream's schedule.
+    Deployments,
+}
+
 #[derive(Debug, Clone)]
 pub struct SqliteConfig {
     pub queue_capacity: usize,
     pub pragma_override: Option<HashMap<String, String>>,
     pub metrics_threshold: Option<Duration>,
     pub fsync: SqliteFsync,
-    /// Litestream control socket. Every commit is revealed only after Litestream replicates it.
+    /// Litestream control socket, see [`LitestreamSync`].
     pub litestream_socket: Option<PathBuf>,
+    pub litestream_sync: LitestreamSync,
 }
 impl Default for SqliteConfig {
     fn default() -> Self {
@@ -548,6 +561,7 @@ impl Default for SqliteConfig {
             metrics_threshold: None,
             fsync: SqliteFsync::default(),
             litestream_socket: None,
+            litestream_sync: LitestreamSync::default(),
         }
     }
 }
@@ -1081,11 +1095,15 @@ impl SqlitePool {
                 InitializationError
             })?;
             if let Some(socket) = &config.litestream_socket {
-                info!("Replicating commits via the Litestream socket {socket:?}");
+                info!(
+                    "Replicating {:?} commits via the Litestream socket {socket:?}",
+                    config.litestream_sync
+                );
             }
             Some(Arc::new(Durability::new(
                 &path,
                 config.litestream_socket.clone(),
+                config.litestream_sync == LitestreamSync::All,
             )))
         } else {
             None
@@ -1259,7 +1277,7 @@ impl SqlitePool {
                 let (res, changed) = std::mem::take(fn_res.lock().unwrap().deref_mut())
                     .expect("ltx must have been run at least once");
                 let wait = match sync {
-                    TxSync::Wait => changed,
+                    TxSync::Wait | TxSync::Replicate => changed,
                     TxSync::Barrier => true,
                     TxSync::Later => false,
                 };
@@ -1268,7 +1286,11 @@ impl SqlitePool {
                     && res.is_ok()
                 {
                     // Without changes `seq` is the latest commit, covering everything read.
-                    durability.wait_seq(seq).await;
+                    if matches!(sync, TxSync::Replicate) {
+                        durability.wait_replicated(seq).await;
+                    } else {
+                        durability.wait_seq(seq).await;
+                    }
                 }
                 res
             }
@@ -4496,7 +4518,6 @@ impl SqlitePool {
         Self::with_deployment_files_tx(tx, record).map(Some)
     }
 
-    #[cfg(feature = "test")]
     fn get_active_deployment_tx(tx: &Transaction) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         let Some(record) = tx
             .query_row(
@@ -5870,7 +5891,8 @@ impl DbExternalApi for SqlitePool {
         deployment_component_files: Vec<DeploymentComponentFileRecord>,
     ) -> Result<(), DbErrorWrite> {
         let deployment_id = record.deployment_id;
-        self.transaction(
+        // A replica restore must keep every deployment a supervisor may fall back to.
+        self.transaction_durable(
             move |tx| {
                 // Parent row first so the t_deployment_component FK is satisfied within the tx.
                 Self::insert_deployment_tx(tx, &record)?;
@@ -5885,6 +5907,8 @@ impl DbExternalApi for SqlitePool {
             },
             TxType::MultipleWrites,
             "insert_deployment_with_components",
+            TxSync::Replicate,
+            None,
         )
         .await
     }
@@ -5929,48 +5953,6 @@ impl DbExternalApi for SqlitePool {
             },
             TxType::MultipleWrites,
             "activate_deployment",
-        )
-        .await
-    }
-
-    async fn commit_app_checkpoint(
-        &self,
-        checkpoint: concepts::storage::AppCheckpoint,
-        now: DateTime<Utc>,
-        app_config_digest: String,
-    ) -> Result<(), DbErrorWrite> {
-        self.transaction(move |tx| {
-            Self::activate_deployment_tx(tx, checkpoint.deployment_id, now, Some(&app_config_digest))?;
-            tx.execute("INSERT INTO t_app_checkpoint(singleton,checkpoint) VALUES(1,?1) ON CONFLICT(singleton) DO UPDATE SET checkpoint=excluded.checkpoint", [JsonWrapper(&checkpoint)])
-                .map_err(RusqliteError::from)?;
-            Ok(())
-        }, TxType::MultipleWrites, "commit_app_checkpoint").await
-    }
-
-    async fn get_app_checkpoint(
-        &self,
-    ) -> Result<Option<concepts::storage::AppCheckpoint>, DbErrorRead> {
-        self.transaction_read_durable(
-            |tx| -> Result<_, DbErrorRead> {
-                let raw: Option<String> = tx
-                    .query_row(
-                        "SELECT checkpoint FROM t_app_checkpoint WHERE singleton=1",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .optional()
-                    .map_err(RusqliteError::from)?;
-                raw.map(|raw| {
-                    serde_json::from_str(&raw).map_err(|err| {
-                        DbErrorRead::from(consistency_db_err(format!(
-                            "invalid app checkpoint: {err}"
-                        )))
-                    })
-                })
-                .transpose()
-            },
-            TxType::Other,
-            "get_app_checkpoint",
         )
         .await
     }
@@ -6052,7 +6034,6 @@ impl DbExternalApi for SqlitePool {
         .await
     }
 
-    #[cfg(feature = "test")]
     #[instrument(skip(self))]
     async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         self.transaction_read_durable(
@@ -6779,12 +6760,12 @@ impl DbAdmin for SqlitePool {
                         } else {
                             "(updated_at, deployment_id) < (
                                SELECT updated_at, deployment_id FROM t_deployment
-                               WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id)
+                               WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1)
                                ORDER BY updated_at DESC, deployment_id DESC LIMIT 1 OFFSET MAX(?1 - 1, 0))".to_string()
                         };
                         tx.prepare(
                         &format!("SELECT deployment_id, updated_at FROM t_deployment
-                         WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id)
+                         WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1)
                            AND ({before_retained})
                            AND ({after})
                          ORDER BY updated_at, deployment_id LIMIT ?2"),
@@ -6795,7 +6776,7 @@ impl DbAdmin for SqlitePool {
                     .collect::<Result<Vec<_>, _>>()?
                     },
                     RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
-                        &format!("SELECT deployment_id, updated_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE json_extract(checkpoint, '$.deployment_id') = t_deployment.deployment_id) AND updated_at < ?1 AND ({after}) ORDER BY updated_at ASC, deployment_id ASC LIMIT ?2"),
+                        &format!("SELECT deployment_id, updated_at FROM t_deployment WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1) AND updated_at < ?1 AND ({after}) ORDER BY updated_at ASC, deployment_id ASC LIMIT ?2"),
                     )?.query_map(rusqlite::params![cutoff, i64::from(batch_size) + 1, cursor.map(|c| c.timestamp), cursor.map(|c| c.deployment_id.to_string())], |row| Ok(DeploymentRetentionCursor { deployment_id: row.get(0)?, timestamp: row.get(1)? }))?
                     .collect::<Result<Vec<_>, _>>()?,
                 };

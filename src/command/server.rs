@@ -484,15 +484,10 @@ impl DeploymentSwitchManagerHandle {
         let cancel_registry = self.inner.cancel_registry.clone();
         let log_forwarder_sender = self.inner.log_forwarder_sender.clone();
         let app_config_digest = self.inner.server_verified.app_config_digest.to_string();
-        let checkpoint = concepts::storage::AppCheckpoint {
-            deployment_id,
-            app_toml: self.inner.server_verified.app_toml.clone(),
-            app_env_prefix: self.inner.server_verified.app_env_prefix.clone(),
-        };
         let server_configuration_event_id =
             self.inner.server_verified.server_configuration_event_id;
         let switch_count = self.inner.switch_count.clone();
-        // Keep the checkpoint commit and worker swap alive if the request is cancelled.
+        // Keep the activation and worker swap alive if the request is cancelled.
         utils::spawn::spawn_named("deployment_switch", async move {
             let _switch_permit = switch_permit;
             let result = async {
@@ -506,7 +501,11 @@ impl DeploymentSwitchManagerHandle {
                         .register_crons(&db_pool, deployment_id)
                         .await?;
                     db_conn
-                        .commit_app_checkpoint(checkpoint, chrono::Utc::now(), app_config_digest)
+                        .activate_deployment(
+                            deployment_id,
+                            chrono::Utc::now(),
+                            Some(&app_config_digest),
+                        )
                         .await
                         .map_err(|err| SwitchError::Other(err.into()))?;
                     switch_count.fetch_add(1, Ordering::SeqCst);
@@ -523,7 +522,11 @@ impl DeploymentSwitchManagerHandle {
                     .await
                 } else {
                     db_conn
-                        .commit_app_checkpoint(checkpoint, chrono::Utc::now(), app_config_digest)
+                        .activate_deployment(
+                            deployment_id,
+                            chrono::Utc::now(),
+                            Some(&app_config_digest),
+                        )
                         .await
                         .map_err(|err| SwitchError::Other(err.into()))?;
                     Ok(SwitchOutcome::Switched)
@@ -1238,35 +1241,6 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
 }
 
 type VerifiedDbPool = (Arc<dyn DbPool>, Pin<Box<dyn Future<Output = ()> + Send>>);
-
-pub(crate) async fn checkpoint(server_config: Option<PathBuf>) -> anyhow::Result<()> {
-    let holder = ConfigHolder::new(
-        crate::project_dirs(),
-        directories::BaseDirs::new(),
-        server_config,
-    )?;
-    let mut config = holder.load_config()?;
-    config.resolve_env_vars(
-        &holder.path_prefixes,
-        &crate::config::env_var::StartupEnvVars::capture(),
-    )?;
-    let (pool, close) = verify_db_schema(
-        &config.database,
-        &holder.path_prefixes,
-        &SecretRegistry::resolve(
-            IndexMap::default(),
-            IndexMap::default(),
-            crate::config::secret_registry::EnvVarSecretsCleanup::Noop,
-            RuntimeConfigAvailability::Strict,
-            &crate::config::env_var::StartupEnvVars::capture(),
-        )?,
-    )
-    .await?;
-    let result = pool.external_api_conn().await?.get_app_checkpoint().await?;
-    println!("{}", serde_json::to_string(&result)?);
-    close.await;
-    Ok(())
-}
 
 async fn verify_db_schema(
     db_config_toml: &DatabaseConfigToml,
@@ -2426,6 +2400,7 @@ pub(crate) async fn run_internal(
             let sqlite_config = SqliteConfig {
                 litestream_socket: sqlite_config_toml
                     .get_litestream_socket(&path_prefixes, &secret_registry)?,
+                litestream_sync: sqlite_config_toml.get_litestream_sync(),
                 ..sqlite_config_toml.as_sqlite_config()
             };
             let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
@@ -2721,11 +2696,11 @@ pub(crate) async fn run_internal(
         {
             let permit = deployment_switch_manager
                 .try_acquire_switch_permit()
-                .map_err(|err| anyhow::anyhow!("checkpoint commit unavailable: {err:?}"))?;
+                .map_err(|err| anyhow::anyhow!("deployment activation unavailable: {err:?}"))?;
             deployment_switch_manager
                 .spawn_critical_hot_switch(None, active_deployment_id, permit)
                 .await
-                .map_err(|err| anyhow::anyhow!("checkpoint commit failed: {err:?}"))?;
+                .map_err(|err| anyhow::anyhow!("deployment activation failed: {err:?}"))?;
         }
         crate::server::system_event_writer::record(
             server_init.db_pool.as_ref(),
@@ -2788,11 +2763,11 @@ pub(crate) async fn run_internal(
         {
             let permit = deployment_switch_manager
                 .try_acquire_switch_permit()
-                .map_err(|err| anyhow::anyhow!("checkpoint commit unavailable: {err:?}"))?;
+                .map_err(|err| anyhow::anyhow!("deployment activation unavailable: {err:?}"))?;
             deployment_switch_manager
                 .spawn_critical_hot_switch(None, active_deployment_id, permit)
                 .await
-                .map_err(|err| anyhow::anyhow!("checkpoint commit failed: {err:?}"))?;
+                .map_err(|err| anyhow::anyhow!("deployment activation failed: {err:?}"))?;
         }
         crate::server::system_event_writer::record(
             server_init.db_pool.as_ref(),

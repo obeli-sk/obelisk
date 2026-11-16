@@ -5763,51 +5763,11 @@ impl DbExternalApi for PostgresConnection {
                 &[&now, &deployment_id.to_string(), &app_config_digest],
             )
             .await?;
-        tx.commit().await?;
         if rows == 0 {
             return Err(DbErrorWrite::NotFound);
         }
-        Ok(())
-    }
-
-    async fn commit_app_checkpoint(
-        &self,
-        checkpoint: concepts::storage::AppCheckpoint,
-        now: DateTime<Utc>,
-        app_config_digest: String,
-    ) -> Result<(), DbErrorWrite> {
-        let mut client_guard = self.client().await?;
-        let tx = client_guard.transaction().await?;
-        tx.execute(
-            "UPDATE t_deployment SET status='inactive', updated_at=$1 WHERE status='active'",
-            &[&now],
-        )
-        .await?;
-        let rows = tx.execute("UPDATE t_deployment SET status='active', last_active_at=$1, updated_at=$1, last_active_app_config_digest=$3 WHERE deployment_id=$2", &[&now, &checkpoint.deployment_id.to_string(), &app_config_digest]).await?;
-        if rows == 0 {
-            return Err(DbErrorWrite::NotFound);
-        }
-        tx.execute("INSERT INTO t_app_checkpoint(singleton,checkpoint) VALUES(1,$1) ON CONFLICT(singleton) DO UPDATE SET checkpoint=excluded.checkpoint", &[&Json(&checkpoint)]).await?;
         tx.commit().await?;
         Ok(())
-    }
-
-    async fn get_app_checkpoint(
-        &self,
-    ) -> Result<Option<concepts::storage::AppCheckpoint>, DbErrorRead> {
-        let client_guard = self.client().await?;
-        let row = client_guard
-            .query_opt(
-                "SELECT checkpoint FROM t_app_checkpoint WHERE singleton=1",
-                &[],
-            )
-            .await?;
-        row.map(|row| {
-            get::<Json<concepts::storage::AppCheckpoint>, _>(&row, "checkpoint")
-                .map(|value| value.0)
-                .map_err(DbErrorRead::from)
-        })
-        .transpose()
     }
 
     async fn enqueue_deployment(
@@ -5917,7 +5877,6 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip(self))]
-    #[cfg(feature = "test")]
     async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
@@ -6731,12 +6690,12 @@ impl DbAdmin for PostgresConnection {
                 } else {
                     "(updated_at, deployment_id) < (
                                SELECT updated_at, deployment_id FROM t_deployment
-                               WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id)
+                               WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1)
                                ORDER BY updated_at DESC, deployment_id DESC LIMIT 1 OFFSET GREATEST($1::bigint - 1, 0))".to_string()
                 };
                 tx.query(
                 &format!("SELECT deployment_id, updated_at FROM t_deployment
-                         WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id)
+                         WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1)
                            AND ({before_retained})
                            AND ({after})
                          ORDER BY updated_at, deployment_id LIMIT $2"),
@@ -6744,7 +6703,7 @@ impl DbAdmin for PostgresConnection {
             ).await?
             },
             RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
-                &format!("SELECT deployment_id, updated_at FROM t_deployment WHERE status = 'inactive' AND NOT EXISTS (SELECT 1 FROM t_app_checkpoint WHERE checkpoint->>'deployment_id' = t_deployment.deployment_id) AND updated_at < $1 AND ({after}) ORDER BY updated_at ASC, deployment_id ASC LIMIT $2"),
+                &format!("SELECT deployment_id, updated_at FROM t_deployment WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1) AND updated_at < $1 AND ({after}) ORDER BY updated_at ASC, deployment_id ASC LIMIT $2"),
                 &[&cutoff, &(i64::from(batch_size) + 1), &cursor.map(|c| c.timestamp), &cursor.map(|c| c.deployment_id.to_string())],
             ).await?,
         };

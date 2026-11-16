@@ -355,10 +355,6 @@ CREATE INDEX t_system_event_deployment_idx ON t_system_event(deployment_id, crea
 CREATE UNIQUE INDEX t_system_event_dedupe_idx
     ON t_system_event(code, deployment_id, dedupe_key)
     WHERE dedupe_key IS NOT NULL;
-CREATE TABLE t_app_checkpoint (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    checkpoint TEXT NOT NULL CHECK (json_valid(checkpoint))
-);
 CREATE TABLE t_file_upload (
     digest      TEXT NOT NULL PRIMARY KEY,
     uploaded_at TEXT NOT NULL

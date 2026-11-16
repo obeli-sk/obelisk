@@ -6455,7 +6455,7 @@ async fn list_executions_filters_by_state(database: Database) {
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn app_checkpoint_is_atomic_and_preserves_unrelated_enqueue(database: Database) {
+async fn activation_is_atomic_and_preserves_unrelated_enqueue(database: Database) {
     set_up();
     let (_guard, pool, close) = database.set_up().await;
     let conn = pool.external_api_conn().await.unwrap();
@@ -6463,7 +6463,6 @@ async fn app_checkpoint_is_atomic_and_preserves_unrelated_enqueue(database: Data
     let first = concepts::prefixed_ulid::DeploymentId::generate();
     let second = concepts::prefixed_ulid::DeploymentId::generate();
     let queued = concepts::prefixed_ulid::DeploymentId::generate();
-    assert!(conn.get_app_checkpoint().await.unwrap().is_none());
     for id in [first, second, queued] {
         conn.insert_deployment_with_components(
             DeploymentRecord {
@@ -6487,58 +6486,35 @@ async fn app_checkpoint_is_atomic_and_preserves_unrelated_enqueue(database: Data
         .await
         .unwrap();
     }
-    let checkpoint = concepts::storage::AppCheckpoint {
-        deployment_id: first,
-        app_toml: "app_name='test-app'".into(),
-        app_env_prefix: "V1_".into(),
-    };
-    conn.commit_app_checkpoint(checkpoint.clone(), now, "first-policy".into())
+    conn.activate_deployment(first, now, Some("first-policy"))
         .await
         .unwrap();
     conn.enqueue_deployment(queued, now).await.unwrap();
-    let missing = concepts::storage::AppCheckpoint {
-        deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
-        ..checkpoint.clone()
-    };
     assert!(
-        conn.commit_app_checkpoint(missing, now, "invalid".into())
-            .await
-            .is_err()
+        conn.activate_deployment(
+            concepts::prefixed_ulid::DeploymentId::generate(),
+            now,
+            Some("invalid")
+        )
+        .await
+        .is_err()
     );
-    assert_eq!(conn.get_app_checkpoint().await.unwrap(), Some(checkpoint));
+    let active = conn.get_active_deployment().await.unwrap().unwrap();
+    assert_eq!(active.deployment_id, first);
     assert_eq!(
-        conn.get_active_deployment()
-            .await
-            .unwrap()
-            .unwrap()
-            .deployment_id,
-        first
+        active.last_active_app_config_digest.as_deref(),
+        Some("first-policy")
     );
-    let next = concepts::storage::AppCheckpoint {
-        deployment_id: second,
-        app_toml: "app_name='test-app'\n[public_env]\nNEW={}".into(),
-        app_env_prefix: "V2_".into(),
-    };
-    conn.commit_app_checkpoint(next.clone(), now, "second-policy".into())
+    conn.activate_deployment(second, now, Some("second-policy"))
         .await
         .unwrap();
-    assert_eq!(conn.get_app_checkpoint().await.unwrap(), Some(next));
     assert_eq!(
         conn.get_deployment(queued).await.unwrap().unwrap().status,
         DeploymentStatus::Enqueued
     );
-    let final_checkpoint = concepts::storage::AppCheckpoint {
-        deployment_id: queued,
-        app_toml: "app_name='test-app'".into(),
-        app_env_prefix: "V3_".into(),
-    };
-    conn.commit_app_checkpoint(final_checkpoint.clone(), now, "third-policy".into())
+    conn.activate_deployment(queued, now, Some("third-policy"))
         .await
         .unwrap();
-    assert_eq!(
-        conn.get_app_checkpoint().await.unwrap(),
-        Some(final_checkpoint)
-    );
     assert_eq!(
         conn.get_deployment(queued).await.unwrap().unwrap().status,
         DeploymentStatus::Active

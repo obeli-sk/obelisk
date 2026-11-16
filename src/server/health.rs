@@ -19,7 +19,7 @@ pub(crate) async fn serve(listener: TcpListener, db_pool: Arc<dyn DbPool>) -> st
 async fn health(State(db_pool): State<Arc<dyn DbPool>>) -> (StatusCode, &'static str) {
     let read = match db_pool.external_api_conn().await {
         Ok(conn) => conn
-            .get_app_checkpoint()
+            .get_active_deployment()
             .await
             .map_err(|err| err.to_string()),
         Err(err) => Err(err.to_string()),

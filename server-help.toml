@@ -159,7 +159,7 @@
 # max_age.hours = 744
 # max_count = 1000
 # [maintenance.gc.retention.deployments]
-## Active, enqueued and last-good checkpoint deployments are excluded.
+## Active, enqueued and the most recently deactivated deployments are excluded.
 # enabled = true
 # max_age.hours = 744
 # max_count = 100

@@ -1,5 +1,5 @@
-//! The app checkpoint records the deployment and app policy of the last successful activation.
-//! Supervisors restart from it after a failed rollout, so only activations may move it.
+//! The active deployment records the app policy digest of the last successful activation.
+//! Only activations may move it: verification and failed startups leave it untouched.
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
 use std::time::{Duration, Instant};
@@ -18,7 +18,7 @@ impl Fixture {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("app.toml"),
-            "app_name = 'checkpoint-test'\n",
+            "app_name = 'activation-test'\n",
         )
         .unwrap();
         let port = free_port();
@@ -67,7 +67,7 @@ wasm.codegen_cache.directory = "{codegen}"
             .env("OBELISK_JS_RUNTIME", "v8")
             .env(
                 "OBELISK_API_TOKEN",
-                "checkpoint-test-api-token-0000000000000000",
+                "activation-test-api-token-0000000000000000",
             )
             .env_remove("OBELISK_APP_NAME");
         command
@@ -91,7 +91,7 @@ wasm.codegen_cache.directory = "{codegen}"
         args.extend(extra);
         let server = Server(self.command(&args).spawn().unwrap());
         let deadline = Instant::now() + Duration::from_secs(60);
-        // Reading the checkpoint earlier would race the server's migrations.
+        // Reading the database earlier would race the server's migrations.
         while std::net::TcpStream::connect(("127.0.0.1", self.port)).is_err() {
             assert!(Instant::now() < deadline, "server did not start");
             std::thread::sleep(Duration::from_millis(50));
@@ -99,13 +99,16 @@ wasm.codegen_cache.directory = "{codegen}"
         server
     }
 
-    fn checkpoint(&self) -> Option<serde_json::Value> {
-        let output = self.run(&["server", "checkpoint", "-s", "server.toml"]);
-        if !output.status.success() {
-            return None;
-        }
-        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        (!value.is_null()).then_some(value)
+    /// The active deployment and the app config digest it was activated under.
+    fn active(&self) -> (String, String) {
+        rusqlite::Connection::open(self.path("db/obelisk.sqlite"))
+            .unwrap()
+            .query_row(
+                "SELECT deployment_id, last_active_app_config_digest FROM t_deployment WHERE status = 'active'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
     }
 
     fn status(&self, deployment_id: &str) -> String {
@@ -125,7 +128,7 @@ wasm.codegen_cache.directory = "{codegen}"
         std::fs::write(
             self.path(&file),
             format!(
-                "[[activity_stub]]\nname = 'stub'\nffqn = 'testing:checkpoint/stubs.{}'\nparams = []\nreturn_type = 'result<string, string>'\n",
+                "[[activity_stub]]\nname = 'stub'\nffqn = 'testing:activation/stubs.{}'\nparams = []\nreturn_type = 'result<string, string>'\n",
                 deployment_id.to_lowercase().replace('_', "-")
             ),
         )
@@ -181,29 +184,22 @@ fn assert_success(output: &Output) {
 }
 
 #[test]
-fn checkpoint_moves_only_on_activation() {
+fn active_moves_only_on_activation() {
     let fixture = Fixture::new();
     let server_toml = fixture.path("server.toml");
     let server = fixture.server(&server_toml, &["--empty-deployment"]);
-    let initial = fixture.checkpoint().unwrap();
-    assert_eq!(initial["app_env_prefix"], "V1_");
-    assert!(
-        initial["app_toml"]
-            .as_str()
-            .unwrap()
-            .contains("checkpoint-test")
-    );
+    let (_, digest) = fixture.active();
     fixture.submit(HOT);
     fixture.submit(QUEUED);
 
-    // Hot activation commits the checkpoint.
+    // Hot activation moves the active deployment.
     assert_success(&fixture.run(&["deployment", "apply", HOT]));
-    let committed = fixture.checkpoint().unwrap();
-    assert_eq!(committed["deployment_id"], HOT);
+    let committed = fixture.active();
+    assert_eq!(committed, (HOT.to_owned(), digest));
     assert_success(&fixture.run(&["deployment", "enqueue", QUEUED]));
-    assert_eq!(fixture.checkpoint().unwrap(), committed);
+    assert_eq!(fixture.active(), committed);
 
-    // Verify under another policy never commits.
+    // Verify under another policy never activates.
     let other_policy = fixture.server_toml("other.toml", "V2_", fixture.port);
     let other_policy = other_policy.to_str().unwrap();
     assert_success(&fixture.run(&[
@@ -216,10 +212,10 @@ fn checkpoint_moves_only_on_activation() {
         "--deployment-id",
         QUEUED,
     ]));
-    assert_eq!(fixture.checkpoint().unwrap(), committed);
+    assert_eq!(fixture.active(), committed);
     server.stop();
 
-    // A startup failing after compilation, at the API bind, never commits.
+    // A startup failing after compilation, at the API bind, never activates.
     let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let blocked = fixture.server_toml("blocked.toml", "V2_", occupied.local_addr().unwrap().port());
     let failed = fixture.run(&[
@@ -236,12 +232,12 @@ fn checkpoint_moves_only_on_activation() {
     assert!(!failed.status.success());
     assert!(String::from_utf8_lossy(&failed.stderr).contains("cannot bind"));
     drop(occupied);
-    assert_eq!(fixture.checkpoint().unwrap(), committed);
+    assert_eq!(fixture.active(), committed);
     assert_eq!(fixture.status(QUEUED), "enqueued");
 
     // Restarting on an explicit deployment ID keeps the unrelated enqueue.
     let server = fixture.server(&server_toml, &["--deployment-id", HOT]);
-    assert_eq!(fixture.checkpoint().unwrap(), committed);
+    assert_eq!(fixture.active(), committed);
     assert_eq!(fixture.status(HOT), "active");
     assert_eq!(fixture.status(QUEUED), "enqueued");
     server.stop();
@@ -256,7 +252,7 @@ fn empty_deployment_under_selected_id() {
     let server_toml = fixture.path("server.toml");
     let args = ["--empty-deployment", "--deployment-id", EMPTY];
     let server = fixture.server(&server_toml, &args);
-    assert_eq!(fixture.checkpoint().unwrap()["deployment_id"], EMPTY);
+    assert_eq!(fixture.active().0, EMPTY);
     assert_eq!(fixture.status(EMPTY), "active");
     fixture.submit(HOT);
     server.stop();
@@ -297,7 +293,7 @@ fn server_starts_on_full_database() {
 
     // A limit below the current page count is clamped to it, so no new page can be allocated.
     let policy = (0..200).fold(
-        "app_name = 'checkpoint-test'\n[public_env]\n".to_owned(),
+        "app_name = 'activation-test'\n[public_env]\n".to_owned(),
         |acc, i| acc + &format!("VAR_{i} = {{ optional = true }}\n"),
     );
     std::fs::write(fixture.path("app.toml"), policy).unwrap();
@@ -310,7 +306,7 @@ fn server_starts_on_full_database() {
     let file = "full.toml";
     std::fs::write(
         fixture.path(file),
-        "[[activity_stub]]\nname = 'stub'\nffqn = 'testing:checkpoint/stubs.full'\nparams = []\nreturn_type = 'result<string, string>'\n",
+        "[[activity_stub]]\nname = 'stub'\nffqn = 'testing:activation/stubs.full'\nparams = []\nreturn_type = 'result<string, string>'\n",
     )
     .unwrap();
     let output = fixture.run(&["deployment", "submit", file]);
@@ -331,7 +327,7 @@ fn verify_dev_resolves_internal_http_server_url() {
     std::fs::write(config_path, config).unwrap();
     std::fs::write(
         fixture.path("app.toml"),
-        "app_name = 'checkpoint-test'\n[public_env]\nINTERNAL_URL = { type = 'internal', source = 'http-server-url', http_server = 'internal' }\n",
+        "app_name = 'activation-test'\n[public_env]\nINTERNAL_URL = { type = 'internal', source = 'http-server-url', http_server = 'internal' }\n",
     )
     .unwrap();
     std::fs::write(fixture.path("deployment.toml"), "").unwrap();
@@ -364,7 +360,7 @@ async fn dev_controls_token_disclosure_and_internal_without_disabling_api_auth()
     for (dev, internal_api_auth) in [(false, false), (true, false), (true, true)] {
         let fixture = Fixture::new();
         if dev {
-            std::fs::write(fixture.path("app.toml"), "app_name = 'checkpoint-test'\n[public_env]\nINTERNAL_URL = { type = 'internal', source = 'http-server-url', http_server = 'internal' }\n[secrets]\nINTERNAL_TOKEN = { type = 'internal' }\n").unwrap();
+            std::fs::write(fixture.path("app.toml"), "app_name = 'activation-test'\n[public_env]\nINTERNAL_URL = { type = 'internal', source = 'http-server-url', http_server = 'internal' }\n[secrets]\nINTERNAL_TOKEN = { type = 'internal' }\n").unwrap();
         }
         let internal_port = free_port();
         let config_path = fixture.path("server.toml");
@@ -414,7 +410,7 @@ async fn dev_controls_token_disclosure_and_internal_without_disabling_api_auth()
         assert!(
             client
                 .get(&url)
-                .bearer_auth("checkpoint-test-api-token-0000000000000000")
+                .bearer_auth("activation-test-api-token-0000000000000000")
                 .send()
                 .await
                 .unwrap()

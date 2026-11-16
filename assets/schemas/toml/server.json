@@ -664,17 +664,35 @@
       ]
     },
     "LitestreamConfigToml": {
-      "description": "Replicate the database with Litestream synchronously: a commit is revealed outside of the\nserver only after Litestream uploads it. Litestream must be replicating the database file\nbefore the server starts; the server waits for it on startup.\n\nThe server does not check that the database is consistent with the replica; the launcher\nmust. Litestream can upload commits whose WAL frames are not on the disk yet, so after a host\ncrash the replica can be ahead of the database, or hold different commits under the same\nposition. Before starting Litestream, the launcher must restore the replica whenever the\ndatabase is behind it or does not match Litestream's local position.",
+      "description": "Replicate the database with Litestream synchronously: a commit is revealed outside of the\nserver only after Litestream uploads it, see `sync`. Litestream must be replicating the database file\nbefore the server starts; the server waits for it on startup.\n\nThe server does not check that the database is consistent with the replica; the launcher\nmust. Litestream can upload commits whose WAL frames are not on the disk yet, so after a host\ncrash the replica can be ahead of the database, or hold different commits under the same\nposition. Before starting Litestream, the launcher must restore the replica whenever the\ndatabase is behind it or does not match Litestream's local position.",
       "type": "object",
       "properties": {
         "socket": {
           "description": "Path to the Litestream control socket (`socket.path` in the Litestream configuration).",
           "type": "string"
+        },
+        "sync": {
+          "$ref": "#/$defs/LitestreamSyncToml"
         }
       },
       "additionalProperties": false,
       "required": [
         "socket"
+      ]
+    },
+    "LitestreamSyncToml": {
+      "description": "Which commits wait for Litestream to upload them.",
+      "oneOf": [
+        {
+          "description": "Every commit is revealed only after Litestream uploads it.",
+          "type": "string",
+          "const": "all"
+        },
+        {
+          "description": "Only deployment inserts wait for the upload, so a restored replica holds every deployment\nthat was submitted. Other commits reach the replica on Litestream's own schedule.",
+          "type": "string",
+          "const": "deployments"
+        }
       ]
     },
     "PostgresConfigToml": {
