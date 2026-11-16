@@ -4496,7 +4496,6 @@ impl SqlitePool {
         Self::with_deployment_files_tx(tx, record).map(Some)
     }
 
-    #[cfg(feature = "test")]
     fn get_active_deployment_tx(tx: &Transaction) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         let Some(record) = tx
             .query_row(
@@ -5933,48 +5932,6 @@ impl DbExternalApi for SqlitePool {
         .await
     }
 
-    async fn commit_app_checkpoint(
-        &self,
-        checkpoint: concepts::storage::AppCheckpoint,
-        now: DateTime<Utc>,
-        app_config_digest: String,
-    ) -> Result<(), DbErrorWrite> {
-        self.transaction(move |tx| {
-            Self::activate_deployment_tx(tx, checkpoint.deployment_id, now, Some(&app_config_digest))?;
-            tx.execute("INSERT INTO t_app_checkpoint(singleton,checkpoint) VALUES(1,?1) ON CONFLICT(singleton) DO UPDATE SET checkpoint=excluded.checkpoint", [JsonWrapper(&checkpoint)])
-                .map_err(RusqliteError::from)?;
-            Ok(())
-        }, TxType::MultipleWrites, "commit_app_checkpoint").await
-    }
-
-    async fn get_app_checkpoint(
-        &self,
-    ) -> Result<Option<concepts::storage::AppCheckpoint>, DbErrorRead> {
-        self.transaction_read_durable(
-            |tx| -> Result<_, DbErrorRead> {
-                let raw: Option<String> = tx
-                    .query_row(
-                        "SELECT checkpoint FROM t_app_checkpoint WHERE singleton=1",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .optional()
-                    .map_err(RusqliteError::from)?;
-                raw.map(|raw| {
-                    serde_json::from_str(&raw).map_err(|err| {
-                        DbErrorRead::from(consistency_db_err(format!(
-                            "invalid app checkpoint: {err}"
-                        )))
-                    })
-                })
-                .transpose()
-            },
-            TxType::Other,
-            "get_app_checkpoint",
-        )
-        .await
-    }
-
     async fn enqueue_deployment(
         &self,
         deployment_id: DeploymentId,
@@ -6052,7 +6009,6 @@ impl DbExternalApi for SqlitePool {
         .await
     }
 
-    #[cfg(feature = "test")]
     #[instrument(skip(self))]
     async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         self.transaction_read_durable(

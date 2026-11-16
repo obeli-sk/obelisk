@@ -735,11 +735,6 @@ pub(crate) enum Server {
         )]
         api_token: Option<SecretString>,
     },
-    /// Read the last successfully committed app checkpoint without starting the server.
-    Checkpoint {
-        #[arg(short, long)]
-        server_config: Option<PathBuf>,
-    },
     /// Read the configuration, compile the components, verify their imports and exit without starting the server.
     Verify(VerifyArgs),
 }

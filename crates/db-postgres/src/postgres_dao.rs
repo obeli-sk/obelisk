@@ -5763,51 +5763,11 @@ impl DbExternalApi for PostgresConnection {
                 &[&now, &deployment_id.to_string(), &app_config_digest],
             )
             .await?;
-        tx.commit().await?;
         if rows == 0 {
             return Err(DbErrorWrite::NotFound);
         }
-        Ok(())
-    }
-
-    async fn commit_app_checkpoint(
-        &self,
-        checkpoint: concepts::storage::AppCheckpoint,
-        now: DateTime<Utc>,
-        app_config_digest: String,
-    ) -> Result<(), DbErrorWrite> {
-        let mut client_guard = self.client().await?;
-        let tx = client_guard.transaction().await?;
-        tx.execute(
-            "UPDATE t_deployment SET status='inactive', updated_at=$1 WHERE status='active'",
-            &[&now],
-        )
-        .await?;
-        let rows = tx.execute("UPDATE t_deployment SET status='active', last_active_at=$1, updated_at=$1, last_active_app_config_digest=$3 WHERE deployment_id=$2", &[&now, &checkpoint.deployment_id.to_string(), &app_config_digest]).await?;
-        if rows == 0 {
-            return Err(DbErrorWrite::NotFound);
-        }
-        tx.execute("INSERT INTO t_app_checkpoint(singleton,checkpoint) VALUES(1,$1) ON CONFLICT(singleton) DO UPDATE SET checkpoint=excluded.checkpoint", &[&Json(&checkpoint)]).await?;
         tx.commit().await?;
         Ok(())
-    }
-
-    async fn get_app_checkpoint(
-        &self,
-    ) -> Result<Option<concepts::storage::AppCheckpoint>, DbErrorRead> {
-        let client_guard = self.client().await?;
-        let row = client_guard
-            .query_opt(
-                "SELECT checkpoint FROM t_app_checkpoint WHERE singleton=1",
-                &[],
-            )
-            .await?;
-        row.map(|row| {
-            get::<Json<concepts::storage::AppCheckpoint>, _>(&row, "checkpoint")
-                .map(|value| value.0)
-                .map_err(DbErrorRead::from)
-        })
-        .transpose()
     }
 
     async fn enqueue_deployment(
@@ -5917,7 +5877,6 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip(self))]
-    #[cfg(feature = "test")]
     async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;

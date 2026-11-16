@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(deployment)* Deployment retention keeps the most recently deactivated deployment instead of the
   checkpointed one.
 
+### Removed
+- *(server)* `obelisk server checkpoint` and the app checkpoint table. The launcher tracks the
+  last-good configuration; `/health` reads the active deployment.
+
 ## [0.43.0-rc.18](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.17...v0.43.0-rc.18)
 
 This release candidate adds group fsync and synchronous Litestream replication for SQLite, and

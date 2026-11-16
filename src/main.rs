@@ -104,9 +104,6 @@ fn command_future(
             ))
         }
 
-        Subcommand::Server(Server::Checkpoint { server_config }) => {
-            Box::pin(crate::command::server::checkpoint(server_config))
-        }
         Subcommand::Server(Server::Verify(VerifyArgs {
             server_config,
             app_config,

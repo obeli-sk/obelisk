@@ -1580,19 +1580,6 @@
           ]
         },
         {
-          "name": "checkpoint",
-          "about": "Read the last successfully committed app checkpoint without starting the server",
-          "options": [
-            {
-              "name": "--server-config",
-              "short": "s",
-              "accepts": {
-                "path": true
-              }
-            }
-          ]
-        },
-        {
           "name": "verify",
           "about": "Read the configuration, compile the components, verify their imports and exit without starting the server",
           "options": [
