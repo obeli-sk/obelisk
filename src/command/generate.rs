@@ -379,6 +379,9 @@ async fn generate_new(
         file.write_all(contents.as_bytes())
             .await
             .with_context(|| format!("cannot write {path:?}"))?;
+        file.flush()
+            .await
+            .with_context(|| format!("cannot flush {path:?}"))?;
         generated.push(GeneratedPathStatus {
             path,
             status: "generated",
@@ -956,6 +959,9 @@ async fn generate_support_wits(
             file.write_all(contents.as_bytes())
                 .await
                 .with_context(|| format!("cannot write to {target_wit:?}"))?;
+            file.flush()
+                .await
+                .with_context(|| format!("cannot flush {target_wit:?}"))?;
 
             results.push(GeneratedPathStatus {
                 path: target_wit,
@@ -1232,6 +1238,9 @@ async fn write_wit_deps(
             file.write_all(content.as_bytes())
                 .await
                 .with_context(|| format!("cannot write to {target_wit:?}"))?;
+            file.flush()
+                .await
+                .with_context(|| format!("cannot flush {target_wit:?}"))?;
             results.push(GeneratedPathStatus {
                 path: target_wit,
                 status: "written",
