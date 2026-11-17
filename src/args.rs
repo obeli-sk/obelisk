@@ -2034,14 +2034,15 @@ pub(crate) enum CloudApp {
     Stage {
         #[command(flatten)]
         selected: SelectedApp,
-        /// App config path; defaults to ./app.toml.
+        /// App config path; defaults to ./app.toml if present, otherwise the draft's config is kept.
         #[arg(short = 'a', long)]
         app_config: Option<PathBuf>,
         #[command(flatten)]
         draft: CloudDraft,
-        /// Submit this deployment manifest and stage it; otherwise the draft's deployment is kept.
-        #[arg(short = 'd', long)]
-        deployment: Option<PathBuf>,
+        /// Stage an existing deployment ID, or submit a deployment manifest and stage it;
+        /// otherwise the draft's deployment is kept.
+        #[arg(short = 'd', long, value_name = "PATH|ID")]
+        deployment: Option<DeploymentSource>,
         /// Submit an empty deployment with no components and stage it.
         #[arg(long, conflicts_with = "deployment")]
         empty_deployment: bool,

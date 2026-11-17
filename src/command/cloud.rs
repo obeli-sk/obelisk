@@ -345,16 +345,13 @@ impl Client {
             .await
     }
     /// ID of draft `key`, opening it on the applied revision when missing.
-    async fn resolve_draft(&self, name: &str, key: &str) -> anyhow::Result<u64> {
+    async fn resolve_draft(&self, name: &str, key: &str) -> anyhow::Result<Value> {
         if let Some(draft) = self.optional(&["v1", "apps", name, "drafts", key]).await? {
-            return draft_id(&draft);
+            return Ok(draft);
         }
         let current = self.app(name, Method::GET, &[], None, Kind::Read).await?;
-        draft_id(
-            &self
-                .open_draft(name, key, applied_revision(&current)?)
-                .await?,
-        )
+        self.open_draft(name, key, applied_revision(&current)?)
+            .await
     }
     /// Discards or edits draft `id` under label `key`.
     /// Edits are not lifecycle commands and take no idempotency key.
@@ -386,7 +383,7 @@ impl Client {
         suffix: &[&str],
         body: Option<Body>,
     ) -> anyhow::Result<Value> {
-        let id = self.resolve_draft(name, key).await?;
+        let id = draft_id(&self.resolve_draft(name, key).await?)?;
         self.fenced(name, key, id, method, suffix, body).await
     }
     /// Applies `body`; `draft_id` pins a draft apply to the draft that was checked.
