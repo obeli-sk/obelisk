@@ -108,7 +108,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
             "request": {
               "type": "delay_request",
               "delay_id": "Delay_00000000000000000000000000.o:1-sleep_1",
-              "expires_at": "1970-01-01T00:00:00.010Z",
+              "expires_at": "1970-01-01T00:00:00.01Z",
               "schedule_at": {
                 "in": {
                   "secs": 0,
@@ -138,7 +138,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
       "version": 6
     },
     {
-      "created_at": "1970-01-01T00:00:00.010Z",
+      "created_at": "1970-01-01T00:00:00.01Z",
       "event": {
         "locked": {
           "component_id": {
@@ -149,7 +149,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           "executor_id": "Exr_00000000000000000000000000",
           "deployment_id": "Dep_00000000000000000000000000",
           "run_id": "Run_00000000000000000000000002",
-          "lock_expires_at": "1970-01-01T00:00:01.010Z",
+          "lock_expires_at": "1970-01-01T00:00:01.01Z",
           "retry_config": {
             "max_retries": null,
             "retry_exp_backoff": {
@@ -162,7 +162,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
       "version": 7
     },
     {
-      "created_at": "1970-01-01T00:00:00.010Z",
+      "created_at": "1970-01-01T00:00:00.01Z",
       "event": {
         "history_event": {
           "event": {
@@ -175,7 +175,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
       "version": 8
     },
     {
-      "created_at": "1970-01-01T00:00:00.010Z",
+      "created_at": "1970-01-01T00:00:00.01Z",
       "event": {
         "history_event": {
           "event": {
@@ -188,7 +188,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
       "version": 9
     },
     {
-      "created_at": "1970-01-01T00:00:00.010Z",
+      "created_at": "1970-01-01T00:00:00.01Z",
       "event": {
         "finished": {
           "retval": {
@@ -215,7 +215,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
       }
     },
     {
-      "created_at": "1970-01-01T00:00:00.010Z",
+      "created_at": "1970-01-01T00:00:00.01Z",
       "event": {
         "join_set_id": "o:1-sleep",
         "event": {
@@ -232,7 +232,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
   "pending_state": {
     "status": "finished",
     "version": 10,
-    "finished_at": "1970-01-01T00:00:00.010Z",
+    "finished_at": "1970-01-01T00:00:00.01Z",
     "result_kind": "ok"
   },
   "component_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"

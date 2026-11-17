@@ -6,10 +6,10 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
   "captured_writes": [
     {
       "AppendBatch": {
-        "current_time": "1970-01-01T00:00:00.300Z",
+        "current_time": "1970-01-01T00:00:00.3Z",
         "batch": [
           {
-            "created_at": "1970-01-01T00:00:00.300Z",
+            "created_at": "1970-01-01T00:00:00.3Z",
             "event": {
               "history_event": {
                 "event": {
@@ -34,13 +34,13 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
         "execution_id": "E_00000000000000000000000000",
         "version": 5,
         "req": {
-          "created_at": "1970-01-01T00:00:00.300Z",
+          "created_at": "1970-01-01T00:00:00.3Z",
           "event": {
             "history_event": {
               "event": {
                 "type": "join_next",
                 "join_set_id": "g:1",
-                "run_expires_at": "1970-01-01T00:00:00.300Z",
+                "run_expires_at": "1970-01-01T00:00:00.3Z",
                 "requested_ffqn": null,
                 "closing": false
               }
@@ -54,7 +54,7 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
       "AppendFinished": {
         "execution_id": "E_00000000000000000000000000",
         "version": 6,
-        "current_time": "1970-01-01T00:00:00.300Z",
+        "current_time": "1970-01-01T00:00:00.3Z",
         "retval": {
           "ok": {
             "type": "string",

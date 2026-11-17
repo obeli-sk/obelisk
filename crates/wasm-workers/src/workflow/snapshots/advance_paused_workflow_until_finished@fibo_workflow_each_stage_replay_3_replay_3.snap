@@ -9,13 +9,13 @@ expression: redact_replay(&replay)
         "execution_id": "E_00000000000000000000000003",
         "version": 8,
         "req": {
-          "created_at": "1970-01-01T00:00:00.700Z",
+          "created_at": "1970-01-01T00:00:00.7Z",
           "event": {
             "history_event": {
               "event": {
                 "type": "join_next",
                 "join_set_id": "g:1",
-                "run_expires_at": "1970-01-01T00:00:00.700Z",
+                "run_expires_at": "1970-01-01T00:00:00.7Z",
                 "requested_ffqn": "testing:fibo/fibo.fibo",
                 "closing": false
               }
