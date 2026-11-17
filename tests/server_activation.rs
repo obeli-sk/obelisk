@@ -91,8 +91,8 @@ wasm.codegen_cache.directory = "{codegen}"
         args.extend(extra);
         let server = Server(self.command(&args).spawn().unwrap());
         let deadline = Instant::now() + Duration::from_secs(60);
-        // Reading the database earlier would race the server's migrations.
-        while std::net::TcpStream::connect(("127.0.0.1", self.port)).is_err() {
+        // The listener is bound before activation commits; only serving follows it.
+        while !responds(self.port) {
             assert!(Instant::now() < deadline, "server did not start");
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -164,6 +164,21 @@ impl Drop for Server {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+fn responds(port: u16) -> bool {
+    use std::io::{Read, Write};
+    let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) else {
+        return false;
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut byte = [0];
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .is_ok()
+        && matches!(stream.read(&mut byte), Ok(1))
 }
 
 fn free_port() -> u16 {
