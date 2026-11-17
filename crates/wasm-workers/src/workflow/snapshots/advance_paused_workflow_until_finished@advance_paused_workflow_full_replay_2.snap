@@ -8,7 +8,7 @@ expression: redact_replay(&replay)
       "AppendFinished": {
         "execution_id": "E_00000000000000000000000000",
         "version": 5,
-        "current_time": "1970-01-01T00:00:00.400Z",
+        "current_time": "1970-01-01T00:00:00.4Z",
         "retval": {
           "ok": {
             "type": "u64",

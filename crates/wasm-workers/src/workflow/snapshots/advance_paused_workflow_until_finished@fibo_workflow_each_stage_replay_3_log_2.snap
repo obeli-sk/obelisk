@@ -35,7 +35,7 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 1
     },
     {
-      "created_at": "1970-01-01T00:00:00.200Z",
+      "created_at": "1970-01-01T00:00:00.2Z",
       "event": {
         "history_event": {
           "event": {
@@ -47,7 +47,7 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 2
     },
     {
-      "created_at": "1970-01-01T00:00:00.200Z",
+      "created_at": "1970-01-01T00:00:00.2Z",
       "event": {
         "history_event": {
           "event": {
@@ -71,7 +71,7 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 3
     },
     {
-      "created_at": "1970-01-01T00:00:00.200Z",
+      "created_at": "1970-01-01T00:00:00.2Z",
       "event": {
         "history_event": {
           "event": {
@@ -95,7 +95,7 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 4
     },
     {
-      "created_at": "1970-01-01T00:00:00.200Z",
+      "created_at": "1970-01-01T00:00:00.2Z",
       "event": {
         "history_event": {
           "event": {
@@ -119,13 +119,13 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 5
     },
     {
-      "created_at": "1970-01-01T00:00:00.200Z",
+      "created_at": "1970-01-01T00:00:00.2Z",
       "event": {
         "history_event": {
           "event": {
             "type": "join_next",
             "join_set_id": "g:1",
-            "run_expires_at": "1970-01-01T00:00:00.200Z",
+            "run_expires_at": "1970-01-01T00:00:00.2Z",
             "requested_ffqn": "testing:fibo/fibo.fibo",
             "closing": false
           }
@@ -134,13 +134,13 @@ expression: "ExecutionLogSanitized::from(log)"
       "version": 6
     },
     {
-      "created_at": "1970-01-01T00:00:00.500Z",
+      "created_at": "1970-01-01T00:00:00.5Z",
       "event": {
         "history_event": {
           "event": {
             "type": "join_next",
             "join_set_id": "g:1",
-            "run_expires_at": "1970-01-01T00:00:00.500Z",
+            "run_expires_at": "1970-01-01T00:00:00.5Z",
             "requested_ffqn": "testing:fibo/fibo.fibo",
             "closing": false
           }
@@ -151,7 +151,7 @@ expression: "ExecutionLogSanitized::from(log)"
   ],
   "responses": [
     {
-      "created_at": "1970-01-01T00:00:00.300Z",
+      "created_at": "1970-01-01T00:00:00.3Z",
       "event": {
         "join_set_id": "g:1",
         "event": {
@@ -173,7 +173,7 @@ expression: "ExecutionLogSanitized::from(log)"
     "status": "paused",
     "BlockedByJoinSet": {
       "join_set_id": "g:1",
-      "lock_expires_at": "1970-01-01T00:00:00.500Z",
+      "lock_expires_at": "1970-01-01T00:00:00.5Z",
       "closing": false
     }
   },
