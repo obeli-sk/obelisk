@@ -1,23 +1,23 @@
 use crate::backtrace::BacktraceInfoSer;
-use chrono::{DateTime, Utc};
 use concepts::{
     ExecutionId, FinishedExecutionFailure, JoinSetId, SupportedFunctionReturnValue,
     storage::{PendingState, Version},
 };
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// A serializable mirror of `CreateRequest` from concepts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct CreateRequestSer {
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub execution_id: String,
     pub ffqn: String,
     #[schema(value_type = Vec<Object>)]
     pub params: concepts::Params,
     pub parent_execution_id: Option<String>,
     pub parent_join_set_id: Option<String>,
-    pub scheduled_at: DateTime<Utc>,
+    pub scheduled_at: Timestamp,
     #[schema(value_type = Object)]
     pub component_id: concepts::ComponentId,
     pub deployment_id: String,
@@ -117,7 +117,7 @@ impl TryFrom<CreateRequestSer> for concepts::storage::CreateRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct StubResponseSer {
     pub parent_execution_id: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub join_set_id: String,
     pub child_execution_id: String,
     pub finished_version: u32,
@@ -339,7 +339,7 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                 version,
                 backtraces,
             } => Ok(Self::AppendBatch {
-                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+                current_time: Timestamp::UNIX_EPOCH, // will be replaced in `advance`
                 batch: events,
                 execution_id: execution_id
                     .parse()
@@ -357,7 +357,7 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                 child_requests,
                 backtraces,
             } => Ok(Self::AppendBatchCreateNewExecution {
-                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+                current_time: Timestamp::UNIX_EPOCH, // will be replaced in `advance`
                 batch: events,
                 execution_id: execution_id
                     .parse()
@@ -380,7 +380,7 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                 delay_id,
                 backtraces,
             } => Ok(Self::AppendBatchWithDelayResponse {
-                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+                current_time: Timestamp::UNIX_EPOCH, // will be replaced in `advance`
                 batch: events,
                 execution_id: execution_id
                     .parse()
@@ -412,7 +412,7 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                     batch: events,
                 },
                 response: response.try_into()?,
-                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+                current_time: Timestamp::UNIX_EPOCH, // will be replaced in `advance`
                 backtraces: backtraces
                     .into_iter()
                     .map(concepts::storage::BacktraceInfo::try_from)
@@ -448,7 +448,7 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                         .map_err(|err| format!("invalid execution_id - {err}"))?,
                     version: Version::new(version),
                     retval,
-                    current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+                    current_time: Timestamp::UNIX_EPOCH, // will be replaced in `advance`
                     parent,
                 })
             }

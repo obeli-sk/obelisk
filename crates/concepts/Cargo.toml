@@ -17,7 +17,7 @@ arbitrary.workspace = true
 assert_matches.workspace = true
 async-trait = { workspace = true, optional = true }
 cfg-if.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 const_format.workspace = true
 deadpool-postgres = { optional = true, workspace = true }
 derive-where.workspace = true

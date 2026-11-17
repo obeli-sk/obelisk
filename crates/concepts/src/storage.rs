@@ -26,9 +26,9 @@ use crate::prefixed_ulid::SystemEventId;
 use assert_matches::assert_matches;
 #[cfg(feature = "runtime")]
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use chrono::{SubsecRound, TimeDelta};
 use http_client_trace::HttpClientTrace;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt::Debug;
@@ -295,7 +295,7 @@ pub struct VersionParseError;
 )]
 #[display("{event}")]
 pub struct ExecutionEvent {
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub event: ExecutionRequest,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backtrace_id: Option<Version>,
@@ -379,7 +379,7 @@ impl ListResponsesResponse {
     Debug, Clone, PartialEq, Eq, Serialize /* webapi */, Deserialize, schemars::JsonSchema,
 )]
 pub struct JoinSetResponseEventOuter {
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub event: JoinSetResponseEvent,
 }
 
@@ -416,7 +416,7 @@ pub const DUMMY_CREATED: ExecutionRequest = ExecutionRequest::Created(Created {
     ffqn: FunctionFqn::new_static("", ""),
     params: Params::empty(),
     parent: None,
-    scheduled_at: DateTime::from_timestamp_nanos(0),
+    scheduled_at: Timestamp::UNIX_EPOCH,
     component_id: ComponentId::dummy_activity(),
     deployment_id: DeploymentId::from_parts(0, 0),
     metadata: ExecutionMetadata::empty(),
@@ -471,7 +471,7 @@ pub enum ExecutionRequest {
     // After expiry interpreted as pending.
     #[display("TemporarilyFailed(`{backoff_expires_at}`)")]
     TemporarilyFailed {
-        backoff_expires_at: DateTime<Utc>,
+        backoff_expires_at: Timestamp,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
         reason: StrVariant,
         detail: Option<String>,
@@ -482,7 +482,7 @@ pub enum ExecutionRequest {
     // After expiry interpreted as pending.
     #[display("TemporarilyTimedOut(`{backoff_expires_at}`)")]
     TemporarilyTimedOut {
-        backoff_expires_at: DateTime<Utc>,
+        backoff_expires_at: Timestamp,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
         http_client_traces: Option<Vec<HttpClientTrace>>,
     },
@@ -703,7 +703,7 @@ pub struct Unlocked {
     /// Instant used when releasing a currently locked execution back to [`PendingState::PendingAt`].
     // The field was renamed only in Rust; keep its serialized name stable.
     #[serde(rename = "backoff_expires_at")]
-    pub unlocked_at: DateTime<Utc>,
+    pub unlocked_at: Timestamp,
     #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
     pub reason: StrVariant,
 }
@@ -727,7 +727,7 @@ pub struct Created {
     #[debug(skip)]
     pub params: Params,
     pub parent: Option<(ExecutionId, JoinSetId)>,
-    pub scheduled_at: DateTime<Utc>,
+    pub scheduled_at: Timestamp,
     #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
     pub component_id: ComponentId,
     pub deployment_id: DeploymentId,
@@ -832,7 +832,7 @@ pub struct Locked {
     pub executor_id: ExecutorId,
     pub deployment_id: DeploymentId,
     pub run_id: RunId,
-    pub lock_expires_at: DateTime<Utc>,
+    pub lock_expires_at: Timestamp,
     #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentRetryConfig::ZERO))]
     pub retry_config: ComponentRetryConfig,
 }
@@ -914,7 +914,7 @@ pub enum HistoryEvent {
         join_set_id: JoinSetId,
         /// Set to a future time if the worker is keeping the execution invocation warm waiting for the result.
         /// The pending status will be kept in Locked state until `run_expires_at`.
-        run_expires_at: DateTime<Utc>,
+        run_expires_at: Timestamp,
         /// Set to a specific function when calling `-await-next` extension function, used for
         /// determinism checks.
         requested_ffqn: Option<FunctionFqn>,
@@ -1155,7 +1155,7 @@ impl From<bool> for JoinNextTryOutcome {
 pub enum HistoryEventScheduleAt {
     Now,
     #[display("At(`{_0}`)")]
-    At(DateTime<Utc>),
+    At(Timestamp),
     #[display("In({_0:?})")]
     In(Duration),
 }
@@ -1167,18 +1167,15 @@ pub enum ScheduleAtConversionError {
 }
 
 impl HistoryEventScheduleAt {
-    pub fn as_date_time(
-        &self,
-        now: DateTime<Utc>,
-    ) -> Result<DateTime<Utc>, ScheduleAtConversionError> {
+    pub fn as_date_time(&self, now: Timestamp) -> Result<Timestamp, ScheduleAtConversionError> {
         match self {
             Self::Now => Ok(now),
             Self::At(date_time) => Ok(*date_time),
             Self::In(duration) => {
-                let time_delta = TimeDelta::from_std(*duration)
+                let time_delta = SignedDuration::try_from(*duration)
                     .map_err(|_| ScheduleAtConversionError::OutOfRangeError)?;
-                now.checked_add_signed(time_delta)
-                    .ok_or(ScheduleAtConversionError::OutOfRangeError)
+                now.checked_add(time_delta)
+                    .map_err(|_| ScheduleAtConversionError::OutOfRangeError)
             }
         }
     }
@@ -1194,7 +1191,7 @@ pub enum JoinSetRequest {
     #[display("DelayRequest({delay_id}, expires_at: `{expires_at}`, schedule_at: `{schedule_at}`)")]
     DelayRequest {
         delay_id: DelayId,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
         schedule_at: HistoryEventScheduleAt,
         #[serde(default)]
         paused: bool,
@@ -1348,7 +1345,7 @@ pub enum SubscribeToResponsesError {
 // Represents next version after successfuly appended to execution log.
 // TODO: Convert to struct with next_version
 pub type AppendResponse = Version;
-pub type PendingExecution = (ExecutionId, Version, Params, Option<DateTime<Utc>>);
+pub type PendingExecution = (ExecutionId, Version, Params, Option<Timestamp>);
 
 #[derive(Debug, Clone)]
 pub struct LockedExecution {
@@ -1372,7 +1369,7 @@ pub type AppendBatchResponse = Version;
 #[derive(Debug, Clone, PartialEq, derive_more::Display, Serialize, Deserialize)]
 #[display("{event}")]
 pub struct AppendRequest {
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub event: ExecutionRequest,
 }
 
@@ -1389,12 +1386,12 @@ impl AppendRequest {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct CreateRequest {
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub execution_id: ExecutionId,
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub parent: Option<(ExecutionId, JoinSetId)>,
-    pub scheduled_at: DateTime<Utc>,
+    pub scheduled_at: Timestamp,
     pub component_id: ComponentId,
     pub deployment_id: DeploymentId,
     pub metadata: ExecutionMetadata,
@@ -1406,7 +1403,7 @@ pub struct CreateRequest {
 #[must_use]
 pub fn schedule_matches(
     existing: &Created,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     requested: &CreateRequest,
     schedule_at: HistoryEventScheduleAt,
 ) -> bool {
@@ -1417,7 +1414,7 @@ pub fn schedule_matches(
             HistoryEventScheduleAt::Now => existing.scheduled_at == created_at,
             HistoryEventScheduleAt::At(at) => existing.scheduled_at == at,
             HistoryEventScheduleAt::In(duration) => {
-                (existing.scheduled_at - created_at).to_std().ok() == Some(duration)
+                (existing.scheduled_at - created_at).try_into().ok() == Some(duration)
             }
         }
 }
@@ -1428,7 +1425,7 @@ impl CreateRequest {
         schedule_at: HistoryEventScheduleAt,
     ) -> Result<(), DbErrorWriteNonRetriable> {
         // PostgreSQL timestamps retain microseconds; normalize before deriving a relative deadline.
-        self.created_at = self.created_at.trunc_subsecs(6);
+        self.created_at = Timestamp::from_microsecond(self.created_at.as_microsecond()).unwrap();
         self.scheduled_at = schedule_at
             .as_date_time(self.created_at)
             .map_err(|err| DbErrorWriteNonRetriable::ValidationFailed(err.to_string().into()))?;
@@ -1522,21 +1519,21 @@ pub struct CleanupResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExecutionRetentionCursor {
     /// Ordering timestamp: `created_at` for count retention, `updated_at` for age retention.
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub execution_id: ExecutionIdTopLevel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeploymentRetentionCursor {
     /// Ordering timestamp: `updated_at`.
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub deployment_id: DeploymentId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetentionPolicy {
     Count(u32),
-    CreatedAtOrAfter(DateTime<Utc>),
+    CreatedAtOrAfter(Timestamp),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1609,7 +1606,7 @@ pub struct SystemEvent {
     pub node_run_id: NodeRunId,
     // backcompat: 0.42.0-rc.3 events have no app config digest.
     pub app_config_digest: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub level: SystemEventLevel,
     pub code: String,
     pub dedupe_key: Option<String>,
@@ -1803,7 +1800,7 @@ impl SystemEvent {
             event_id: SystemEventId::generate(),
             node_run_id: node_run_id(),
             app_config_digest: APP_CONFIG_DIGEST.get().cloned(),
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             level: code.level(),
             code: code.as_str().to_owned(),
             dedupe_key: None,
@@ -1909,9 +1906,9 @@ pub struct SystemEventFilter {
     pub deployment_id: Option<DeploymentId>,
     pub before_event_id: Option<SystemEventId>,
     /// Inclusive lower bound of `created_at`.
-    pub created_from: Option<DateTime<Utc>>,
+    pub created_from: Option<Timestamp>,
     /// Exclusive upper bound of `created_at`.
-    pub created_to: Option<DateTime<Utc>>,
+    pub created_to: Option<Timestamp>,
     pub limit: u32,
 }
 
@@ -1930,7 +1927,7 @@ pub trait CasGc: Send + Sync {
     async fn upload_blob(
         &self,
         content: Vec<u8>,
-        uploaded_at: DateTime<Utc>,
+        uploaded_at: Timestamp,
     ) -> Result<ContentDigest, DbErrorWrite>;
 
     /// Delete unreferenced blobs, except those uploaded at or after `uploaded_before`.
@@ -1938,7 +1935,7 @@ pub trait CasGc: Send + Sync {
         &self,
         dry_run: bool,
         batch_size: u32,
-        uploaded_before: DateTime<Utc>,
+        uploaded_before: Timestamp,
     ) -> Result<CasGcResult, DbErrorWrite>;
 }
 
@@ -1979,7 +1976,7 @@ pub trait DbAdmin: Send + Sync {
 
     async fn retain_system_events(
         &self,
-        created_before: DateTime<Utc>,
+        created_before: Timestamp,
         limit: u32,
         // Events of this node run are never deleted.
         keep_node_run_id: NodeRunId,
@@ -2049,7 +2046,7 @@ pub struct AppendEventsToExecution {
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct AppendResponseToExecution {
     pub parent_execution_id: ExecutionId,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub join_set_id: JoinSetId,
     pub child_execution_id: ExecutionIdDerived,
     pub finished_version: Version,
@@ -2078,14 +2075,14 @@ pub enum CapturedDbWrite {
         backtraces: Vec<BacktraceInfo>,
     },
     AppendBatch {
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
         backtraces: Vec<BacktraceInfo>,
     },
     AppendBatchWithDelayResponse {
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
@@ -2094,7 +2091,7 @@ pub enum CapturedDbWrite {
         backtraces: Vec<BacktraceInfo>,
     },
     AppendBatchCreateNewExecution {
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
@@ -2104,13 +2101,13 @@ pub enum CapturedDbWrite {
     AppendStubResponse {
         events: AppendEventsToExecution,
         response: AppendResponseToExecution,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         backtraces: Vec<BacktraceInfo>,
     },
     AppendFinished {
         execution_id: ExecutionId,
         version: Version,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         retval: SupportedFunctionReturnValue,
         parent: Option<(ExecutionId, JoinSetId)>,
     },
@@ -2129,13 +2126,13 @@ pub trait DbExecutor: Send + Sync {
     async fn lock_pending_by_ffqns(
         &self,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqns: Arc<[FunctionFqn]>,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         component_id: ComponentId,
         deployment_id: DeploymentId,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite>;
@@ -2144,13 +2141,13 @@ pub trait DbExecutor: Send + Sync {
     async fn lock_pending_by_ffqns_auto(
         &self,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqns: Arc<[FunctionFqn]>,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         component_id: ComponentId,
         deployment_id: DeploymentId,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite>;
@@ -2159,12 +2156,12 @@ pub trait DbExecutor: Send + Sync {
     async fn lock_pending_by_component_digest(
         &self,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         component_id: &ComponentId,
         deployment_id: DeploymentId,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite>;
@@ -2173,14 +2170,14 @@ pub trait DbExecutor: Send + Sync {
     #[expect(clippy::too_many_arguments)]
     async fn lock_one(
         &self,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         component_id: ComponentId,
         deployment_id: DeploymentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite>;
 
@@ -2199,7 +2196,7 @@ pub trait DbExecutor: Send + Sync {
         &self,
         events: AppendEventsToExecution,
         response: AppendResponseToExecution,
-        current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
+        current_time: Timestamp, // not persisted, can be used for unblocking `subscribe_to_pending`
     ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
     /// Notification mechainism with no strict guarantees for waiting while there are no pending executions.
@@ -2209,7 +2206,7 @@ pub trait DbExecutor: Send + Sync {
     /// If `current_digest` is set, ignore executions with incompatible digests.
     async fn wait_for_pending_by_ffqn(
         &self,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqns: Arc<[FunctionFqn]>,
         current_digest: Option<ComponentDigest>,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
@@ -2221,7 +2218,7 @@ pub trait DbExecutor: Send + Sync {
     /// Delay requests that expire between `pending_at_or_sooner` and timeout can be disregarded.
     async fn wait_for_pending_by_component_digest(
         &self,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         component_digest: &ComponentDigest,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     );
@@ -2230,7 +2227,7 @@ pub trait DbExecutor: Send + Sync {
     async fn append_activity_cancellation_requested_with_retries(
         &self,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let mut retries = 5;
         loop {
@@ -2253,7 +2250,7 @@ pub trait DbExecutor: Send + Sync {
     async fn append_cancel_workflow_requested(
         &self,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
     ) -> Result<CancelOutcome, DbErrorWrite>;
 
     /// Request cancellation of a cancellable workflow, retrying the version-guarded
@@ -2261,7 +2258,7 @@ pub trait DbExecutor: Send + Sync {
     async fn append_cancel_workflow_requested_with_retries(
         &self,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let mut retries = 5;
         loop {
@@ -2289,7 +2286,7 @@ pub trait DbExecutor: Send + Sync {
     async fn append_activity_cancellation_requested(
         &self,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
     ) -> Result<CancelOutcome, DbErrorWrite>;
 }
 
@@ -2319,11 +2316,11 @@ pub enum ExecutionStateFilter {
     Locked,
     /// [`PendingState::PendingAt`] with the scheduled time at or before `now`.
     Pending {
-        now: DateTime<Utc>,
+        now: Timestamp,
     },
     /// [`PendingState::PendingAt`] with the scheduled time after `now`.
     Scheduled {
-        now: DateTime<Utc>,
+        now: Timestamp,
     },
     Blocked,
     /// Paused regardless of the underlying state (locked, pending or blocked).
@@ -2496,7 +2493,7 @@ pub trait DbExternalApi: DbConnection {
         old: &ComponentDigest,
         new: &ComponentDigest,
         reason: ComponentUpgradeReason,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
     ) -> Result<(), DbErrorWrite>;
 
     async fn list_logs(
@@ -2510,7 +2507,7 @@ pub trait DbExternalApi: DbConnection {
     /// Ordered by `(updated_at, deployment_id)`, most recently updated first.
     async fn list_deployment_states(
         &self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         pagination: Pagination<Option<DeploymentId>>,
         include_deployment_toml: bool,
         execution_counts: DeploymentExecutionCounts,
@@ -2546,7 +2543,7 @@ pub trait DbExternalApi: DbConnection {
     async fn activate_deployment(
         &self,
         deployment_id: DeploymentId,
-        now: DateTime<Utc>,
+        now: Timestamp,
         app_config_digest: Option<&str>,
     ) -> Result<(), DbErrorWrite>;
 
@@ -2557,7 +2554,7 @@ pub trait DbExternalApi: DbConnection {
     async fn enqueue_deployment(
         &self,
         deployment_id: DeploymentId,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<EnqueueOutcome, DbErrorWrite>;
 
     /// Bump `updated_at`, which deployment retention orders by. A `None` description keeps the
@@ -2566,7 +2563,7 @@ pub trait DbExternalApi: DbConnection {
         &self,
         deployment_id: DeploymentId,
         description: Option<String>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), DbErrorWrite>;
 
     /// Returned [`DeploymentRecord`] must contain `deployment_toml`.
@@ -2602,14 +2599,14 @@ pub trait DbExternalApi: DbConnection {
     async fn pause_execution(
         &self,
         execution_id: &ExecutionId,
-        paused_at: DateTime<Utc>,
+        paused_at: Timestamp,
     ) -> Result<AppendResponse, DbErrorWrite>;
 
     /// Unpause an execution. Only paused executions can be unpaused.
     async fn unpause_execution(
         &self,
         execution_id: &ExecutionId,
-        unpaused_at: DateTime<Utc>,
+        unpaused_at: Timestamp,
     ) -> Result<AppendResponse, DbErrorWrite>;
 
     /// Pause a delay, preventing it from being picked up by the expired timers watcher.
@@ -2650,11 +2647,11 @@ pub struct DeploymentState {
     pub finished_execution_failure: u32,
     /// Processed deployment manifest, stored byte-for-byte. None if not requested from db.
     pub deployment_toml: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// Last status change: insert, enqueue, activation or demotion.
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
     /// Set when the deployment becomes Active; None if it has never been active.
-    pub last_active_at: Option<DateTime<Utc>>,
+    pub last_active_at: Option<Timestamp>,
     // backcompat: 0.42.0-rc.3 deployments have no activation policy digest.
     pub last_active_app_config_digest: Option<String>,
     pub status: DeploymentStatus,
@@ -2715,11 +2712,11 @@ pub struct DeploymentRecord {
     pub description: Option<String>,
     /// Content digest = `sha256(deployment_toml)`.
     pub digest: ContentDigest,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// Last status change: insert, enqueue, activation or demotion.
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
     /// Set when the deployment becomes Active; None if it has never been active.
-    pub last_active_at: Option<DateTime<Utc>>,
+    pub last_active_at: Option<Timestamp>,
     // backcompat: 0.42.0-rc.3 deployments have no activation policy digest.
     pub last_active_app_config_digest: Option<String>,
     pub status: DeploymentStatus,
@@ -2883,8 +2880,8 @@ pub struct LogFilter {
     show_streams: bool,
     levels: Vec<LogLevel>, // Only applied if `show_logs` = true, empty means return all levels.
     stream_types: Vec<LogStreamType>, // Only applied if `show_streams` = true, empty means return all stream types.
-    created_after: Option<DateTime<Utc>>,
-    created_before: Option<DateTime<Utc>>,
+    created_after: Option<Timestamp>,
+    created_before: Option<Timestamp>,
 }
 impl LogFilter {
     // Constructor for logs only
@@ -2943,19 +2940,19 @@ impl LogFilter {
     #[must_use]
     pub fn with_created_bounds(
         mut self,
-        created_after: Option<DateTime<Utc>>,
-        created_before: Option<DateTime<Utc>>,
+        created_after: Option<Timestamp>,
+        created_before: Option<Timestamp>,
     ) -> Self {
         self.created_after = created_after;
         self.created_before = created_before;
         self
     }
     #[must_use]
-    pub fn created_after(&self) -> Option<DateTime<Utc>> {
+    pub fn created_after(&self) -> Option<Timestamp> {
         self.created_after
     }
     #[must_use]
-    pub fn created_before(&self) -> Option<DateTime<Utc>> {
+    pub fn created_before(&self) -> Option<Timestamp> {
         self.created_before
     }
 }
@@ -2974,8 +2971,8 @@ pub struct CronRecord {
     pub cron_digest: ComponentDigest,
     pub tracking_execution_id: Option<ExecutionId>,
     pub last_target_execution_id: Option<ExecutionId>,
-    pub last_submitted_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
+    pub last_submitted_at: Option<Timestamp>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Clone, Debug)]
@@ -2983,7 +2980,7 @@ pub struct CronAdvanceRequest {
     pub cron_digest: ComponentDigest,
     pub execution_id: ExecutionId,
     pub version: Version,
-    pub current_time: DateTime<Utc>,
+    pub current_time: Timestamp,
     pub batch: Vec<AppendRequest>,
     pub target: Option<CreateRequest>,
     pub successor: Option<CreateRequest>,
@@ -3014,7 +3011,7 @@ pub trait DbConnection: DbExecutor {
 
     async fn append_delay_response(
         &self,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         execution_id: ExecutionId,
         join_set_id: JoinSetId,
         delay_id: DelayId,
@@ -3025,7 +3022,7 @@ pub trait DbConnection: DbExecutor {
     /// The batch must not contain [`ExecutionRequest::Created`].
     async fn append_batch(
         &self,
-        current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
+        current_time: Timestamp, // not persisted, can be used for unblocking `subscribe_to_pending`
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
@@ -3037,7 +3034,7 @@ pub trait DbConnection: DbExecutor {
     /// workflow resumes without a round trip through the expired-timers watcher.
     async fn append_batch_with_delay_response(
         &self,
-        current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
+        current_time: Timestamp, // not persisted, can be used for unblocking `subscribe_to_pending`
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
@@ -3049,8 +3046,8 @@ pub trait DbConnection: DbExecutor {
     /// The batch must not contain [`ExecutionRequest::Created`].
     async fn append_batch_create_new_execution(
         &self,
-        current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
-        batch: Vec<AppendRequest>,   // must not contain [`ExecutionRequest::Created`] events
+        current_time: Timestamp, // not persisted, can be used for unblocking `subscribe_to_pending`
+        batch: Vec<AppendRequest>, // must not contain [`ExecutionRequest::Created`] events
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
@@ -3143,7 +3140,7 @@ pub trait DbConnection: DbExecutor {
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
     ) -> Result<(), DbErrorStubResponse>;
 
     #[instrument(skip(self))]
@@ -3169,10 +3166,7 @@ pub trait DbConnection: DbExecutor {
     ) -> Result<ExecutionWithState, DbErrorRead>;
 
     /// Get currently expired locks and async timers (delay requests)
-    async fn get_expired_timers(
-        &self,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<ExpiredTimer>, DbErrorGeneric>;
+    async fn get_expired_timers(&self, at: Timestamp) -> Result<Vec<ExpiredTimer>, DbErrorGeneric>;
 
     /// Create a new execution log
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite>;
@@ -3249,19 +3243,19 @@ pub struct LogCursor(pub i64);
 #[derive(Debug, Clone)]
 pub enum LogEntry {
     Log {
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         level: LogLevel,
         message: String,
     },
     Stream {
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         payload: Vec<u8>,
         stream_type: LogStreamType,
     },
 }
 impl LogEntry {
     #[must_use]
-    pub fn created_at(&self) -> DateTime<Utc> {
+    pub fn created_at(&self) -> Timestamp {
         match self {
             LogEntry::Log { created_at, .. } | LogEntry::Stream { created_at, .. } => *created_at,
         }
@@ -3299,7 +3293,7 @@ pub enum TimeoutOutcome {
 pub trait DbConnectionTest: DbConnection {
     async fn append_response(
         &self,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         execution_id: ExecutionId,
         response_event: JoinSetResponseEvent,
     ) -> Result<(), DbErrorWrite>;
@@ -3324,7 +3318,7 @@ async fn upsert_stub_finished(
     execution_id: ExecutionIdDerived,
     parent_execution_id: ExecutionId,
     join_set_id: JoinSetId,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     return_value: SupportedFunctionReturnValue,
 ) -> Result<(), DbErrorStubResponse> {
     let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
@@ -3361,7 +3355,7 @@ pub async fn stub_execution(
     execution_id: ExecutionIdDerived,
     parent_execution_id: ExecutionId,
     join_set_id: JoinSetId,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     return_value: SupportedFunctionReturnValue,
 ) -> Result<(), DbErrorWrite> {
     upsert_stub_finished(
@@ -3385,7 +3379,7 @@ pub async fn stub_execution(
 pub async fn cancel_stub_execution_ignoring_conflict(
     db_connection: &dyn DbConnection,
     execution_id: ExecutionIdDerived,
-    cancelled_at: DateTime<Utc>,
+    cancelled_at: Timestamp,
 ) -> Result<(), DbErrorWrite> {
     let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
     let retval = SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
@@ -3412,7 +3406,7 @@ pub async fn cancel_stub_execution_ignoring_conflict(
 pub async fn cancel_delay(
     db_connection: &dyn DbConnection,
     delay_id: DelayId,
-    cancelled_at: DateTime<Utc>,
+    cancelled_at: Timestamp,
 ) -> Result<DelayCancelOutcome, DbErrorWrite> {
     let (parent_execution_id, join_set_id) = delay_id.split_to_parts();
     db_connection
@@ -3531,8 +3525,8 @@ pub struct ExecutionWithState {
     pub execution_id: ExecutionId,
     pub ffqn: FunctionFqn,
     pub pending_state: PendingState,
-    pub created_at: DateTime<Utc>,
-    pub first_scheduled_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub first_scheduled_at: Timestamp,
     pub component_digest: ComponentDigest,
     pub component_type: ComponentType,
     pub deployment_id: DeploymentId,
@@ -3547,7 +3541,7 @@ pub enum ExecutionListPagination {
 /// Position in the `(created_at, execution_id)` ordering of the execution list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionListCreatedAtCursor {
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     // backcompat: 0.43.0-rc.15 bare `created_at` cursors compare on `created_at` alone.
     pub execution_id: Option<ExecutionId>,
 }
@@ -3594,11 +3588,11 @@ pub enum Pagination<T> {
 /// Fallback `updated_at` for a deployment cursor whose row no longer exists (e.g. garbage collected):
 /// its ULID timestamp, the earliest it could have been.
 #[must_use]
-pub fn deployment_cursor_fallback_updated_at(cursor: DeploymentId) -> DateTime<Utc> {
-    DateTime::from_timestamp_millis(
+pub fn deployment_cursor_fallback_updated_at(cursor: DeploymentId) -> Timestamp {
+    Timestamp::from_millisecond(
         i64::try_from(cursor.timestamp_part()).expect("ULID timestamp is 48 bits"),
     )
-    .expect("ULID timestamp is within chrono range")
+    .unwrap_or(Timestamp::MAX)
 }
 
 impl<T: Clone> Pagination<T> {
@@ -3843,7 +3837,7 @@ impl From<PendingState> for PendingStateMerged {
 #[display("Locked(`{lock_expires_at}`, {}, {})", locked_by.executor_id, locked_by.run_id)]
 pub struct PendingStateLocked {
     pub locked_by: LockedBy,
-    pub lock_expires_at: DateTime<Utc>,
+    pub lock_expires_at: Timestamp,
 }
 
 #[derive(
@@ -3851,7 +3845,7 @@ pub struct PendingStateLocked {
 )]
 #[display("`{scheduled_at}`, last_lock={last_lock:?}")]
 pub struct PendingStatePendingAt {
-    pub scheduled_at: DateTime<Utc>,
+    pub scheduled_at: Timestamp,
     /// `last_lock` is needed for lock extension.
     pub last_lock: Option<LockedBy>,
 }
@@ -3863,7 +3857,7 @@ pub struct PendingStatePendingAt {
 pub struct PendingStateBlockedByJoinSet {
     pub join_set_id: JoinSetId,
     /// See [`HistoryEvent::JoinNext::lock_expires_at`].
-    pub lock_expires_at: DateTime<Utc>,
+    pub lock_expires_at: Timestamp,
     /// Blocked by closing of the join set
     pub closing: bool,
 }
@@ -3917,7 +3911,7 @@ impl From<&Locked> for LockedBy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PendingStateFinished {
     pub version: VersionType, // not Version since it must be Copy
-    pub finished_at: DateTime<Utc>,
+    pub finished_at: Timestamp,
     pub result_kind: PendingStateFinishedResultKind,
 }
 impl Display for PendingStateFinished {
@@ -3974,10 +3968,10 @@ impl PendingState {
     #[instrument(skip(self))]
     pub fn can_append_lock(
         &self,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         executor_id: ExecutorId,
         run_id: RunId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
     ) -> Result<LockKind, DbErrorWriteNonRetriable> {
         if lock_expires_at <= created_at {
             return Err(DbErrorWriteNonRetriable::ValidationFailed(
@@ -4079,7 +4073,7 @@ pub enum LockKind {
 }
 
 pub mod http_client_trace {
-    use chrono::{DateTime, Utc};
+    use jiff::Timestamp;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -4090,14 +4084,14 @@ pub mod http_client_trace {
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
     pub struct RequestTrace {
-        pub sent_at: DateTime<Utc>,
+        pub sent_at: Timestamp,
         pub uri: String,
         pub method: String,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
     pub struct ResponseTrace {
-        pub finished_at: DateTime<Utc>,
+        pub finished_at: Timestamp,
         pub status: Result<u16, String>,
     }
 }
@@ -4125,8 +4119,8 @@ mod tests {
     use crate::JoinSetId;
     use crate::Params;
     use crate::SupportedFunctionReturnValue;
-    use chrono::DateTime;
-    use chrono::Datelike;
+    use jiff::Timestamp;
+
     use insta::assert_snapshot;
     use rstest::rstest;
     use std::time::Duration;
@@ -4231,7 +4225,7 @@ mod tests {
             ffqn: crate::FunctionFqn::new_static("ns:pkg/ifc", "fn"),
             params: Params::empty(),
             parent: None,
-            scheduled_at: DateTime::UNIX_EPOCH,
+            scheduled_at: Timestamp::UNIX_EPOCH,
             component_id: crate::ComponentId::dummy_activity(),
             deployment_id: crate::prefixed_ulid::DeploymentId::from_parts(0, 0),
             metadata: crate::ExecutionMetadata::empty(),
@@ -4303,7 +4297,7 @@ mod tests {
     fn serde_pending_state_finished_should_work(result_kind: PendingStateFinishedResultKind) {
         let expected = PendingStateFinished {
             version: 0,
-            finished_at: DateTime::UNIX_EPOCH,
+            finished_at: Timestamp::UNIX_EPOCH,
             result_kind,
         };
 
@@ -4333,8 +4327,8 @@ mod tests {
     fn as_date_time_should_work_with_duration_u32_max_secs() {
         let duration = Duration::from_secs(u64::from(u32::MAX));
         let schedule_at = HistoryEventScheduleAt::In(duration);
-        let resolved = schedule_at.as_date_time(DateTime::UNIX_EPOCH).unwrap();
-        assert_eq!(2106, resolved.year());
+        let resolved = schedule_at.as_date_time(Timestamp::UNIX_EPOCH).unwrap();
+        assert_eq!(2106, resolved.to_zoned(jiff::tz::TimeZone::UTC).year());
     }
 
     const MILLIS_PER_SEC: i64 = 1000;
@@ -4347,7 +4341,7 @@ mod tests {
             u64::try_from(TIMEDELTA_MAX_SECS).expect("positive number must not fail") + 1,
         );
         let schedule_at = HistoryEventScheduleAt::In(duration);
-        schedule_at.as_date_time(DateTime::UNIX_EPOCH).unwrap_err();
+        schedule_at.as_date_time(Timestamp::UNIX_EPOCH).unwrap_err();
     }
 
     #[test]

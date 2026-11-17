@@ -20,7 +20,6 @@ use axum::{
 use axum_accept::AcceptExtractor;
 use axum_extra::extract::Query;
 use base64::{Engine as _, prelude::BASE64_URL_SAFE_NO_PAD};
-use chrono::{DateTime, Utc};
 use concepts::{
     ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId,
     SupportedFunctionReturnValue,
@@ -38,6 +37,7 @@ use concepts::{
 };
 use http::HeaderMap;
 use http::{StatusCode, header};
+use jiff::Timestamp;
 use rest_types::{
     backtrace::{BacktraceInfoSer, ComponentSourceSer},
     executions::{
@@ -564,7 +564,7 @@ pub(crate) mod app_config {
 }
 
 pub(crate) mod server_info {
-    use super::{Arc, DateTime, Response, State, StatusCode, WebApiState, pretty_json_response};
+    use super::{Arc, Response, State, StatusCode, Timestamp, WebApiState, pretty_json_response};
     use crate::args::shadow::PKG_VERSION;
     use rest_types::server::ServerInfoResponse;
 
@@ -572,7 +572,7 @@ pub(crate) mod server_info {
         let node_run_id = concepts::storage::initialize_node_run_id();
         let started_at = i64::try_from(node_run_id.timestamp_part())
             .ok()
-            .and_then(DateTime::from_timestamp_millis)
+            .and_then(|millis| Timestamp::from_millisecond(millis).ok())
             .expect("node run ID timestamp is generated from the current time");
         let body = ServerInfoResponse {
             app_name: state.server_verified.app_name.clone(),
@@ -611,9 +611,9 @@ pub(crate) mod admin {
         #[param(value_type = Option<String>)]
         before: Option<SystemEventId>,
         /// Inclusive lower bound of `created_at` (RFC 3339, millisecond precision).
-        created_from: Option<DateTime<Utc>>,
+        created_from: Option<Timestamp>,
         /// Exclusive upper bound of `created_at` (RFC 3339, millisecond precision).
-        created_to: Option<DateTime<Utc>>,
+        created_to: Option<Timestamp>,
         limit: Option<u32>,
     }
 
@@ -777,12 +777,12 @@ pub(crate) mod admin {
         if request.max_age_seconds == 0 {
             return Err(precondition("max_age_seconds must be greater than zero"));
         }
-        let age = chrono::Duration::from_std(Duration::from_secs(request.max_age_seconds))
+        let age = jiff::SignedDuration::try_from(Duration::from_secs(request.max_age_seconds))
             .map_err(|_| precondition("max_age_seconds is too large"))?;
         let cutoff = Now
             .now()
-            .checked_sub_signed(age)
-            .ok_or_else(|| precondition("max_age_seconds is too large"))?;
+            .checked_sub(age)
+            .map_err(|_| precondition("max_age_seconds is too large"))?;
         let result = until_terminated(&state, AcceptHeader::Json, async {
             state
                 .db_pool
@@ -835,12 +835,12 @@ pub(crate) mod admin {
         match (retain_count, max_age_seconds) {
             (Some(count), None) => Ok(storage::RetentionPolicy::Count(count)),
             (None, Some(seconds)) if seconds > 0 => {
-                let age = chrono::Duration::from_std(std::time::Duration::from_secs(seconds))
+                let age = jiff::SignedDuration::try_from(std::time::Duration::from_secs(seconds))
                     .map_err(|_| precondition("max_age_seconds is too large"))?;
                 let cutoff = Now
                     .now()
-                    .checked_sub_signed(age)
-                    .ok_or_else(|| precondition("max_age_seconds is too large"))?;
+                    .checked_sub(age)
+                    .map_err(|_| precondition("max_age_seconds is too large"))?;
                 Ok(storage::RetentionPolicy::CreatedAtOrAfter(cutoff))
             }
             (None, Some(_)) => Err(precondition("max_age_seconds must be greater than zero")),
@@ -1299,7 +1299,7 @@ enum ExecutionStateParam {
 }
 
 impl ExecutionStateParam {
-    fn into_filter(self, now: DateTime<Utc>) -> ExecutionStateFilter {
+    fn into_filter(self, now: Timestamp) -> ExecutionStateFilter {
         match self {
             Self::Locked => ExecutionStateFilter::Locked,
             Self::Pending => ExecutionStateFilter::Pending { now },
@@ -1375,7 +1375,7 @@ enum ExecutionListOrder {
 #[serde(tag = "order", rename_all = "snake_case")]
 enum ExecutionListCursor {
     CreatedAt {
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         execution_id: ExecutionId,
     },
     ExecutionId {
@@ -1410,7 +1410,7 @@ impl ExecutionListCursor {
 
     // backcompat: 0.43.0-rc.15 cursors were a bare `created_at` or execution ID, whose type set the order.
     fn decode_legacy(cursor: &str) -> Option<ExecutionListPaginationCursor> {
-        if let Ok(created_at) = cursor.parse::<DateTime<Utc>>() {
+        if let Ok(created_at) = cursor.parse::<Timestamp>() {
             Some(ExecutionListPaginationCursor::CreatedAt(
                 ExecutionListCreatedAtCursor {
                     created_at,
@@ -2156,8 +2156,8 @@ async fn execution_events(
 pub(crate) mod logs {
     use super::*;
     use base64::prelude::BASE64_STANDARD;
-    use chrono::{DateTime, Utc};
     use concepts::storage::{LogCursor, LogFilter, LogLevel, LogStreamType};
+    use jiff::Timestamp;
     use rest_types::logs::LogEntryRowSer;
 
     #[derive(Deserialize, Debug, IntoParams)]
@@ -2186,7 +2186,7 @@ pub(crate) mod logs {
         /// Opaque cursor for pagination
         cursor: Option<String>,
         /// Only include entries created after this timestamp.
-        after: Option<DateTime<Utc>>,
+        after: Option<Timestamp>,
         /// Number of entries to return. With `follow`, the total for the whole stream,
         /// unlimited by default.
         #[param(minimum = 1)]
@@ -5332,7 +5332,6 @@ mod tests {
         format_execution_status_text, nonzero_page_length, parse_execution_list_cursor,
         parse_join_set_filter,
     };
-    use chrono::{DateTime, Utc};
     use concepts::{
         ExecutionFailureKind, SupportedFunctionReturnValue,
         prefixed_ulid::NodeRunId,
@@ -5341,6 +5340,7 @@ mod tests {
             PendingStateFinishedResultKind,
         },
     };
+    use jiff::Timestamp;
 
     #[tokio::test]
     #[expect(deprecated)]
@@ -5388,7 +5388,7 @@ mod tests {
             parse_execution_list_cursor(cursor, order, AcceptHeader::Json).map_err(|err| err.status)
         };
         let execution_id = concepts::ExecutionId::generate();
-        let created_at = DateTime::from_timestamp(1, 0).unwrap();
+        let created_at = Timestamp::from_second(1).unwrap();
         let opaque = ExecutionListCursor::CreatedAt {
             created_at,
             execution_id: execution_id.clone(),
@@ -5414,7 +5414,7 @@ mod tests {
                     execution_id: None,
                 }
             )),
-            parse(&created_at.to_rfc3339(), ExecutionListOrder::ExecutionId)
+            parse(&created_at.to_string(), ExecutionListOrder::ExecutionId)
         );
         assert_eq!(
             Ok(ExecutionListPaginationCursor::ExecutionId(
@@ -5517,7 +5517,7 @@ mod tests {
         parse_join_set_filter("session-name").unwrap_err();
     }
 
-    fn parse_dt(value: &str) -> DateTime<Utc> {
+    fn parse_dt(value: &str) -> Timestamp {
         value.parse().unwrap()
     }
 }

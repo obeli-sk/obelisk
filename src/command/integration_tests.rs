@@ -1660,7 +1660,7 @@ impl TestServer {
             .await
             .unwrap();
         let conn = pool.connection().await.unwrap();
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         let create = |execution_id: ExecutionId, ffqn: FunctionFqn| CreateRequest {
             created_at: now,
             execution_id,
@@ -3315,7 +3315,7 @@ async fn system_event_retention_dry_run_webapi() {
     for age_days in [2, 3] {
         let mut event =
             SystemEvent::new(SystemEventCode::MaintenanceGcFailed, None, None, json!({})).unwrap();
-        event.created_at = chrono::Utc::now() - chrono::Duration::days(age_days);
+        event.created_at = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(age_days * 24);
         event.node_run_id = concepts::prefixed_ulid::NodeRunId::generate();
         event_ids.push(event.event_id);
         admin.append_system_event(event).await.unwrap();

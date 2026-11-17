@@ -23,7 +23,6 @@ use crate::workflow::host_exports::{
     self, SUFFIX_FN_GET, SUFFIX_FN_STUB, execution_id_derived_into_wast_val,
     execution_id_into_wast_val, stub_result_to_wast_val,
 };
-use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutionIdDerived};
 use concepts::storage::{
     self, DbErrorRead, DbErrorWrite, HistoryEventScheduleAt, Locked, LogEntry, LogInfoAppendRow,
@@ -38,6 +37,7 @@ use concepts::{
 use concepts::{FunctionFqn, Params};
 use concepts::{JoinSetId, JoinSetKind};
 use executor::worker::FatalError;
+use jiff::Timestamp;
 use log_activities::obelisk::log::log::Host;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -252,7 +252,7 @@ impl DirectFnCall<'_> {
     async fn call_imported_fn(
         self,
         ctx: &mut WorkflowCtx,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let DirectFnCall {
             ffqn,
@@ -376,7 +376,7 @@ impl ScheduleFnCall<'_> {
     async fn call_imported_fn(
         self,
         ctx: &mut WorkflowCtx,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
         called_ffqn: &FunctionFqn,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let ScheduleFnCall {
@@ -483,7 +483,7 @@ impl SubmitExecutionFnCall<'_> {
     async fn call_imported_fn(
         self,
         ctx: &mut WorkflowCtx,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let SubmitExecutionFnCall {
             target_ffqn,
@@ -623,7 +623,7 @@ impl AwaitNextFnCall {
     async fn call_imported_fn(
         self,
         ctx: &mut WorkflowCtx,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let AwaitNextFnCall {
             target_ffqn,
@@ -753,7 +753,7 @@ impl StubFnCall<'_> {
     async fn call_imported_fn(
         self,
         ctx: &mut WorkflowCtx,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let StubFnCall {
             target_ffqn,
@@ -1211,7 +1211,7 @@ impl WorkflowCtx {
         schedule_at: HistoryEventScheduleAt,
         name: Option<String>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
-    ) -> Result<Result<DateTime<Utc>, ()>, WorkflowFunctionError> {
+    ) -> Result<Result<Timestamp, ()>, WorkflowFunctionError> {
         let expires_at_if_new = schedule_at
             .as_date_time(self.clock_fn.now())
             .map_err(|err| {
@@ -2340,7 +2340,7 @@ impl WorkflowCtx {
     pub(crate) async fn call_imported_fn(
         &mut self,
         imported_fn_call: ImportedFnCall<'_>,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
         called_ffqn: &FunctionFqn,
     ) -> Result<Val, WorkflowFunctionError> {
         match imported_fn_call {
@@ -3612,7 +3612,6 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use chrono::DateTime;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CreateRequest, DbPool,
@@ -3638,6 +3637,7 @@ pub(crate) mod tests {
         worker::{Worker, WorkerContext, WorkerResult},
     };
     use hashbrown::HashSet;
+    use jiff::Timestamp;
     use rand::SeedableRng as _;
     use rand::rngs::StdRng;
 
@@ -4082,7 +4082,7 @@ pub(crate) mod tests {
                             executor_id: ExecutorId::from_parts(0, 0),
                             deployment_id: DEPLOYMENT_ID_DUMMY,
                             run_id: RunId::from_parts(
-                                u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
+                                u64::try_from(sim_clock.now().as_millisecond()).unwrap(),
                                 0,
                             ),
                             lock_expires_at: sim_clock.now() + Duration::from_secs(1),
@@ -4161,7 +4161,7 @@ pub(crate) mod tests {
                         event: HistoryEvent::JoinNext { run_expires_at, .. },
                         ..
                     } => {
-                        *run_expires_at = DateTime::UNIX_EPOCH;
+                        *run_expires_at = Timestamp::UNIX_EPOCH;
                     }
                     ExecutionRequest::HistoryEvent {
                         event:
@@ -4170,7 +4170,7 @@ pub(crate) mod tests {
                                 ..
                             },
                     } => {
-                        *expires_at = DateTime::UNIX_EPOCH;
+                        *expires_at = Timestamp::UNIX_EPOCH;
                     }
                     _ => {}
                 }
@@ -4576,7 +4576,7 @@ pub(crate) mod tests {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Steps: {steps:?}");
         let execution_id = ExecutionId::from_parts(
-            u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
+            u64::try_from(sim_clock.now().as_millisecond()).unwrap(),
             next_u128(),
         );
 
@@ -4608,7 +4608,7 @@ pub(crate) mod tests {
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter_cell: None,
                 executor_id: ExecutorId::from_parts(
-                    u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
+                    u64::try_from(sim_clock.now().as_millisecond()).unwrap(),
                     next_u128(),
                 ),
                 retry_config: ComponentRetryConfig::ZERO,
@@ -4649,7 +4649,7 @@ pub(crate) mod tests {
                 .tick_test(
                     sim_clock.now(),
                     RunId::from_parts(
-                        u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
+                        u64::try_from(sim_clock.now().as_millisecond()).unwrap(),
                         next_u128(),
                     ),
                 )

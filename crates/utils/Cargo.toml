@@ -16,7 +16,7 @@ val-json = { workspace = true, features = ["wit-parser"] }
 
 anyhow.workspace = true
 async-trait.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 const_format.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true

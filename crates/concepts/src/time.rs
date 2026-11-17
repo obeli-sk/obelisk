@@ -1,11 +1,10 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
 pub trait ClockFn: Send + Sync + 'static {
-    fn now(&self) -> DateTime<Utc>;
+    fn now(&self) -> Timestamp;
     fn clone_box(&self) -> Box<dyn ClockFn>;
 }
 
@@ -35,13 +34,13 @@ pub struct Now;
 
 impl ClockFn for Now {
     #[cfg(not(feature = "test"))]
-    fn now(&self) -> DateTime<Utc> {
-        Utc::now()
+    fn now(&self) -> Timestamp {
+        Timestamp::now()
     }
     #[cfg(feature = "test")]
-    fn now(&self) -> DateTime<Utc> {
-        let micros = Utc::now().timestamp_micros();
-        chrono::TimeZone::timestamp_micros(&Utc, micros).unwrap()
+    fn now(&self) -> Timestamp {
+        let micros = Timestamp::now().as_microsecond();
+        Timestamp::from_microsecond(micros).unwrap()
     }
 
     fn clone_box(&self) -> Box<dyn ClockFn> {
@@ -50,9 +49,9 @@ impl ClockFn for Now {
 }
 
 #[derive(Clone, Copy)]
-pub struct ConstClock(pub DateTime<Utc>);
+pub struct ConstClock(pub Timestamp);
 impl ClockFn for ConstClock {
-    fn now(&self) -> DateTime<Utc> {
+    fn now(&self) -> Timestamp {
         self.0
     }
 

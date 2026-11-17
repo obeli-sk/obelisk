@@ -1,9 +1,9 @@
 use base64::{Engine as _, prelude::BASE64_STANDARD};
-use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::RunId,
     storage::{LogEntry, LogEntryRow, LogLevel, LogStreamType},
 };
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use utoipa::ToSchema;
@@ -29,13 +29,13 @@ pub struct LogEntryRowSer {
 pub enum LogEntrySer {
     /// Structured log message
     Log {
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         level: LogLevelSer,
         message: String,
     },
     /// Raw stream output (stdout/stderr)
     Stream {
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         /// Base64 encoded payload
         payload: String,
         stream_type: LogStreamTypeSer,

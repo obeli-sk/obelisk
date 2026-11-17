@@ -1,15 +1,15 @@
-use chrono::{DateTime, Utc};
 use concepts::storage::{
     AppendRequest, CreateRequest, DbPoolCloseable, ExecutionRequest, HistoryEvent,
     HistoryEventScheduleAt, ScheduleRequestError, Version,
 };
 use concepts::{ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, Params};
+use jiff::Timestamp;
 use obeli_db_tests::Database;
 use rstest::rstest;
 use std::time::Duration;
 use test_db_macro::expand_enum_database;
 
-fn create_request(execution_id: ExecutionId, created_at: DateTime<Utc>) -> CreateRequest {
+fn create_request(execution_id: ExecutionId, created_at: Timestamp) -> CreateRequest {
     CreateRequest {
         created_at,
         execution_id,
@@ -49,7 +49,7 @@ async fn schedule_with_id_is_atomic_and_idempotent(database: Database) {
     test_utils::set_up();
     let (_guard, pool, close) = database.set_up().await;
     let conn = pool.connection().await.unwrap();
-    let created_at = DateTime::UNIX_EPOCH + Duration::from_nanos(123_456_789);
+    let created_at = Timestamp::UNIX_EPOCH + Duration::from_nanos(123_456_789);
     let child = create_request(ExecutionId::generate(), created_at);
     let mut tasks = tokio::task::JoinSet::new();
     for offset in 0..8 {

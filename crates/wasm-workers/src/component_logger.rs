@@ -1,9 +1,9 @@
-use chrono::Utc;
 use concepts::{
     ExecutionId,
     prefixed_ulid::RunId,
     storage::{LogEntry, LogInfoAppendRow, LogLevel},
 };
+use jiff::Timestamp;
 use tokio::sync::mpsc;
 use tracing::{Span, debug, error, info, trace, warn};
 
@@ -41,7 +41,7 @@ impl ComponentLogger {
                 execution_id: self.execution_id.clone(),
                 run_id: self.run_id,
                 log_entry: LogEntry::Log {
-                    created_at: Utc::now(),
+                    created_at: Timestamp::now(),
                     level,
                     message,
                 },

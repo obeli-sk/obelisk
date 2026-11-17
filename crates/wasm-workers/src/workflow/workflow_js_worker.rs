@@ -645,7 +645,6 @@ mod tests {
         JoinNextBlockingStrategy, WorkflowConfig, WorkflowConfigMode,
     };
     use assert_matches::assert_matches;
-    use chrono::DateTime;
     use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest, Digest};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, DeploymentId, ExecutorId, RunId};
     use concepts::storage::{
@@ -669,6 +668,7 @@ mod tests {
     use executor::worker::{FatalError, WorkerContext, WorkerError, WorkerResultOk};
     use executor::{expired_timers_watcher, worker::Worker};
     use insta::assert_json_snapshot;
+    use jiff::Timestamp;
     use rstest::rstest;
     use serde_json::json;
     use sha2::{Digest as ShaDigest, Sha256};
@@ -1024,7 +1024,7 @@ mod tests {
                 executor_id: ExecutorId::generate(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 run_id: RunId::generate(),
-                lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
+                lock_expires_at: jiff::Timestamp::UNIX_EPOCH + jiff::SignedDuration::from_secs(60),
                 retry_config: ComponentRetryConfig::WORKFLOW,
             },
             execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
@@ -3710,7 +3710,7 @@ mod tests {
             panic!("expected Created")
         };
         assert_eq!(
-            (created.scheduled_at - event.created_at).to_std().unwrap(),
+            Duration::try_from(created.scheduled_at.duration_since(event.created_at)).unwrap(),
             Duration::from_secs(60)
         );
         assert!(
@@ -4602,7 +4602,7 @@ mod tests {
             log.events.iter().any(|event| matches!(&event.event,
                 ExecutionRequest::HistoryEvent { event: HistoryEvent::JoinSetRequest {
                     request: JoinSetRequest::DelayRequest { expires_at, .. }, ..
-                }} if expires_at.timestamp_millis() == 142
+                }} if expires_at.as_millisecond() == 142
             )),
             "{log:?}"
         );
@@ -4619,7 +4619,7 @@ mod tests {
                 .get_create_request(&execution_id)
                 .await
                 .unwrap();
-            assert_eq!(request.scheduled_at.timestamp_millis(), millis);
+            assert_eq!(request.scheduled_at.as_millisecond(), millis);
         }
         drop(harness);
         db_close.close().await;
@@ -6854,14 +6854,14 @@ function inner() {
                     child_req,
                     ..
                 } => {
-                    *current_time = DateTime::UNIX_EPOCH; // modifying time in the advance request should have no effect.
+                    *current_time = Timestamp::UNIX_EPOCH; // modifying time in the advance request should have no effect.
                     for req in batch.iter_mut() {
-                        req.created_at = DateTime::UNIX_EPOCH;
+                        req.created_at = Timestamp::UNIX_EPOCH;
                     }
                     for child in child_req.iter_mut() {
                         child.paused = true;
-                        child.created_at = DateTime::UNIX_EPOCH;
-                        child.scheduled_at = DateTime::UNIX_EPOCH;
+                        child.created_at = Timestamp::UNIX_EPOCH;
+                        child.scheduled_at = Timestamp::UNIX_EPOCH;
                     }
                     child_req.first().map(|child| child.execution_id.clone())
                 }
@@ -6988,7 +6988,7 @@ function inner() {
             .expect("replay should create a scheduled execution");
         assert_eq!(
             replayed_child_scheduled_at,
-            sim_clock.now() + chrono::TimeDelta::minutes(5)
+            sim_clock.now() + jiff::SignedDuration::from_mins(5)
         );
         let scheduled_execution_id = requested
             .captured_writes
@@ -7000,13 +7000,13 @@ function inner() {
                     child_req,
                     ..
                 } => {
-                    *current_time = DateTime::UNIX_EPOCH; // modifying time in the advance request should have no effect.
+                    *current_time = Timestamp::UNIX_EPOCH; // modifying time in the advance request should have no effect.
                     for req in batch.iter_mut() {
-                        req.created_at = DateTime::UNIX_EPOCH;
+                        req.created_at = Timestamp::UNIX_EPOCH;
                     }
                     for child in child_req.iter_mut() {
-                        child.created_at = DateTime::UNIX_EPOCH;
-                        child.scheduled_at = DateTime::UNIX_EPOCH;
+                        child.created_at = Timestamp::UNIX_EPOCH;
+                        child.scheduled_at = Timestamp::UNIX_EPOCH;
                     }
                     child_req.first().map(|child| child.execution_id.clone())
                 }
@@ -7023,7 +7023,7 @@ function inner() {
         advance
             .finished
             .expect("main execution should have finished");
-        let expected_scheduled_at = sim_clock.now() + chrono::TimeDelta::minutes(5);
+        let expected_scheduled_at = sim_clock.now() + jiff::SignedDuration::from_mins(5);
         assert_matches!(
             db_connection
                 .get_pending_state(&scheduled_execution_id)

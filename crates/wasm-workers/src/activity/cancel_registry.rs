@@ -1,9 +1,9 @@
-use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::ExecutionId,
     storage::{CancelOutcome, DbConnection, DbErrorWrite},
 };
 use executor::AbortOnDropHandle;
+use jiff::Timestamp;
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -119,7 +119,7 @@ impl CancelRegistry {
         &self,
         db_connection: &dyn DbConnection,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         info!(%execution_id, "Cancelling activity");
         let outcome = db_connection

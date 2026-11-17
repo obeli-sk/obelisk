@@ -641,7 +641,7 @@ mod tests {
                 executor_id: ExecutorId::generate(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 run_id: RunId::generate(),
-                lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
+                lock_expires_at: jiff::Timestamp::UNIX_EPOCH + jiff::SignedDuration::from_secs(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
             execution_interrupt_watcher,
@@ -678,7 +678,7 @@ mod tests {
                 executor_id: ExecutorId::generate(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 run_id: RunId::generate(),
-                lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
+                lock_expires_at: jiff::Timestamp::UNIX_EPOCH + jiff::SignedDuration::from_secs(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
             execution_interrupt_watcher,
@@ -989,7 +989,7 @@ mod tests {
         .await;
         let (mut ctx, _close_tx) = make_worker_context(ffqn, &[]);
         ctx.locked_event.lock_expires_at =
-            chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(50);
+            jiff::Timestamp::UNIX_EPOCH + jiff::SignedDuration::from_millis(50);
         let result = worker.run(ctx).await;
         assert_matches!(result, Err(WorkerError::TemporaryTimeout { .. }));
     }
@@ -1015,7 +1015,7 @@ mod tests {
         .await;
         let (mut ctx, _close_tx) = make_worker_context(ffqn, &[]);
         ctx.locked_event.lock_expires_at =
-            chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(200);
+            jiff::Timestamp::UNIX_EPOCH + jiff::SignedDuration::from_millis(200);
         let result = tokio::time::timeout(std::time::Duration::from_secs(10), worker.run(ctx))
             .await
             .expect("pending fetch must not outlive the deadline");

@@ -41,7 +41,7 @@ impl args::Admin {
                 } else {
                     eprintln!(
                         "{} {} {}: {}",
-                        event.created_at.to_rfc3339(),
+                        event.created_at,
                         event.level.as_str(),
                         event.code,
                         event.message
@@ -231,8 +231,8 @@ impl args::Admin {
                             ("node_run_id", node_run_id.map(|id| id.to_string())),
                             ("level", level),
                             ("code", code),
-                            ("created_from", from.map(|at| at.to_rfc3339())),
-                            ("created_to", to.map(|at| at.to_rfc3339())),
+                            ("created_from", from.map(|at| at.to_string())),
+                            ("created_to", to.map(|at| at.to_string())),
                         ])
                         .query(&[("limit", limit)])
                         .header(ACCEPT, "application/json"),
@@ -244,7 +244,7 @@ impl args::Admin {
                     for event in response.events {
                         eprintln!(
                             "{} {} {}: {}",
-                            event.created_at.to_rfc3339(),
+                            event.created_at,
                             event.level.as_str(),
                             event.code,
                             event.message

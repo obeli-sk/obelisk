@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{
     AppendRequest, CreateRequest, CronAdvanceRequest, DbConnection, DbErrorRead, ExecutionRequest,
@@ -10,6 +9,7 @@ use concepts::{
     ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, Name, Params,
 };
 use executor::worker::{Worker, WorkerContext, WorkerResult, WorkerResultOk};
+use jiff::Timestamp;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -39,11 +39,13 @@ pub enum CronOrOnce {
 impl CronOrOnce {
     pub fn next_occurrence(
         &self,
-        after: DateTime<Utc>,
-    ) -> Result<Option<DateTime<Utc>>, croner::errors::CronError> {
+        after: Timestamp,
+    ) -> Result<Option<Timestamp>, croner::errors::CronError> {
         match self {
             CronOrOnce::Once => Ok(None),
-            CronOrOnce::Cron(cron) => cron.find_next_occurrence(&after, false).map(Some),
+            CronOrOnce::Cron(cron) => cron
+                .find_next_occurrence(&after.to_zoned(jiff::tz::TimeZone::UTC), false)
+                .map(|next| Some(next.timestamp())),
         }
     }
 }
@@ -84,8 +86,8 @@ impl CronWorker {
 
     fn next_fire_time(
         &self,
-        after: DateTime<Utc>,
-    ) -> Result<Option<DateTime<Utc>>, executor::worker::FatalError> {
+        after: Timestamp,
+    ) -> Result<Option<Timestamp>, executor::worker::FatalError> {
         self.cron_schedule.next_occurrence(after).map_err(|err| {
             executor::worker::FatalError::ConstraintViolation {
                 reason: format!("cron next occurrence error: {err}").into(),
@@ -258,7 +260,7 @@ impl Worker for CronWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+
     use concepts::StrVariant;
     use concepts::component_id::{ComponentDigest, Digest};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId, RunId};
@@ -271,7 +273,7 @@ mod tests {
     const TARGET_FFQN: FunctionFqn = FunctionFqn::new_static("test:pkg/ifc", "do-work");
     const MAX_PERSISTED_VALUE_SIZE_BYTES: u64 = 12_345;
 
-    fn tracker_request(execution_id: ExecutionId, now: DateTime<Utc>) -> CreateRequest {
+    fn tracker_request(execution_id: ExecutionId, now: Timestamp) -> CreateRequest {
         CreateRequest {
             created_at: now,
             execution_id,
@@ -434,7 +436,10 @@ mod tests {
         collect_executions(&db_pool).await;
         assert!(conn.get(&seed).await.is_err());
         assert!(conn.get(&target.execution_id).await.is_err());
-        let request = tracker_request(ExecutionId::generate(), now + chrono::Duration::days(1));
+        let request = tracker_request(
+            ExecutionId::generate(),
+            now + jiff::SignedDuration::from_hours(24),
+        );
         assert_eq!(
             conn.register_cron(request.clone(), true).await.unwrap(),
             record
@@ -492,7 +497,7 @@ mod tests {
             .await
             .unwrap();
         let target = ExecutionId::generate();
-        let submitted_at = now + chrono::Duration::seconds(1);
+        let submitted_at = now + jiff::SignedDuration::from_secs(1);
         if submitted {
             let version = conn
                 .append(
@@ -529,7 +534,7 @@ mod tests {
                             }
                         } else {
                             ExecutionRequest::Unlocked(Unlocked {
-                                unlocked_at: now + chrono::Duration::hours(1),
+                                unlocked_at: now + jiff::SignedDuration::from_hours(1),
                                 reason: "cron".into(),
                             })
                         },
@@ -576,7 +581,10 @@ mod tests {
         )
         .unwrap();
         conn.register_cron(unrelated, false).await.unwrap();
-        let request = tracker_request(ExecutionId::generate(), now + chrono::Duration::days(1));
+        let request = tracker_request(
+            ExecutionId::generate(),
+            now + jiff::SignedDuration::from_hours(24),
+        );
         let record = conn.register_cron(request.clone(), once).await.unwrap();
         assert_eq!(record.created_at, now);
         assert_eq!(record.last_submitted_at, submitted.then_some(submitted_at));
@@ -629,7 +637,7 @@ mod tests {
         for _ in 0..TRACKER_EVENT_WATERMARK {
             tick(&worker, &db_pool, now).await;
             record = conn.get_cron(&digest).await.unwrap();
-            now += chrono::Duration::seconds(1);
+            now += jiff::SignedDuration::from_secs(1);
             clock.move_time_to(now);
             if record.tracking_execution_id.as_ref() != Some(&seed) {
                 break;
@@ -684,7 +692,7 @@ mod tests {
                 .await
                 .unwrap();
             collect_executions(&db_pool).await;
-            now += chrono::Duration::seconds(1);
+            now += jiff::SignedDuration::from_secs(1);
             clock.move_time_to(now);
             tick(&worker, &db_pool, now).await;
             assert_ne!(
@@ -750,13 +758,13 @@ mod tests {
         CronOrOnce::Cron(Box::new(expr.parse::<croner::Cron>().unwrap()))
     }
 
-    fn make_locked_event(now: DateTime<Utc>) -> Locked {
+    fn make_locked_event(now: Timestamp) -> Locked {
         Locked {
             component_id: make_cron_component_id(),
             executor_id: ExecutorId::generate(),
             deployment_id: DEPLOYMENT_ID_DUMMY,
             run_id: RunId::generate(),
-            lock_expires_at: now + chrono::Duration::seconds(60),
+            lock_expires_at: now + jiff::SignedDuration::from_secs(60),
             retry_config: concepts::ComponentRetryConfig::ZERO,
         }
     }
@@ -764,7 +772,7 @@ mod tests {
     fn make_worker_context(
         execution_id: ExecutionId,
         version: Version,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> WorkerContext {
         let locked_event = make_locked_event(now);
         WorkerContext {
@@ -790,7 +798,7 @@ mod tests {
     /// and return the `execution_id` and the version after locking (for the worker).
     async fn create_and_lock_execution(
         db_pool: &Arc<dyn DbPool>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> (ExecutionId, Version) {
         let conn = db_pool.connection().await.unwrap();
         let execution_id = ExecutionId::generate();
@@ -804,7 +812,7 @@ mod tests {
             AppendRequest {
                 created_at: now,
                 event: ExecutionRequest::Locked(Locked {
-                    lock_expires_at: now + chrono::Duration::seconds(60),
+                    lock_expires_at: now + jiff::SignedDuration::from_secs(60),
                     component_id: make_cron_component_id(),
                     executor_id: ExecutorId::generate(),
                     run_id: RunId::generate(),
@@ -820,8 +828,8 @@ mod tests {
     }
 
     // Fixed test time: 2025-01-15 10:30:00 UTC
-    fn test_time() -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2025, 1, 15, 10, 30, 0).unwrap()
+    fn test_time() -> Timestamp {
+        "2025-01-15T10:30:00Z".parse::<Timestamp>().unwrap()
     }
 
     #[tokio::test]
@@ -837,12 +845,12 @@ mod tests {
         let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(test_time());
         let worker = make_worker(db_pool, parse_cron("0 12 * * *"), sim_clock); // daily at 12:00
-        let after = Utc.with_ymd_and_hms(2025, 1, 15, 11, 0, 0).unwrap();
+        let after = "2025-01-15T11:00:00Z".parse::<Timestamp>().unwrap();
         let next = worker
             .next_fire_time(after)
             .unwrap()
             .expect("must have next fire time");
-        assert_eq!(next, Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap());
+        assert_eq!(next, "2025-01-15T12:00:00Z".parse::<Timestamp>().unwrap());
     }
 
     #[tokio::test]
@@ -850,12 +858,12 @@ mod tests {
         let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(test_time());
         let worker = make_worker(db_pool, parse_cron("0 12 * * *"), sim_clock); // daily at 12:00
-        let after = Utc.with_ymd_and_hms(2025, 1, 15, 13, 0, 0).unwrap();
+        let after = "2025-01-15T13:00:00Z".parse::<Timestamp>().unwrap();
         let next = worker
             .next_fire_time(after)
             .unwrap()
             .expect("must have next fire time");
-        assert_eq!(next, Utc.with_ymd_and_hms(2025, 1, 16, 12, 0, 0).unwrap());
+        assert_eq!(next, "2025-01-16T12:00:00Z".parse::<Timestamp>().unwrap());
     }
 
     #[tokio::test]
@@ -1009,7 +1017,7 @@ mod tests {
         if let PendingState::PendingAt(PendingStatePendingAt { scheduled_at, .. }) =
             &schedule_log.pending_state
         {
-            let expected_next = Utc.with_ymd_and_hms(2025, 1, 15, 11, 0, 0).unwrap();
+            let expected_next = "2025-01-15T11:00:00Z".parse::<Timestamp>().unwrap();
             assert_eq!(
                 *scheduled_at, expected_next,
                 "next tick must be {expected_next}, got {scheduled_at}"
@@ -1019,7 +1027,7 @@ mod tests {
         }
     }
 
-    async fn create_seed(db_pool: &Arc<dyn DbPool>, now: DateTime<Utc>) -> ExecutionId {
+    async fn create_seed(db_pool: &Arc<dyn DbPool>, now: Timestamp) -> ExecutionId {
         db_pool
             .connection()
             .await
@@ -1034,7 +1042,7 @@ mod tests {
     async fn lock(
         db_pool: &Arc<dyn DbPool>,
         component_id: &ComponentId,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> concepts::storage::LockedExecution {
         let mut locked = db_pool
             .connection()
@@ -1047,7 +1055,7 @@ mod tests {
                 DEPLOYMENT_ID_DUMMY,
                 now,
                 ExecutorId::generate(),
-                now + chrono::Duration::seconds(60),
+                now + jiff::SignedDuration::from_secs(60),
                 RunId::generate(),
                 concepts::ComponentRetryConfig::ZERO,
             )
@@ -1058,7 +1066,7 @@ mod tests {
     }
 
     /// Lock the seed through the DB like the executor does and run one tick.
-    async fn tick(worker: &CronWorker, db_pool: &Arc<dyn DbPool>, now: DateTime<Utc>) {
+    async fn tick(worker: &CronWorker, db_pool: &Arc<dyn DbPool>, now: Timestamp) {
         let locked = lock(db_pool, &make_cron_component_id(), now).await;
         let mut ctx = make_worker_context(locked.execution_id, locked.next_version, now);
         ctx.event_history = locked.event_history;
@@ -1090,8 +1098,8 @@ mod tests {
     #[tokio::test]
     async fn skip_overlap_waits_for_previous_execution_to_finish() {
         let t0 = test_time();
-        let t1 = Utc.with_ymd_and_hms(2025, 1, 15, 11, 0, 0).unwrap();
-        let t2 = Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap();
+        let t1 = "2025-01-15T11:00:00Z".parse::<Timestamp>().unwrap();
+        let t2 = "2025-01-15T12:00:00Z".parse::<Timestamp>().unwrap();
         let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(t0);
         let worker = make_worker_with_overlap(
@@ -1144,7 +1152,7 @@ mod tests {
     #[tokio::test]
     async fn allow_overlap_schedules_while_previous_execution_is_running() {
         let t0 = test_time();
-        let t1 = Utc.with_ymd_and_hms(2025, 1, 15, 11, 0, 0).unwrap();
+        let t1 = "2025-01-15T11:00:00Z".parse::<Timestamp>().unwrap();
         let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(t0);
         let worker = make_worker_with_overlap(

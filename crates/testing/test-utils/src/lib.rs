@@ -41,11 +41,11 @@ where
     ) -> fmt::Result {
         // Format values from the event's's metadata:
         let metadata = event.metadata();
-        let timestamp = chrono::Utc::now();
+        let timestamp = jiff::Timestamp::now();
         write!(
             &mut writer,
             "{ts} {level: <5} ",
-            ts = timestamp.format(":%M:%S%.3f"),
+            ts = timestamp.strftime(":%M:%S%.3f"),
             level = metadata.level(),
         )?;
 
@@ -218,7 +218,7 @@ pub fn sanitize_json(value: &Value) -> Value {
                 Value::String("Exr_<REDACTED>".to_string())
             } else if s.starts_with("sha256:") {
                 Value::String("sha256:<REDACTED>".to_string())
-            } else if chrono::DateTime::parse_from_rfc3339(s).is_ok() {
+            } else if s.parse::<jiff::Timestamp>().is_ok() {
                 Value::String("<TIMESTAMP>".to_string())
             } else {
                 value.clone()

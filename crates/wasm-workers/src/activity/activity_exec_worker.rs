@@ -234,7 +234,7 @@ impl Worker for ActivityExecWorker {
         let version = ctx.version.clone();
         let started_at = self.clock_fn.now();
         let lock_expires_at = ctx.locked_event.lock_expires_at;
-        let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
+        let Ok(deadline_duration) = (lock_expires_at - started_at).try_into() else {
             debug!(execution_deadline = %lock_expires_at, %started_at,
                 "Timed out - started_at later than execution_deadline");
             return Err(WorkerError::TemporaryTimeout {
@@ -543,7 +543,7 @@ fn forward_output(config: &StdOutputConfigWithSender, output: &[u8], ctx: &Worke
             forwarding_from,
         } => {
             let log_entry = concepts::storage::LogEntry::Stream {
-                created_at: chrono::Utc::now(),
+                created_at: jiff::Timestamp::now(),
                 payload: output.to_vec(),
                 stream_type: *forwarding_from,
             };

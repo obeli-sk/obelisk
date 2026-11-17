@@ -16,7 +16,7 @@ pub(super) struct ValidatedConfig {
     interval: Duration,
     batch_size: u32,
     batch_delay: Duration,
-    upload_grace_period: chrono::Duration,
+    upload_grace_period: jiff::SignedDuration,
     executions: Option<Retention>,
     deployments: Option<Retention>,
     system_events: Option<Duration>,
@@ -56,10 +56,10 @@ impl ValidatedConfig {
         if upload_grace_period.is_zero() {
             bail!("`maintenance.gc.upload_grace_period` must be greater than zero");
         }
-        let upload_grace_period = chrono::Duration::from_std(upload_grace_period)
+        let upload_grace_period = jiff::SignedDuration::try_from(upload_grace_period)
             .context("`maintenance.gc.upload_grace_period` is too large")?;
-        chrono::Utc::now()
-            .checked_sub_signed(upload_grace_period)
+        jiff::Timestamp::now()
+            .checked_sub(upload_grace_period)
             .context("`maintenance.gc.upload_grace_period` is too large")?;
         Ok(Self {
             interval,
@@ -110,10 +110,10 @@ fn retention_duration(
     if duration.is_zero() {
         bail!("`maintenance.gc.retention.{name}.max_age` must be greater than zero");
     }
-    let age = chrono::Duration::from_std(duration)
+    let age = jiff::SignedDuration::try_from(duration)
         .with_context(|| format!("`maintenance.gc.retention.{name}.max_age` is too large"))?;
-    chrono::Utc::now()
-        .checked_sub_signed(age)
+    jiff::Timestamp::now()
+        .checked_sub(age)
         .with_context(|| format!("`maintenance.gc.retention.{name}.max_age` is too large"))?;
     Ok(Some(duration))
 }
@@ -306,7 +306,7 @@ pub(super) fn spawn(
                             .gc_cas(
                                 false,
                                 config.batch_size,
-                                chrono::Utc::now() - config.upload_grace_period,
+                                jiff::Timestamp::now() - config.upload_grace_period,
                             )
                             .await
                             .map_or_else(
@@ -565,10 +565,11 @@ where
     Ok(stats)
 }
 
-fn cutoff(max_age: Duration) -> chrono::DateTime<chrono::Utc> {
-    let age = chrono::Duration::from_std(max_age).expect("retention age was validated at startup");
-    chrono::Utc::now()
-        .checked_sub_signed(age)
+fn cutoff(max_age: Duration) -> jiff::Timestamp {
+    let age =
+        jiff::SignedDuration::try_from(max_age).expect("retention age was validated at startup");
+    jiff::Timestamp::now()
+        .checked_sub(age)
         .expect("retention age was validated at startup")
 }
 
@@ -597,7 +598,7 @@ mod tests {
             interval: Duration::from_secs(60),
             batch_size: 1,
             batch_delay: Duration::ZERO,
-            upload_grace_period: chrono::Duration::hours(1),
+            upload_grace_period: jiff::SignedDuration::from_hours(1),
             executions: None,
             deployments: Some(Retention {
                 max_age: Duration::from_secs(60),
@@ -624,7 +625,7 @@ mod tests {
                 db_pool
                     .cas_gc_conn()
                     .await?
-                    .gc_cas(false, 100, chrono::Utc::now())
+                    .gc_cas(false, 100, jiff::Timestamp::now())
                     .await?,
             ))
         })
@@ -656,8 +657,8 @@ mod tests {
                     deployment_id,
                     description: None,
                     digest: DeploymentRecord::compute_digest(&deployment_id.to_string()),
-                    created_at: chrono::Utc::now() - chrono::Duration::days(age),
-                    updated_at: chrono::Utc::now() - chrono::Duration::days(age),
+                    created_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(age * 24),
+                    updated_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(age * 24),
                     last_active_at: None,
                     last_active_app_config_digest: None,
                     status: DeploymentStatus::Inactive,
@@ -681,7 +682,7 @@ mod tests {
         finished: bool,
     ) -> ExecutionId {
         let execution_id = ExecutionId::generate();
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         let conn = db_pool.connection().await.unwrap();
         conn.create(CreateRequest {
             created_at: now,
@@ -744,7 +745,7 @@ mod tests {
             serde_json::json!({}),
         )
         .unwrap();
-        old_event.created_at = chrono::Utc::now() - chrono::Duration::days(1);
+        old_event.created_at = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(24);
         old_event.node_run_id = concepts::prefixed_ulid::NodeRunId::generate();
         let old_event_id = old_event.event_id;
         admin.append_system_event(old_event).await.unwrap();
@@ -759,7 +760,7 @@ mod tests {
                         db_pool
                             .cas_gc_conn()
                             .await?
-                            .gc_cas(false, 1, chrono::Utc::now())
+                            .gc_cas(false, 1, jiff::Timestamp::now())
                             .await?,
                     ))
                 }),
@@ -824,7 +825,7 @@ mod tests {
                 db_pool
                     .cas_gc_conn()
                     .await?
-                    .gc_cas(false, 1, chrono::Utc::now())
+                    .gc_cas(false, 1, jiff::Timestamp::now())
                     .await?,
             ))
         })
@@ -838,7 +839,7 @@ mod tests {
                 db_pool
                     .cas_gc_conn()
                     .await?
-                    .gc_cas(false, 1, chrono::Utc::now())
+                    .gc_cas(false, 1, jiff::Timestamp::now())
                     .await?,
             ))
         })
@@ -904,7 +905,7 @@ mod tests {
                 db_pool
                     .cas_gc_conn()
                     .await?
-                    .gc_cas(false, 1, chrono::Utc::now())
+                    .gc_cas(false, 1, jiff::Timestamp::now())
                     .await?,
             ))
         })

@@ -467,7 +467,7 @@ mod tests {
 
         let oversized_envelope =
             crate::storage::ExecutionRequest::Unlocked(crate::storage::Unlocked {
-                unlocked_at: chrono::DateTime::UNIX_EPOCH,
+                unlocked_at: jiff::Timestamp::UNIX_EPOCH,
                 reason: crate::StrVariant::from("x".repeat(70_000)),
             });
         assert!(oversized_envelope.validate_persisted_values(64).is_ok());
@@ -486,7 +486,7 @@ mod tests {
             retval: crate::SUPPORTED_RETURN_VALUE_OK_EMPTY,
             http_client_traces: Some(vec![HttpClientTrace {
                 req: RequestTrace {
-                    sent_at: chrono::DateTime::UNIX_EPOCH,
+                    sent_at: jiff::Timestamp::UNIX_EPOCH,
                     uri: "x".repeat(70_000),
                     method: "GET".to_string(),
                 },

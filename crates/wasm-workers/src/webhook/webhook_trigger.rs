@@ -141,12 +141,13 @@ pub(crate) mod types {
 
 /// Convert a `PendingAt` scheduled time to the WIT `datetime`.
 fn datetime_from_scheduled_at(
-    scheduled_at: &chrono::DateTime<chrono::Utc>,
+    scheduled_at: &jiff::Timestamp,
 ) -> types::obelisk::types::time::Datetime {
     types::obelisk::types::time::Datetime {
-        seconds: u64::try_from(scheduled_at.timestamp())
+        seconds: u64::try_from(scheduled_at.as_second())
             .expect("pending at before unix epoch is unsupported"),
-        nanoseconds: scheduled_at.timestamp_subsec_nanos(),
+        nanoseconds: u32::try_from(scheduled_at.subsec_nanosecond())
+            .expect("scheduled_at is after epoch"),
     }
 }
 
@@ -204,7 +205,7 @@ fn supported_return_value_to_json_result(
 fn schedule_at_from_webhook(
     schedule_at: types::obelisk::webhook::webhook_support::ScheduleAt,
 ) -> HistoryEventScheduleAt {
-    use chrono::{DateTime, Utc};
+    use jiff::Timestamp;
     use std::time::UNIX_EPOCH;
     use types::obelisk::webhook::webhook_support::ScheduleAt;
 
@@ -213,7 +214,9 @@ fn schedule_at_from_webhook(
         ScheduleAt::At(datetime) => {
             let duration = Duration::new(datetime.seconds, datetime.nanoseconds);
             let systemtime = UNIX_EPOCH + duration;
-            HistoryEventScheduleAt::At(DateTime::<Utc>::from(systemtime))
+            HistoryEventScheduleAt::At(
+                Timestamp::try_from(systemtime).expect("WASI datetime is within timestamp range"),
+            )
         }
         ScheduleAt::In(duration) => {
             use types::obelisk::types::time::Duration as WitDuration;
@@ -806,7 +809,7 @@ pub(super) struct WebhookEndpointCtx {
 }
 
 pub(super) struct IncomingRequest {
-    received_at: chrono::DateTime<chrono::Utc>,
+    received_at: jiff::Timestamp,
     method: String,
     uri: String,
 }
@@ -6366,7 +6369,7 @@ pub(crate) mod tests {
                 let execution_id =
                     concepts::ExecutionId::from_str(body[key].as_str().unwrap()).unwrap();
                 let request = conn.get_create_request(&execution_id).await.unwrap();
-                assert_eq!(request.scheduled_at.timestamp_millis(), millis);
+                assert_eq!(request.scheduled_at.as_millisecond(), millis);
             }
         }
 

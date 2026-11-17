@@ -121,10 +121,10 @@ impl args::Deployment {
                 for dep in deployments {
                     let id = dep.deployment_id;
                     let status = format_status(&dep.status);
-                    let created = dep.created_at.format("%Y-%m-%d %H:%M:%S");
+                    let created = dep.created_at.strftime("%Y-%m-%d %H:%M:%S");
                     let last_active = dep
                         .last_active_at
-                        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .map(|t| t.strftime("%Y-%m-%d %H:%M:%S").to_string())
                         .unwrap_or_default();
                     if client_startup.detailed_output() {
                         eprintln!(

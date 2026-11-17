@@ -8,7 +8,6 @@ use crate::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
 use crate::v8_executor::V8Executor;
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::storage::{LogInfoAppendRow, LogStreamType, Version};
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
@@ -20,6 +19,7 @@ use concepts::{FunctionMetadata, ResultParsingError};
 use executor::worker::{FatalError, RunFinished, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
+use jiff::Timestamp;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
@@ -252,7 +252,7 @@ impl ActivityWorker {
         let started_at = self.clock_fn.now();
         let version = ctx.version.clone();
         let lock_expires_at = ctx.locked_event.lock_expires_at;
-        let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
+        let Ok(deadline_duration) = (lock_expires_at - started_at).try_into() else {
             return Err(WorkerError::TemporaryTimeout {
                 http_client_traces: None,
                 version,
@@ -559,7 +559,7 @@ impl ActivityWorker {
     fn create_store(
         &self,
         ctx: WorkerContext,
-        started_at: DateTime<Utc>,
+        started_at: Timestamp,
     ) -> Result<(Store<ActivityCtx>, Duration /* deadline duration*/), WorkerError> {
         let lock_expires_at = ctx.locked_event.lock_expires_at;
         let worker_span = ctx.worker_span.clone();
@@ -604,7 +604,7 @@ impl ActivityWorker {
         });
 
         let deadline_delta = lock_expires_at - started_at;
-        let Ok(deadline_duration) = deadline_delta.to_std() else {
+        let Ok(deadline_duration) = deadline_delta.try_into() else {
             worker_span.in_scope(|| {
                 info!(execution_deadline = %lock_expires_at, %started_at,
                     "Timed out - started_at later than execution_deadline");

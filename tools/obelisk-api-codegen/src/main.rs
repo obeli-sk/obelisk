@@ -105,6 +105,19 @@ fn main() -> Result<()> {
     let mut settings = typify::TypeSpaceSettings::default();
     settings.with_derive("PartialEq".into());
     settings.with_map_type("::std::collections::BTreeMap");
+    settings.with_conversion(
+        schemars::schema::SchemaObject {
+            instance_type: Some(schemars::schema::InstanceType::String.into()),
+            format: Some("date-time".into()),
+            ..Default::default()
+        },
+        "::jiff::Timestamp",
+        [
+            typify::TypeSpaceImpl::Display,
+            typify::TypeSpaceImpl::FromStr,
+        ]
+        .into_iter(),
+    );
     let mut types = typify::TypeSpace::new(&settings);
     types.add_ref_types(definitions)?;
     let source = prettyplease::unparse(&syn::parse2(types.to_stream())?);

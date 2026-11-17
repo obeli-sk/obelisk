@@ -565,7 +565,7 @@ async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<V
                 .open(token_file)
                 .context("Cannot create private token file; use a new path")?;
             let expires_at = expires_at
-                .map(|date| u64::try_from(date.timestamp()))
+                .map(|date| u64::try_from(date.as_second()))
                 .transpose()
                 .context("Expiry must be after the Unix epoch")?;
             let result = client.request(Method::POST, &path, Some(json!({"name":name,"global":scope.is_empty(),"apps":scope,"expires_at":expires_at})), Kind::Read).await;
@@ -1740,7 +1740,7 @@ mod tests {
                 switch_count: 0,
                 app_config_digest: "digest".to_owned(),
                 gc: None,
-                started_at: chrono::Utc::now(),
+                started_at: jiff::Timestamp::now(),
             }),
             "/prefix/v1/tokens" if method == Method::POST => {
                 json!({"token_id":"a".repeat(32),"token":format!("obk_{}_{}", "a".repeat(32), "b".repeat(64))})

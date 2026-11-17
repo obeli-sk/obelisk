@@ -1,15 +1,15 @@
 //! Notification types for database events.
 
-use chrono::{DateTime, Utc};
 use concepts::{
     ExecutionId, FunctionFqn, SupportedFunctionReturnValue, component_id::ComponentDigest,
     storage::ResponseWithCursor,
 };
+use jiff::Timestamp;
 
 /// Notification data for when an execution becomes pending.
 #[derive(Debug)]
 pub struct NotifierPendingAt {
-    pub scheduled_at: DateTime<Utc>,
+    pub scheduled_at: Timestamp,
     pub ffqn: FunctionFqn,
     pub component_input_digest: ComponentDigest,
 }

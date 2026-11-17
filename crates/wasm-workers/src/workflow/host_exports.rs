@@ -1,12 +1,12 @@
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::StubJsonError;
 use assert_matches::assert_matches;
-use chrono::DateTime;
 use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::StubError;
 use indexmap::indexmap;
+use jiff::Timestamp;
 use std::ops::Deref as _;
 use std::time::Duration;
 use val_json::wast_val::ValKey;
@@ -20,14 +20,13 @@ pub(crate) use concepts::SUFFIX_FN_SUBMIT;
 
 // Generate `obelisk:workflow:workflow-support
 pub(crate) mod latest {
-    use chrono::DateTime;
-    use chrono::Utc;
     use concepts::ExecutionId;
     use concepts::FunctionFqn;
     use concepts::prefixed_ulid::DelayId;
     use concepts::prefixed_ulid::ExecutionIdDerived;
     use concepts::prefixed_ulid::ExecutionIdParseError;
     use concepts::storage::HistoryEventScheduleAt;
+    use jiff::Timestamp;
     use obelisk::types::execution as types_execution;
     pub(crate) use obelisk::types::execution::DelayId as DelayIdTypes;
     pub(crate) use obelisk::types::execution::ExecutionId as ExecutionIdTypes;
@@ -72,7 +71,7 @@ pub(crate) mod latest {
         }
     }
 
-    impl From<Datetime> for DateTime<Utc> {
+    impl From<Datetime> for Timestamp {
         fn from(
             Datetime {
                 seconds,
@@ -81,14 +80,14 @@ pub(crate) mod latest {
         ) -> Self {
             let duration = Duration::new(seconds, nanoseconds);
             let systemtime = UNIX_EPOCH + duration;
-            DateTime::<Utc>::from(systemtime)
+            Timestamp::try_from(systemtime).expect("WASI datetime is within timestamp range")
         }
     }
-    impl TryFrom<DateTime<Utc>> for Datetime {
-        type Error = chrono::OutOfRangeError;
-        fn try_from(value: DateTime<Utc>) -> Result<Self, Self::Error> {
-            let epoch = DateTime::<Utc>::from(UNIX_EPOCH);
-            let duration = value.signed_duration_since(epoch).to_std()?;
+    impl TryFrom<Timestamp> for Datetime {
+        type Error = jiff::Error;
+        fn try_from(value: Timestamp) -> Result<Self, Self::Error> {
+            let epoch = Timestamp::UNIX_EPOCH;
+            let duration: Duration = value.duration_since(epoch).try_into()?;
             Ok(Datetime {
                 seconds: duration.as_secs(),
                 nanoseconds: duration.subsec_nanos(),
@@ -100,7 +99,7 @@ pub(crate) mod latest {
         fn from(value: ScheduleAtTypes) -> Self {
             match value {
                 ScheduleAtTypes::Now => Self::Now,
-                ScheduleAtTypes::At(datetime) => Self::At(DateTime::from(datetime)),
+                ScheduleAtTypes::At(datetime) => Self::At(Timestamp::from(datetime)),
                 ScheduleAtTypes::In(duration) => Self::In(Duration::from(duration)),
             }
         }
@@ -292,7 +291,7 @@ pub fn history_event_schedule_at_from_wast_val(
                         seconds: *seconds,
                         nanoseconds: *nanoseconds,
                     };
-                    let date_time = DateTime::from(date_time);
+                    let date_time = Timestamp::from(date_time);
                     Ok(HistoryEventScheduleAt::At(date_time))
                 }
                 _ => Err(

@@ -3,7 +3,6 @@ use crate::worker::{
     WorkerResult, WorkerResultOk,
 };
 use assert_matches::assert_matches;
-use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, RunId};
 use concepts::storage::{
     AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbConnection, DbErrorWrite,
@@ -20,6 +19,7 @@ use concepts::{
     FinishedExecutionFailure,
     storage::{ExecutionRequest, Version, http_client_trace::HttpClientTrace},
 };
+use jiff::Timestamp;
 use std::{
     sync::{
         Arc,
@@ -413,7 +413,7 @@ impl ExecTask {
     }
 
     #[cfg(feature = "test")]
-    pub async fn tick_test(&self, executed_at: DateTime<Utc>, run_id: RunId) -> ExecutionProgress {
+    pub async fn tick_test(&self, executed_at: Timestamp, run_id: RunId) -> ExecutionProgress {
         use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
 
         let db_exec = self.db_pool.db_exec_conn().await.unwrap();
@@ -423,11 +423,7 @@ impl ExecTask {
     }
 
     #[cfg(feature = "test")]
-    pub async fn tick_test_await(
-        &self,
-        executed_at: DateTime<Utc>,
-        run_id: RunId,
-    ) -> Vec<ExecutionId> {
+    pub async fn tick_test_await(&self, executed_at: Timestamp, run_id: RunId) -> Vec<ExecutionId> {
         use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
 
         let db_exec = self.db_pool.db_exec_conn().await.unwrap();
@@ -442,7 +438,7 @@ impl ExecTask {
     async fn tick(
         &self,
         db_exec: &dyn DbExecutor,
-        executed_at: DateTime<Utc>,
+        executed_at: Timestamp,
         run_id: RunId,
         deployment_id: DeploymentId,
     ) -> Result<ExecutionProgress, DbErrorWrite> {
@@ -675,7 +671,7 @@ impl ExecTask {
     async fn cancelled_activity_to_append(
         db_conn: &dyn DbConnection,
         execution_id: ExecutionId,
-        result_obtained_at: DateTime<Utc>,
+        result_obtained_at: Timestamp,
     ) -> Result<Option<Append>, DbErrorWrite> {
         let log = db_conn
             .get(&execution_id)
@@ -768,7 +764,7 @@ impl ExecTask {
         http_client_traces: Option<Vec<HttpClientTrace>>,
         version: Version,
         can_be_retried: Option<Duration>,
-        result_obtained_at: DateTime<Utc>,
+        result_obtained_at: Timestamp,
         parent: Option<(ExecutionId, JoinSetId)>,
     ) -> (ExecutionRequest, Option<ChildFinishedResponse>, Version) {
         if let Some(duration) = can_be_retried {
@@ -816,7 +812,7 @@ impl ExecTask {
         component_type: ComponentType,
         execution_id: ExecutionId,
         worker_result: WorkerResult,
-        result_obtained_at: DateTime<Utc>,
+        result_obtained_at: Timestamp,
         parent: Option<(ExecutionId, JoinSetId)>,
         can_be_retried: Option<Duration>,
         unlock_expiry_on_limit_reached: Duration,
@@ -1051,7 +1047,7 @@ pub(crate) struct ChildFinishedResponse {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Append {
-    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) created_at: Timestamp,
     pub(crate) primary_event: AppendRequest,
     pub(crate) execution_id: ExecutionId,
     pub(crate) version: Version,
@@ -1381,13 +1377,13 @@ mod tests {
         async fn lock_pending_by_ffqns(
             &self,
             _: u32,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: Arc<[FunctionFqn]>,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: ComponentId,
             _: DeploymentId,
             _: ExecutorId,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: RunId,
             _: ComponentRetryConfig,
         ) -> Result<LockPendingResponse, DbErrorWrite> {
@@ -1396,13 +1392,13 @@ mod tests {
         async fn lock_pending_by_ffqns_auto(
             &self,
             _: u32,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: Arc<[FunctionFqn]>,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: ComponentId,
             _: DeploymentId,
             _: ExecutorId,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: RunId,
             _: ComponentRetryConfig,
         ) -> Result<LockPendingResponse, DbErrorWrite> {
@@ -1411,12 +1407,12 @@ mod tests {
         async fn lock_pending_by_component_digest(
             &self,
             _: u32,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: &ComponentId,
             _: DeploymentId,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: ExecutorId,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: RunId,
             _: ComponentRetryConfig,
         ) -> Result<LockPendingResponse, DbErrorWrite> {
@@ -1424,14 +1420,14 @@ mod tests {
         }
         async fn lock_one(
             &self,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: ComponentId,
             _: DeploymentId,
             _: &ExecutionId,
             _: RunId,
             _: Version,
             _: ExecutorId,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: ComponentRetryConfig,
         ) -> Result<LockedExecution, DbErrorWrite> {
             unreachable!()
@@ -1448,13 +1444,13 @@ mod tests {
             &self,
             _: AppendEventsToExecution,
             _: AppendResponseToExecution,
-            _: DateTime<Utc>,
+            _: Timestamp,
         ) -> Result<concepts::storage::AppendBatchResponse, DbErrorWrite> {
             unreachable!()
         }
         async fn wait_for_pending_by_ffqn(
             &self,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: Arc<[FunctionFqn]>,
             _: Option<ComponentDigest>,
             _: Pin<Box<dyn Future<Output = ()> + Send>>,
@@ -1462,7 +1458,7 @@ mod tests {
         }
         async fn wait_for_pending_by_component_digest(
             &self,
-            _: DateTime<Utc>,
+            _: Timestamp,
             _: &ComponentDigest,
             _: Pin<Box<dyn Future<Output = ()> + Send>>,
         ) {
@@ -1470,7 +1466,7 @@ mod tests {
         async fn append_cancel_workflow_requested(
             &self,
             _: &ExecutionId,
-            _: DateTime<Utc>,
+            _: Timestamp,
         ) -> Result<concepts::storage::CancelOutcome, DbErrorWrite> {
             unreachable!()
         }
@@ -1483,7 +1479,7 @@ mod tests {
         async fn append_activity_cancellation_requested(
             &self,
             _: &ExecutionId,
-            _: DateTime<Utc>,
+            _: Timestamp,
         ) -> Result<concepts::storage::CancelOutcome, DbErrorWrite> {
             unreachable!()
         }
@@ -1513,7 +1509,7 @@ mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy: LockingStrategy::ByFfqns,
             },
-            Box::new(ConstClock(DateTime::UNIX_EPOCH)),
+            Box::new(ConstClock(Timestamp::UNIX_EPOCH)),
             Arc::new(FailingLockDb(attempts.clone())),
             CountingSleep(sleeps.clone()),
         );
@@ -1547,7 +1543,7 @@ mod tests {
             ComponentType::Activity,
             execution_id.clone(),
             worker_result,
-            DateTime::UNIX_EPOCH,
+            Timestamp::UNIX_EPOCH,
             None,
             Some(Duration::from_secs(1)),
             Duration::from_secs(1),
@@ -1601,7 +1597,7 @@ mod tests {
                 version: Version::new(2),
                 http_client_traces: None,
             }),
-            DateTime::UNIX_EPOCH,
+            Timestamp::UNIX_EPOCH,
             None,
             Some(Duration::from_secs(1)),
             Duration::from_secs(1),
@@ -1632,7 +1628,7 @@ mod tests {
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
         worker: Arc<W>,
-        executed_at: DateTime<Utc>,
+        executed_at: Timestamp,
     ) -> Vec<ExecutionId> {
         trace!("Ticking with {worker:?}");
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
@@ -1651,7 +1647,7 @@ mod tests {
         locking_strategy: LockingStrategy,
     ) {
         set_up();
-        let created_at = DateTime::UNIX_EPOCH;
+        let created_at = Timestamp::UNIX_EPOCH;
         let (_guard, db_pool, db_close) = database.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         execute_simple_lifecycle_tick_based_inner(
@@ -1725,7 +1721,7 @@ mod tests {
         locking_strategy: LockingStrategy,
     ) {
         set_up();
-        let created_at = DateTime::UNIX_EPOCH;
+        let created_at = Timestamp::UNIX_EPOCH;
         let clock_fn = Box::new(ConstClock(created_at));
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let exec_config = ExecConfig {
@@ -1784,7 +1780,7 @@ mod tests {
     #[tokio::test]
     async fn saturated_cell_must_leave_executions_pending() {
         set_up();
-        let created_at = DateTime::UNIX_EPOCH;
+        let created_at = Timestamp::UNIX_EPOCH;
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         let execution_id = ExecutionId::generate();
@@ -1850,13 +1846,13 @@ mod tests {
 
     struct CreateAndTickConfig {
         execution_id: ExecutionId,
-        created_at: DateTime<Utc>,
-        executed_at: DateTime<Utc>,
+        created_at: Timestamp,
+        executed_at: Timestamp,
     }
 
     async fn create_and_tick<
         W: Worker,
-        T: FnMut(ExecConfig, Box<dyn ClockFn>, Arc<dyn DbPool>, Arc<W>, DateTime<Utc>) -> F,
+        T: FnMut(ExecConfig, Box<dyn ClockFn>, Arc<dyn DbPool>, Arc<W>, Timestamp) -> F,
         F: Future<Output = Vec<ExecutionId>>,
     >(
         config: CreateAndTickConfig,
@@ -2068,7 +2064,7 @@ mod tests {
         locking_strategy: LockingStrategy,
     ) {
         set_up();
-        let created_at = DateTime::UNIX_EPOCH;
+        let created_at = Timestamp::UNIX_EPOCH;
         let clock_fn = Box::new(ConstClock(created_at));
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let exec_config = ExecConfig {

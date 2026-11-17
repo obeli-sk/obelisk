@@ -80,7 +80,6 @@ use crate::server::web_api_server::app_router;
 use anyhow::Context;
 use anyhow::bail;
 use anyhow::ensure;
-use chrono::Utc;
 use concepts::ComponentId;
 use concepts::ComponentType;
 use concepts::ContentDigest;
@@ -133,6 +132,7 @@ use executor::worker::Worker;
 use futures_util::future::OptionFuture;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
+use jiff::Timestamp;
 use schemars::JsonSchema;
 use secrecy::ExposeSecret as _;
 use secrecy::SecretString;
@@ -414,7 +414,7 @@ impl DeploymentSwitchManagerHandle {
         &self,
         dry_run: bool,
         batch_size: u32,
-        uploaded_before: chrono::DateTime<chrono::Utc>,
+        uploaded_before: jiff::Timestamp,
     ) -> Result<concepts::storage::CasGcResult, SubmitDeploymentError> {
         let _permit = self.try_acquire_submit_permit()?;
         self.inner
@@ -503,7 +503,7 @@ impl DeploymentSwitchManagerHandle {
                     db_conn
                         .activate_deployment(
                             deployment_id,
-                            chrono::Utc::now(),
+                            jiff::Timestamp::now(),
                             Some(&app_config_digest),
                         )
                         .await
@@ -524,7 +524,7 @@ impl DeploymentSwitchManagerHandle {
                     db_conn
                         .activate_deployment(
                             deployment_id,
-                            chrono::Utc::now(),
+                            jiff::Timestamp::now(),
                             Some(&app_config_digest),
                         )
                         .await
@@ -2031,7 +2031,7 @@ async fn write_to_cas_prepare_deployment_record(
         });
     }
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let digest = DeploymentRecord::compute_digest(&deployment_toml);
     let component_files =
         DeploymentManifest::try_from_toml(&deployment_toml, &cas_deployment_dir())?
@@ -2281,7 +2281,7 @@ async fn persist_startup_deployment(
                 .context("cannot get db connection for deployment refresh")?;
             allow_full_database(
                 api_conn
-                    .refresh_deployment(deployment_id, description, Utc::now())
+                    .refresh_deployment(deployment_id, description, Timestamp::now())
                     .await
                     .context("cannot refresh deployment"),
             )?;
@@ -3728,7 +3728,7 @@ async fn submit_deployment_manifest(
     {
         if existing.digest == digest {
             info!("Deployment already exists with matching digest, refreshing it");
-            conn.refresh_deployment(deployment_id, description, chrono::Utc::now())
+            conn.refresh_deployment(deployment_id, description, jiff::Timestamp::now())
                 .await
                 .map_err(anyhow::Error::from)?;
             return Ok(deployment_id);
@@ -3751,7 +3751,7 @@ async fn submit_deployment_manifest(
             )));
         }
         info!(%stored_id, "Deployment content already stored, refreshing it");
-        conn.refresh_deployment(stored_id, description, chrono::Utc::now())
+        conn.refresh_deployment(stored_id, description, jiff::Timestamp::now())
             .await
             .map_err(anyhow::Error::from)?;
         return Ok(stored_id);
@@ -3843,7 +3843,7 @@ async fn submit_deployment_manifest(
             .await
             .map_err(SubmitDeploymentError::Other)?;
 
-            let now = chrono::Utc::now();
+            let now = jiff::Timestamp::now();
 
             // Persist the deployment row together with its verified component metadata in a
             // single transaction so the DB-backed ListComponents / GetWit see this deployment
@@ -3892,7 +3892,7 @@ async fn submit_deployment_manifest(
             const { assert!(DEFAULT_SUBMIT_CONCURRENCY == 1) };
             let gc_result = match db_pool.cas_gc_conn().await {
                 Ok(gc) => gc
-                    .gc_cas(false, 10_000, chrono::DateTime::UNIX_EPOCH)
+                    .gc_cas(false, 10_000, jiff::Timestamp::UNIX_EPOCH)
                     .await
                     .map_err(anyhow::Error::from),
                 Err(err) => Err(anyhow::Error::from(err)),
@@ -4020,7 +4020,7 @@ async fn enqueue_deployment_and_release(
         .await
         .map_err(|e| SwitchError::Other(e.into()))?;
     let outcome = db_conn
-        .enqueue_deployment(deployment_id, chrono::Utc::now())
+        .enqueue_deployment(deployment_id, jiff::Timestamp::now())
         .await
         .map_err(|e| SwitchError::Other(e.into()))?;
     deployment_switch_manager
@@ -4617,7 +4617,7 @@ async fn register_crons(
 ) -> Result<(), anyhow::Error> {
     let conn = db_pool.connection().await?;
     for cron_config in cron_configs {
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         // A new tracker waits for the first occurrence, otherwise it would submit on deploy.
         let scheduled_at = cron_config
             .cron_schedule
@@ -8295,7 +8295,7 @@ mod tests {
             cron_schedule: CronOrOnce::Cron(Box::new("@yearly".parse().unwrap())),
             overlap: CronOverlap::default(),
         };
-        let before = chrono::Utc::now();
+        let before = jiff::Timestamp::now();
         super::register_crons(
             &db_pool,
             DeploymentId::generate(),

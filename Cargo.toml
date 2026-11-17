@@ -38,7 +38,7 @@ base64.workspace = true
 boa_engine.workspace = true
 bytes.workspace = true
 cfg-if.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 clap.workspace = true
 config.workspace = true
 const_format.workspace = true
@@ -262,7 +262,7 @@ base64 = "0.22.1" # keep on 0.22 to match axum/hyper-util; only reqwest/oci pull
 bytes = "1.12.1"
 cargo_metadata = "0.23"
 cfg-if = "1.0.5"
-chrono = { version = "0.4.45", features = ["arbitrary", "serde"] }
+jiff = { version = "0.2.43", default-features = false, features = ["std", "arbitrary", "serde"] }
 clap = { version = "4.6.7", features = ["derive", "env"] }
 config = { version = "0.15.27", default-features = false, features = [
     "toml",
@@ -271,7 +271,7 @@ config = { version = "0.15.27", default-features = false, features = [
 ] }
 console-subscriber = "0.5.0"
 const_format = "0.2.37"
-croner = "4"
+croner = { version = "4", default-features = false, features = ["jiff"] }
 deadpool-postgres = "0.14.2"
 derive_more = { version = "2.1.1", features = [
     "debug",
@@ -328,10 +328,10 @@ route-recognizer = "0.3.1"
 rstest = "0.27"
 rusqlite = { version = "0.41", features = [
     "bundled",
-    "chrono",
+    "jiff",
     "serde_json",
 ] }
-schemars = { version = "1.2.3", features = ["indexmap2", "chrono04"] }
+schemars = { version = "1.2.3", features = ["indexmap2", "jiff02"] }
 secrecy = "0.10.3"
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -344,7 +344,7 @@ strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "3", features = ["full"] }
 tempfile = "3.27"
 thiserror = "2.0"
-tokio-postgres = { version = "0.7.18", features = ["with-chrono-0_4", "with-serde_json-1"] }
+tokio-postgres = { version = "0.7.18", features = ["with-jiff-0_2", "with-serde_json-1"] }
 tokio-postgres-rustls = "0.13"
 tokio = { version = "1", features = [
     "fs",
@@ -369,7 +369,7 @@ tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 ulid = { version = "3.0", features = ["serde"] }
 url = "2.5.8"
-utoipa = { version = "6.0.0", features = ["chrono"] }
+utoipa = { version = "6.0.0", features = ["jiff_0_2"] }
 wiremock = "0.6"
 
 # wasmtime

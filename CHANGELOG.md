@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Replace Chrono with Jiff for timestamps, scheduling and database access, preserving existing
+  SQLite timestamp storage and RFC 3339 API fields.
 - *(cli)* `cloud app stage` creates a missing app with a bare app.toml and says so, accepts
   `--env`, `--secret`, `--fill` and `--fill-non-interactive`, and with `-d/--deployment` or
   `--empty-deployment` submits a deployment first and stages its ID with the configuration in the

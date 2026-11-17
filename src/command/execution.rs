@@ -907,7 +907,7 @@ async fn advance(
 #[cfg(test)]
 mod tests {
     use super::{format_execution_failure, pause_delays_in_replay, pause_submitted_in_replay};
-    use chrono::{DateTime, Utc};
+    use jiff::Timestamp;
     use rest_types::replay::{AdvanceRequestSer, CapturedWriteSer};
     use serde_json::json;
 
@@ -927,7 +927,7 @@ mod tests {
 
     #[test]
     fn pause_submitted_marks_only_new_child_requests_as_paused() {
-        let current_time: DateTime<Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
+        let current_time: Timestamp = "2026-01-01T00:00:00Z".parse().unwrap();
         let mut advance_request = serde_json::from_value::<AdvanceRequestSer>(json!({
             "captured_writes": [
                 {
@@ -986,7 +986,7 @@ mod tests {
 
     #[test]
     fn pause_delays_marks_only_delay_requests_as_paused() {
-        let current_time: DateTime<Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
+        let current_time: Timestamp = "2026-01-01T00:00:00Z".parse().unwrap();
         let execution_id = concepts::ExecutionId::generate();
         let delay_join_set_id = concepts::JoinSetId::new(
             concepts::JoinSetKind::Generated,

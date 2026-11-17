@@ -1,6 +1,5 @@
 use crate::{polling, postgres_dao::ddl::ADMIN_DB_NAME};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionFailureKind,
     ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
@@ -46,6 +45,7 @@ use db_common::{
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::{HashMap, HashSet};
+use jiff::Timestamp;
 use rustls::pki_types::{CertificateDer, pem::PemObject as _};
 use rustls_platform_verifier::BuilderVerifierExt as _;
 use secrecy::{ExposeSecret as _, SecretString};
@@ -626,7 +626,7 @@ fn consistency_db_err_src(
 struct DelayReq {
     join_set_id: JoinSetId,
     delay_id: DelayId,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
     paused: bool,
 }
 
@@ -842,8 +842,8 @@ async fn create_inner(
 async fn update_state_pending_after_response_appended(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    updated_at: DateTime<Utc>,
-    scheduled_at: DateTime<Utc>, // Changing to state PendingAt
+    updated_at: Timestamp,
+    scheduled_at: Timestamp, // Changing to state PendingAt
     component_input_digest: ComponentDigest,
 ) -> Result<AppendNotifier, DbErrorWrite> {
     debug!("Setting t_state to Pending(`{scheduled_at:?}`) after response appended");
@@ -895,7 +895,7 @@ async fn update_state_pending_after_response_appended(
 }
 
 struct PendingAfterEventUpdate {
-    scheduled_at: DateTime<Utc>,
+    scheduled_at: Timestamp,
     intermittent_failure: bool,
     component_input_digest: ComponentDigest,
 }
@@ -904,7 +904,7 @@ struct PendingAfterEventUpdate {
 async fn update_state_pending_after_event_appended(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
     appending_version: &Version,
     update: PendingAfterEventUpdate,
 ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
@@ -966,7 +966,7 @@ async fn update_state_pending_after_event_appended(
 async fn update_state_component_upgrade_finished_success(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
     component_digest: &ComponentDigest,
     deployment_id: DeploymentId,
     appending_version: &Version,
@@ -1004,9 +1004,9 @@ async fn update_state_component_upgrade_finished_success(
 async fn update_state_unlocked_from_locked(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
     component_digest: ComponentDigest,
-    scheduled_at: DateTime<Utc>,
+    scheduled_at: Timestamp,
     appending_version: &Version,
 ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
     update_state_pending_after_event_appended(
@@ -1026,7 +1026,7 @@ async fn update_state_unlocked_from_locked(
 async fn update_state_component_upgrade_finished_failed(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
     target_digest: &ComponentDigest,
     appending_version: &Version,
 ) -> Result<AppendResponse, DbErrorWrite> {
@@ -1063,12 +1063,12 @@ async fn update_state_component_upgrade_finished_failed(
 async fn update_state_locked_get_intermittent_event_count(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
     deployment_id: Option<DeploymentId>,
     component_digest: Option<&ComponentDigest>,
     executor_id: ExecutorId,
     run_id: RunId,
-    lock_expires_at: DateTime<Utc>,
+    lock_expires_at: Timestamp,
     appending_version: &Version,
     retry_config: ComponentRetryConfig,
 ) -> Result<u32, DbErrorWrite> {
@@ -1150,10 +1150,10 @@ async fn update_state_locked_get_intermittent_event_count(
 async fn update_state_blocked(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
     appending_version: &Version,
     join_set_id: &JoinSetId,
-    lock_expires_at: DateTime<Utc>,
+    lock_expires_at: Timestamp,
     join_set_closing: bool,
 ) -> Result<AppendResponse, DbErrorWrite> {
     debug!("Setting t_state to BlockedByJoinSet(`{join_set_id}`)");
@@ -1201,7 +1201,7 @@ async fn update_state_finished(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
     appending_version: &Version,
-    finished_at: DateTime<Utc>,
+    finished_at: Timestamp,
     result_kind: PendingStateFinishedResultKind,
 ) -> Result<(), DbErrorWrite> {
     debug!("Setting t_state to Finished");
@@ -1251,7 +1251,7 @@ async fn update_state_finished(
 async fn update_state_paused(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
     appending_version: &Version,
     is_paused: bool,
 ) -> Result<AppendResponse, DbErrorWrite> {
@@ -1294,7 +1294,7 @@ async fn update_state_paused(
 async fn update_state_cancelling(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
     appending_version: &Version,
 ) -> Result<AppendResponse, DbErrorWrite> {
     debug!("Setting t_state lifecycle to cancelling");
@@ -1327,7 +1327,7 @@ async fn update_state_cancelling(
 async fn bump_state_next_version(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
     appending_version: &Version,
     delay_req: Option<DelayReq>,
 ) -> Result<AppendResponse, DbErrorWrite> {
@@ -1401,8 +1401,8 @@ async fn get_combined_state(
 
     // Parsing columns
 
-    let created_at: DateTime<Utc> = get(&row, "created_at")?;
-    let first_scheduled_at: DateTime<Utc> = get(&row, "first_scheduled_at")?;
+    let created_at: Timestamp = get(&row, "created_at")?;
+    let first_scheduled_at: Timestamp = get(&row, "first_scheduled_at")?;
 
     let component_digest: ComponentDigest = get(&row, "component_id_input_digest")?;
 
@@ -1414,7 +1414,7 @@ async fn get_combined_state(
     let state: String = get(&row, "state")?;
     let ffqn: FunctionFqn = get(&row, "ffqn")?;
 
-    let pending_expires_finished: DateTime<Utc> = get(&row, "pending_expires_finished")?;
+    let pending_expires_finished: Timestamp = get(&row, "pending_expires_finished")?;
 
     let last_lock_version_raw: Option<i64> = get(&row, "last_lock_version")?;
     let last_lock_version = last_lock_version_raw
@@ -1480,7 +1480,7 @@ async fn get_combined_state(
 async fn append_cancellation_requested(
     tx: deadpool_postgres::Transaction<'_>,
     execution_id: &ExecutionId,
-    cancelled_at: DateTime<Utc>,
+    cancelled_at: Timestamp,
     combined_state: &CombinedState,
     ffqn_check: CancellationFfqnCheck,
 ) -> Result<CancelOutcome, DbErrorWrite> {
@@ -1504,7 +1504,7 @@ async fn append_cancellation_requested(
 async fn cancel_workflow_tx(
     tx: deadpool_postgres::Transaction<'_>,
     execution_id: &ExecutionId,
-    cancelled_at: DateTime<Utc>,
+    cancelled_at: Timestamp,
 ) -> Result<CancelOutcome, DbErrorWrite> {
     let combined_state = get_combined_state(&tx, execution_id).await?;
     if let Some(outcome) = combined_state.cancel_short_circuit() {
@@ -1523,7 +1523,7 @@ async fn cancel_workflow_tx(
 async fn append_activity_cancellation_requested_tx(
     tx: deadpool_postgres::Transaction<'_>,
     execution_id: &ExecutionId,
-    cancelled_at: DateTime<Utc>,
+    cancelled_at: Timestamp,
     combined_state: &CombinedState,
 ) -> Result<CancelOutcome, DbErrorWrite> {
     match &combined_state.execution_with_state.pending_state {
@@ -1727,8 +1727,8 @@ async fn list_executions(
             let deployment_id =
                 DeploymentId::from_str(&deployment_id).map_err(DbErrorGeneric::from)?;
 
-            let created_at: DateTime<Utc> = get(&row, "created_at")?;
-            let first_scheduled_at: DateTime<Utc> = get(&row, "first_scheduled_at")?;
+            let created_at: Timestamp = get(&row, "created_at")?;
+            let first_scheduled_at: Timestamp = get(&row, "first_scheduled_at")?;
 
             let result_kind: Option<Json<PendingStateFinishedResultKind>> =
                 get(&row, "result_kind")?;
@@ -1993,7 +1993,7 @@ async fn list_logs_tx(
     let mut items = Vec::with_capacity(rows.len());
 
     for row in rows {
-        let created_at: chrono::DateTime<chrono::Utc> = get(&row, "created_at")?;
+        let created_at: jiff::Timestamp = get(&row, "created_at")?;
         let run_id: String = get(&row, "run_id")?;
         let run_id = RunId::from_str(&run_id).map_err(|parse_err| {
             consistency_db_err_src(
@@ -2089,7 +2089,7 @@ async fn list_logs_tx(
 
 async fn list_deployment_states(
     tx: &Transaction<'_>,
-    current_time: DateTime<Utc>,
+    current_time: Timestamp,
     pagination: Pagination<Option<DeploymentId>>,
     include_deployment_toml: bool,
     execution_counts: DeploymentExecutionCounts,
@@ -2280,9 +2280,9 @@ async fn list_deployment_states(
             )?)
             .expect("count is never negative"),
             deployment_toml: get::<Option<String>, _>(&row, "deployment_toml")?,
-            created_at: get::<DateTime<Utc>, _>(&row, "created_at")?,
-            updated_at: get::<DateTime<Utc>, _>(&row, "updated_at")?,
-            last_active_at: get::<Option<DateTime<Utc>>, _>(&row, "last_active_at")?,
+            created_at: get::<Timestamp, _>(&row, "created_at")?,
+            updated_at: get::<Timestamp, _>(&row, "updated_at")?,
+            last_active_at: get::<Option<Timestamp>, _>(&row, "last_active_at")?,
             last_active_app_config_digest: get(&row, "last_active_app_config_digest")?,
             status,
         });
@@ -2299,7 +2299,7 @@ fn parse_response_with_cursor(
     let seq = u32::try_from(get::<i64, _>(row, "seq")?)
         .map_err(|_| consistency_db_err("seq must not be negative"))?;
 
-    let created_at: DateTime<Utc> = get(row, "created_at")?;
+    let created_at: Timestamp = get(row, "created_at")?;
     let join_set_id_str: String = get(row, "join_set_id")?;
     let join_set_id = JoinSetId::from_str(&join_set_id_str).map_err(DbErrorGeneric::from)?;
 
@@ -2370,7 +2370,7 @@ fn parse_response_with_cursor(
 #[expect(clippy::too_many_arguments)]
 async fn lock_single_execution(
     tx: &Transaction<'_>,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     component_id: &ComponentId,
     update_component_digest_and_deployment_id: bool,
     deployment_id: DeploymentId,
@@ -2378,7 +2378,7 @@ async fn lock_single_execution(
     run_id: RunId,
     appending_version: &Version,
     executor_id: ExecutorId,
-    lock_expires_at: DateTime<Utc>,
+    lock_expires_at: Timestamp,
     retry_config: ComponentRetryConfig,
 ) -> Result<LockedExecution, DbErrorWrite> {
     trace!("lock_single_execution");
@@ -2489,7 +2489,7 @@ async fn lock_single_execution(
             .map_err(|_| consistency_db_err("version must be non-negative"))?;
 
         events.push_back(ExecutionEvent {
-            created_at: DateTime::from_timestamp_nanos(0), // not used, only the inner event and version
+            created_at: Timestamp::UNIX_EPOCH, // not used, only the inner event and version
             event,
             backtrace_id: None,
             version,
@@ -3324,7 +3324,7 @@ async fn get_execution_log(
 
     let mut events = Vec::with_capacity(rows.len());
     for row in rows {
-        let created_at: DateTime<Utc> = get(&row, "created_at")?;
+        let created_at: Timestamp = get(&row, "created_at")?;
         let event: Json<ExecutionRequest> = get(&row, "json_value")?;
         let event = event.0;
         let version: i64 = get(&row, "version")?;
@@ -3473,7 +3473,7 @@ async fn list_execution_events(
 
     let mut events = Vec::with_capacity(rows.len());
     for row in rows {
-        let created_at: DateTime<Utc> = get(&row, "created_at")?;
+        let created_at: Timestamp = get(&row, "created_at")?;
         let backtrace_id = get::<Option<i64>, _>(&row, "backtrace_id")?
             .map(Version::try_from)
             .transpose()
@@ -3510,7 +3510,7 @@ async fn get_execution_event(
         )
         .await?;
 
-    let created_at: DateTime<Utc> = get(&row, "created_at")?;
+    let created_at: Timestamp = get(&row, "created_at")?;
     let json_val: Json<ExecutionRequest> = get(&row, "json_value")?;
     let version = get::<i64, _>(&row, "version")?;
     let version = Version::try_from(version)
@@ -3537,7 +3537,7 @@ async fn get_last_execution_event(
         )
         .await?;
 
-    let created_at: DateTime<Utc> = get(&row, "created_at")?;
+    let created_at: Timestamp = get(&row, "created_at")?;
     let event: Json<ExecutionRequest> = get(&row, "json_value")?;
     let event = event.0;
     let version: i64 = get(&row, "version")?;
@@ -3613,7 +3613,7 @@ async fn get_responses_after(
 async fn get_pending_of_single_ffqn(
     tx: &Transaction<'_>,
     batch_size: u32,
-    pending_at_or_sooner: DateTime<Utc>,
+    pending_at_or_sooner: Timestamp,
     ffqn: &FunctionFqn,
     select_strategy: SelectStrategy,
 ) -> Result<Vec<(ExecutionId, Version)>, ()> {
@@ -3665,7 +3665,7 @@ async fn get_pending_of_single_ffqn(
 async fn get_pending_by_ffqns(
     tx: &Transaction<'_>,
     batch_size: u32,
-    pending_at_or_sooner: DateTime<Utc>,
+    pending_at_or_sooner: Timestamp,
     ffqns: &[FunctionFqn],
     select_strategy: SelectStrategy,
 ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
@@ -3693,7 +3693,7 @@ async fn get_pending_by_ffqns(
 async fn get_pending_by_ffqns_auto(
     tx: &Transaction<'_>,
     batch_size: u32,
-    pending_at_or_sooner: DateTime<Utc>,
+    pending_at_or_sooner: Timestamp,
     ffqns: &[FunctionFqn],
     current_digest: &ComponentDigest,
     select_strategy: SelectStrategy,
@@ -3752,7 +3752,7 @@ enum SelectStrategy {
 async fn get_pending_by_component_input_digest(
     tx: &Transaction<'_>,
     batch_size: u32,
-    pending_at_or_sooner: DateTime<Utc>,
+    pending_at_or_sooner: Timestamp,
     input_digest: &ComponentDigest,
     select_strategy: SelectStrategy,
 ) -> Result<Vec<(ExecutionId, Version)>, DbErrorGeneric> {
@@ -3797,7 +3797,7 @@ async fn get_pending_by_component_input_digest(
 
 fn notify_pending_locked(
     notifier: &NotifierPendingAt,
-    current_time: DateTime<Utc>,
+    current_time: Timestamp,
     ffqn_to_pending_subscription: &std::sync::MutexGuard<PendingFfqnSubscribersHolder>,
 ) {
     if notifier.scheduled_at <= current_time {
@@ -3811,7 +3811,7 @@ async fn upgrade_execution_component(
     old: &ComponentDigest,
     new: &ComponentDigest,
     reason: ComponentUpgradeReason,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 ) -> Result<(), DbErrorWrite> {
     let combined_state = get_combined_state(tx, execution_id).await?;
     if combined_state.execution_with_state.component_digest != *old {
@@ -3842,7 +3842,7 @@ impl PostgresConnection {
 
     // Must be called after write transaction commit for a correct happens-before relationship.
     #[instrument(level = Level::TRACE, skip_all)]
-    fn notify_all(&self, notifiers: Vec<AppendNotifier>, current_time: DateTime<Utc>) {
+    fn notify_all(&self, notifiers: Vec<AppendNotifier>, current_time: Timestamp) {
         let (pending_ats, finished_execs, responses) = {
             let (mut pending_ats, mut finished_execs, mut responses) =
                 (Vec::new(), Vec::new(), Vec::new());
@@ -3896,13 +3896,13 @@ impl DbExecutor for PostgresConnection {
     async fn lock_pending_by_ffqns(
         &self,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqns: Arc<[FunctionFqn]>,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         component_id: ComponentId,
         deployment_id: DeploymentId,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
@@ -3963,13 +3963,13 @@ impl DbExecutor for PostgresConnection {
     async fn lock_pending_by_ffqns_auto(
         &self,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqns: Arc<[FunctionFqn]>,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         component_id: ComponentId,
         deployment_id: DeploymentId,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
@@ -4028,12 +4028,12 @@ impl DbExecutor for PostgresConnection {
     async fn lock_pending_by_component_digest(
         &self,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         component_id: &ComponentId,
         deployment_id: DeploymentId,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
@@ -4090,14 +4090,14 @@ impl DbExecutor for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip(self))]
     async fn lock_one(
         &self,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         component_id: ComponentId,
         deployment_id: DeploymentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite> {
         debug!(%execution_id, "lock_one");
@@ -4155,7 +4155,7 @@ impl DbExecutor for PostgresConnection {
         &self,
         mut events: AppendEventsToExecution,
         response: AppendResponseToExecution,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         debug!("append_batch_respond_to_parent");
         if events.execution_id == response.parent_execution_id {
@@ -4214,7 +4214,7 @@ impl DbExecutor for PostgresConnection {
     #[instrument(level = Level::TRACE, skip(self, timeout_fut))]
     async fn wait_for_pending_by_ffqn(
         &self,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqns: Arc<[FunctionFqn]>,
         current_digest: Option<ComponentDigest>,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
@@ -4299,7 +4299,7 @@ impl DbExecutor for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
     async fn wait_for_pending_by_component_digest(
         &self,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         component_digest: &ComponentDigest,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
@@ -4378,7 +4378,7 @@ impl DbExecutor for PostgresConnection {
     async fn append_activity_cancellation_requested(
         &self,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
@@ -4395,7 +4395,7 @@ impl DbExecutor for PostgresConnection {
     async fn append_cancel_workflow_requested(
         &self,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
@@ -4449,7 +4449,7 @@ impl DbConnection for PostgresConnection {
                                 },
                         } => Some((
                             execution_id.to_string(),
-                            row.get::<_, DateTime<Utc>>("created_at"),
+                            row.get::<_, Timestamp>("created_at"),
                         )),
                         _ => None,
                     }
@@ -4464,7 +4464,7 @@ impl DbConnection for PostgresConnection {
                 };
                 tx.execute(
                     "UPDATE t_cron SET tracking_execution_id = $2, last_target_execution_id = $3, last_submitted_at = $4, created_at = $5 WHERE cron_digest = $1",
-                    &[digest, &tracking, &submission.as_ref().map(|s| &s.0), &submission.as_ref().map(|s| s.1), &legacy.get::<_, DateTime<Utc>>("created_at")],
+                    &[digest, &tracking, &submission.as_ref().map(|s| &s.0), &submission.as_ref().map(|s| s.1), &legacy.get::<_, Timestamp>("created_at")],
                 ).await?;
             } else {
                 let (_, notifier) = create_inner(&tx, tracker.clone()).await?;
@@ -4572,7 +4572,7 @@ impl DbConnection for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip(self, batch))]
     async fn append_batch(
         &self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         mut batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
@@ -4608,7 +4608,7 @@ impl DbConnection for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %version))]
     async fn append_batch_with_delay_response(
         &self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         mut batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
@@ -4662,7 +4662,7 @@ impl DbConnection for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %version))]
     async fn append_batch_create_new_execution(
         &self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         mut batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
@@ -4849,7 +4849,7 @@ impl DbConnection for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip_all, fields(%join_set_id, %execution_id))]
     async fn append_delay_response(
         &self,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         execution_id: ExecutionId,
         join_set_id: JoinSetId,
         delay_id: DelayId,
@@ -4981,10 +4981,7 @@ impl DbConnection for PostgresConnection {
 
     /// Get currently expired delays and locks.
     #[instrument(level = Level::TRACE, skip(self))]
-    async fn get_expired_timers(
-        &self,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<ExpiredTimer>, DbErrorGeneric> {
+    async fn get_expired_timers(&self, at: Timestamp) -> Result<Vec<ExpiredTimer>, DbErrorGeneric> {
         let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
 
@@ -5100,7 +5097,7 @@ impl DbConnection for PostgresConnection {
         version: Version,
         mut req: AppendRequest,
         response: AppendResponseToExecution,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
     ) -> Result<(), DbErrorStubResponse> {
         debug!("upsert_stub_response");
         #[cfg(debug_assertions)]
@@ -5622,7 +5619,7 @@ impl DbExternalApi for PostgresConnection {
         old: &ComponentDigest,
         new: &ComponentDigest,
         reason: ComponentUpgradeReason,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
     ) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
@@ -5655,7 +5652,7 @@ impl DbExternalApi for PostgresConnection {
     #[instrument(skip(self))]
     async fn list_deployment_states(
         &self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         pagination: Pagination<Option<DeploymentId>>,
         include_deployment_toml: bool,
         execution_counts: DeploymentExecutionCounts,
@@ -5745,7 +5742,7 @@ impl DbExternalApi for PostgresConnection {
     async fn activate_deployment(
         &self,
         deployment_id: DeploymentId,
-        now: DateTime<Utc>,
+        now: Timestamp,
         app_config_digest: Option<&str>,
     ) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client().await?;
@@ -5773,7 +5770,7 @@ impl DbExternalApi for PostgresConnection {
     async fn enqueue_deployment(
         &self,
         deployment_id: DeploymentId,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<EnqueueOutcome, DbErrorWrite> {
         let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
@@ -5816,7 +5813,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         deployment_id: DeploymentId,
         description: Option<String>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), DbErrorWrite> {
         let client_guard = self.client().await?;
         let rows = client_guard
@@ -5987,7 +5984,7 @@ impl DbExternalApi for PostgresConnection {
     async fn pause_execution(
         &self,
         execution_id: &ExecutionId,
-        paused_at: DateTime<Utc>,
+        paused_at: Timestamp,
     ) -> Result<AppendResponse, DbErrorWrite> {
         let mut client_guard = self.client().await?;
         // A `Locked` execution can concurrently append its own event for the same
@@ -6067,7 +6064,7 @@ impl DbExternalApi for PostgresConnection {
     async fn unpause_execution(
         &self,
         execution_id: &ExecutionId,
-        unpaused_at: DateTime<Utc>,
+        unpaused_at: Timestamp,
     ) -> Result<AppendResponse, DbErrorWrite> {
         let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
@@ -6485,7 +6482,7 @@ impl DbAdmin for PostgresConnection {
 
     async fn retain_system_events(
         &self,
-        created_before: DateTime<Utc>,
+        created_before: Timestamp,
         limit: u32,
         keep_node_run_id: NodeRunId,
         dry_run: bool,
@@ -6967,7 +6964,7 @@ impl CasGc for PostgresConnection {
     async fn upload_blob(
         &self,
         content: Vec<u8>,
-        uploaded_at: DateTime<Utc>,
+        uploaded_at: Timestamp,
     ) -> Result<ContentDigest, DbErrorWrite> {
         let digest = compute_file_digest(&content);
         let size = i64::try_from(content.len()).map_err(|err| DbErrorGeneric::Uncategorized {
@@ -6998,7 +6995,7 @@ impl CasGc for PostgresConnection {
         &self,
         dry_run: bool,
         batch_size: u32,
-        uploaded_before: DateTime<Utc>,
+        uploaded_before: Timestamp,
     ) -> Result<CasGcResult, DbErrorWrite> {
         let mut client_guard = self.client().await?;
         let tx = client_guard.transaction().await?;
@@ -7133,7 +7130,7 @@ impl concepts::storage::DbConnectionTest for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip(self, response_event), fields(join_set_id = %response_event.join_set_id))]
     async fn append_response(
         &self,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         execution_id: ExecutionId,
         response_event: JoinSetResponseEvent,
     ) -> Result<(), DbErrorWrite> {

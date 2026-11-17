@@ -1,28 +1,28 @@
 use crate::config::deployment::DurationConfig;
 use crate::config::server::IdleReportConfig;
-use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::IdlePeriodId;
 use concepts::storage::{DbPool, PendingExecutionFilter, SystemEventCode};
 use db_sqlite::sqlite_dao::{IdleState, SqlitePool};
+use jiff::Timestamp;
 use std::time::Duration;
 use tokio::time::Instant;
 use utils::http_activity::{HttpActivity, Snapshot};
 
 struct Detector {
     config: IdleReportConfig,
-    previous: (DateTime<Utc>, Instant),
+    previous: (Timestamp, Instant),
     generation: u64,
     /// First check that saw no execution activity since the last one that did.
-    executions_quiet_since: Option<DateTime<Utc>>,
+    executions_quiet_since: Option<Timestamp>,
     /// Identity of the current idle period, assigned when its event is recorded. Every report
     /// carries it, so the receiver can discard reports of a period it already suspended.
     period: Option<IdlePeriodId>,
     /// Wall time skipped by the last detected resume and the period it ended, until recorded.
-    resumed: Option<(chrono::TimeDelta, Option<IdlePeriodId>)>,
+    resumed: Option<(jiff::SignedDuration, Option<IdlePeriodId>)>,
 }
 
 impl Detector {
-    fn new(config: IdleReportConfig, now: DateTime<Utc>, monotonic: Instant) -> Self {
+    fn new(config: IdleReportConfig, now: Timestamp, monotonic: Instant) -> Self {
         Self {
             config,
             previous: (now, monotonic),
@@ -35,18 +35,12 @@ impl Detector {
 
     /// Whether to report. Every idle check reports until the Machine is suspended, so a
     /// failed or skipped suspension needs no response handling.
-    fn check(
-        &mut self,
-        now: DateTime<Utc>,
-        monotonic: Instant,
-        http: Snapshot,
-        db: IdleState,
-    ) -> bool {
-        let wall_delta = now.signed_duration_since(self.previous.0);
-        let monotonic_delta = chrono::TimeDelta::from_std(monotonic - self.previous.1).unwrap();
+    fn check(&mut self, now: Timestamp, monotonic: Instant, http: Snapshot, db: IdleState) -> bool {
+        let wall_delta = now.duration_since(self.previous.0);
+        let monotonic_delta = jiff::SignedDuration::try_from(monotonic - self.previous.1).unwrap();
         let gap = wall_delta - monotonic_delta;
-        let resumed =
-            gap > chrono::TimeDelta::from_std(self.config.resume_threshold.into()).unwrap();
+        let resumed = gap
+            > jiff::SignedDuration::try_from(Duration::from(self.config.resume_threshold)).unwrap();
         if resumed {
             self.resumed = Some((gap, self.period));
         }
@@ -61,8 +55,9 @@ impl Detector {
             Some(*self.executions_quiet_since.get_or_insert(now))
         };
         self.executions_quiet_since = executions_quiet_since;
-        let quiet_for = |since: DateTime<Utc>, period: DurationConfig| {
-            now.signed_duration_since(since) >= chrono::TimeDelta::from_std(period.into()).unwrap()
+        let quiet_for = |since: Timestamp, period: DurationConfig| {
+            now.duration_since(since)
+                >= jiff::SignedDuration::try_from(Duration::from(period)).unwrap()
         };
         let idle = http.in_flight == 0
             && quiet_for(http.last_finished_at, self.config.quiet_period.http)
@@ -97,14 +92,14 @@ pub(crate) async fn run<F, Fut>(
             return;
         }
     };
-    let mut detector = Detector::new(config, Utc::now(), Instant::now());
+    let mut detector = Detector::new(config, Timestamp::now(), Instant::now());
     loop {
         tokio::time::sleep(detector.config.check_interval.into()).await;
         let generation = http.snapshot().generation;
         match db.idle_state(executors().await).await {
             Ok(state) => {
                 let activity = http.snapshot();
-                let idle = detector.check(Utc::now(), Instant::now(), activity, state);
+                let idle = detector.check(Timestamp::now(), Instant::now(), activity, state);
                 record_resume(&db, &mut detector).await;
                 if idle && activity.generation == generation {
                     let (period, new_period) = match detector.period {
@@ -129,7 +124,7 @@ pub(crate) async fn run<F, Fut>(
                     // Event persistence can yield to an incoming request.
                     let activity = http.snapshot();
                     if activity.generation == generation
-                        && detector.check(Utc::now(), Instant::now(), activity, state)
+                        && detector.check(Timestamp::now(), Instant::now(), activity, state)
                     {
                         // The status is informational: an unsuspended Machine reports again.
                         match client
@@ -163,7 +158,7 @@ async fn record_resume(db: &SqlitePool, detector: &mut Detector) {
             None,
             None,
             serde_json::json!({
-                "suspended_ms": gap.num_milliseconds(),
+                "suspended_ms": gap.as_millis(),
                 "period_id": period,
             }),
         )
@@ -231,7 +226,7 @@ mod tests {
 
     #[test]
     fn idle_decision_boundaries_and_activity() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let instant = Instant::now();
         let http = Snapshot {
             in_flight: 0,
@@ -273,7 +268,7 @@ mod tests {
                 http,
                 IdleState {
                     busy: false,
-                    next_run_at: Some(now + chrono::TimeDelta::seconds(seconds))
+                    next_run_at: Some(now + jiff::SignedDuration::from_secs(seconds))
                 }
             ));
         }
@@ -305,7 +300,7 @@ mod tests {
 
     #[test]
     fn idle_execution_quiet_period_starts_at_first_quiet_check() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let instant = Instant::now();
         let http = Snapshot {
             in_flight: 0,
@@ -344,7 +339,7 @@ mod tests {
 
     #[test]
     fn idle_resume_skips_one_check() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let instant = Instant::now();
         let http = Snapshot {
             in_flight: 0,
@@ -371,7 +366,7 @@ mod tests {
         ));
         assert_eq!(
             detector.resumed.take(),
-            Some((chrono::TimeDelta::seconds(595), Some(period)))
+            Some((jiff::SignedDuration::from_secs(595), Some(period)))
         );
         assert!(detector.period.is_none());
         assert!(detector.check(

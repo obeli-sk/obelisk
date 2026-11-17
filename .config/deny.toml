@@ -97,6 +97,8 @@ skip = [
 # https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
 [advisories]
 ignore = [
+    # oci-wasm 0.6 and its matching oci-client 0.17 still require chrono.
+    { id = "RUSTSEC-2026-0543" },
     # paste is unmaintained; also pulled in by utoipa-axum so unavoidable
     { id = "RUSTSEC-2024-0436" },
 ]

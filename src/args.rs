@@ -237,10 +237,10 @@ pub(crate) enum AdminEvents {
         code: Option<String>,
         /// Only show events created at or after this RFC 3339 time.
         #[arg(long)]
-        from: Option<chrono::DateTime<chrono::Utc>>,
+        from: Option<jiff::Timestamp>,
         /// Only show events created before this RFC 3339 time.
         #[arg(long)]
-        to: Option<chrono::DateTime<chrono::Utc>>,
+        to: Option<jiff::Timestamp>,
         #[arg(long, default_value_t = 100)]
         limit: u32,
         #[arg(long)]
@@ -1952,7 +1952,7 @@ pub(crate) enum CloudToken {
         scope: Vec<String>,
         /// Absolute expiry in RFC 3339 format.
         #[arg(long)]
-        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        expires_at: Option<jiff::Timestamp>,
     },
     List,
     Get {

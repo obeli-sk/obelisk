@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{DeploymentFileRecord, DeploymentRecord, DeploymentStatus};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -60,12 +60,12 @@ pub struct DeploymentStateSer {
     /// Deployment lifecycle status
     pub status: DeploymentStatusSer,
     /// When this deployment was submitted
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// Last submission, matching resubmit or status change; deployment retention orders by it
     // backcompat: 0.43.0-rc.15 deployment responses had no updated_at.
-    pub updated_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<Timestamp>,
     /// When this deployment was last active; None if never active
-    pub last_active_at: Option<DateTime<Utc>>,
+    pub last_active_at: Option<Timestamp>,
     // backcompat: 0.42.0-rc.3 deployment responses had no policy digest.
     pub last_active_app_config_digest: Option<String>,
     /// Number of locked executions
@@ -122,10 +122,10 @@ pub struct DeploymentRecordSer {
     /// Content digest = `sha256(deployment_toml)`
     pub digest: String,
     pub status: DeploymentStatusSer,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     // backcompat: 0.43.0-rc.15 deployment responses had no updated_at.
-    pub updated_at: Option<DateTime<Utc>>,
-    pub last_active_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<Timestamp>,
+    pub last_active_at: Option<Timestamp>,
     // backcompat: 0.42.0-rc.3 deployment responses had no policy digest.
     pub last_active_app_config_digest: Option<String>,
     /// Processed deployment manifest (`deployment.toml`), stored byte-for-byte

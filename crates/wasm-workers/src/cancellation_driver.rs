@@ -13,7 +13,6 @@
 //! local activity worker owns the prompt path.
 
 use crate::activity::cancel_registry::CancelRegistry;
-use chrono::{DateTime, Utc};
 use concepts::{
     ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionFailure,
     SupportedFunctionReturnValue,
@@ -30,6 +29,7 @@ use db_common::{
     JoinSetResponseId,
 };
 use executor::AbortOnDropHandle;
+use jiff::Timestamp;
 use std::{collections::HashMap, collections::HashSet, sync::Arc, time::Duration};
 use tracing::{debug, warn};
 
@@ -88,7 +88,7 @@ impl CancellationDriver {
 async fn tick(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
-    now: DateTime<Utc>,
+    now: Timestamp,
     batch_size: u32,
     cancellation_requested_inflight: &mut HashSet<ExecutionIdDerived>,
 ) {
@@ -118,7 +118,7 @@ async fn tick(
 pub(crate) async fn tick_test(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) {
     let mut cancellation_requested = HashSet::new();
     tick(conn, cancel_registry, now, 10, &mut cancellation_requested).await;
@@ -129,7 +129,7 @@ async fn close_step(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
     execution_id: &ExecutionId,
-    now: DateTime<Utc>,
+    now: Timestamp,
     cancellation_requested_inflight: &mut HashSet<ExecutionIdDerived>,
 ) -> Result<(), CloseStepError> {
     let log = conn.get(execution_id).await?;
@@ -150,7 +150,7 @@ async fn close_step(
 async fn activity_finish_if_expired(
     conn: &dyn DbConnection,
     log: &ExecutionLog,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), CloseStepError> {
     if let PendingState::Cancelling(PendingStateCancelling::Locked(locked)) = &log.pending_state
         && locked.lock_expires_at > now
@@ -165,7 +165,7 @@ async fn close_workflow_step(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
     log: &ExecutionLog,
-    now: DateTime<Utc>,
+    now: Timestamp,
     cancellation_requested_inflight: &mut HashSet<ExecutionIdDerived>,
 ) -> Result<(), CloseStepError> {
     // Responses in cursor order, plus the set of children/delays that have one.
@@ -236,10 +236,7 @@ async fn close_workflow_step(
 
 /// One closing `JoinNext` per still-open join-set member, matching the per-member
 /// count a worker-run close appends so responses pair 1:1.
-fn build_closing_join_nexts(
-    tracker: &JoinSetOpenTracker,
-    now: DateTime<Utc>,
-) -> Vec<AppendRequest> {
+fn build_closing_join_nexts(tracker: &JoinSetOpenTracker, now: Timestamp) -> Vec<AppendRequest> {
     let mut reqs = Vec::new();
     for (join_set_id, members) in tracker.open_join_sets() {
         for _ in 0..members.len() {
@@ -295,7 +292,7 @@ async fn cancel_or_finish_delays_and_activities(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
     cancellable: &JoinSetCancellable,
-    now: DateTime<Utc>,
+    now: Timestamp,
     cancellation_requested_inflight: &mut HashSet<ExecutionIdDerived>,
 ) -> Result<(), DbErrorWrite> {
     match cancellable {
@@ -324,7 +321,7 @@ async fn cancel_or_finish_delays_and_activities(
 async fn signal_cancellable_child_workflow(
     conn: &dyn DbConnection,
     child_id: &ExecutionIdDerived,
-    now: DateTime<Utc>,
+    now: Timestamp,
     cancellation_requested: &mut HashSet<ExecutionIdDerived>,
 ) -> Result<(), DbErrorWrite> {
     if cancellation_requested.contains(child_id) {
@@ -345,7 +342,7 @@ async fn append_finish_cancelled(
     conn: &dyn DbConnection,
     log: &ExecutionLog,
     closing_join_nexts: Vec<AppendRequest>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), DbErrorWrite> {
     let retval = SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
         reason: None,
