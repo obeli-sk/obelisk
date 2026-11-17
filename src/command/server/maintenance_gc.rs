@@ -745,7 +745,7 @@ mod tests {
             serde_json::json!({}),
         )
         .unwrap();
-        old_event.created_at = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1 * 24);
+        old_event.created_at = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(24);
         old_event.node_run_id = concepts::prefixed_ulid::NodeRunId::generate();
         let old_event_id = old_event.event_id;
         admin.append_system_event(old_event).await.unwrap();

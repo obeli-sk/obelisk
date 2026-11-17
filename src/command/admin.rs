@@ -41,7 +41,7 @@ impl args::Admin {
                 } else {
                     eprintln!(
                         "{} {} {}: {}",
-                        event.created_at.to_string(),
+                        event.created_at,
                         event.level.as_str(),
                         event.code,
                         event.message
@@ -244,7 +244,7 @@ impl args::Admin {
                     for event in response.events {
                         eprintln!(
                             "{} {} {}: {}",
-                            event.created_at.to_string(),
+                            event.created_at,
                             event.level.as_str(),
                             event.code,
                             event.message

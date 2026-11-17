@@ -941,7 +941,7 @@ async fn deployment_retention_preserves_last_deactivated(database: Database) {
     .unwrap();
     for policy in [
         RetentionPolicy::Count(0),
-        RetentionPolicy::CreatedAtOrAfter(now + SignedDuration::from_hours(1 * 24)),
+        RetentionPolicy::CreatedAtOrAfter(now + SignedDuration::from_hours(24)),
     ] {
         let preview = admin
             .retain_deployments(policy, 10, true, true, true, None)
@@ -951,7 +951,7 @@ async fn deployment_retention_preserves_last_deactivated(database: Database) {
     }
     let result = admin
         .retain_deployments(
-            RetentionPolicy::CreatedAtOrAfter(now + SignedDuration::from_hours(1 * 24)),
+            RetentionPolicy::CreatedAtOrAfter(now + SignedDuration::from_hours(24)),
             10,
             true,
             true,
@@ -1360,7 +1360,7 @@ async fn execution_retention_skips_protected_trees_across_batches(
     }
     let eligible = create_execution(db_pool.as_ref(), &clock, inactive, true).await;
     let policy = if retain_by_age {
-        RetentionPolicy::CreatedAtOrAfter(clock.now() + SignedDuration::from_hours(1 * 24))
+        RetentionPolicy::CreatedAtOrAfter(clock.now() + SignedDuration::from_hours(24))
     } else {
         RetentionPolicy::Count(0)
     };

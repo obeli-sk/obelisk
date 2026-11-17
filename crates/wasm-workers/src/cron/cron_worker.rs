@@ -438,7 +438,7 @@ mod tests {
         assert!(conn.get(&target.execution_id).await.is_err());
         let request = tracker_request(
             ExecutionId::generate(),
-            now + jiff::SignedDuration::from_hours(1 * 24),
+            now + jiff::SignedDuration::from_hours(24),
         );
         assert_eq!(
             conn.register_cron(request.clone(), true).await.unwrap(),
@@ -583,7 +583,7 @@ mod tests {
         conn.register_cron(unrelated, false).await.unwrap();
         let request = tracker_request(
             ExecutionId::generate(),
-            now + jiff::SignedDuration::from_hours(1 * 24),
+            now + jiff::SignedDuration::from_hours(24),
         );
         let record = conn.register_cron(request.clone(), once).await.unwrap();
         assert_eq!(record.created_at, now);

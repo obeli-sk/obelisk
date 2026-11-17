@@ -549,7 +549,7 @@ fn token(out: &mut String, value: &Value) {
         .as_i64()
         .and_then(|expiry| jiff::Timestamp::from_second(expiry).ok())
     {
-        let _ = writeln!(out, "Expires: {}", expiry.to_string());
+        let _ = writeln!(out, "Expires: {expiry}");
     }
 }
 

@@ -112,7 +112,11 @@ fn main() -> Result<()> {
             ..Default::default()
         },
         "::jiff::Timestamp",
-        [typify::TypeSpaceImpl::Display, typify::TypeSpaceImpl::FromStr].into_iter(),
+        [
+            typify::TypeSpaceImpl::Display,
+            typify::TypeSpaceImpl::FromStr,
+        ]
+        .into_iter(),
     );
     let mut types = typify::TypeSpace::new(&settings);
     types.add_ref_types(definitions)?;
