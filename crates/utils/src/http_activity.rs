@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use hyper::body::{Body, Frame, SizeHint};
+use jiff::Timestamp;
 use std::{
     pin::Pin,
     sync::{Arc, Mutex},
@@ -12,7 +12,7 @@ pub struct HttpActivity(Arc<Mutex<Snapshot>>);
 #[derive(Clone, Copy, Debug)]
 pub struct Snapshot {
     pub in_flight: usize,
-    pub last_finished_at: DateTime<Utc>,
+    pub last_finished_at: Timestamp,
     pub generation: u64,
 }
 
@@ -20,7 +20,7 @@ impl Default for HttpActivity {
     fn default() -> Self {
         Self(Arc::new(Mutex::new(Snapshot {
             in_flight: 0,
-            last_finished_at: Utc::now(),
+            last_finished_at: Timestamp::now(),
             generation: 0,
         })))
     }
@@ -47,7 +47,7 @@ impl Drop for RequestGuard {
     fn drop(&mut self) {
         let mut state = self.0.0.lock().unwrap();
         state.in_flight -= 1;
-        state.last_finished_at = Utc::now();
+        state.last_finished_at = Timestamp::now();
     }
 }
 

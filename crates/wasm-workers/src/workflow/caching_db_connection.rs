@@ -4,7 +4,6 @@ use crate::{
     workflow::{event_history::UpsertStubOrReplayInterrupt, replay_advance::is_closing_join_next},
 };
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ExecutionId, JoinSetId,
     prefixed_ulid::{DelayId, ExecutionIdDerived},
@@ -15,6 +14,7 @@ use concepts::{
     },
 };
 use db_common::{JoinSetCancellable, JoinSetCloseCancellations};
+use jiff::Timestamp;
 use std::pin::Pin;
 use std::{any::Any, future::Future};
 use tracing::{debug, instrument, warn};
@@ -32,7 +32,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
     async fn append_non_blocking(
         &mut self,
         non_blocking_event: CacheableDbEvent,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<(), DbErrorWrite>;
 
     async fn append_schedule(
@@ -68,7 +68,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
     async fn append_batch(
         &mut self,
         version: Version,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -79,7 +79,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
     async fn append_batch_with_delay_response(
         &mut self,
         version: Version,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         join_set_id: JoinSetId,
@@ -92,7 +92,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
     async fn append_batch_create_new_execution(
         &mut self,
         version: Version,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         child_req: Vec<CreateRequest>,
@@ -107,7 +107,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         stub_backtrace: Option<BacktraceInfo>,
     ) -> Result<(), UpsertStubOrReplayInterrupt>;
 
@@ -126,7 +126,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
 
     async fn flush_non_blocking_event_cache(
         &mut self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
     ) -> Result<(), DbErrorWrite>;
 
     fn captured_writes_collected(&self) -> Option<usize> {
@@ -209,7 +209,7 @@ pub(crate) enum CacheableDbEvent {
 enum CachedDbWrite {
     NonBlocking(CacheableDbEvent),
     BatchWithDelayResponse {
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         version: Version,
         join_set_id: JoinSetId,
@@ -286,7 +286,7 @@ impl WorkflowDbConnection for CachingDbConnection {
     async fn append_non_blocking(
         &mut self,
         non_blocking_event: CacheableDbEvent,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<(), DbErrorWrite> {
         if let Some(caching_buffer) = &mut self.caching_buffer {
             caching_buffer
@@ -384,7 +384,7 @@ impl WorkflowDbConnection for CachingDbConnection {
     async fn append_batch(
         &mut self,
         version: Version,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         _wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -400,7 +400,7 @@ impl WorkflowDbConnection for CachingDbConnection {
     async fn append_batch_with_delay_response(
         &mut self,
         version: Version,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         join_set_id: JoinSetId,
@@ -508,7 +508,7 @@ impl WorkflowDbConnection for CachingDbConnection {
     async fn append_batch_create_new_execution(
         &mut self,
         version: Version,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         child_req: Vec<CreateRequest>,
@@ -540,7 +540,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         _stub_backtrace: Option<BacktraceInfo>,
     ) -> Result<(), UpsertStubOrReplayInterrupt> {
         // This write bypasses the cache (it must return the conflict result
@@ -600,7 +600,7 @@ impl WorkflowDbConnection for CachingDbConnection {
     // workflow state to observe it.
     async fn flush_non_blocking_event_cache(
         &mut self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
     ) -> Result<(), DbErrorWrite> {
         if let Some(caching_buffer) = &mut self.caching_buffer
             && !caching_buffer.writes.is_empty()
@@ -647,7 +647,7 @@ impl WorkflowDbConnection for CachingDbConnection {
 impl CachingDbConnection {
     async fn flush_non_blocking_batch(
         &self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         non_blocking_batch: &mut Vec<CacheableDbEvent>,
     ) -> Result<(), DbErrorWrite> {
         if non_blocking_batch.is_empty() {
@@ -746,7 +746,7 @@ impl Drop for CachingDbConnection {
 impl CachingDbConnection {
     async fn flush_non_blocking_event_cache_if_full(
         &mut self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
     ) -> Result<(), DbErrorWrite> {
         if let Some(caching_buffer) = &self.caching_buffer {
             let too_many = caching_buffer.writes.len() >= caching_buffer.write_batch_size;

@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use concepts::{storage::ResponseSubscriptionEnd, time::ClockFn};
+use jiff::Timestamp;
 use std::{pin::Pin, time::Duration};
 use tokio::sync::watch;
 
@@ -108,7 +108,7 @@ impl DeadlineTrackerFactory {
 
     pub fn create(
         &self,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         execution_interrupt_watcher: watch::Receiver<bool>,
         local_interrupt_watcher: watch::Receiver<bool>,
     ) -> Result<DeadlineTracker, LockAlreadyExpired> {
@@ -116,7 +116,7 @@ impl DeadlineTrackerFactory {
             return Ok(DeadlineTracker::Replay);
         };
         let started_at = clock_fn.now();
-        if (lock_expires_at - started_at).to_std().is_err() {
+        if Duration::try_from(lock_expires_at.duration_since(started_at)).is_err() {
             return Err(LockAlreadyExpired { started_at });
         }
         Ok(DeadlineTracker::ClockFn(DeadlineTrackerClockFn {
@@ -131,7 +131,7 @@ impl DeadlineTrackerFactory {
 #[derive(Debug, thiserror::Error)]
 #[error("lock already expired before {started_at}")]
 pub struct LockAlreadyExpired {
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -143,7 +143,7 @@ pub enum EpochCallbackError {
 }
 
 pub struct DeadlineTrackerClockFn {
-    pub(crate) lock_expires_at: DateTime<Utc>, // updated on every extension
+    pub(crate) lock_expires_at: Timestamp, // updated on every extension
     pub(crate) clock_fn: Box<dyn ClockFn>,
     execution_interrupt_watcher: watch::Receiver<bool>,
     local_interrupt_watcher: watch::Receiver<bool>,
@@ -183,7 +183,7 @@ impl DeadlineTrackerClockFn {
     fn track(&self, subscription_interruption: Option<Duration>) -> TrackResult {
         let now = self.clock_fn.now();
 
-        let Ok(duration_to_expiry) = (self.lock_expires_at - now).to_std() else {
+        let Ok(duration_to_expiry) = (self.lock_expires_at - now).try_into() else {
             return Err(TrackInterruptKind::LockDeadlineReached);
         };
 
@@ -239,8 +239,8 @@ impl DeadlineTrackerClockFn {
 }
 
 pub struct ExtendBy {
-    pub lock_expires_at: DateTime<Utc>,
-    pub now: DateTime<Utc>,
+    pub lock_expires_at: Timestamp,
+    pub now: Timestamp,
 }
 
 impl Clone for DeadlineTrackerFactory {

@@ -13,7 +13,7 @@ concepts.workspace = true
 utils.workspace = true
 
 arbitrary.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 rand.workspace = true
 rustls.workspace = true
 serde.workspace = true

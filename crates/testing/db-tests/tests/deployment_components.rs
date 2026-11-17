@@ -25,10 +25,7 @@ fn mk_function(ffqn: &str, submittable: bool) -> FunctionMetadata {
     }
 }
 
-fn mk_deployment_record(
-    deployment_id: DeploymentId,
-    now: chrono::DateTime<chrono::Utc>,
-) -> DeploymentRecord {
+fn mk_deployment_record(deployment_id: DeploymentId, now: jiff::Timestamp) -> DeploymentRecord {
     DeploymentRecord {
         deployment_id,
         description: None,
@@ -48,7 +45,7 @@ fn mk_deployment_record(
 async fn insert_deployment(
     api_conn: &dyn DbExternalApi,
     deployment_id: DeploymentId,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jiff::Timestamp,
 ) {
     api_conn
         .insert_deployment_with_components(

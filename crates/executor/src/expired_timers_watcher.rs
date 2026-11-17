@@ -1,7 +1,6 @@
 use crate::AbortOnDropHandle;
 use crate::executor::Append;
 use crate::executor::ChildFinishedResponse;
-use chrono::{DateTime, Utc};
 use concepts::ExecutionFailureKind;
 use concepts::ExecutionId;
 use concepts::SupportedFunctionReturnValue;
@@ -17,6 +16,7 @@ use concepts::{
     FinishedExecutionFailure,
     storage::{ExecutionRequest, ExpiredTimer},
 };
+use jiff::Timestamp;
 use std::{sync::Arc, time::Duration};
 use tracing::Level;
 use tracing::trace;
@@ -77,7 +77,7 @@ fn log_err_if_new(res: Result<TickProgress, DbErrorWrite>, old_err: &mut Option<
 #[cfg(feature = "test")]
 pub async fn tick_test(
     db_connection: &dyn DbConnection,
-    executed_at: DateTime<Utc>,
+    executed_at: Timestamp,
 ) -> Result<TickProgress, DbErrorWrite> {
     tick(db_connection, executed_at).await
 }
@@ -85,7 +85,7 @@ pub async fn tick_test(
 #[instrument(level = Level::TRACE, skip_all)]
 pub(crate) async fn tick(
     db_connection: &dyn DbConnection,
-    executed_at: DateTime<Utc>,
+    executed_at: Timestamp,
 ) -> Result<TickProgress, DbErrorWrite> {
     let mut expired_locks = 0;
     let mut expired_async_timers = 0;

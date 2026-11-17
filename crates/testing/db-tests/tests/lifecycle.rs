@@ -1,5 +1,4 @@
 use assert_matches::assert_matches;
-use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, RunId};
 use concepts::storage::http_client_trace::{HttpClientTrace, RequestTrace};
 use concepts::storage::{
@@ -25,6 +24,7 @@ use concepts::{ComponentRetryConfig, JoinSetId, JoinSetKind, SUPPORTED_RETURN_VA
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use db_postgres::postgres_dao::{DbInitialzationOutcome, PostgresPool, ProvisionPolicy};
 use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
+use jiff::Timestamp;
 use obeli_db_tests::{CANCELLABLE_FFQN, SOME_FFQN};
 use obeli_db_tests::{Database, initialize_fresh_postgres_db};
 use rstest::rstest;
@@ -79,7 +79,7 @@ async fn postgres_waiters_should_not_hold_connections() {
             waiters.spawn(async move {
                 db_exec
                     .wait_for_pending_by_ffqn(
-                        DateTime::<Utc>::MIN_UTC,
+                        Timestamp::MIN,
                         Arc::from([SOME_FFQN]),
                         None,
                         Box::pin(std::future::pending()),
@@ -468,7 +468,7 @@ async fn append_after_finish_should_not_be_possible(
 #[expect(clippy::too_many_arguments)]
 async fn lock_pending(
     execution_id: &ExecutionId,
-    lock_expires_at: DateTime<Utc>,
+    lock_expires_at: Timestamp,
     executor_id: ExecutorId,
     run_id: RunId,
     component_id: &ComponentId,
@@ -1591,7 +1591,7 @@ async fn lock(
     execution_id: &ExecutionId,
     sim_clock: &SimClock,
     executor_id: ExecutorId,
-    lock_expires_at: DateTime<Utc>,
+    lock_expires_at: Timestamp,
     run_id: RunId,
 ) -> Version {
     let lock_pending_res = db_connection
@@ -1998,7 +1998,7 @@ async fn create_join_set(
     execution_id: &ExecutionId,
     version: &mut Version,
     join_set_id: JoinSetId,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     db_connection: &dyn DbConnection,
 ) {
     let new_version = db_connection
@@ -2854,7 +2854,7 @@ async fn create_at(
     db_connection: &dyn DbConnection,
     sim_clock: &SimClock,
     execution_id: &ExecutionId,
-    scheduled_at: DateTime<Utc>,
+    scheduled_at: Timestamp,
 ) {
     db_connection
         .create(CreateRequest {
@@ -3219,7 +3219,7 @@ async fn create_cancellable_at(
     db_connection: &dyn DbConnection,
     sim_clock: &SimClock,
     execution_id: &ExecutionId,
-    scheduled_at: DateTime<Utc>,
+    scheduled_at: Timestamp,
 ) {
     db_connection
         .create(CreateRequest {
@@ -4640,7 +4640,7 @@ async fn append_delay_response(
     join_set_id: &JoinSetId,
     version: &mut Version,
     index: u64,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) {
     let delay_id = DelayId::new_with_index(execution_id, join_set_id, index);
     *version = db_connection

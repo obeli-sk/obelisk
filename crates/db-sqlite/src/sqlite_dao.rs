@@ -1,9 +1,9 @@
+use crate::timestamp::SqlTimestamp;
 use crate::{
     durability::Durability, histograms::Histograms, polling,
     sqlite_dao::conversions::to_generic_error,
 };
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionFailureKind,
     ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
@@ -49,6 +49,7 @@ use db_common::{
     PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
 use hashbrown::HashMap;
+use jiff::Timestamp;
 use rusqlite::{
     CachedStatement, Connection, OpenFlags, OptionalExtension, Row, ToSql, Transaction,
     TransactionBehavior,
@@ -84,7 +85,7 @@ pub struct InitializationError;
 struct DelayReq {
     join_set_id: JoinSetId,
     delay_id: DelayId,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
     paused: bool,
 }
 /*
@@ -634,7 +635,7 @@ fn deployment_component_detail_from_row(
 }
 
 struct PendingAfterEventUpdate {
-    scheduled_at: DateTime<Utc>,
+    scheduled_at: Timestamp,
     intermittent_failure: bool,
     component_input_digest: ComponentDigest,
 }
@@ -642,7 +643,7 @@ struct PendingAfterEventUpdate {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IdleState {
     pub busy: bool,
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
 }
 
 impl SqlitePool {
@@ -658,7 +659,7 @@ impl SqlitePool {
                         next_run_at: row.get(1)?,
                     })
                 })?;
-                let mut include = |at: Option<DateTime<Utc>>| {
+                let mut include = |at: Option<Timestamp>| {
                     if let Some(at) = at {
                         state.next_run_at = Some(state.next_run_at.map_or(at, |next| next.min(at)));
                     }
@@ -1470,7 +1471,7 @@ impl SqlitePool {
         ?
         .execute(named_params! {
             ":execution_id": &execution_id_str,
-            ":created_at": created_at,
+            ":created_at": SqlTimestamp(created_at),
             ":version": version.0,
             ":json_value": event_ser,
             ":variant": event.variant(),
@@ -1517,14 +1518,14 @@ impl SqlitePool {
                 ":execution_id": execution_id.to_string(),
                 ":is_top_level": execution_id.is_top_level(),
                 ":corresponding_version": version.0,
-                ":pending_expires_finished": scheduled_at,
+                ":pending_expires_finished": SqlTimestamp(scheduled_at),
                 ":ffqn": ffqn.to_string(),
                 ":state": STATE_PENDING_AT,
-                ":created_at": created_at,
+                ":created_at": SqlTimestamp(created_at),
                 ":component_id_input_digest": component_id.component_digest,
                 ":component_type": component_id.component_type,
                 ":deployment_id": deployment_id.to_string(),
-                ":first_scheduled_at": scheduled_at,
+                ":first_scheduled_at": SqlTimestamp(scheduled_at),
             })?;
             AppendNotifier {
                 pending_at: if paused {
@@ -1561,8 +1562,8 @@ impl SqlitePool {
     fn update_state_pending_after_response_appended(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        updated_at: DateTime<Utc>,
-        scheduled_at: DateTime<Utc>, // Changing to state PendingAt
+        updated_at: Timestamp,
+        scheduled_at: Timestamp, // Changing to state PendingAt
         component_input_digest: ComponentDigest,
     ) -> Result<AppendNotifier, DbErrorWrite> {
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after response appended");
@@ -1594,8 +1595,8 @@ impl SqlitePool {
         let updated = stmt
             .execute(named_params! {
                 ":execution_id": execution_id,
-                ":updated_at": updated_at,
-                ":pending_expires_finished": scheduled_at,
+                ":updated_at": SqlTimestamp(updated_at),
+                ":pending_expires_finished": SqlTimestamp(scheduled_at),
                 ":state": STATE_PENDING_AT,
             })
             .map_err(|err| DbErrorGeneric::Uncategorized {
@@ -1622,7 +1623,7 @@ impl SqlitePool {
     fn update_state_pending_after_event_appended(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        updated_at: DateTime<Utc>,
+        updated_at: Timestamp,
         appending_version: &Version,
         update: PendingAfterEventUpdate,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
@@ -1650,9 +1651,9 @@ impl SqlitePool {
         let mut stmt = tx.prepare_cached(sql)?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
-            ":updated_at": updated_at,
+            ":updated_at": SqlTimestamp(updated_at),
             ":appending_version": appending_version.0,
-            ":pending_expires_finished": scheduled_at,
+            ":pending_expires_finished": SqlTimestamp(scheduled_at),
             ":state": STATE_PENDING_AT,
             ":intermittent_delta": i32::from(update.intermittent_failure),
         })?;
@@ -1676,7 +1677,7 @@ impl SqlitePool {
     fn update_state_component_upgrade_finished_success(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        updated_at: DateTime<Utc>,
+        updated_at: Timestamp,
         component_digest: &ComponentDigest,
         deployment_id: DeploymentId,
         appending_version: &Version,
@@ -1696,7 +1697,7 @@ impl SqlitePool {
         )?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
-            ":updated_at": updated_at,
+            ":updated_at": SqlTimestamp(updated_at),
             ":appending_version": appending_version.0,
             ":component_digest": component_digest,
             ":deployment_id": deployment_id.to_string(),
@@ -1710,7 +1711,7 @@ impl SqlitePool {
     fn update_state_component_upgrade_finished_failed(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        updated_at: DateTime<Utc>,
+        updated_at: Timestamp,
         target_digest: &ComponentDigest,
         appending_version: &Version,
     ) -> Result<AppendResponse, DbErrorWrite> {
@@ -1727,7 +1728,7 @@ impl SqlitePool {
         )?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
-            ":updated_at": updated_at,
+            ":updated_at": SqlTimestamp(updated_at),
             ":appending_version": appending_version.0,
             ":target_digest": target_digest,
         })?;
@@ -1742,12 +1743,12 @@ impl SqlitePool {
     fn update_state_locked_get_intermittent_event_count(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        updated_at: DateTime<Utc>,
+        updated_at: Timestamp,
         deployment_id: Option<DeploymentId>,
         component_digest: Option<&ComponentDigest>,
         executor_id: ExecutorId,
         run_id: RunId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         appending_version: &Version,
         retry_config: ComponentRetryConfig,
     ) -> Result<u32, DbErrorWrite> {
@@ -1789,9 +1790,9 @@ impl SqlitePool {
         )?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
-            ":updated_at": updated_at,
+            ":updated_at": SqlTimestamp(updated_at),
             ":appending_version": appending_version.0,
-            ":pending_expires_finished": lock_expires_at,
+            ":pending_expires_finished": SqlTimestamp(lock_expires_at),
             ":state": STATE_LOCKED,
             ":deployment_id": deployment_id, // no change if `None` due to `coalesce`
             ":component_id_input_digest": component_digest.cloned(), // no change if `None` due to `coalesce`
@@ -1827,11 +1828,11 @@ impl SqlitePool {
     fn update_state_blocked(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        updated_at: DateTime<Utc>,
+        updated_at: Timestamp,
         appending_version: &Version,
         // BlockedByJoinSet fields
         join_set_id: &JoinSetId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         join_set_closing: bool,
     ) -> Result<
         AppendResponse, // next version
@@ -1861,9 +1862,9 @@ impl SqlitePool {
         )?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
-            ":updated_at": updated_at,
+            ":updated_at": SqlTimestamp(updated_at),
             ":appending_version": appending_version.0,
-            ":pending_expires_finished": lock_expires_at,
+            ":pending_expires_finished": SqlTimestamp(lock_expires_at),
             ":state": STATE_BLOCKED_BY_JOIN_SET,
             ":join_set_id": join_set_id,
             ":join_set_closing": join_set_closing,
@@ -1880,7 +1881,7 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         appending_version: &Version,
         // Finished fields
-        finished_at: DateTime<Utc>,
+        finished_at: Timestamp,
         result_kind: PendingStateFinishedResultKind,
     ) -> Result<(), DbErrorWrite> {
         debug!("Setting t_state to Finished");
@@ -1912,7 +1913,7 @@ impl SqlitePool {
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
             ":appending_version": appending_version.0,
-            ":pending_expires_finished": finished_at,
+            ":pending_expires_finished": SqlTimestamp(finished_at),
             ":state": STATE_FINISHED,
             ":result_kind": JsonWrapper(result_kind),
         })?;
@@ -1926,7 +1927,7 @@ impl SqlitePool {
     fn update_state_paused(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        updated_at: DateTime<Utc>,
+        updated_at: Timestamp,
         appending_version: &Version,
         is_paused: bool,
     ) -> Result<AppendResponse, DbErrorWrite> {
@@ -1953,7 +1954,7 @@ impl SqlitePool {
 
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
-            ":updated_at": updated_at,
+            ":updated_at": SqlTimestamp(updated_at),
             ":appending_version": appending_version.0,
             ":lifecycle": lifecycle,
         })?;
@@ -1967,7 +1968,7 @@ impl SqlitePool {
     fn update_state_cancelling(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        updated_at: DateTime<Utc>,
+        updated_at: Timestamp,
         appending_version: &Version,
     ) -> Result<AppendResponse, DbErrorWrite> {
         debug!("Setting t_state lifecycle to cancelling");
@@ -1985,7 +1986,7 @@ impl SqlitePool {
 
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
-            ":updated_at": updated_at,
+            ":updated_at": SqlTimestamp(updated_at),
             ":appending_version": appending_version.0,
             ":lifecycle": LIFECYCLE_CANCELLING,
         })?;
@@ -2000,7 +2001,7 @@ impl SqlitePool {
     fn bump_state_next_version(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        updated_at: DateTime<Utc>,
+        updated_at: Timestamp,
         appending_version: &Version,
         delay_req: Option<DelayReq>,
     ) -> Result<AppendResponse /* next version */, DbErrorWrite> {
@@ -2017,7 +2018,7 @@ impl SqlitePool {
         )?;
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
-            ":updated_at": updated_at,
+            ":updated_at": SqlTimestamp(updated_at),
             ":appending_version": appending_version.0,
         })?;
         if updated != 1 {
@@ -2040,7 +2041,7 @@ impl SqlitePool {
                 ":execution_id": execution_id_str,
                 ":join_set_id": join_set_id.to_string(),
                 ":delay_id": delay_id.to_string(),
-                ":expires_at": expires_at,
+                ":expires_at": SqlTimestamp(expires_at),
                 ":is_paused": paused,
             })?;
         }
@@ -2081,7 +2082,7 @@ impl SqlitePool {
                         state: row.get("state")?,
                         ffqn: row.get("ffqn")?,
                         pending_expires_finished: row
-                            .get::<_, DateTime<Utc>>("pending_expires_finished")?,
+                            .get::<_, Timestamp>("pending_expires_finished")?,
                         last_lock_version: row
                             .get::<_, Option<VersionType>>("last_lock_version")?
                             .map(Version::new),
@@ -2154,9 +2155,10 @@ impl SqlitePool {
                         statement_mod.where_vec.push(format!(
                             "(created_at, execution_id) {rel} (:cursor, :cursor_execution_id)"
                         ));
-                        statement_mod
-                            .params
-                            .push((":cursor", cursor_to_sql(created_at)?));
+                        statement_mod.params.push((
+                            ":cursor",
+                            ToSqlOutput::from(SqlTimestamp(*created_at).text()),
+                        ));
                         statement_mod
                             .params
                             .push((":cursor_execution_id", cursor_to_sql(execution_id)?));
@@ -2168,9 +2170,10 @@ impl SqlitePool {
                         statement_mod
                             .where_vec
                             .push(format!("created_at {rel} :cursor"));
-                        statement_mod
-                            .params
-                            .push((":cursor", cursor_to_sql(created_at)?));
+                        statement_mod.params.push((
+                            ":cursor",
+                            ToSqlOutput::from(SqlTimestamp(*created_at).text()),
+                        ));
                     }
                     None => {}
                 }
@@ -2254,12 +2257,12 @@ impl SqlitePool {
                 .where_vec
                 .push(format!("({})", conditions.join(" OR ")));
             if let Some(now) = state_filters_now(&filter.state_filters) {
-                state_filter_now_temporary = now;
+                state_filter_now_temporary = SqlTimestamp(now);
                 statement_mod.params.push((
                     ":state_filter_now",
                     state_filter_now_temporary
                         .to_sql()
-                        .expect("DateTime conversion never fails"),
+                        .expect("Timestamp conversion never fails"),
                 ));
             }
         }
@@ -2422,7 +2425,7 @@ impl SqlitePool {
     ) -> Result<ResponseWithCursor, rusqlite::Error> {
         let id: i64 = row.get("id")?;
         let seq: u32 = row.get("seq")?;
-        let created_at: DateTime<Utc> = row.get("created_at")?;
+        let created_at: Timestamp = row.get("created_at")?;
         let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
         let event = match (
             row.get::<_, Option<DelayId>>("delay_id")?,
@@ -2473,7 +2476,7 @@ impl SqlitePool {
     #[expect(clippy::too_many_arguments)]
     fn lock_single_execution(
         tx: &Transaction,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         component_id: &ComponentId,
         update_component_digest_and_deployment_id: bool,
         deployment_id: DeploymentId,
@@ -2481,7 +2484,7 @@ impl SqlitePool {
         run_id: RunId,
         appending_version: &Version,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite> {
         trace!("lock_single_execution");
@@ -2535,7 +2538,7 @@ impl SqlitePool {
             })?;
         stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
-            ":created_at": created_at,
+            ":created_at": SqlTimestamp(created_at),
             ":json_value": event_ser,
             ":version": appending_version.0,
             ":variant": event.variant(),
@@ -2582,7 +2585,7 @@ impl SqlitePool {
                     ":variant2": DUMMY_HISTORY_EVENT.variant(),
                 },
                 |row| {
-                    let created_at_fake = DateTime::from_timestamp_nanos(0); // not used, only the inner event and version
+                    let created_at_fake = Timestamp::UNIX_EPOCH; // not used, only the inner event and version
                     let event = row
                         .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
                         .map_err(|serde| {
@@ -2780,7 +2783,7 @@ impl SqlitePool {
                     ?;
         stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
-            ":created_at": req.created_at,
+            ":created_at": SqlTimestamp(req.created_at),
             ":json_value": event_ser,
             ":version": appending_version.0,
             ":variant": req.event.variant(),
@@ -3177,7 +3180,7 @@ impl SqlitePool {
         let seq = stmt.query_row(
             named_params! {
                 ":execution_id": execution_id.to_string(),
-                ":created_at": event.created_at,
+                ":created_at": SqlTimestamp(event.created_at),
                 ":join_set_id": join_set_id.to_string(),
                 ":delay_id": delay_id,
                 ":delay_success": delay_success,
@@ -3299,7 +3302,7 @@ impl SqlitePool {
                 stmt.execute(named_params! {
                     ":execution_id": row.execution_id,
                     ":run_id": row.run_id,
-                    ":created_at": created_at,
+                    ":created_at": SqlTimestamp(*created_at),
                     ":level": *level as u8,
                     ":message": message,
                     ":stream_type": Option::<u8>::None,
@@ -3314,7 +3317,7 @@ impl SqlitePool {
                 stmt.execute(named_params! {
                     ":execution_id": row.execution_id,
                     ":run_id": row.run_id,
-                    ":created_at": created_at,
+                    ":created_at": SqlTimestamp(*created_at),
                     ":level": Option::<u8>::None,
                     ":message": Option::<String>::None,
                     ":stream_type": *stream_type as u8,
@@ -3624,12 +3627,12 @@ impl SqlitePool {
     fn get_pending_of_single_ffqn(
         mut stmt: CachedStatement,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqn: &FunctionFqn,
     ) -> Result<Vec<(ExecutionId, Version)>, ()> {
         stmt.query_map(
             named_params! {
-                ":pending_expires_finished": pending_at_or_sooner,
+                ":pending_expires_finished": SqlTimestamp(pending_at_or_sooner),
                 ":ffqn": ffqn.to_string(),
                 ":batch_size": batch_size,
             },
@@ -3653,7 +3656,7 @@ impl SqlitePool {
     fn get_pending_by_ffqns(
         conn: &Connection,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqns: &[FunctionFqn],
     ) -> Result<Vec<(ExecutionId, Version)>, RusqliteError> {
         let batch_size = usize::try_from(batch_size).expect("16 bit systems are unsupported");
@@ -3681,7 +3684,7 @@ impl SqlitePool {
     fn get_pending_by_ffqns_auto(
         conn: &Connection,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqns: &[FunctionFqn],
         current_digest: &ComponentDigest,
     ) -> Result<Vec<(ExecutionId, Version)>, RusqliteError> {
@@ -3697,7 +3700,7 @@ impl SqlitePool {
             if let Ok(execs_and_versions) = stmt
                 .query_map(
                     named_params! {
-                        ":pending_expires_finished": pending_at_or_sooner,
+                        ":pending_expires_finished": SqlTimestamp(pending_at_or_sooner),
                         ":ffqn": ffqn.to_string(),
                         ":current_digest": current_digest,
                         ":batch_size": u32::try_from(needed)
@@ -3725,14 +3728,14 @@ impl SqlitePool {
     fn get_pending_by_component_input_digest(
         conn: &Connection,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         input_digest: &ComponentDigest,
     ) -> Result<Vec<(ExecutionId, Version)>, RusqliteError> {
         let mut stmt = conn.prepare_cached(polling::PENDING_BY_COMPONENT)?;
 
         stmt.query_map(
             named_params! {
-                ":pending_expires_finished": pending_at_or_sooner,
+                ":pending_expires_finished": SqlTimestamp(pending_at_or_sooner),
                 ":component_id_input_digest": input_digest,
                 ":batch_size": batch_size,
             },
@@ -3749,7 +3752,7 @@ impl SqlitePool {
 
     // Must be called after write transaction for a correct happens-before relationship.
     #[instrument(level = Level::TRACE, skip_all)]
-    fn notify_all(&self, notifiers: Vec<AppendNotifier>, current_time: DateTime<Utc>) {
+    fn notify_all(&self, notifiers: Vec<AppendNotifier>, current_time: Timestamp) {
         trace!("notify_all");
         let (pending_ats, finished_execs, responses) = {
             let (mut pending_ats, mut finished_execs, mut responses) =
@@ -3808,7 +3811,7 @@ impl SqlitePool {
 
     fn notify_pending_locked(
         notifier: &NotifierPendingAt,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         ffqn_to_pending_subscription: &std::sync::MutexGuard<PendingFfqnSubscribersHolder>,
     ) {
         // No need to remove here, cleanup is handled by the caller.
@@ -3823,7 +3826,7 @@ impl SqlitePool {
         old: &ComponentDigest,
         new: &ComponentDigest,
         reason: ComponentUpgradeReason,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
     ) -> Result<(), DbErrorWrite> {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         if combined_state.execution_with_state.component_digest != *old {
@@ -3868,8 +3871,8 @@ impl SqlitePool {
         );
 
         let cursor = pagination.cursor();
-        let created_after = filter.created_after();
-        let created_before = filter.created_before();
+        let created_after = filter.created_after().map(SqlTimestamp);
+        let created_before = filter.created_before().map(SqlTimestamp);
         let mut params = vec![
             (":execution_id", &exec_id_str as &dyn rusqlite::ToSql),
             (":cursor", &cursor.0 as &dyn rusqlite::ToSql),
@@ -3955,7 +3958,7 @@ impl SqlitePool {
 
         let items = stmt
             .query_map(params.as_slice(), |row| {
-                let created_at: DateTime<Utc> = row.get("created_at")?;
+                let created_at: Timestamp = row.get("created_at")?;
                 let run_id = row.get("run_id")?;
                 let level: Option<u8> = row.get("level")?;
                 let message: Option<String> = row.get("message")?;
@@ -4032,7 +4035,7 @@ impl SqlitePool {
 
     fn list_deployment_states(
         tx: &Transaction,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         pagination: Pagination<Option<DeploymentId>>,
         include_deployment_toml: bool,
         execution_counts: DeploymentExecutionCounts,
@@ -4102,14 +4105,14 @@ impl SqlitePool {
         );
 
         if include_execution_counts {
-            params.push((":now", Box::new(current_time)));
+            params.push((":now", Box::new(SqlTimestamp(current_time))));
         }
 
         if let Some(cursor) = pagination.cursor() {
             params.push((":cursor", Box::new(*cursor)));
             params.push((
                 ":cursor_fallback",
-                Box::new(deployment_cursor_fallback_updated_at(*cursor)),
+                Box::new(SqlTimestamp(deployment_cursor_fallback_updated_at(*cursor))),
             ));
             write!(
                 sql,
@@ -4216,8 +4219,8 @@ impl SqlitePool {
                 ":deployment_id": record.deployment_id.to_string(),
                 ":description": record.description,
                 ":digest": record.digest.to_string(),
-                ":created_at": record.created_at,
-                ":updated_at": record.updated_at,
+                ":created_at": SqlTimestamp(record.created_at),
+                ":updated_at": SqlTimestamp(record.updated_at),
                 ":status": record.status.as_str(),
                 ":deployment_toml": record.deployment_toml,
                 ":obelisk_version": record.obelisk_version,
@@ -4430,13 +4433,13 @@ impl SqlitePool {
     fn activate_deployment_tx(
         tx: &Transaction,
         deployment_id: DeploymentId,
-        now: DateTime<Utc>,
+        now: Timestamp,
         app_config_digest: Option<&str>,
     ) -> Result<(), DbErrorWrite> {
         // Preserve an unrelated enqueued deployment.
         tx.execute(
             "UPDATE t_deployment SET status = 'inactive', updated_at = :now WHERE status = 'active'",
-            rusqlite::named_params! { ":now": now },
+            rusqlite::named_params! { ":now": SqlTimestamp(now)},
         )
         .map_err(RusqliteError::from)?;
         // Set target deployment to active, recording activation time.
@@ -4444,7 +4447,7 @@ impl SqlitePool {
             .execute(
                 "UPDATE t_deployment SET status = 'active', last_active_at = :now, updated_at = :now, last_active_app_config_digest = :app_config_digest WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! {
-                    ":now": now,
+                    ":now": SqlTimestamp(now),
                     ":app_config_digest": app_config_digest,
                     ":deployment_id": deployment_id.to_string(),
                 },
@@ -4459,7 +4462,7 @@ impl SqlitePool {
     fn enqueue_deployment_tx(
         tx: &Transaction,
         deployment_id: DeploymentId,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<EnqueueOutcome, DbErrorWrite> {
         let status_opt: Option<String> = tx
             .query_row(
@@ -4476,7 +4479,7 @@ impl SqlitePool {
         // Demote any previously enqueued deployment to inactive.
         tx.execute(
             "UPDATE t_deployment SET status = 'inactive', updated_at = :now WHERE status = 'enqueued'",
-            rusqlite::named_params! { ":now": now },
+            rusqlite::named_params! { ":now": SqlTimestamp(now)},
         )
         .map_err(RusqliteError::from)?;
         // The target is already active: it stays active, only the pending one was cleared.
@@ -4488,7 +4491,7 @@ impl SqlitePool {
             .execute(
                 "UPDATE t_deployment SET status = 'enqueued', updated_at = :now WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! {
-                    ":now": now,
+                    ":now": SqlTimestamp(now),
                     ":deployment_id": deployment_id.to_string(),
                 },
             )
@@ -4548,7 +4551,7 @@ impl SqlitePool {
             params.push((":cursor", Box::new(*cursor)));
             params.push((
                 ":cursor_fallback",
-                Box::new(deployment_cursor_fallback_updated_at(*cursor)),
+                Box::new(SqlTimestamp(deployment_cursor_fallback_updated_at(*cursor))),
             ));
             write!(
                 sql,
@@ -4609,7 +4612,7 @@ impl SqlitePool {
     fn pause_execution(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        paused_at: DateTime<Utc>,
+        paused_at: Timestamp,
     ) -> Result<Version, DbErrorWrite> {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         let mut appending_version = combined_state.get_next_version_fail_if_finished()?;
@@ -4643,7 +4646,7 @@ impl SqlitePool {
     fn unpause_execution(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        paused_at: DateTime<Utc>,
+        paused_at: Timestamp,
     ) -> Result<Version, DbErrorWrite> {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         let appending_version = combined_state.get_next_version_fail_if_finished()?;
@@ -4663,7 +4666,7 @@ impl SqlitePool {
     fn cancel_workflow(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         if let Some(outcome) = combined_state.cancel_short_circuit() {
@@ -4681,7 +4684,7 @@ impl SqlitePool {
     fn append_cancellation_requested(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
         combined_state: &CombinedState,
         ffqn_check: CancellationFfqnCheck,
     ) -> Result<CancelOutcome, DbErrorWrite> {
@@ -4703,7 +4706,7 @@ impl SqlitePool {
     fn append_activity_cancellation_requested_tx(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
         combined_state: &CombinedState,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         match &combined_state.execution_with_state.pending_state {
@@ -4738,13 +4741,13 @@ impl DbExecutor for SqlitePool {
     async fn lock_pending_by_ffqns(
         &self,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqns: Arc<[FunctionFqn]>,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         component_id: ComponentId,
         deployment_id: DeploymentId,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
@@ -4796,13 +4799,13 @@ impl DbExecutor for SqlitePool {
     async fn lock_pending_by_ffqns_auto(
         &self,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqns: Arc<[FunctionFqn]>,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         component_id: ComponentId,
         deployment_id: DeploymentId,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
@@ -4860,12 +4863,12 @@ impl DbExecutor for SqlitePool {
     async fn lock_pending_by_component_digest(
         &self,
         batch_size: u32,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         component_id: &ComponentId,
         deployment_id: DeploymentId,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         run_id: RunId,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockPendingResponse, DbErrorWrite> {
@@ -4926,14 +4929,14 @@ impl DbExecutor for SqlitePool {
     #[instrument(level = Level::DEBUG, skip(self))]
     async fn lock_one(
         &self,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         component_id: ComponentId,
         deployment_id: DeploymentId,
         execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
         executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
         retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite> {
         debug!(%execution_id, "lock_one");
@@ -5000,7 +5003,7 @@ impl DbExecutor for SqlitePool {
         &self,
         events: AppendEventsToExecution,
         response: AppendResponseToExecution,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
         debug!("append_batch_respond_to_parent");
         if events.execution_id == response.parent_execution_id {
@@ -5084,7 +5087,7 @@ impl DbExecutor for SqlitePool {
     #[instrument(level = Level::TRACE, skip(self, timeout_fut))]
     async fn wait_for_pending_by_ffqn(
         &self,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         ffqns: Arc<[FunctionFqn]>,
         current_digest: Option<ComponentDigest>,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
@@ -5169,7 +5172,7 @@ impl DbExecutor for SqlitePool {
     #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
     async fn wait_for_pending_by_component_digest(
         &self,
-        pending_at_or_sooner: DateTime<Utc>,
+        pending_at_or_sooner: Timestamp,
         component_digest: &ComponentDigest,
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
@@ -5250,7 +5253,7 @@ impl DbExecutor for SqlitePool {
     async fn append_activity_cancellation_requested(
         &self,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let execution_id = execution_id.clone();
         let touched = touching([execution_id.clone()]);
@@ -5277,7 +5280,7 @@ impl DbExecutor for SqlitePool {
     async fn append_cancel_workflow_requested(
         &self,
         execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let execution_id = execution_id.clone();
         let touched = touching([execution_id.clone()]);
@@ -5809,7 +5812,7 @@ impl DbExternalApi for SqlitePool {
         old: &ComponentDigest,
         new: &ComponentDigest,
         reason: ComponentUpgradeReason,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
     ) -> Result<(), DbErrorWrite> {
         let execution_id = execution_id.clone();
         let old = old.clone();
@@ -5862,7 +5865,7 @@ impl DbExternalApi for SqlitePool {
     #[instrument(skip(self))]
     async fn list_deployment_states(
         &self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         pagination: Pagination<Option<DeploymentId>>,
         include_deployment_toml: bool,
         execution_counts: DeploymentExecutionCounts,
@@ -5943,7 +5946,7 @@ impl DbExternalApi for SqlitePool {
     async fn activate_deployment(
         &self,
         deployment_id: DeploymentId,
-        now: DateTime<Utc>,
+        now: Timestamp,
         app_config_digest: Option<&str>,
     ) -> Result<(), DbErrorWrite> {
         let app_config_digest = app_config_digest.map(str::to_owned);
@@ -5960,7 +5963,7 @@ impl DbExternalApi for SqlitePool {
     async fn enqueue_deployment(
         &self,
         deployment_id: DeploymentId,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<EnqueueOutcome, DbErrorWrite> {
         self.transaction(
             move |tx| Self::enqueue_deployment_tx(tx, deployment_id, now),
@@ -5974,7 +5977,7 @@ impl DbExternalApi for SqlitePool {
         &self,
         deployment_id: DeploymentId,
         description: Option<String>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), DbErrorWrite> {
         self.transaction(
             move |tx| {
@@ -5983,7 +5986,7 @@ impl DbExternalApi for SqlitePool {
                         "UPDATE t_deployment SET description = NULLIF(COALESCE(:description, description), ''), updated_at = :now WHERE deployment_id = :deployment_id",
                         rusqlite::named_params! {
                             ":description": description,
-                            ":now": now,
+                            ":now": SqlTimestamp(now),
                             ":deployment_id": deployment_id.to_string(),
                         },
                     )
@@ -6086,7 +6089,7 @@ impl DbExternalApi for SqlitePool {
     async fn pause_execution(
         &self,
         execution_id: &ExecutionId,
-        paused_at: DateTime<Utc>,
+        paused_at: Timestamp,
     ) -> Result<AppendResponse, DbErrorWrite> {
         let execution_id = execution_id.clone();
         let touched = touching([execution_id.clone()]);
@@ -6107,7 +6110,7 @@ impl DbExternalApi for SqlitePool {
     async fn unpause_execution(
         &self,
         execution_id: &ExecutionId,
-        unpaused_at: DateTime<Utc>,
+        unpaused_at: Timestamp,
     ) -> Result<AppendResponse, DbErrorWrite> {
         let execution_id = execution_id.clone();
         let touched = touching([execution_id.clone()]);
@@ -6385,7 +6388,7 @@ impl DbAdmin for SqlitePool {
                     .map_err(|err| RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err))))?;
                 tx.execute(
                     "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest, app_config_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-                    rusqlite::params![event.event_id.to_string(), event.node_run_id.to_string(), event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, event.cas_digest.as_ref().map(ToString::to_string), event.app_config_digest],
+                    rusqlite::params![event.event_id.to_string(), event.node_run_id.to_string(), SqlTimestamp(event.created_at), event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, event.cas_digest.as_ref().map(ToString::to_string), event.app_config_digest],
                 )?;
                 Ok(())
             },
@@ -6408,7 +6411,7 @@ impl DbAdmin for SqlitePool {
                 })?;
                 tx.execute(
                     "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest, app_config_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-                    rusqlite::params![event.event_id.to_string(), event.node_run_id.to_string(), event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, digest.to_string(), event.app_config_digest],
+                    rusqlite::params![event.event_id.to_string(), event.node_run_id.to_string(), SqlTimestamp(event.created_at), event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, digest.to_string(), event.app_config_digest],
                 )?;
                 Ok(())
             },
@@ -6438,8 +6441,8 @@ impl DbAdmin for SqlitePool {
                             filter.deployment_id.map(|id| id.to_string()),
                             filter.before_event_id.map(|id| id.to_string()),
                             i64::from(filter.limit.clamp(1, 1000)),
-                            filter.created_from,
-                            filter.created_to
+                            filter.created_from.map(SqlTimestamp),
+                            filter.created_to.map(SqlTimestamp)
                         ],
                         |row| {
                             let level: String = row.get(3)?;
@@ -6557,7 +6560,7 @@ impl DbAdmin for SqlitePool {
 
     async fn retain_system_events(
         &self,
-        created_before: DateTime<Utc>,
+        created_before: Timestamp,
         limit: u32,
         keep_node_run_id: NodeRunId,
         dry_run: bool,
@@ -6568,13 +6571,13 @@ impl DbAdmin for SqlitePool {
                 let limit = limit.clamp(1, 10_000);
                 let event_ids = tx
                     .prepare("SELECT event_id FROM t_system_event WHERE created_at < ?1 AND node_run_id <> ?3 ORDER BY created_at, event_id LIMIT ?2")?
-                    .query_map(rusqlite::params![created_before, i64::from(limit) + 1, keep_node_run_id], |row| row.get::<_, String>(0))?
+                    .query_map(rusqlite::params![SqlTimestamp(created_before), i64::from(limit) + 1, keep_node_run_id], |row| row.get::<_, String>(0))?
                     .collect::<Result<Vec<_>, _>>()?;
                 let has_more = event_ids.len() > limit as usize;
                 let deleted = if dry_run {
                     event_ids.len().min(limit as usize) as u64
                 } else {
-                    tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 AND node_run_id <> ?3 ORDER BY created_at, event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit), keep_node_run_id])? as u64
+                    tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 AND node_run_id <> ?3 ORDER BY created_at, event_id LIMIT ?2)", rusqlite::params![SqlTimestamp(created_before), i64::from(limit), keep_node_run_id])? as u64
                 };
                 Ok(SystemEventRetentionResult {
                     deleted,
@@ -6634,13 +6637,13 @@ impl DbAdmin for SqlitePool {
                            AND ({before_retained})
                            AND ({after_created})
                          ORDER BY created_at, execution_id LIMIT ?1")
-                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count), cursor.map(|c| c.timestamp), cursor.map(|c| c.execution_id.to_string())], |row| {
+                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count), cursor.map(|c| SqlTimestamp(c.timestamp)), cursor.map(|c| c.execution_id.to_string())], |row| {
                         Ok(ExecutionRetentionCursor { execution_id: row.get::<_, ExecutionId>(0)?.get_top_level(), timestamp: row.get(1)? })
                     })?.collect::<Result<Vec<_>, _>>()?
                     },
                     RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
                         &format!("SELECT execution_id, updated_at FROM t_state WHERE is_top_level = TRUE AND {eligible} AND tombstoned = FALSE AND updated_at < ?2 AND ({after_updated}) ORDER BY updated_at, execution_id LIMIT ?1")
-                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, cutoff, cursor.map(|c| c.timestamp), cursor.map(|c| c.execution_id.to_string())], |row| {
+                    )?.query_map(rusqlite::params![i64::from(batch_size) + 1, SqlTimestamp(cutoff), cursor.map(|c| SqlTimestamp(c.timestamp)), cursor.map(|c| c.execution_id.to_string())], |row| {
                         Ok(ExecutionRetentionCursor { execution_id: row.get::<_, ExecutionId>(0)?.get_top_level(), timestamp: row.get(1)? })
                     })?.collect::<Result<Vec<_>, _>>()?,
                 };
@@ -6770,14 +6773,14 @@ impl DbAdmin for SqlitePool {
                            AND ({after})
                          ORDER BY updated_at, deployment_id LIMIT ?2"),
                     )?
-                    .query_map(rusqlite::params![i64::from(count), i64::from(batch_size) + 1, cursor.map(|c| c.timestamp), cursor.map(|c| c.deployment_id.to_string())], |row| {
+                    .query_map(rusqlite::params![i64::from(count), i64::from(batch_size) + 1, cursor.map(|c| SqlTimestamp(c.timestamp)), cursor.map(|c| c.deployment_id.to_string())], |row| {
                         Ok(DeploymentRetentionCursor { deployment_id: row.get(0)?, timestamp: row.get(1)? })
                     })?
                     .collect::<Result<Vec<_>, _>>()?
                     },
                     RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
                         &format!("SELECT deployment_id, updated_at FROM t_deployment WHERE status = 'inactive' AND deployment_id NOT IN (SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND last_active_at IS NOT NULL ORDER BY last_active_at DESC LIMIT 1) AND updated_at < ?1 AND ({after}) ORDER BY updated_at ASC, deployment_id ASC LIMIT ?2"),
-                    )?.query_map(rusqlite::params![cutoff, i64::from(batch_size) + 1, cursor.map(|c| c.timestamp), cursor.map(|c| c.deployment_id.to_string())], |row| Ok(DeploymentRetentionCursor { deployment_id: row.get(0)?, timestamp: row.get(1)? }))?
+                    )?.query_map(rusqlite::params![SqlTimestamp(cutoff), i64::from(batch_size) + 1, cursor.map(|c| SqlTimestamp(c.timestamp)), cursor.map(|c| c.deployment_id.to_string())], |row| Ok(DeploymentRetentionCursor { deployment_id: row.get(0)?, timestamp: row.get(1)? }))?
                     .collect::<Result<Vec<_>, _>>()?,
                 };
                 let more_deployments = ids.len() > batch_size as usize;
@@ -6963,7 +6966,7 @@ impl CasGc for SqlitePool {
     async fn upload_blob(
         &self,
         content: Vec<u8>,
-        uploaded_at: DateTime<Utc>,
+        uploaded_at: Timestamp,
     ) -> Result<ContentDigest, DbErrorWrite> {
         let digest = Self::compute_file_digest(&content);
         {
@@ -6974,7 +6977,7 @@ impl CasGc for SqlitePool {
                     tx.execute(
                         "INSERT INTO t_file_upload (digest, uploaded_at) VALUES (?1, ?2) \
                          ON CONFLICT (digest) DO UPDATE SET uploaded_at = excluded.uploaded_at",
-                        rusqlite::params![digest.to_string(), uploaded_at],
+                        rusqlite::params![digest.to_string(), SqlTimestamp(uploaded_at)],
                     )
                     .map_err(RusqliteError::from)?;
                     Ok::<_, DbErrorWrite>(())
@@ -6992,7 +6995,7 @@ impl CasGc for SqlitePool {
         &self,
         dry_run: bool,
         batch_size: u32,
-        uploaded_before: DateTime<Utc>,
+        uploaded_before: Timestamp,
     ) -> Result<CasGcResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
@@ -7000,7 +7003,7 @@ impl CasGc for SqlitePool {
                 if !dry_run {
                     tx.execute(
                         "DELETE FROM t_file_upload WHERE uploaded_at < ?1",
-                        [uploaded_before],
+                        [SqlTimestamp(uploaded_before)],
                     )?;
                 }
                 let orphans = tx
@@ -7026,7 +7029,7 @@ impl CasGc for SqlitePool {
                             i64::from(limit) + 1,
                             i64::from(limit),
                             i64::try_from(CAS_GC_BATCH_SIZE_BYTES).unwrap(),
-                            uploaded_before
+                            SqlTimestamp(uploaded_before)
                         ],
                         |row| {
                             Ok((
@@ -7113,7 +7116,7 @@ impl DbConnection for SqlitePool {
             let digest = &tracker.component_id.component_digest;
             let inserted = tx.execute(
                 "INSERT INTO t_cron (cron_digest, tracking_execution_id, created_at) VALUES (?1, ?2, ?3) ON CONFLICT (cron_digest) DO NOTHING",
-                rusqlite::params![digest, tracker.execution_id.to_string(), now],
+                rusqlite::params![digest, tracker.execution_id.to_string(), SqlTimestamp(now)],
             )?;
             let mut notifiers = Vec::new();
             if inserted == 1 {
@@ -7122,7 +7125,7 @@ impl DbConnection for SqlitePool {
                 let legacy = tx.query_row(
                     "SELECT created_at, state, tombstoned FROM t_state WHERE execution_id = ?1",
                     [legacy_id.to_string()],
-                    |row| Ok((row.get::<_, DateTime<Utc>>(0)?, row.get::<_, String>(1)?, row.get::<_, bool>(2)?)),
+                    |row| Ok((row.get::<_, Timestamp>(0)?, row.get::<_, String>(1)?, row.get::<_, bool>(2)?)),
                 ).optional()?;
                 if let Some((created_at, state, tombstoned)) = legacy {
                     if tombstoned {
@@ -7131,7 +7134,7 @@ impl DbConnection for SqlitePool {
                     let last = tx.query_row(
                         "SELECT created_at, json_value FROM t_execution_log WHERE execution_id = ?1 AND history_event_type = 'schedule' ORDER BY version DESC LIMIT 1",
                         [legacy_id.to_string()],
-                        |row| Ok((row.get::<_, DateTime<Utc>>(0)?, row.get::<_, JsonWrapper<ExecutionRequest>>(1)?.0)),
+                        |row| Ok((row.get::<_, Timestamp>(0)?, row.get::<_, JsonWrapper<ExecutionRequest>>(1)?.0)),
                     ).optional()?;
                     let submission = last.and_then(|(at, event)| match event {
                         ExecutionRequest::HistoryEvent { event: HistoryEvent::Schedule { execution_id, result: Ok(()), .. } } => Some((execution_id, at)),
@@ -7140,7 +7143,7 @@ impl DbConnection for SqlitePool {
                     let tracking = if once && state == STATE_FINISHED && submission.is_some() { None } else { Some(legacy_id.to_string()) };
                     tx.execute(
                         "UPDATE t_cron SET tracking_execution_id = ?2, last_target_execution_id = ?3, last_submitted_at = ?4, created_at = ?5 WHERE cron_digest = ?1",
-                        rusqlite::params![digest, tracking, submission.as_ref().map(|s| s.0.to_string()), submission.map(|s| s.1), created_at],
+                        rusqlite::params![digest, tracking, submission.as_ref().map(|s| s.0.to_string()), submission.map(|s| SqlTimestamp(s.1)), SqlTimestamp(created_at)],
                     )?;
                 } else {
                     let (_, notifier) = Self::create_inner(tx, tracker.clone())?;
@@ -7171,7 +7174,7 @@ impl DbConnection for SqlitePool {
         let notifiers = self.transaction(move |tx| {
             let changed = tx.execute(
                 "UPDATE t_cron SET tracking_execution_id = ?3, last_target_execution_id = COALESCE(?4, last_target_execution_id), last_submitted_at = CASE WHEN ?4 IS NULL THEN last_submitted_at ELSE ?5 END WHERE cron_digest = ?1 AND tracking_execution_id = ?2",
-                rusqlite::params![request.cron_digest, request.execution_id.to_string(), request.tracking_execution_id.as_ref().map(ToString::to_string), request.target.as_ref().map(|r| r.execution_id.to_string()), now],
+                rusqlite::params![request.cron_digest, request.execution_id.to_string(), request.tracking_execution_id.as_ref().map(ToString::to_string), request.target.as_ref().map(|r| r.execution_id.to_string()), SqlTimestamp(now)],
             )?;
             if changed != 1 {
                 return Err(DbErrorWriteNonRetriable::Conflict.into());
@@ -7261,7 +7264,7 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip(self, batch))]
     async fn append_batch(
         &self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
@@ -7303,7 +7306,7 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %version))]
     async fn append_batch_with_delay_response(
         &self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
@@ -7366,7 +7369,7 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %version))]
     async fn append_batch_create_new_execution(
         &self,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
@@ -7588,7 +7591,7 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip_all, fields(%join_set_id, %execution_id))]
     async fn append_delay_response(
         &self,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         execution_id: ExecutionId,
         join_set_id: JoinSetId,
         delay_id: DelayId,
@@ -7724,16 +7727,13 @@ impl DbConnection for SqlitePool {
 
     /// Get currently expired delays and locks.
     #[instrument(level = Level::TRACE, skip(self))]
-    async fn get_expired_timers(
-        &self,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<ExpiredTimer>, DbErrorGeneric> {
+    async fn get_expired_timers(&self, at: Timestamp) -> Result<Vec<ExpiredTimer>, DbErrorGeneric> {
         self.transaction(
             move |conn| {
                 let mut expired_timers = conn.prepare(polling::EXPIRED_DELAYS)?
                 .query_map(
                         named_params! {
-                            ":at": at,
+                            ":at": SqlTimestamp(at),
                         },
                         |row| {
                             let execution_id = row.get("execution_id")?;
@@ -7748,7 +7748,7 @@ impl DbConnection for SqlitePool {
                 let expired = conn.prepare(polling::EXPIRED_LOCKS)?
                 .query_map(
                         named_params! {
-                            ":at": at,
+                            ":at": SqlTimestamp(at),
                         },
                         |row| {
                             let execution_id = row.get("execution_id")?;
@@ -7812,7 +7812,7 @@ impl DbConnection for SqlitePool {
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
     ) -> Result<(), DbErrorStubResponse> {
         debug!("upsert_stub_response");
         #[cfg(debug_assertions)]
@@ -7918,7 +7918,7 @@ impl concepts::storage::DbConnectionTest for SqlitePool {
     #[instrument(level = Level::DEBUG, skip(self, response_event), fields(join_set_id = %response_event.join_set_id))]
     async fn append_response(
         &self,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         execution_id: ExecutionId,
         response_event: JoinSetResponseEvent,
     ) -> Result<(), DbErrorWrite> {
@@ -7968,8 +7968,8 @@ pub mod tempfile {
 #[cfg(test)]
 mod tests {
     use crate::sqlite_dao::{RusqliteError, SqlitePool, TxType, tempfile::sqlite_pool};
+    use crate::timestamp::SqlTimestamp;
     use assert_matches::assert_matches;
-    use chrono::DateTime;
     use concepts::ContentDigest;
     use concepts::storage::DbExternalApi;
     use concepts::{
@@ -7979,6 +7979,7 @@ mod tests {
             CasGc, CreateRequest, DbAdmin, DbErrorWrite, DbErrorWriteNonRetriable, DbPoolCloseable,
         },
     };
+    use jiff::Timestamp;
     use rusqlite::named_params;
 
     const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn");
@@ -8004,7 +8005,7 @@ mod tests {
         #[case] pending: bool,
     ) {
         let (pool, _file) = sqlite_pool().await;
-        let at = chrono::Utc::now() - std::time::Duration::from_secs(3600);
+        let at = jiff::Timestamp::now() - std::time::Duration::from_secs(3600);
         pool.transaction(move |tx| {
             tx.execute("INSERT INTO t_state (
                 execution_id, is_top_level, corresponding_version, ffqn, created_at,
@@ -8013,7 +8014,7 @@ mod tests {
             ) VALUES ('Execution_root', TRUE, 0, 'missing:component/ifc.fn', :at,
                 X'00', :component_type, :at, 'Dep_00000000000000000000000000', :at,
                 :state, :at, 0, :lifecycle, :tombstoned)", named_params! {
-                    ":at": at, ":component_type": component_type, ":state": state, ":lifecycle": lifecycle, ":tombstoned": tombstoned,
+                    ":at": SqlTimestamp(at), ":component_type": component_type, ":state": state, ":lifecycle": lifecycle, ":tombstoned": tombstoned,
                 })?;
             Ok::<_, super::RusqliteError>(())
         }, TxType::Other, "idle_state_fixture").await.unwrap();
@@ -8041,7 +8042,7 @@ mod tests {
         let (pool, _file) = sqlite_pool().await;
         let old_digest = ComponentDigest(Digest([1; 32]));
         let current_digest = ComponentDigest(Digest([2; 32]));
-        let at = chrono::Utc::now();
+        let at = jiff::Timestamp::now();
         let old = old_digest.clone();
         let current = current_digest.clone();
         pool.transaction(move |tx| {
@@ -8057,8 +8058,8 @@ mod tests {
                     pending_expires_finished, state, updated_at, intermittent_event_count, incompatible_digest
                 ) VALUES (:id, TRUE, 0, :ffqn, :at, :digest, :component_type, :at,
                     'Dep_00000000000000000000000000', :when, 'pending_at', :at, 0, :incompatible)",
-                    named_params! { ":id": id, ":ffqn": ffqn, ":at": at, ":digest": digest,
-                        ":component_type": component_type, ":when": when, ":incompatible": incompatible })?;
+                    named_params! { ":id": id, ":ffqn": ffqn, ":at": SqlTimestamp(at), ":digest": digest,
+                        ":component_type": component_type, ":when": SqlTimestamp(when), ":incompatible": incompatible })?;
             }
             Ok::<_, RusqliteError>(())
         }, TxType::Other, "idle_executor_fixture").await.unwrap();
@@ -8102,7 +8103,7 @@ mod tests {
     #[tokio::test]
     async fn idle_state_delays_and_paused_parent() {
         let (pool, _file) = sqlite_pool().await;
-        let at = chrono::Utc::now();
+        let at = jiff::Timestamp::now();
         pool.transaction(move |tx| {
             tx.execute("INSERT INTO t_state (
                 execution_id, is_top_level, corresponding_version, ffqn, created_at,
@@ -8110,8 +8111,8 @@ mod tests {
                 pending_expires_finished, state, updated_at, intermittent_event_count, lifecycle, tombstoned
             ) VALUES ('Execution_root', TRUE, 0, 'ns:pkg/ifc.fn', :at,
                 X'00', 'workflow', :at, 'Dep_00000000000000000000000000', :at,
-                'blocked_by_join_set', :at, 0, 'paused', FALSE)", named_params! { ":at": at })?;
-            tx.execute("INSERT INTO t_delay VALUES ('Execution_root.child', 'join-set', 'delay', :at, FALSE)", named_params! { ":at": at })?;
+                'blocked_by_join_set', :at, 0, 'paused', FALSE)", named_params! { ":at": SqlTimestamp(at)})?;
+            tx.execute("INSERT INTO t_delay VALUES ('Execution_root.child', 'join-set', 'delay', :at, FALSE)", named_params! { ":at": SqlTimestamp(at)})?;
             Ok::<_, super::RusqliteError>(())
         }, TxType::Other, "idle_delay_fixture").await.unwrap();
         assert_eq!(
@@ -8298,7 +8299,7 @@ mod tests {
             2
         );
         pool.write_blob(&vec![5; 4 * 1024 * 1024]).await?;
-        pool.gc_cas(false, 100, chrono::Utc::now()).await?;
+        pool.gc_cas(false, 100, jiff::Timestamp::now()).await?;
         let pages_before: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
         let free_before: i64 = conn.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
         assert!(free_before > 100);
@@ -8319,7 +8320,7 @@ mod tests {
 
     #[tokio::test]
     async fn failing_ltx_should_be_rolled_back() -> Result<(), DbErrorWrite> {
-        let created_at = DateTime::from_timestamp_nanos(0);
+        let created_at = Timestamp::UNIX_EPOCH;
         let (pool, _guard) = sqlite_pool().await;
         pool.transaction(
             move |tx| {

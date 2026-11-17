@@ -1,10 +1,10 @@
 // Based on https://github.com/bytecodealliance/wasmtime/blob/v36.0.1/src/commands/serve.rs#L874
-use chrono::{DateTime, Utc};
 use concepts::{
     ExecutionId,
     prefixed_ulid::RunId,
     storage::{LogEntry, LogInfoAppendRow, LogStreamType},
 };
+use jiff::Timestamp;
 use std::{
     pin::Pin,
     sync::{
@@ -89,7 +89,7 @@ impl DbOutput {
             execution_id: self.execution_id.clone(),
             run_id: self.run_id,
             log_entry: LogEntry::Stream {
-                created_at: Utc::now(),
+                created_at: Timestamp::now(),
                 payload: Vec::from(buf),
                 stream_type: self.forwarding_from,
             },
@@ -103,7 +103,7 @@ impl DbOutput {
 #[derive(Clone)]
 pub struct OutputEvent {
     pub buf: Vec<u8>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

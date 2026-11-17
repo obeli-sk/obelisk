@@ -6,7 +6,6 @@ use super::workflow_worker::{CallFuncResult, RunError};
 use crate::js_imports::{JsDispatchPolicy, NamedFnImport};
 use crate::v8_executor::V8Executor;
 use async_trait::async_trait;
-use chrono::{TimeZone as _, Utc};
 use concepts::storage::{HistoryEventScheduleAt, LogLevel, Version};
 use concepts::{
     ComponentId, FunctionFqn, IfcFqnName, JoinSetId, Params, ResultParsingError,
@@ -19,6 +18,7 @@ use deno_core::{
     RuntimeOptions, op2, resolve_import, v8,
 };
 use deno_error::JsErrorBox;
+use jiff::Timestamp;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::c_void;
@@ -1133,10 +1133,8 @@ fn schedule_arg(args: &Value, name: &str) -> Result<HistoryEventScheduleAt, JsEr
             reason = "Date.getTime() returns integral milliseconds within the i64 range"
         )]
         let millis = millis as i64;
-        let datetime = Utc
-            .timestamp_millis_opt(millis)
-            .single()
-            .ok_or_else(|| JsErrorBox::type_error("schedule Date is invalid"))?;
+        let datetime = Timestamp::from_millisecond(millis)
+            .map_err(|_| JsErrorBox::type_error("schedule Date is invalid"))?;
         return Ok(HistoryEventScheduleAt::At(datetime));
     }
     if let Some(at) = object.get("at").and_then(Value::as_object) {
@@ -1150,10 +1148,8 @@ fn schedule_arg(args: &Value, name: &str) -> Result<HistoryEventScheduleAt, JsEr
             .unwrap_or(0)
             .try_into()
             .map_err(|_| JsErrorBox::type_error("invalid absolute schedule"))?;
-        let datetime = Utc
-            .timestamp_opt(seconds, nanos)
-            .single()
-            .ok_or_else(|| JsErrorBox::type_error("invalid absolute schedule"))?;
+        let datetime = Timestamp::new(seconds, nanos)
+            .map_err(|_| JsErrorBox::type_error("invalid absolute schedule"))?;
         return Ok(HistoryEventScheduleAt::At(datetime));
     }
     if object.contains_key("executionId") {

@@ -51,7 +51,7 @@ async fn get_status_cancelling(#[case] runtime: JsRuntime) {
             .await
             .unwrap();
         let conn = pool.connection().await.unwrap();
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         let create = |execution_id: ExecutionId, ffqn: FunctionFqn| CreateRequest {
             created_at: now,
             execution_id,

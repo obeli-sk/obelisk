@@ -2,12 +2,12 @@
 //! so that `list_executions` filtering stays consistent with the deployment summary
 //! buckets in both implementations.
 
-use chrono::{DateTime, Utc};
 use concepts::storage::{
     ExecutionStateFilter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED,
     RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
     STATE_LOCKED, STATE_PENDING_AT,
 };
+use jiff::Timestamp;
 
 /// Render one filter as a parenthesized SQL condition.
 ///
@@ -58,7 +58,7 @@ pub fn state_filter_to_sql(
 /// All entries must carry the same `now`, see
 /// [`concepts::storage::ListExecutionsFilter::state_filters`].
 #[must_use]
-pub fn state_filters_now(filters: &[ExecutionStateFilter]) -> Option<DateTime<Utc>> {
+pub fn state_filters_now(filters: &[ExecutionStateFilter]) -> Option<Timestamp> {
     filters.iter().find_map(|filter| match filter {
         ExecutionStateFilter::Pending { now } | ExecutionStateFilter::Scheduled { now } => {
             Some(*now)

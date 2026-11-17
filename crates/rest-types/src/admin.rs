@@ -1,9 +1,9 @@
-use chrono::{DateTime, Utc};
 use concepts::{
     ExecutionId,
     prefixed_ulid::{DeploymentId, ExecutionIdTopLevel, NodeRunId, SystemEventId},
     storage,
 };
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -21,7 +21,7 @@ pub struct SystemEventResponse {
     pub node_run_id: NodeRunId,
     // backcompat: 0.42.0-rc.3 event responses had no policy digest.
     pub app_config_digest: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     #[schema(value_type = String)]
     pub level: storage::SystemEventLevel,
     pub code: String,
@@ -85,7 +85,7 @@ pub struct CleanupRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ExecutionRetentionCursor {
     /// Ordering timestamp: `created_at` for count retention, `updated_at` for age retention.
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     #[schema(value_type = String)]
     pub execution_id: ExecutionIdTopLevel,
 }
@@ -111,7 +111,7 @@ impl From<ExecutionRetentionCursor> for storage::ExecutionRetentionCursor {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DeploymentRetentionCursor {
     /// Ordering timestamp: `updated_at`.
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     #[schema(value_type = String)]
     pub deployment_id: DeploymentId,
 }

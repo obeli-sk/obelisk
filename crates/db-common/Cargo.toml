@@ -13,7 +13,7 @@ version.workspace = true
 [dependencies]
 concepts.workspace = true
 
-chrono.workspace = true
+jiff.workspace = true
 hashbrown.workspace = true
 indexmap.workspace = true
 thiserror.workspace = true

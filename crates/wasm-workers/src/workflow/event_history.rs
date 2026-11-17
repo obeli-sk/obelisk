@@ -16,7 +16,6 @@ use crate::workflow::host_exports::latest::obelisk::types::function as types_fun
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError;
 use assert_matches::assert_matches;
-use chrono::{DateTime, Utc};
 use concepts::ComponentId;
 use concepts::ExecutionMetadata;
 use concepts::FunctionRegistry;
@@ -52,6 +51,7 @@ use db_common::{
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use indexmap::indexmap;
+use jiff::Timestamp;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -73,7 +73,7 @@ enum ChildReturnValue {
     JoinNextTry(Result<(JoinSetResponseId, Result<(), ()>), JoinNextTryError>),
     JoinNextRequestingFfqn(Result<(ExecutionIdDerived, WastVal), AwaitNextExtensionError>),
     OneOffDelay {
-        scheduled_at: DateTime<Utc>,
+        scheduled_at: Timestamp,
         result: Result<(), ()>,
     },
     SubmitDelay,
@@ -166,7 +166,7 @@ pub(crate) struct EventHistory {
     // Used for `-get`ting the processed response by Execution Id.
     index_child_exe_to_processed_response_idx: HashMap<ExecutionIdDerived, usize>,
     index_child_exe_to_ffqn: HashMap<ExecutionIdDerived, FunctionFqn>,
-    index_delay_id_to_expires_at: IndexMap<DelayId, DateTime<Utc>>,
+    index_delay_id_to_expires_at: IndexMap<DelayId, Timestamp>,
     responses: Vec<(ResponseWithCursor, ProcessingStatus)>,
     worker_span: Span,
     pub(crate) deadline_tracker: DeadlineTracker,
@@ -396,7 +396,7 @@ impl EventHistory {
         event_call: EventCallKind,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<ChildReturnValue, WorkflowFunctionError> {
         self.apply_event_call(event_call, event_call_cursor, db_connection, called_at)
             .await
@@ -408,7 +408,7 @@ impl EventHistory {
         event_call_kind: EventCallKind,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<ChildReturnValue, ApplyError> {
         match self.deadline_tracker.check_preempt() {
             Ok(()) => {}
@@ -446,7 +446,7 @@ impl EventHistory {
         &mut self,
         event_call: EventCall,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<ChildReturnValue, ApplyError> {
         debug!("applying {event_call:?}");
 
@@ -673,8 +673,8 @@ impl EventHistory {
         event_call: EventCallBlocking,
         version: Version,
         db_connection: &mut dyn WorkflowDbConnection,
-        lock_expires_at: DateTime<Utc>,
-        called_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
+        called_at: Timestamp,
     ) -> Result<ChildReturnValue, ApplyError> {
         let join_next_variant = event_call.join_next_variant();
         let keys = event_call.as_keys();
@@ -815,7 +815,7 @@ impl EventHistory {
         join_set_id: &JoinSetId,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), WorkflowFunctionError> {
         self.join_set_close_inner(
@@ -834,7 +834,7 @@ impl EventHistory {
         join_set_id: &JoinSetId,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), ApplyError> {
         let response_ids = self
@@ -868,7 +868,7 @@ impl EventHistory {
         &mut self,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<(), ApplyError> {
         while let Some(join_set_id) = self
             .join_set_open_tracker
@@ -1517,7 +1517,7 @@ impl EventHistory {
         event_call: EventCallNonBlocking,
         version: Version,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<(HistoryEvent, Version), DbErrorWriteOrReplayInterrupt> {
         trace!("append_to_db_non_blocking {}", version);
         match event_call {
@@ -2066,8 +2066,8 @@ impl EventHistory {
         event_call: EventCallBlocking,
         version: Version,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
-        lock_expires_at: DateTime<Utc>,
+        called_at: Timestamp,
+        lock_expires_at: Timestamp,
     ) -> Result<AppendedBlockingEvents, DbErrorWrite> {
         trace!("append_to_db_blocking {}", version);
         match event_call {
@@ -2712,7 +2712,7 @@ impl AwaitNextExtensionError {
 enum JoinSetResponseEnriched<'a> {
     DelayFinished {
         delay_id: &'a DelayId,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
         result: Result<(), ()>,
     },
     ChildExecutionFinished(ChildExecutionFinished<'a>),
@@ -2926,7 +2926,7 @@ impl JoinSetCreate {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<JoinSetId, ApplyError> {
         assert_ne!(self.join_set_id.kind, JoinSetKind::OneOff);
         let join_set_id = self.join_set_id.clone();
@@ -2967,7 +2967,7 @@ impl SubmitChildExecution {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<Result<(), ChildExecutionRequestError>, WorkflowFunctionError> {
         assert!(
             self.join_set_id.kind != JoinSetKind::OneOff,
@@ -3021,7 +3021,7 @@ pub(crate) struct SubmitDelay {
     pub(crate) join_set_id: JoinSetId,
     pub(crate) delay_id: DelayId,
     pub(crate) schedule_at: HistoryEventScheduleAt, // Intention that must be compared when checking determinism
-    pub(crate) expires_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
+    pub(crate) expires_at_if_new: Timestamp, // Actual time based on first execution. Should be disregarded on replay.
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
@@ -3031,7 +3031,7 @@ impl SubmitDelay {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<DelayId, WorkflowFunctionError> {
         assert!(
             self.join_set_id.kind != JoinSetKind::OneOff,
@@ -3064,7 +3064,7 @@ impl SubmitDelay {
 pub(crate) struct Schedule {
     #[expect(clippy::struct_field_names)]
     pub(crate) schedule_at: HistoryEventScheduleAt, // Intention that must be compared when checking determinism
-    pub(crate) scheduled_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
+    pub(crate) scheduled_at_if_new: Timestamp, // Actual time based on first execution. Should be disregarded on replay.
     pub(crate) execution_id: ExecutionId,
     pub(crate) idempotent: bool,
     pub(crate) ffqn: FunctionFqn,
@@ -3081,7 +3081,7 @@ impl Schedule {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<Result<(), ScheduleRequestError>, WorkflowFunctionError> {
         let value = event_history
             .apply(
@@ -3161,7 +3161,7 @@ impl Stub {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<Result<(), StubError>, WorkflowFunctionError> {
         let value = event_history
             .apply(
@@ -3191,7 +3191,7 @@ impl JoinNextRequestingFfqn {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<Result<(ExecutionIdDerived, WastVal), AwaitNextExtensionError>, WorkflowFunctionError>
     {
         assert!(
@@ -3254,7 +3254,7 @@ impl JoinNextRequestingFfqn {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
         let value = self
             .apply_response(event_history, event_call_cursor, db_connection, called_at)
@@ -3274,7 +3274,7 @@ impl JoinNextRequestingFfqn {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<Result<ExecutionIdDerived, AwaitNextExtensionError>, WorkflowFunctionError> {
         self.apply_response(event_history, event_call_cursor, db_connection, called_at)
             .await
@@ -3295,7 +3295,7 @@ impl JoinNext {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<
         Result<(types_execution::ResponseId, Result<(), ()>), JoinNextError>,
         WorkflowFunctionError,
@@ -3352,7 +3352,7 @@ impl JoinNextTry {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<
         Result<(types_execution::ResponseId, Result<(), ()>), JoinNextTryError>,
         WorkflowFunctionError,
@@ -3409,7 +3409,7 @@ impl OneOffChildExecutionRequest {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<Val, WorkflowFunctionError> {
         let join_set_id = event_history
             .next_join_set_one_off_named(&ffqn.function_name)
@@ -3442,7 +3442,7 @@ pub(crate) struct OneOffDelayRequest {
     join_set_id: JoinSetId,
     delay_id: DelayId,
     schedule_at: HistoryEventScheduleAt, // Intention that must be compared when checking determinism
-    expires_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
+    expires_at_if_new: Timestamp, // Actual time based on first execution. Should be disregarded on replay.
     #[debug(skip)]
     wasm_backtrace: Option<storage::WasmBacktrace>,
 }
@@ -3451,13 +3451,13 @@ impl OneOffDelayRequest {
     pub(crate) async fn apply(
         schedule_at: HistoryEventScheduleAt,
         name: Option<String>,
-        expires_at_if_new: DateTime<Utc>,
+        expires_at_if_new: Timestamp,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
-    ) -> Result<Result<DateTime<Utc>, ()>, WorkflowFunctionError> {
+        called_at: Timestamp,
+    ) -> Result<Result<Timestamp, ()>, WorkflowFunctionError> {
         let suffix = name.as_deref().unwrap_or("sleep");
         let join_set_id = event_history
             .next_join_set_one_off_named(suffix)
@@ -3514,7 +3514,7 @@ impl Persist {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<(), WorkflowFunctionError> {
         let ret = event_history
             .apply(
@@ -3544,7 +3544,7 @@ impl Persist {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<(), WorkflowFunctionError> {
         let ret = event_history
             .apply(
@@ -3568,7 +3568,7 @@ impl Persist {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<(), WorkflowFunctionError> {
         let ret = event_history
             .apply(
@@ -3886,7 +3886,6 @@ mod tests {
     };
     use crate::workflow::workflow_ctx::WorkflowFunctionError;
     use assert_matches::assert_matches;
-    use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
         AppendRequest, CreateRequest, DbConnectionTest, ExecutionRequest, HistoryEvent,
@@ -3903,6 +3902,7 @@ mod tests {
     use concepts::{JoinSetId, StrVariant};
     use db_common::JoinSetResponseId;
     use db_tests::Database;
+    use jiff::Timestamp;
     use rstest::rstest;
     use std::sync::Arc;
     use std::time::Duration;
@@ -3969,7 +3969,7 @@ mod tests {
     #[tokio::test]
     async fn already_due_one_off_delays_are_resolved_before_cache_flush() {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
@@ -4034,7 +4034,7 @@ mod tests {
         second_run_strategy: JoinNextBlockingStrategy,
     ) {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -4276,7 +4276,7 @@ mod tests {
                 value: WastVal::U8(1),
             }));
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         // Create an execution.
@@ -4423,7 +4423,7 @@ mod tests {
             MOCK_FFQN
         };
 
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -4599,7 +4599,7 @@ mod tests {
     #[tokio::test]
     async fn schedule_event_should_be_processed() {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
         let db_connection = db_connection.as_ref();
@@ -4670,7 +4670,7 @@ mod tests {
     #[tokio::test]
     async fn oversized_persist_fails_before_entering_non_blocking_buffer() {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         let execution_id = create_execution_with_limit(db_connection.as_ref(), &sim_clock, 4).await;
@@ -4717,7 +4717,7 @@ mod tests {
     #[tokio::test]
     async fn persist_stores_only_value_hash() {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
@@ -4777,7 +4777,7 @@ mod tests {
     #[tokio::test]
     async fn legacy_persist_value_matches_on_replay() {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
@@ -4839,7 +4839,7 @@ mod tests {
     #[tokio::test]
     async fn oversized_child_params_are_rejected_and_match_on_replay() {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         let execution_id = create_execution_with_limit(db_connection.as_ref(), &sim_clock, 4).await;
@@ -4978,7 +4978,7 @@ mod tests {
     #[tokio::test]
     async fn oversized_schedule_params_are_rejected_and_match_on_replay() {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         let execution_id = create_execution_with_limit(db_connection.as_ref(), &sim_clock, 4).await;
@@ -5074,7 +5074,7 @@ mod tests {
     #[tokio::test]
     async fn submit_stub_await() {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
         let db_connection = db_connection.as_ref();
@@ -5176,7 +5176,7 @@ mod tests {
     // Two executions are setting the same stub value to the target activity_stub.
     async fn stubbing_many_times_with_same_value_should_be_ok(db: Database) {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = db.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
 
@@ -5301,7 +5301,7 @@ mod tests {
         second_run_strategy: JoinNextBlockingStrategy,
     ) {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -5438,7 +5438,7 @@ mod tests {
     async fn finish_child_execution(
         db_connection: &dyn DbConnectionTest,
         child_execution_id: ExecutionIdDerived,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         result: SupportedFunctionReturnValue,
     ) -> Version {
         let child_execution_id = ExecutionId::Derived(child_execution_id);
@@ -5465,7 +5465,7 @@ mod tests {
     async fn load_event_history(
         db_connection: Box<dyn DbConnectionTest>,
         execution_id: ExecutionId,
-        now: DateTime<Utc>,
+        now: Timestamp,
         lock_expires_at: Duration,
         deadline_factory: Arc<DeadlineTrackerFactory>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -5530,7 +5530,7 @@ mod tests {
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         join_set_id: JoinSetId,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<ChildReturnValue, ApplyError> {
         apply_create_join_set_start_async(
             db_connection,
@@ -5565,7 +5565,7 @@ mod tests {
         join_set_id: JoinSetId,
         ffqn: FunctionFqn,
         child_execution_id: ExecutionIdDerived,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) {
         event_history
             .apply(
@@ -5614,7 +5614,7 @@ mod tests {
         child_execution_id_a: ExecutionIdDerived,
         ffqn_b: FunctionFqn,
         child_execution_id_b: ExecutionIdDerived,
-        called_at: DateTime<Utc>,
+        called_at: Timestamp,
     ) -> Result<Result<(ExecutionIdDerived, WastVal), AwaitNextExtensionError>, ApplyError> {
         apply_create_join_set_start_async(
             db_connection,
@@ -5678,7 +5678,7 @@ mod tests {
         use concepts::prefixed_ulid::DelayId;
 
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
 
@@ -5885,7 +5885,7 @@ mod tests {
     #[tokio::test]
     async fn join_next_try_all_processed_should_be_persisted() {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
 

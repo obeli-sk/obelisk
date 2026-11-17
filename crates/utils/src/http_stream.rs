@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use concepts::time::ClockFn;
 use hyper::body::{Body, Frame, SizeHint};
+use jiff::Timestamp;
 use std::{
     future::Future as _,
     pin::Pin,
@@ -11,7 +11,7 @@ use tokio::sync::watch;
 
 pub struct LimitedBody<B> {
     body: Option<B>,
-    deadline: DateTime<Utc>,
+    deadline: Timestamp,
     clock: Box<dyn ClockFn>,
     timer: Pin<Box<tokio::time::Sleep>>,
     expired: Option<watch::Sender<()>>,
@@ -45,8 +45,8 @@ impl<B: Body + Unpin> Body for LimitedBody<B> {
         if self.body.is_none() {
             return Poll::Ready(None);
         }
-        let remaining = (self.deadline - self.clock.now())
-            .to_std()
+        let remaining: std::time::Duration = (self.deadline - self.clock.now())
+            .try_into()
             .unwrap_or_default();
         if remaining.is_zero() {
             self.body.take();

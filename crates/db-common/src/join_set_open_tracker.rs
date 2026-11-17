@@ -1,8 +1,8 @@
-use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
 use concepts::storage::{HistoryEvent, JoinNextTryOutcome, JoinSetRequest, JoinSetResponse};
 use concepts::{ComponentType, FunctionFqn, JoinSetId};
 use indexmap::IndexMap;
+use jiff::Timestamp;
 use std::collections::HashMap;
 
 /// Simplified version of [`JoinSetResponse`]
@@ -98,14 +98,14 @@ pub struct JoinSetCloseCancellations {
     cancellables: Vec<JoinSetCancellable>,
     /// Signalled, not finished: the cancellation driver closes these.
     cancellable_child_workflow_ids: Vec<ExecutionIdDerived>,
-    pub cancelled_at: DateTime<Utc>,
+    pub cancelled_at: Timestamp,
 }
 
 impl JoinSetCloseCancellations {
     #[must_use]
     pub fn classify(
         members: impl Iterator<Item = (JoinSetResponseId, JoinSetMember)>,
-        cancelled_at: DateTime<Utc>,
+        cancelled_at: Timestamp,
     ) -> Option<JoinSetCloseCancellations> {
         let mut cancellables = Vec::new();
         let mut cancellable_child_workflow_ids = Vec::new();
@@ -455,7 +455,7 @@ mod tests {
                     join_set_id: join_set_id.clone(),
                     request: JoinSetRequest::DelayRequest {
                         delay_id: delay_id.clone(),
-                        expires_at: chrono::DateTime::UNIX_EPOCH,
+                        expires_at: jiff::Timestamp::UNIX_EPOCH,
                         schedule_at: concepts::storage::HistoryEventScheduleAt::Now,
                         paused: false,
                     },
@@ -499,7 +499,7 @@ mod tests {
             .apply_history_event(
                 &HistoryEvent::JoinNext {
                     join_set_id: join_set_id.clone(),
-                    run_expires_at: chrono::DateTime::UNIX_EPOCH,
+                    run_expires_at: jiff::Timestamp::UNIX_EPOCH,
                     requested_ffqn: Some(FunctionFqn::new_static(
                         "testing:integration/other",
                         "other",
@@ -556,7 +556,7 @@ mod tests {
             },
             HistoryEvent::JoinNext {
                 join_set_id: join_set_id.clone(),
-                run_expires_at: chrono::DateTime::UNIX_EPOCH,
+                run_expires_at: jiff::Timestamp::UNIX_EPOCH,
                 requested_ffqn: None,
                 closing: false,
             },
@@ -593,7 +593,7 @@ mod tests {
             .apply_history_event(
                 &HistoryEvent::JoinNext {
                     join_set_id: join_set_id.clone(),
-                    run_expires_at: chrono::DateTime::UNIX_EPOCH,
+                    run_expires_at: jiff::Timestamp::UNIX_EPOCH,
                     requested_ffqn: None,
                     closing: true,
                 },
@@ -670,7 +670,7 @@ mod tests {
                             join_set_id: js.clone(),
                             request: JoinSetRequest::DelayRequest {
                                 delay_id: did.clone(),
-                                expires_at: chrono::DateTime::UNIX_EPOCH,
+                                expires_at: jiff::Timestamp::UNIX_EPOCH,
                                 schedule_at: concepts::storage::HistoryEventScheduleAt::Now,
                                 paused: false,
                             },
@@ -727,7 +727,7 @@ mod tests {
                 for _ in 0..consume {
                     history.push(HistoryEvent::JoinNext {
                         join_set_id: js.clone(),
-                        run_expires_at: chrono::DateTime::UNIX_EPOCH,
+                        run_expires_at: jiff::Timestamp::UNIX_EPOCH,
                         // Vary requested_ffqn to also cover the await-next log shape.
                         requested_ffqn: if rng.coin() {
                             Some(plain.clone())
@@ -746,7 +746,7 @@ mod tests {
                     // tracker treats the first as the drop and any extra as no-ops).
                     history.push(HistoryEvent::JoinNext {
                         join_set_id: js.clone(),
-                        run_expires_at: chrono::DateTime::UNIX_EPOCH,
+                        run_expires_at: jiff::Timestamp::UNIX_EPOCH,
                         requested_ffqn: None,
                         closing: true,
                     });

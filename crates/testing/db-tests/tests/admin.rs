@@ -1,4 +1,3 @@
-use chrono::Duration;
 use concepts::{
     ComponentId, ComponentRetryConfig, ExecutionId, JoinSetId, JoinSetKind, Params,
     SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant,
@@ -11,6 +10,7 @@ use concepts::{
     },
     time::ClockFn,
 };
+use jiff::SignedDuration;
 use obeli_db_tests::{Database, SOME_FFQN};
 use rstest::rstest;
 use test_db_macro::expand_enum_database;
@@ -18,7 +18,7 @@ use test_utils::{set_up, sim_clock::SimClock};
 
 fn deployment_record(
     deployment_id: DeploymentId,
-    created_at: chrono::DateTime<chrono::Utc>,
+    created_at: jiff::Timestamp,
     files: Vec<DeploymentFileRecord>,
 ) -> DeploymentRecord {
     DeploymentRecord {
@@ -153,7 +153,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         admin.get_storage_status().await.unwrap().system_event_count,
         2
     );
-    let cutoff = chrono::Utc::now() + Duration::seconds(1);
+    let cutoff = jiff::Timestamp::now() + SignedDuration::from_secs(1);
     let first_run_id = "NodeRun_01M281KSH954NC9NHNMCN09S6W".parse().unwrap();
     let preview = admin
         .retain_system_events(cutoff, 100, first_run_id, true)
@@ -178,7 +178,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         assert!(admin.get_system_event(second_id).await.unwrap().is_some());
     }
     let preview = admin
-        .retain_system_events(chrono::DateTime::UNIX_EPOCH, 1, other_run, true)
+        .retain_system_events(jiff::Timestamp::UNIX_EPOCH, 1, other_run, true)
         .await
         .unwrap();
     assert_eq!(preview.deleted, 0);
@@ -226,10 +226,8 @@ async fn system_events_in_same_millisecond_are_sorted_by_created_at(database: Da
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let admin = db_pool.admin_conn().await.unwrap();
-    let base = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-        .unwrap()
-        .to_utc();
-    let timestamp_ms = u64::try_from(base.timestamp_millis()).unwrap();
+    let base = "2026-01-01T00:00:00Z".parse::<jiff::Timestamp>().unwrap();
+    let timestamp_ms = u64::try_from(base.as_millisecond()).unwrap();
     // Event IDs share the millisecond and have random parts ordered opposite to `created_at`.
     let mut ids = Vec::new();
     for idx in 0..3u8 {
@@ -240,7 +238,7 @@ async fn system_events_in_same_millisecond_are_sorted_by_created_at(database: Da
             serde_json::json!({}),
         )
         .unwrap();
-        event.created_at = base + Duration::microseconds(i64::from(idx) * 100);
+        event.created_at = base + SignedDuration::from_micros(i64::from(idx) * 100);
         event.event_id = SystemEventId::from_parts(timestamp_ms, u128::from(3 - idx));
         ids.push(event.event_id);
         admin.append_system_event(event).await.unwrap();
@@ -276,14 +274,12 @@ async fn system_events_are_filtered_by_created_at_range(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let admin = db_pool.admin_conn().await.unwrap();
-    let base = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-        .unwrap()
-        .to_utc();
+    let base = "2026-01-01T00:00:00Z".parse::<jiff::Timestamp>().unwrap();
     let offsets = [
-        Duration::zero(),
-        Duration::milliseconds(500),
-        Duration::seconds(1),
-        Duration::milliseconds(1_250),
+        SignedDuration::ZERO,
+        SignedDuration::from_millis(500),
+        SignedDuration::from_secs(1),
+        SignedDuration::from_millis(1_250),
     ];
     let mut ids = Vec::new();
     for offset in offsets {
@@ -318,17 +314,17 @@ async fn system_events_are_filtered_by_created_at_range(database: Database) {
         }
     };
     assert_eq!(
-        list(Some(base + Duration::milliseconds(500)), None).await,
+        list(Some(base + SignedDuration::from_millis(500)), None).await,
         ids[1..]
     );
     assert_eq!(
-        list(None, Some(base + Duration::seconds(1))).await,
+        list(None, Some(base + SignedDuration::from_secs(1))).await,
         ids[..2]
     );
     assert_eq!(
         list(
-            Some(base + Duration::milliseconds(500)),
-            Some(base + Duration::milliseconds(1_250))
+            Some(base + SignedDuration::from_millis(500)),
+            Some(base + SignedDuration::from_millis(1_250))
         )
         .await,
         ids[1..3]
@@ -362,7 +358,7 @@ async fn system_event_cas_details_are_retained_with_the_event(database: Database
 
     let gc = db_pool.cas_gc_conn().await.unwrap();
     assert_eq!(
-        gc.gc_cas(false, 100, chrono::Utc::now())
+        gc.gc_cas(false, 100, jiff::Timestamp::now())
             .await
             .unwrap()
             .deleted_blobs,
@@ -370,7 +366,7 @@ async fn system_event_cas_details_are_retained_with_the_event(database: Database
     );
     assert!(cas.contains_blob(&digest).await.unwrap());
 
-    let cutoff = chrono::Utc::now() + Duration::seconds(1);
+    let cutoff = jiff::Timestamp::now() + SignedDuration::from_secs(1);
     let retention = admin
         .retain_system_events(
             cutoff,
@@ -382,7 +378,7 @@ async fn system_event_cas_details_are_retained_with_the_event(database: Database
         .unwrap();
     assert_eq!(retention.deleted, 0);
     assert_eq!(
-        gc.gc_cas(false, 100, chrono::Utc::now())
+        gc.gc_cas(false, 100, jiff::Timestamp::now())
             .await
             .unwrap()
             .deleted_blobs,
@@ -395,7 +391,7 @@ async fn system_event_cas_details_are_retained_with_the_event(database: Database
         .await
         .unwrap();
     assert_eq!(
-        gc.gc_cas(false, 100, chrono::Utc::now())
+        gc.gc_cas(false, 100, jiff::Timestamp::now())
             .await
             .unwrap()
             .deleted_blobs,
@@ -415,7 +411,7 @@ async fn uploaded_blob_survives_gc_until_grace_period_ends(database: Database) {
     let (_guard, db_pool, db_close) = database.set_up().await;
     let cas = db_pool.cas_conn().await.unwrap();
     let gc = db_pool.cas_gc_conn().await.unwrap();
-    let uploaded_at = chrono::Utc::now();
+    let uploaded_at = jiff::Timestamp::now();
     let digest = gc
         .upload_blob(b"uploaded".to_vec(), uploaded_at)
         .await
@@ -426,17 +422,17 @@ async fn uploaded_blob_survives_gc_until_grace_period_ends(database: Database) {
     assert!(cas.contains_blob(&digest).await.unwrap());
 
     // Re-uploading refreshes the grace period.
-    let reuploaded_at = uploaded_at + Duration::seconds(10);
+    let reuploaded_at = uploaded_at + SignedDuration::from_secs(10);
     gc.upload_blob(b"uploaded".to_vec(), reuploaded_at)
         .await
         .unwrap();
-    gc.gc_cas(false, 100, uploaded_at + Duration::seconds(1))
+    gc.gc_cas(false, 100, uploaded_at + SignedDuration::from_secs(1))
         .await
         .unwrap();
     assert!(cas.contains_blob(&digest).await.unwrap());
 
     let expired = gc
-        .gc_cas(false, 100, reuploaded_at + Duration::seconds(1))
+        .gc_cas(false, 100, reuploaded_at + SignedDuration::from_secs(1))
         .await
         .unwrap();
     assert_eq!(expired.deleted_blobs, 1);
@@ -505,7 +501,7 @@ async fn finish_execution(
 async fn insert_deployment(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_id: DeploymentId,
-    created_at: chrono::DateTime<chrono::Utc>,
+    created_at: jiff::Timestamp,
 ) {
     db_pool
         .external_api_conn()
@@ -620,9 +616,9 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
     );
 
     let older = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
-    clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
+    clock.move_time_forward(SignedDuration::from_millis(1).try_into().unwrap());
     let middle = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
-    clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
+    clock.move_time_forward(SignedDuration::from_millis(1).try_into().unwrap());
     let newer = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
     let result = admin
         .retain_executions(RetentionPolicy::Count(1), 1, false, false, None)
@@ -710,7 +706,7 @@ async fn execution_gc_skips_locked_tree(database: Database) {
             RunId::generate(),
             concepts::storage::Version::new(1),
             ExecutorId::generate(),
-            clock.now() + Duration::minutes(1),
+            clock.now() + SignedDuration::from_mins(1),
             ComponentRetryConfig {
                 retry_exp_backoff: std::time::Duration::ZERO,
                 max_retries: Some(0),
@@ -792,7 +788,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .cas_gc_conn()
         .await
         .unwrap()
-        .gc_cas(true, 10, chrono::Utc::now())
+        .gc_cas(true, 10, jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(dry_run.orphan_blobs, 2);
@@ -802,7 +798,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .cas_gc_conn()
         .await
         .unwrap()
-        .gc_cas(false, 1, chrono::Utc::now())
+        .gc_cas(false, 1, jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(collected.deleted_blobs, 1);
@@ -817,7 +813,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .cas_gc_conn()
         .await
         .unwrap()
-        .gc_cas(false, 1, chrono::Utc::now())
+        .gc_cas(false, 1, jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(collected.deleted_blobs, 1);
@@ -891,7 +887,7 @@ async fn cas_gc_batches_are_bounded_by_bytes(database: Database) {
     let second_digest = cas.write_blob(&vec![2; blob_size]).await.unwrap();
     let gc = db_pool.cas_gc_conn().await.unwrap();
 
-    let first = gc.gc_cas(false, 100, chrono::Utc::now()).await.unwrap();
+    let first = gc.gc_cas(false, 100, jiff::Timestamp::now()).await.unwrap();
     assert_eq!(first.orphan_blobs, 1);
     assert_eq!(first.deleted_blobs, 1);
     assert_eq!(first.deleted_bytes, blob_size as u64);
@@ -901,14 +897,14 @@ async fn cas_gc_batches_are_bounded_by_bytes(database: Database) {
         cas.contains_blob(&second_digest).await.unwrap()
     );
 
-    let second = gc.gc_cas(false, 100, chrono::Utc::now()).await.unwrap();
+    let second = gc.gc_cas(false, 100, jiff::Timestamp::now()).await.unwrap();
     assert_eq!(second.deleted_blobs, 1);
     assert_eq!(second.deleted_bytes, blob_size as u64);
     assert!(!second.has_more);
 
     let oversized_size = usize::try_from(CAS_GC_BATCH_SIZE_BYTES + 1).unwrap();
     let oversized_digest = cas.write_blob(&vec![3; oversized_size]).await.unwrap();
-    let oversized = gc.gc_cas(false, 100, chrono::Utc::now()).await.unwrap();
+    let oversized = gc.gc_cas(false, 100, jiff::Timestamp::now()).await.unwrap();
     assert_eq!(oversized.deleted_blobs, 1);
     assert_eq!(oversized.deleted_bytes, oversized_size as u64);
     assert!(!oversized.has_more);
@@ -926,7 +922,7 @@ async fn deployment_retention_preserves_last_deactivated(database: Database) {
     let (_guard, pool, close) = database.set_up().await;
     let conn = pool.external_api_conn().await.unwrap();
     let admin = pool.admin_conn().await.unwrap();
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     let last_good = DeploymentId::generate();
     let candidate = DeploymentId::generate();
     let unused = DeploymentId::generate();
@@ -936,12 +932,16 @@ async fn deployment_retention_preserves_last_deactivated(database: Database) {
     conn.activate_deployment(last_good, now, Some("policy"))
         .await
         .unwrap();
-    conn.activate_deployment(candidate, now + Duration::seconds(1), Some("policy"))
-        .await
-        .unwrap();
+    conn.activate_deployment(
+        candidate,
+        now + SignedDuration::from_secs(1),
+        Some("policy"),
+    )
+    .await
+    .unwrap();
     for policy in [
         RetentionPolicy::Count(0),
-        RetentionPolicy::CreatedAtOrAfter(now + Duration::days(1)),
+        RetentionPolicy::CreatedAtOrAfter(now + SignedDuration::from_hours(1 * 24)),
     ] {
         let preview = admin
             .retain_deployments(policy, 10, true, true, true, None)
@@ -951,7 +951,7 @@ async fn deployment_retention_preserves_last_deactivated(database: Database) {
     }
     let result = admin
         .retain_deployments(
-            RetentionPolicy::CreatedAtOrAfter(now + Duration::days(1)),
+            RetentionPolicy::CreatedAtOrAfter(now + SignedDuration::from_hours(1 * 24)),
             10,
             true,
             true,
@@ -965,7 +965,7 @@ async fn deployment_retention_preserves_last_deactivated(database: Database) {
     assert!(conn.get_deployment(last_good).await.unwrap().is_some());
     let next = DeploymentId::generate();
     insert_deployment(pool.as_ref(), next, now).await;
-    conn.activate_deployment(next, now + Duration::seconds(2), Some("policy"))
+    conn.activate_deployment(next, now + SignedDuration::from_secs(2), Some("policy"))
         .await
         .unwrap();
     let result = admin
@@ -989,10 +989,10 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
 
     let oldest = DeploymentId::generate();
     insert_deployment(db_pool.as_ref(), oldest, clock.now()).await;
-    clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
+    clock.move_time_forward(SignedDuration::from_millis(1).try_into().unwrap());
     let older = DeploymentId::generate();
     insert_deployment(db_pool.as_ref(), older, clock.now()).await;
-    clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
+    clock.move_time_forward(SignedDuration::from_millis(1).try_into().unwrap());
     let referenced = DeploymentId::generate();
     insert_deployment(db_pool.as_ref(), referenced, clock.now()).await;
     create_execution(db_pool.as_ref(), &clock, referenced, true).await;
@@ -1093,7 +1093,7 @@ async fn deployment_retention_batches_multiple_execution_trees(
         for _ in 0..2 {
             executions.push(create_execution(db_pool.as_ref(), &clock, deployment, true).await);
         }
-        clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
+        clock.move_time_forward(SignedDuration::from_millis(1).try_into().unwrap());
     }
     let admin = db_pool.admin_conn().await.unwrap();
     let preview = admin
@@ -1343,7 +1343,7 @@ async fn execution_retention_skips_protected_trees_across_batches(
     #[values(false, true)] retain_by_age: bool,
 ) {
     set_up();
-    let clock = SimClock::new(chrono::Utc::now());
+    let clock = SimClock::new(jiff::Timestamp::now());
     let (_guard, db_pool, db_close) = database.set_up().await;
     let active = DeploymentId::generate();
     let inactive = DeploymentId::generate();
@@ -1360,7 +1360,7 @@ async fn execution_retention_skips_protected_trees_across_batches(
     }
     let eligible = create_execution(db_pool.as_ref(), &clock, inactive, true).await;
     let policy = if retain_by_age {
-        RetentionPolicy::CreatedAtOrAfter(clock.now() + Duration::days(1))
+        RetentionPolicy::CreatedAtOrAfter(clock.now() + SignedDuration::from_hours(1 * 24))
     } else {
         RetentionPolicy::Count(0)
     };
@@ -1412,14 +1412,14 @@ async fn age_retention_uses_completion_and_inactive_times(database: Database) {
     set_up();
     // State transition timestamps use the database clock. Start near wall-clock time so
     // advancing the simulated API clock also produces a meaningful retention cutoff.
-    let clock = SimClock::new(chrono::Utc::now());
+    let clock = SimClock::new(jiff::Timestamp::now());
     let (_guard, db_pool, db_close) = database.set_up().await;
     let old_deployment = DeploymentId::generate();
     insert_deployment(db_pool.as_ref(), old_deployment, clock.now()).await;
     let old_execution = create_execution(db_pool.as_ref(), &clock, old_deployment, true).await;
     let stale_non_terminal =
         create_execution(db_pool.as_ref(), &clock, old_deployment, false).await;
-    clock.move_time_forward(Duration::days(31).to_std().unwrap());
+    clock.move_time_forward(SignedDuration::from_hours(31 * 24).try_into().unwrap());
     let new_deployment = DeploymentId::generate();
     insert_deployment(db_pool.as_ref(), new_deployment, clock.now()).await;
     db_pool
@@ -1436,7 +1436,7 @@ async fn age_retention_uses_completion_and_inactive_times(database: Database) {
         .activate_deployment(new_deployment, clock.now(), Some("test-app-config"))
         .await
         .unwrap();
-    let cutoff = clock.now() - Duration::days(30);
+    let cutoff = clock.now() - SignedDuration::from_hours(30 * 24);
     let admin = db_pool.admin_conn().await.unwrap();
     let executions = admin
         .retain_executions(

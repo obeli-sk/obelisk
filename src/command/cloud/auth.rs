@@ -44,11 +44,11 @@ impl Account {
         self.user_slug == other.user_slug && normalized(&self.api_url) == normalized(&other.api_url)
     }
     fn expired(&self) -> bool {
-        self.expires_at <= chrono::Utc::now().timestamp()
+        self.expires_at <= jiff::Timestamp::now().as_second()
     }
     fn expiry(&self) -> String {
-        chrono::DateTime::from_timestamp(self.expires_at, 0)
-            .map_or_else(|| self.expires_at.to_string(), |date| date.to_rfc3339())
+        jiff::Timestamp::from_second(self.expires_at)
+            .map_or_else(|_| self.expires_at.to_string(), |date| date.to_string())
     }
 }
 
@@ -568,7 +568,7 @@ mod tests {
             api_token: format!("token-{slug}-{domain}"),
             token_id: "1".repeat(32),
             token_name: "cli-test-abcdef".to_owned(),
-            expires_at: chrono::Utc::now().timestamp() + 1000,
+            expires_at: jiff::Timestamp::now().as_second() + 1000,
         }
     }
 

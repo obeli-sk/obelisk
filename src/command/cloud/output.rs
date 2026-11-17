@@ -351,10 +351,10 @@ fn text<'a>(value: &'a Value, key: &str, fallback: &'a str) -> &'a str {
 /// Unix milliseconds as UTC time.
 fn time(ms: &Value) -> String {
     ms.as_i64()
-        .and_then(chrono::DateTime::from_timestamp_millis)
+        .and_then(|millis| jiff::Timestamp::from_millisecond(millis).ok())
         .map_or_else(
             || "unknown time".to_owned(),
-            |time| time.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+            |time| time.strftime("%Y-%m-%d %H:%M:%S UTC").to_string(),
         )
 }
 
@@ -530,7 +530,7 @@ fn token(out: &mut String, value: &Value) {
         "revoked"
     } else if value["expires_at"]
         .as_i64()
-        .is_some_and(|expiry| expiry <= chrono::Utc::now().timestamp())
+        .is_some_and(|expiry| expiry <= jiff::Timestamp::now().as_second())
     {
         "expired"
     } else {
@@ -547,9 +547,9 @@ fn token(out: &mut String, value: &Value) {
     }
     if let Some(expiry) = value["expires_at"]
         .as_i64()
-        .and_then(|expiry| chrono::DateTime::from_timestamp(expiry, 0))
+        .and_then(|expiry| jiff::Timestamp::from_second(expiry).ok())
     {
-        let _ = writeln!(out, "Expires: {}", expiry.to_rfc3339());
+        let _ = writeln!(out, "Expires: {}", expiry.to_string());
     }
 }
 

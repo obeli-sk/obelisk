@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use concepts::{
     ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn,
     SupportedFunctionReturnValue,
@@ -9,6 +8,7 @@ use concepts::{
         Version,
     },
 };
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use val_json::wast_val::WastVal;
@@ -26,9 +26,9 @@ pub struct ExecutionWithStateSer {
     #[schema(value_type = Object)]
     pub pending_state: PendingState,
     /// When the execution was created
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// When the execution was first scheduled
-    pub first_scheduled_at: DateTime<Utc>,
+    pub first_scheduled_at: Timestamp,
     /// Component content digest
     #[schema(value_type = String)]
     pub component_digest: ComponentDigest,

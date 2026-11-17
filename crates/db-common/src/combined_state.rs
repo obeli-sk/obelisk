@@ -1,6 +1,5 @@
 //! Combined state types representing execution state from the database.
 
-use chrono::{DateTime, Utc};
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, JoinSetId,
     component_id::ComponentDigest,
@@ -13,6 +12,7 @@ use concepts::{
         STATE_LOCKED, STATE_PENDING_AT, Version,
     },
 };
+use jiff::Timestamp;
 use std::panic::Location;
 use tracing::debug;
 use tracing_error::SpanTrace;
@@ -26,9 +26,9 @@ pub struct CombinedStateDTO {
     pub component_digest: ComponentDigest,
     pub component_type: ComponentType,
     pub deployment_id: DeploymentId,
-    pub created_at: DateTime<Utc>,
-    pub first_scheduled_at: DateTime<Utc>,
-    pub pending_expires_finished: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub first_scheduled_at: Timestamp,
+    pub pending_expires_finished: Timestamp,
     pub lifecycle: Lifecycle,
     // Locked:
     pub last_lock_version: Option<Version>,

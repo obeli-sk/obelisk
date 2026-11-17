@@ -22,7 +22,6 @@ use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialRes
 use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, CapturedDbWrite, ComponentUpgradeOutcome, ComponentUpgradeReason,
@@ -41,6 +40,7 @@ use executor::worker::{
     WorkerResultOk,
 };
 use itertools::Either;
+use jiff::Timestamp;
 use std::future;
 use std::ops::Deref;
 use std::time::Duration;
@@ -969,7 +969,7 @@ impl WorkflowWorker {
     async fn call_func_convert_result(
         invocation: Box<dyn super::workflow_runtime::WorkflowInvocation>,
         worker_span: &Span,
-        execution_deadline: DateTime<Utc>,
+        execution_deadline: Timestamp,
         assigned_fuel: Option<u64>,
     ) -> Result<
         (
@@ -1079,7 +1079,7 @@ impl WorkflowWorker {
         res: CallFuncResult,
         worker_span: &Span,
         #[expect(unused_variables)] elapsed: Duration,
-        #[expect(unused_variables)] execution_deadline: DateTime<Utc>,
+        #[expect(unused_variables)] execution_deadline: Timestamp,
     ) -> WorkerResultRefactored {
         match res {
             Ok((supported_result, mut workflow_ctx)) => {
@@ -1604,7 +1604,7 @@ impl WorkflowWorker {
         execution_id: &ExecutionId,
         version: &Version,
         replay_progress: ReplayProgress,
-        lock_expires_at: DateTime<Utc>,
+        lock_expires_at: Timestamp,
     ) {
         let event = SystemEvent::new(
             SystemEventCode::WorkflowReplayLockExpired,
@@ -1990,7 +1990,6 @@ pub(crate) mod tests {
         engines::{EngineConfig, Engines},
     };
     use assert_matches::assert_matches;
-    use chrono::DateTime;
     use concepts::component_id::COMPONENT_DIGEST_DUMMY;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived};
     use concepts::storage::{
@@ -2021,6 +2020,7 @@ pub(crate) mod tests {
         expired_timers_watcher,
     };
     use insta::assert_json_snapshot;
+    use jiff::Timestamp;
     use rstest::rstest;
 
     use serde_json::{Value, json};
@@ -3522,7 +3522,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn stargazers_should_be_deserialized_after_interrupt(db: Database) {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = db.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection().await.unwrap();
@@ -3612,7 +3612,7 @@ pub(crate) mod tests {
         const BODY: &str = "ok";
 
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = db.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection().await.unwrap();
@@ -3717,7 +3717,7 @@ pub(crate) mod tests {
 
         test_utils::set_up();
         let concurrency = 5;
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let created_at = sim_clock.now();
         let (_guard, db_pool, db_close) = db.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
@@ -3955,7 +3955,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn http_get_fallible_err(database: Database) {
         test_utils::set_up();
-        let sim_clock = SimClock::new(DateTime::default());
+        let sim_clock = SimClock::new(Timestamp::default());
         let (_guard, db_pool, db_close) = database.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection().await.unwrap();
@@ -4844,7 +4844,7 @@ pub(crate) mod tests {
 
     pub(crate) async fn write_stub_response(
         db_connection: &dyn DbConnection,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
         stub_execution_id: ExecutionIdDerived,
         result: SupportedFunctionReturnValue,
     ) {
@@ -5362,7 +5362,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         let ffqn = FunctionFqn::new_static("test:workflow/workflow", "trimmed-logs");
-        let current_time = DateTime::UNIX_EPOCH;
+        let current_time = Timestamp::UNIX_EPOCH;
         let old_version = db_connection
             .create(CreateRequest {
                 created_at: current_time,
@@ -5856,7 +5856,7 @@ pub(crate) mod tests {
 
     #[test]
     fn replay_response_accepts_paused_override_for_new_child_execution() {
-        let created_at = DateTime::default();
+        let created_at = Timestamp::default();
         let execution_id = ExecutionId::from_parts(0, 1);
         let child_execution_id = ExecutionId::from_parts(0, 2);
         let component_id = ComponentId::dummy_activity();
@@ -6008,14 +6008,14 @@ pub(crate) mod tests {
                     child_req,
                     ..
                 } => {
-                    *current_time = DateTime::UNIX_EPOCH;
+                    *current_time = Timestamp::UNIX_EPOCH;
                     for req in batch.iter_mut() {
-                        req.created_at = DateTime::UNIX_EPOCH;
+                        req.created_at = Timestamp::UNIX_EPOCH;
                     }
                     for child in child_req.iter_mut() {
                         child.paused = true;
-                        child.created_at = DateTime::UNIX_EPOCH;
-                        child.scheduled_at = DateTime::UNIX_EPOCH;
+                        child.created_at = Timestamp::UNIX_EPOCH;
+                        child.scheduled_at = Timestamp::UNIX_EPOCH;
                     }
                     child_req.first().map(|child| child.execution_id.clone())
                 }

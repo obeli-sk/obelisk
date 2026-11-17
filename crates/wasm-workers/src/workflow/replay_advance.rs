@@ -1,6 +1,5 @@
 use crate::workflow::event_history::ReplayProgress;
 use crate::workflow::replay_db_proxy::InternalCapturedWrite;
-use chrono::DateTime;
 use concepts::{
     SupportedFunctionReturnValue,
     storage::{
@@ -10,6 +9,7 @@ use concepts::{
     },
 };
 use executor::worker::FatalError;
+use jiff::Timestamp;
 use std::time::Duration;
 
 /// Replay outcome for a workflow execution.
@@ -279,7 +279,7 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
             version,
             backtraces: _,
         } => CapturedDbWrite::AppendBatch {
-            current_time: DateTime::UNIX_EPOCH,
+            current_time: Timestamp::UNIX_EPOCH,
             batch: batch
                 .into_iter()
                 .map(normalize_append_request_for_matching)
@@ -297,7 +297,7 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
             delay_id,
             backtraces: _,
         } => CapturedDbWrite::AppendBatchWithDelayResponse {
-            current_time: DateTime::UNIX_EPOCH,
+            current_time: Timestamp::UNIX_EPOCH,
             batch: batch
                 .into_iter()
                 .map(normalize_append_request_for_matching)
@@ -316,7 +316,7 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
             child_req,
             backtraces: _,
         } => CapturedDbWrite::AppendBatchCreateNewExecution {
-            current_time: DateTime::UNIX_EPOCH,
+            current_time: Timestamp::UNIX_EPOCH,
             batch: batch
                 .into_iter()
                 .map(normalize_append_request_for_matching)
@@ -346,13 +346,13 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
             },
             response: AppendResponseToExecution {
                 parent_execution_id: response.parent_execution_id,
-                created_at: DateTime::UNIX_EPOCH,
+                created_at: Timestamp::UNIX_EPOCH,
                 join_set_id: response.join_set_id,
                 child_execution_id: response.child_execution_id,
                 finished_version: response.finished_version,
                 result: response.result,
             },
-            current_time: DateTime::UNIX_EPOCH,
+            current_time: Timestamp::UNIX_EPOCH,
             backtraces: vec![],
         },
         CapturedDbWrite::AppendFinished {
@@ -364,7 +364,7 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
         } => CapturedDbWrite::AppendFinished {
             execution_id,
             version,
-            current_time: DateTime::UNIX_EPOCH,
+            current_time: Timestamp::UNIX_EPOCH,
             retval,
             parent,
         },
@@ -373,7 +373,7 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
 
 fn normalize_append_request_for_matching(req: AppendRequest) -> AppendRequest {
     AppendRequest {
-        created_at: DateTime::UNIX_EPOCH,
+        created_at: Timestamp::UNIX_EPOCH,
         event: normalize_execution_request_for_matching(req.event),
     }
 }
@@ -394,12 +394,12 @@ fn normalize_create_request_for_matching(req: CreateRequest) -> CreateRequest {
         max_persisted_value_size_bytes,
     } = req;
     CreateRequest {
-        created_at: DateTime::UNIX_EPOCH,
+        created_at: Timestamp::UNIX_EPOCH,
         execution_id,
         ffqn,
         params,
         parent,
-        scheduled_at: DateTime::UNIX_EPOCH,
+        scheduled_at: Timestamp::UNIX_EPOCH,
         component_id,
         deployment_id,
         metadata,
@@ -425,7 +425,7 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
             ffqn,
             params,
             parent,
-            scheduled_at: DateTime::UNIX_EPOCH,
+            scheduled_at: Timestamp::UNIX_EPOCH,
             component_id,
             deployment_id,
             metadata,
@@ -433,11 +433,11 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
             max_persisted_value_size_bytes,
         }),
         ExecutionRequest::Locked(mut locked) => {
-            locked.lock_expires_at = DateTime::UNIX_EPOCH;
+            locked.lock_expires_at = Timestamp::UNIX_EPOCH;
             ExecutionRequest::Locked(locked)
         }
         ExecutionRequest::Unlocked(mut unlocked) => {
-            unlocked.unlocked_at = DateTime::UNIX_EPOCH;
+            unlocked.unlocked_at = Timestamp::UNIX_EPOCH;
             ExecutionRequest::Unlocked(unlocked)
         }
         ExecutionRequest::ComponentUpgradeFinished {
@@ -455,7 +455,7 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
             detail,
             http_client_traces,
         } => ExecutionRequest::TemporarilyFailed {
-            backoff_expires_at: DateTime::UNIX_EPOCH,
+            backoff_expires_at: Timestamp::UNIX_EPOCH,
             reason,
             detail,
             http_client_traces,
@@ -464,7 +464,7 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
             backoff_expires_at: _,
             http_client_traces,
         } => ExecutionRequest::TemporarilyTimedOut {
-            backoff_expires_at: DateTime::UNIX_EPOCH,
+            backoff_expires_at: Timestamp::UNIX_EPOCH,
             http_client_traces,
         },
         ExecutionRequest::Finished {
@@ -511,7 +511,7 @@ fn normalize_history_event_for_matching(event: HistoryEvent) -> HistoryEvent {
             closing,
         } => HistoryEvent::JoinNext {
             join_set_id,
-            run_expires_at: DateTime::UNIX_EPOCH,
+            run_expires_at: Timestamp::UNIX_EPOCH,
             requested_ffqn,
             closing,
         },
@@ -561,7 +561,7 @@ fn normalize_join_set_request_for_matching(request: JoinSetRequest) -> JoinSetRe
             paused: _, // Ignore for comparison, user's flag will make it to the database in `merge_requested_overrides_into_fresh_write`
         } => JoinSetRequest::DelayRequest {
             delay_id,
-            expires_at: DateTime::UNIX_EPOCH,
+            expires_at: Timestamp::UNIX_EPOCH,
             schedule_at: normalize_schedule_at_for_matching(schedule_at),
             paused: false,
         },
@@ -586,7 +586,7 @@ fn normalize_schedule_at_for_matching(
 ) -> HistoryEventScheduleAt {
     match schedule_at {
         HistoryEventScheduleAt::Now => HistoryEventScheduleAt::Now,
-        HistoryEventScheduleAt::At(_) => HistoryEventScheduleAt::At(DateTime::UNIX_EPOCH),
+        HistoryEventScheduleAt::At(_) => HistoryEventScheduleAt::At(Timestamp::UNIX_EPOCH),
         HistoryEventScheduleAt::In(duration) => HistoryEventScheduleAt::In(duration),
     }
 }

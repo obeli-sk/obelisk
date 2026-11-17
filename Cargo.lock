@@ -658,7 +658,6 @@ version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
- "arbitrary",
  "iana-time-zone",
  "js-sys",
  "num-traits",
@@ -1186,8 +1185,8 @@ version = "4.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0097e28936e948e8f759478e1b5ec2e5ca70ab62cf38aaa9bd3aa660023e3fca"
 dependencies = [
- "chrono",
  "derive_builder",
+ "jiff",
  "strum 0.27.2",
 ]
 
@@ -2866,13 +2865,16 @@ version = "0.2.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26699905cc795a23e3949585cc7ba3ee8ade090872a27e4316304a777297894a"
 dependencies = [
+ "arbitrary",
  "jiff-core",
  "jiff-static",
  "jiff-tzdb-platform",
+ "js-sys",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -2882,6 +2884,7 @@ version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ffe6854081f5ac0a3046a9b223729ccd7a20b1e0e8277e44dc0660eedf67dfe2"
 dependencies = [
+ "arbitrary",
  "log",
 ]
 
@@ -3485,7 +3488,7 @@ dependencies = [
  "arbitrary",
  "assert_matches",
  "async-trait",
- "chrono",
+ "jiff",
  "obeli-sk-concepts",
  "obeli-sk-db-postgres",
  "obeli-sk-db-sqlite",
@@ -3688,7 +3691,6 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "cfg-if",
- "chrono",
  "const_format",
  "deadpool-postgres",
  "derive-where",
@@ -3696,6 +3698,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "indexmap 2.14.2",
  "insta",
+ "jiff",
  "obeli-sk-val-json",
  "opentelemetry",
  "rand 0.9.5",
@@ -3722,9 +3725,9 @@ dependencies = [
 name = "obeli-sk-db-common"
 version = "0.43.0-rc.18"
 dependencies = [
- "chrono",
  "hashbrown 0.17.1",
  "indexmap 2.14.2",
+ "jiff",
  "obeli-sk-concepts",
  "thiserror 2.0.21",
  "tokio",
@@ -3739,10 +3742,10 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "async-trait",
- "chrono",
  "deadpool-postgres",
  "derive_more",
  "hashbrown 0.17.1",
+ "jiff",
  "obeli-sk-concepts",
  "obeli-sk-db-common",
  "obeli-sk-val-json",
@@ -3768,7 +3771,6 @@ version = "0.43.0-rc.18"
 dependencies = [
  "assert_matches",
  "async-trait",
- "chrono",
  "derive_more",
  "hashbrown 0.17.1",
  "hdrhistogram",
@@ -3776,6 +3778,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "itertools 0.15.0",
+ "jiff",
  "obeli-sk-concepts",
  "obeli-sk-db-common",
  "obeli-sk-val-json",
@@ -3815,10 +3818,10 @@ dependencies = [
  "arbitrary",
  "assert_matches",
  "async-trait",
- "chrono",
  "derive_more",
  "hashbrown 0.17.1",
  "indexmap 2.14.2",
+ "jiff",
  "obeli-db-tests",
  "obeli-sk-concepts",
  "obeli-sk-db-sqlite",
@@ -3850,9 +3853,9 @@ name = "obeli-sk-rest-types"
 version = "0.43.0-rc.18"
 dependencies = [
  "base64 0.22.1",
- "chrono",
  "derive_more",
  "itertools 0.15.0",
+ "jiff",
  "obeli-sk-concepts",
  "obeli-sk-val-json",
  "obelisk-api-types",
@@ -3882,7 +3885,6 @@ version = "0.43.0-rc.18"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
  "const_format",
  "derive_more",
  "hashbrown 0.17.1",
@@ -3890,6 +3892,7 @@ dependencies = [
  "id-arena",
  "indexmap 2.14.2",
  "insta",
+ "jiff",
  "obeli-sk-concepts",
  "obeli-sk-val-json",
  "rstest",
@@ -3948,7 +3951,6 @@ dependencies = [
  "async-trait",
  "boa-common",
  "bytes",
- "chrono",
  "const_format",
  "croner",
  "deno_core",
@@ -3962,6 +3964,7 @@ dependencies = [
  "indexmap 2.14.2",
  "insta",
  "itertools 0.15.0",
+ "jiff",
  "libc",
  "obeli-db-tests",
  "obeli-sk-boa-engine",
@@ -4044,7 +4047,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "cfg-if",
- "chrono",
  "clap",
  "config",
  "console-subscriber",
@@ -4062,6 +4064,7 @@ dependencies = [
  "indexmap 2.14.2",
  "insta",
  "itertools 0.15.0",
+ "jiff",
  "jsonschema",
  "jsonwebtoken",
  "obeli-db-tests",
@@ -4130,7 +4133,7 @@ dependencies = [
 name = "obelisk-api-types"
 version = "0.1.0"
 dependencies = [
- "chrono",
+ "jiff",
  "serde",
  "serde_json",
 ]
@@ -4554,8 +4557,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "851ca9db4932932d69f3ea811b1abe63087a0f740a47692619dd40d4899b68be"
 dependencies = [
  "bytes",
- "chrono",
  "fallible-iterator 0.2.0",
+ "jiff",
  "postgres-protocol",
  "serde_core",
  "serde_json",
@@ -5110,10 +5113,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags",
- "chrono",
  "fallible-iterator 0.3.0",
  "fallible-streaming-iterator",
  "hashlink",
+ "jiff",
  "libsqlite3-sys",
  "serde_json",
  "smallvec",
@@ -5311,9 +5314,9 @@ version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
 dependencies = [
- "chrono",
  "dyn-clone",
  "indexmap 2.14.2",
+ "jiff",
  "ref-cast",
  "schemars_derive",
  "serde",
@@ -6227,7 +6230,7 @@ name = "test-utils"
 version = "0.43.0-rc.18"
 dependencies = [
  "arbitrary",
- "chrono",
+ "jiff",
  "obeli-sk-concepts",
  "obeli-sk-utils",
  "rand 0.9.5",

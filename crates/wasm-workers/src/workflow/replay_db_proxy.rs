@@ -8,7 +8,6 @@ use crate::{
     workflow::{event_history::UpsertStubOrReplayInterrupt, replay_advance::is_closing_join_next},
 };
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use concepts::storage::DbErrorStubResponse;
 use concepts::{
     ComponentId, ExecutionId, JoinSetId,
@@ -21,6 +20,7 @@ use concepts::{
     },
 };
 use db_common::{JoinSetCancellable, JoinSetCloseCancellations};
+use jiff::Timestamp;
 use std::pin::Pin;
 use std::{any::Any, future::Future};
 use tokio::sync::mpsc;
@@ -503,7 +503,7 @@ impl ReplayWorkflowDbConnection {
     async fn get_schedule_create_request(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<(DateTime<Utc>, Created), DbErrorRead> {
+    ) -> Result<(Timestamp, Created), DbErrorRead> {
         if let Some(request) =
             self.collector
                 .preview
@@ -622,7 +622,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     async fn append_non_blocking(
         &mut self,
         non_blocking_event: CacheableDbEvent,
-        _called_at: DateTime<Utc>,
+        _called_at: Timestamp,
     ) -> Result<(), DbErrorWrite> {
         let (request, version, child_req, backtrace) = cacheable_event_parts(non_blocking_event);
         assert!(
@@ -717,7 +717,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     async fn append_batch(
         &mut self,
         version: Version,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -746,7 +746,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     async fn append_batch_with_delay_response(
         &mut self,
         version: Version,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         join_set_id: JoinSetId,
@@ -780,7 +780,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     async fn append_batch_create_new_execution(
         &mut self,
         version: Version,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         child_req: Vec<CreateRequest>,
@@ -815,7 +815,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         version: Version,
         req: AppendRequest,
         response: AppendResponseToExecution,
-        current_time: DateTime<Utc>,
+        current_time: Timestamp,
         stub_backtrace: Option<BacktraceInfo>,
     ) -> Result<(), UpsertStubOrReplayInterrupt> {
         let execution_id = ExecutionId::Derived(execution_id);
@@ -897,7 +897,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
 
     async fn flush_non_blocking_event_cache(
         &mut self,
-        _current_time: DateTime<Utc>,
+        _current_time: Timestamp,
     ) -> Result<(), DbErrorWrite> {
         // noop
         Ok(())
@@ -925,7 +925,7 @@ mod tests {
         use std::time::Duration;
         let (_guard, pool, close) = db_tests::Database::Sqlite.set_up().await;
         let conn = pool.connection().await.unwrap();
-        let created_at = DateTime::UNIX_EPOCH + Duration::from_nanos(123_456_789);
+        let created_at = Timestamp::UNIX_EPOCH + Duration::from_nanos(123_456_789);
         let request = |id| CreateRequest {
             created_at,
             execution_id: id,
@@ -1034,7 +1034,7 @@ mod tests {
         let real_connection = db_pool.connection().await.unwrap();
         let parent_execution_id = ExecutionId::from_parts(0, 0);
         let child_execution_id = ExecutionId::from_parts(0, 1);
-        let created_at = DateTime::UNIX_EPOCH;
+        let created_at = Timestamp::UNIX_EPOCH;
         let parent_version = real_connection
             .create(CreateRequest {
                 created_at,
@@ -1134,7 +1134,7 @@ mod tests {
     ) {
         let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let query_conn = db_pool.connection().await.unwrap();
-        let created_at = DateTime::UNIX_EPOCH;
+        let created_at = Timestamp::UNIX_EPOCH;
         let cancel_registry = CancelRegistry::new();
 
         let parent_execution_id = ExecutionId::from_parts(0, 0);
