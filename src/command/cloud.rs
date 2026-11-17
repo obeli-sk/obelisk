@@ -2,8 +2,8 @@ use super::output::print_json;
 use crate::args::CloudToken;
 use crate::args::{
     AdminArgs, App, AppArgs, ClientConnection, Cloud, CloudApp, CloudAppTarget, CloudArgs,
-    CloudCommandId, CloudDraft, CloudEnv, CloudSecrets, CloudValues, ComponentArgs, Deployment,
-    DeploymentArgs, ExecutionArgs, SelectedApp, Subcommand,
+    CloudCommandId, CloudDraft, CloudEnv, CloudSecrets, CloudValues, ComponentArgs, DeploymentArgs,
+    ExecutionArgs, SelectedApp, Subcommand,
 };
 use crate::client::ClientStartup;
 use crate::config::app::{AppConfigToml, generate_app_name_hint, with_app_name};
@@ -680,20 +680,6 @@ impl CloudArgs {
         crate::command_future(command, Some(startup))?.await
     }
     pub(crate) async fn run(mut self) -> anyhow::Result<()> {
-        if matches!(
-            &self.command,
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::Deployment {
-                    command: Deployment::Enqueue { .. } | Deployment::Apply { .. },
-                    ..
-                },
-                ..
-            })
-        ) {
-            bail!(
-                "Cloud deployment enqueue/apply is unsupported; use `obelisk cloud app deploy` to upload and activate a deployment, or `obelisk cloud app apply` to apply configuration with the active deployment"
-            );
-        }
         if self.verbose {
             crate::client::enable_trace();
         }
@@ -1738,6 +1724,12 @@ mod tests {
                     None => return axum::http::StatusCode::NOT_FOUND.into_response(),
                 }
             }
+            path if path.starts_with("/prefix/tenant/v1/deployments/")
+                && path.ends_with("/switch") =>
+            {
+                // app-proxy stages in the default draft, applying it when asked.
+                json!({"ok": if body["apply"] == true { "switched" } else { "restart_required" }})
+            }
             "/prefix/tenant/v1/components" => json!([]),
             "/prefix/tenant/v1/info" => json!(rest_types::server::ServerInfoResponse {
                 app_env_prefix: String::new(),
@@ -2089,21 +2081,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cloud_deployment_activation_requires_provisioner_apply() {
+    async fn cloud_deployment_switch_uses_direct_api() {
         let (origin, state, task) = server().await;
+        let deployment_id = concepts::prefixed_ulid::DeploymentId::generate().to_string();
         for command in ["enqueue", "apply"] {
-            let error = args(
-                &origin,
-                &["app", "deployment", command, "--empty-deployment"],
+            args(
+                "http://127.0.0.1:1",
+                &["app", "deployment", command, &deployment_id],
             )
-            .run()
+            .run_app_api(format!("{origin}tenant"))
             .await
-            .unwrap_err()
-            .to_string();
-            assert!(error.contains("use `obelisk cloud app deploy`"), "{error}");
-            assert!(error.contains("`obelisk cloud app apply`"), "{error}");
+            .unwrap();
         }
-        assert!(state.lock().unwrap().received.is_empty());
+        let received = state.lock().unwrap().received.clone();
+        let switch = format!("PUT /prefix/tenant/v1/deployments/{deployment_id}/switch");
+        assert_eq!(
+            received
+                .iter()
+                .filter(|(route, _)| *route == switch)
+                .map(|(_, body)| body["apply"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!(false), json!(true)]
+        );
         task.abort();
     }
 
