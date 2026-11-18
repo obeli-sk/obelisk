@@ -116,23 +116,41 @@
     "LimitsToml": {
       "type": "object",
       "properties": {
-        "max_persisted_value_size_bytes": {
-          "description": "Maximum compact JSON-encoded size of one newly persisted execution\nvalue. Each execution snapshots the effective positive value so config\nchanges do not alter replay. Historical executions created before this\nsetting was persisted retain their legacy unlimited contract.",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0,
-          "default": 1048576
+        "max_persisted_value_size": {
+          "description": "Maximum compact JSON-encoded size of one newly persisted execution\nvalue. Each execution snapshots the effective positive value so config\nchanges do not alter replay. Historical executions created before this\nsetting was persisted retain their legacy unlimited contract.\nDefaults to 1 MiB.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSizeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
-        "max_deployment_file_bytes": {
-          "description": "Per-file size limit for deployment-owned blobs attached to a submit request.",
-          "$ref": "#/$defs/MaxDeploymentFileBytes"
+        "max_deployment_file_size": {
+          "description": "Per-file size limit for deployment-owned blobs attached to a submit request.\nDefaults to 20 MiB.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSizeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
-        "max_transport_message_size_bytes": {
-          "description": "Maximum size of a single API request body. Must be positive; the\ndefault is 512 MiB. This is a transport bound and is distinct from\n`max_persisted_value_size_bytes`.",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0,
-          "default": 536870912
+        "max_transport_message_size": {
+          "description": "Maximum size of a single API request body. Must be positive; the\ndefault is 512 MiB. This is a transport bound and is distinct from\n`max_persisted_value_size`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSizeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "activities": {
           "description": "Concurrency and per-slot memory of the activity runtimes.",
@@ -149,11 +167,66 @@
       },
       "additionalProperties": false
     },
-    "MaxDeploymentFileBytes": {
-      "description": "Per-file size limit (in bytes) for deployment-owned blobs, defaulting to 20 MiB.",
-      "type": "integer",
-      "format": "uint32",
-      "minimum": 0
+    "ByteSizeConfig": {
+      "description": "A byte size whose unit is part of the key, like [`DurationConfig`]. Units are binary and a\nbare integer is not accepted, so a configuration cannot silently mean something 1024x off.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "bytes"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kib"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "mib"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "gib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "gib"
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "ActivityCellsToml": {
       "type": "object",
@@ -226,67 +299,6 @@
         },
         {
           "$ref": "#/$defs/ByteSizeConfig"
-        }
-      ]
-    },
-    "ByteSizeConfig": {
-      "description": "A byte size whose unit is part of the key, like [`DurationConfig`]. Units are binary and a\nbare integer is not accepted, so a configuration cannot silently mean something 1024x off.",
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "bytes": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "bytes"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kib": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "kib"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "mib": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "mib"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "gib": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            }
-          },
-          "required": [
-            "gib"
-          ],
-          "additionalProperties": false
         }
       ]
     },

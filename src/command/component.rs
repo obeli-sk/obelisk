@@ -249,7 +249,7 @@ fn find_component_for_push(
             })
         }
         TomlComponentType::ActivityExec => {
-            let (cfg, _) = deployment
+            let (cfg, n) = deployment
                 .activities_exec
                 .iter()
                 .find(|(_, n)| n.to_string() == name)
@@ -276,7 +276,7 @@ fn find_component_for_push(
                     ffqn: cfg.ffqn.clone(),
                     params,
                     return_type,
-                    max_output_bytes: cfg.max_output_bytes,
+                    max_output_bytes: cfg.resolve_max_output_bytes(n)?,
                     exposed_secrets: cfg.exposed_secrets.clone(),
                     params_via_stdin: cfg.params_via_stdin,
                 },
@@ -532,7 +532,12 @@ fn build_component_table(
             }
             t["env_vars"] = Item::Value(toml_edit::Value::Array(arr));
         }
-        t["max_output_bytes"] = value(i64::try_from(*max_output_bytes).unwrap_or(i64::MAX));
+        let mut max_output_size = toml_edit::InlineTable::new();
+        max_output_size.insert(
+            "bytes",
+            i64::try_from(*max_output_bytes).unwrap_or(i64::MAX).into(),
+        );
+        t["max_output_size"] = value(max_output_size);
         if *params_via_stdin {
             t["params_via_stdin"] = value(true);
         }
@@ -1044,7 +1049,11 @@ mod tests {
             panic!("expected synthesized interface")
         };
         assert_eq!(interface.params.as_ref().expect("params set").len(), 1);
-        assert_eq!(act.max_output_bytes, 1024);
+        assert_eq!(
+            act.resolve_max_output_bytes(act.name.as_ref().unwrap())
+                .unwrap(),
+            1024
+        );
         assert!(matches!(act.exec.lock_expiry, DurationConfig::Seconds(3)));
     }
 }

@@ -1,11 +1,12 @@
 //! Shared parser for authored and processed deployments; digest metadata is only accepted in processed manifests.
 
 use super::{
-    AllowedHostToml, BlockingStrategyConfigToml, ComponentCommon, ComponentLocationToml,
-    ComponentStdOutputToml, ConfigName, DeploymentResolved, DurationConfig, ExecConfigToml,
-    JsParamToml, LogLevelToml, OCI_SCHEMA_PREFIX, SecretRef, WebhookRoute, default_lock_extension,
-    default_max_output_bytes, default_max_retries, default_retry_exp_backoff, resolve_local_refs,
-    sanitize_deployment_relative_path, validate_secret_optionality,
+    AllowedHostToml, BlockingStrategyConfigToml, ByteSizeConfig, ComponentCommon,
+    ComponentLocationToml, ComponentStdOutputToml, ConfigName, DeploymentResolved, DurationConfig,
+    ExecConfigToml, JsParamToml, LogLevelToml, OCI_SCHEMA_PREFIX, SecretRef, WebhookRoute,
+    default_lock_extension, default_max_output_bytes, default_max_retries,
+    default_retry_exp_backoff, resolve_local_refs, sanitize_deployment_relative_path,
+    validate_secret_optionality,
 };
 use crate::args::TomlComponentType;
 use crate::config::env_var::EnvVarConfig;
@@ -472,6 +473,24 @@ impl HasOptionalNameAndFfqn for ActivityJsComponentConfigToml {
     }
 }
 
+impl ActivityExecComponentConfigToml {
+    pub(crate) fn resolve_max_output_bytes(&self, name: &ConfigName) -> Result<u64, anyhow::Error> {
+        match (self.max_output_size, self.max_output_bytes) {
+            (Some(_), Some(_)) => bail!(
+                "Exec activity `{name}`: `max_output_size` and the deprecated `max_output_bytes` are mutually exclusive"
+            ),
+            (Some(size), None) => Ok(u64::from(size)),
+            (None, Some(bytes)) => {
+                warn!(
+                    "Exec activity `{name}`: `max_output_bytes` is deprecated, replace it with `max_output_size.bytes = {bytes}`"
+                );
+                Ok(bytes)
+            }
+            (None, None) => Ok(default_max_output_bytes()),
+        }
+    }
+}
+
 impl HasOptionalNameAndFfqn for ActivityExecComponentConfigToml {
     fn config_name(&self) -> Option<&ConfigName> {
         self.name.as_ref()
@@ -681,11 +700,15 @@ pub(crate) struct ActivityExecComponentConfigToml {
     pub(crate) logs_store_min_level: LogLevelToml,
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVarConfig>,
-    /// Maximum bytes collected from stdout to form the response.
+    /// Maximum stdout size collected to form the response, 4 KiB by default.
     /// Exceeding the limit fails the execution.
     /// Not used when `return_type` is result (default), since the response carries no data.
-    #[serde(default = "default_max_output_bytes")]
-    pub(crate) max_output_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) max_output_size: Option<ByteSizeConfig>,
+    // backcompat: 0.42 byte count, superseded by `max_output_size`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
+    pub(crate) max_output_bytes: Option<u64>,
     /// Registered secret names (from the app-owned `app.toml` `[secrets]`
     /// table) to expose to the script in the stdin JSON `secrets` object.
     #[serde(default)]

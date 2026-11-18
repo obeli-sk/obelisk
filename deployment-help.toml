@@ -218,11 +218,11 @@
 ## Environment variables: same syntax as activity_wasm. Default is empty, not even `PATH` is exposed from the host.
 ## When explicitly set, only the listed vars are exposed (env is cleared first).
 # env_vars = ["PATH", {key = "MY_VAR", value = "my_value"}] # Values support interpolation.
-## Maximum bytes collected from stdout to form the response.
+## Maximum stdout size collected to form the response, with the unit as the key: `bytes`, `kib`, `mib` or `gib`.
 ## Exceeding the limit fails the execution.
 ## Not used when return_type is result (default), since the response carries no data.
-## Default: 4096.
-# max_output_bytes = 4096
+## Default: 4 KiB. Replaces the deprecated `max_output_bytes`.
+# max_output_size.kib = 4
 ## Pass parameters via the stdin JSON `params` array instead of argv.
 ## Use for large payloads that would exceed the `execve` argument-size limit.
 ## The child receives `{"params":[...]}` on stdin (alongside `secrets`, if configured).

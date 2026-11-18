@@ -14,7 +14,7 @@ app_name = "my-app"
 
 ## Optional hosted VM settings; omitted memory uses the cloud default.
 # [cloud]
-# memory_mb = 512
+# memory.mib = 512
 
 ## Cloud bindings supply public environment values, overriding uploaded or local values.
 ## Obelisk reads only `env`; types and other settings are validated by the target cloud. Local runs must set required envs.

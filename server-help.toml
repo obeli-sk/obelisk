@@ -286,16 +286,19 @@
 # this setting affects only new execution trees and does not change replay.
 # Existing database events need no schema migration. Created events written by
 # older releases have no stored limit and retain their legacy unlimited contract.
-# This is separate from `max_transport_message_size_bytes`, which is a larger
+# This is separate from `max_transport_message_size`, which is a larger
 # transport bound. Increasing the transport bound does not relax this
 # persisted-value limit.
+# Sizes take the unit as the key: `bytes`, `kib`, `mib` or `gib`. The 0.42 keys
+# `max_persisted_value_size_bytes`, `max_deployment_file_bytes` and
+# `max_transport_message_size_bytes` are deprecated but still accepted.
 [limits]
-max_persisted_value_size_bytes = 1048576
-# Per-file size limit (in bytes) for deployment-owned blobs attached to a submit
-# request. Defaults to 20 MiB.
-# max_deployment_file_bytes = 20971520
+max_persisted_value_size.mib = 1
+# Per-file size limit for deployment-owned blobs attached to a submit request.
+# Defaults to 20 MiB.
+# max_deployment_file_size.mib = 20
 # Maximum size of a single API request body. Must be positive. Defaults to 512 MiB.
-# max_transport_message_size_bytes = 536870912
+# max_transport_message_size.mib = 512
 
 # Every execution slot in the process is charged to exactly one (workload, runtime) cell below.
 # `count` is how many slots the cell grants, `memory` how much linear memory (for a native V8

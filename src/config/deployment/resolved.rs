@@ -1444,6 +1444,7 @@ pub(crate) async fn resolve_local_refs(
 
     let mut activities_exec = Vec::with_capacity(deployment.activities_exec.len());
     for (mut a, name) in deployment.activities_exec {
+        let max_output_bytes = a.resolve_max_output_bytes(&name)?;
         let interface =
             resolve_function_interface(a.interface, &mut a.component_files, cas).await?;
         ensure!(
@@ -1473,7 +1474,7 @@ pub(crate) async fn resolve_local_refs(
             forward_stderr: a.forward_stderr,
             logs_store_min_level: a.logs_store_min_level,
             env_vars: a.env_vars,
-            max_output_bytes: a.max_output_bytes,
+            max_output_bytes,
             exposed_secrets: a.exposed_secrets,
             params_via_stdin: a.params_via_stdin,
         });

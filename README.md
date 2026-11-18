@@ -167,14 +167,14 @@ value, or failure diagnostic. Self-hosted operators can set a positive value in
 
 ```toml
 [limits]
-max_persisted_value_size_bytes = 1048576
+max_persisted_value_size.mib = 1
 ```
 
 Each top-level execution snapshots the effective limit. Child and scheduled
 executions inherit it, so a configuration change applies only to new execution
 trees and cannot change replay behavior. Existing databases require no schema
 migration: executions created by older releases retain their legacy unlimited
-contract. `max_transport_message_size_bytes` (also under `[limits]`, defaulting to
+contract. `max_transport_message_size` (also under `[limits]`, defaulting to
 512 MiB) is a separate, larger transport safeguard bounding a single API request
 body, and does not relax the persisted-value limit.
 

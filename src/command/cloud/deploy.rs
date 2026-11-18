@@ -461,13 +461,13 @@ mod tests {
             let origin = format!("http://{}", listener.local_addr().unwrap());
             // The applied app.toml differs from the local one only in the config scenarios.
             let applied_toml = if matches!(scenario, "config" | "stopped-config") {
-                "app_name='demo'\n[cloud]\nmemory_mb=512\n"
+                "app_name='demo'\n[cloud]\nmemory.mib=512\n"
             } else {
                 config
             };
             let mut app = json!({"policy":desired.policy(),"cloud":{},"status":"running","desired_state":"running","revision":1,"applied_revision":1,"endpoints":{"api":format!("{origin}/tenant")}});
             if matches!(scenario, "config" | "stopped-config") {
-                app["cloud"] = json!({"memory_mb":512});
+                app["cloud"] = json!({"memory":{"mib":512}});
             }
             if matches!(scenario, "stopped" | "stopped-config") {
                 app["status"] = json!("stopped");

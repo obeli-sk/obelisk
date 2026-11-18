@@ -278,7 +278,7 @@ mod tests {
             let config = if scenario == "new" {
                 "app_name='demo'\n[secrets]\nKEY={}\n"
             } else {
-                "app_name='demo'\n[cloud]\nmemory_mb=512\n"
+                "app_name='demo'\n[cloud]\nmemory.mib=512\n"
             };
             std::fs::write(&app_path, config).unwrap();
             std::fs::write(&deployment_path, "").unwrap();
