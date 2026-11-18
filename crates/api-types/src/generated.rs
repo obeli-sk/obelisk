@@ -968,9 +968,9 @@ pub struct CloudConfigToml {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub integrations: ::std::collections::BTreeMap<::std::string::String, CloudIntegrationToml>,
-    ///VM memory in MB; omission uses the cloud default.
+    ///VM memory; omission uses the cloud default.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub memory_mb: ::std::option::Option<::std::num::NonZeroU32>,
+    pub memory: ::std::option::Option<MemorySizeConfig>,
 }
 ///Obelisk reads only `env`; the other keys (`type` and its settings) belong to the cloud.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -1264,6 +1264,14 @@ impl ::std::convert::TryFrom<::std::string::String> for InternalSecretType {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///A whole number of MiB or GiB, the granularity cloud VMs are sized in.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub enum MemorySizeConfig {
+    #[serde(rename = "mib")]
+    Mib(::std::num::NonZeroU32),
+    #[serde(rename = "gib")]
+    Gib(::std::num::NonZeroU32),
 }
 /**Input for method restrictions in TOML configuration.
 Supports both `methods = "*"` and `methods = ["GET", "POST"]` syntax.*/
@@ -1559,7 +1567,7 @@ pub mod defaults {
     pub(super) fn app_config_toml_cloud() -> super::CloudConfigToml {
         super::CloudConfigToml {
             integrations: Default::default(),
-            memory_mb: Default::default(),
+            memory: Default::default(),
         }
     }
     pub(super) fn app_config_toml_outbound_http() -> super::OutboundHttpToml {

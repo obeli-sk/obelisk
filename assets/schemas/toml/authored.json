@@ -839,12 +839,16 @@
           },
           "default": []
         },
-        "max_output_bytes": {
-          "description": "Maximum bytes collected from stdout to form the response.\nExceeding the limit fails the execution.\nNot used when `return_type` is result (default), since the response carries no data.",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0,
-          "default": 4096
+        "max_output_size": {
+          "description": "Maximum stdout size collected to form the response, 4 KiB by default.\nExceeding the limit fails the execution.\nNot used when `return_type` is result (default), since the response carries no data.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSizeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "exposed_secrets": {
           "description": "Registered secret names (from the app-owned `app.toml` `[secrets]`\ntable) to expose to the script in the stdin JSON `secrets` object.",
@@ -869,6 +873,67 @@
         },
         {
           "$ref": "#/$defs/InlineFunctionInterfaceToml"
+        }
+      ]
+    },
+    "ByteSizeConfig": {
+      "description": "A byte size whose unit is part of the key, like [`DurationConfig`]. Units are binary and a\nbare integer is not accepted, so a configuration cannot silently mean something 1024x off.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "bytes"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kib"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "mib"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "gib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "gib"
+          ],
+          "additionalProperties": false
         }
       ]
     },

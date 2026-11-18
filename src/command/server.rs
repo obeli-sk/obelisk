@@ -2936,12 +2936,7 @@ impl ServerVerified {
         if workflows_max_events_per_run == 0 {
             bail!("`workflows.max_events_per_run` must be greater than zero");
         }
-        if config.limits.max_persisted_value_size_bytes == 0 {
-            bail!("`limits.max_persisted_value_size_bytes` must be greater than zero");
-        }
-        if config.limits.max_transport_message_size_bytes == 0 {
-            bail!("`limits.max_transport_message_size_bytes` must be greater than zero");
-        }
+        let size_limits = config.limits.resolve_sizes()?;
         let workflows_response_refresh_interval =
             config.workflows_global_config.response_refresh_interval;
         if workflows_response_refresh_interval == 0 {
@@ -3015,7 +3010,7 @@ impl ServerVerified {
                 webhook_max_stream_duration: config.webhooks.max_stream_duration.into(),
                 webhook_persist_on_outbound_http: config.webhooks.persist_on_outbound_http,
                 build_semaphore,
-                max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
+                max_persisted_value_size_bytes: size_limits.persisted_value,
                 workflows_max_replay_captured_writes,
                 workflow_js_runtime,
                 activity_js_runtime,
@@ -3035,9 +3030,9 @@ impl ServerVerified {
             } else {
                 None
             },
-            max_deployment_file_bytes: config.limits.max_deployment_file_bytes.0,
-            max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
-            max_transport_message_size_bytes: config.limits.max_transport_message_size_bytes,
+            max_deployment_file_bytes: size_limits.deployment_file,
+            max_persisted_value_size_bytes: size_limits.persisted_value,
+            max_transport_message_size_bytes: size_limits.transport_message,
             global_http_config,
             server_http_policy_audit,
             server_configuration_event_id: None,

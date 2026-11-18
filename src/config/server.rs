@@ -340,23 +340,35 @@ impl ServerConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LimitsToml {
     /// Maximum compact JSON-encoded size of one newly persisted execution
     /// value. Each execution snapshots the effective positive value so config
     /// changes do not alter replay. Historical executions created before this
     /// setting was persisted retain their legacy unlimited contract.
-    #[serde(default = "default_max_persisted_value_size_bytes")]
-    pub(crate) max_persisted_value_size_bytes: u64,
-    /// Per-file size limit for deployment-owned blobs attached to a submit request.
+    /// Defaults to 1 MiB.
     #[serde(default)]
-    pub(crate) max_deployment_file_bytes: MaxDeploymentFileBytes,
+    pub(crate) max_persisted_value_size: Option<ByteSizeConfig>,
+    /// Per-file size limit for deployment-owned blobs attached to a submit request.
+    /// Defaults to 20 MiB.
+    #[serde(default)]
+    pub(crate) max_deployment_file_size: Option<ByteSizeConfig>,
     /// Maximum size of a single API request body. Must be positive; the
     /// default is 512 MiB. This is a transport bound and is distinct from
-    /// `max_persisted_value_size_bytes`.
-    #[serde(default = "default_max_transport_message_size_bytes")]
-    pub(crate) max_transport_message_size_bytes: u64,
+    /// `max_persisted_value_size`.
+    #[serde(default)]
+    pub(crate) max_transport_message_size: Option<ByteSizeConfig>,
+    // backcompat: 0.42 byte counts, superseded by the unit-keyed sizes above.
+    #[serde(default)]
+    #[schemars(skip)]
+    max_persisted_value_size_bytes: Option<u64>,
+    #[serde(default)]
+    #[schemars(skip)]
+    max_deployment_file_bytes: Option<u64>,
+    #[serde(default)]
+    #[schemars(skip)]
+    max_transport_message_size_bytes: Option<u64>,
     /// Concurrency and per-slot memory of the activity runtimes.
     #[serde(default)]
     pub(crate) activities: ActivityCellsToml,
@@ -368,17 +380,12 @@ pub(crate) struct LimitsToml {
     pub(crate) webhooks: WebhookCellsToml,
 }
 
-impl Default for LimitsToml {
-    fn default() -> Self {
-        Self {
-            max_persisted_value_size_bytes: DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES,
-            max_deployment_file_bytes: MaxDeploymentFileBytes::default(),
-            max_transport_message_size_bytes: default_max_transport_message_size_bytes(),
-            activities: ActivityCellsToml::default(),
-            workflows: WorkflowCellsToml::default(),
-            webhooks: WebhookCellsToml::default(),
-        }
-    }
+/// Byte counts of `[limits]`, after defaults and the 0.42 `*_bytes` keys are applied.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ResolvedSizeLimits {
+    pub(crate) persisted_value: u64,
+    pub(crate) deployment_file: u32,
+    pub(crate) transport_message: u64,
 }
 
 /// One `(workload, runtime)` cell: how many execution slots it grants and how large one slot may
@@ -553,6 +560,47 @@ impl ConcurrencyCells {
 }
 
 impl LimitsToml {
+    pub(crate) fn resolve_sizes(&self) -> Result<ResolvedSizeLimits, anyhow::Error> {
+        let max_persisted_value_size_bytes = resolve_size(
+            "max_persisted_value_size",
+            self.max_persisted_value_size,
+            "max_persisted_value_size_bytes",
+            self.max_persisted_value_size_bytes,
+            DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES,
+        )?;
+        let max_deployment_file_bytes = resolve_size(
+            "max_deployment_file_size",
+            self.max_deployment_file_size,
+            "max_deployment_file_bytes",
+            self.max_deployment_file_bytes,
+            u64::from(MAX_DEPLOYMENT_FILE_BYTES),
+        )?;
+        let max_deployment_file_bytes = u32::try_from(max_deployment_file_bytes).map_err(|_| {
+            anyhow::anyhow!("`limits.max_deployment_file_size` must be below 4 GiB")
+        })?;
+        let max_transport_message_size_bytes = resolve_size(
+            "max_transport_message_size",
+            self.max_transport_message_size,
+            "max_transport_message_size_bytes",
+            self.max_transport_message_size_bytes,
+            crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES as u64,
+        )?;
+        for (key, value) in [
+            ("max_persisted_value_size", max_persisted_value_size_bytes),
+            (
+                "max_transport_message_size",
+                max_transport_message_size_bytes,
+            ),
+        ] {
+            anyhow::ensure!(value > 0, "`limits.{key}` must be greater than zero");
+        }
+        Ok(ResolvedSizeLimits {
+            persisted_value: max_persisted_value_size_bytes,
+            deployment_file: max_deployment_file_bytes,
+            transport_message: max_transport_message_size_bytes,
+        })
+    }
+
     pub(crate) fn resolve_cells(&self) -> Result<ConcurrencyCells, anyhow::Error> {
         Ok(ConcurrencyCells {
             activities_wasm: self.activities.wasm.resolve("activities.wasm", 500, GIB)?,
@@ -616,12 +664,28 @@ fn resolve_count(
     Ok(count)
 }
 
-const fn default_max_persisted_value_size_bytes() -> u64 {
-    DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES
-}
-
-const fn default_max_transport_message_size_bytes() -> u64 {
-    crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES as u64
+fn resolve_size(
+    key: &str,
+    size: Option<ByteSizeConfig>,
+    legacy_key: &str,
+    legacy_bytes: Option<u64>,
+    default: u64,
+) -> Result<u64, anyhow::Error> {
+    match (size, legacy_bytes) {
+        (Some(_), Some(_)) => {
+            anyhow::bail!(
+                "`limits.{key}` and the deprecated `limits.{legacy_key}` are mutually exclusive"
+            )
+        }
+        (Some(size), None) => Ok(u64::from(size)),
+        (None, Some(bytes)) => {
+            tracing::warn!(
+                "`limits.{legacy_key}` is deprecated, replace it with `limits.{key}.bytes = {bytes}`"
+            );
+            Ok(bytes)
+        }
+        (None, None) => Ok(default),
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
@@ -631,17 +695,6 @@ pub(crate) struct OutboundHttpToml {
     /// `allowed_host` entries.
     #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
-}
-
-/// Per-file size limit (in bytes) for deployment-owned blobs, defaulting to 20 MiB.
-#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
-#[serde(transparent)]
-pub(crate) struct MaxDeploymentFileBytes(pub(crate) u32);
-
-impl Default for MaxDeploymentFileBytes {
-    fn default() -> Self {
-        Self(MAX_DEPLOYMENT_FILE_BYTES)
-    }
 }
 
 /// Exec activity policy: component name -> reviewed secret exposure digests.
@@ -2178,6 +2231,33 @@ mod tests {
             assert_eq!(Some(64 * MIB), cells.activities_wasm.memory);
             assert_eq!(Some(500), cells.workflows_wasm.count);
             assert_eq!(None, cells.workflows_wasm.memory);
+        }
+
+        #[test]
+        fn sizes_accept_units_and_legacy_byte_counts() {
+            let sizes = |toml: &str| {
+                toml::from_str::<ServerConfigToml>(toml)
+                    .unwrap()
+                    .limits
+                    .resolve_sizes()
+            };
+            let resolved = sizes(
+                "[limits]\nmax_persisted_value_size.kib = 2\nmax_deployment_file_bytes = 10\n",
+            )
+            .unwrap();
+            assert_eq!(resolved.persisted_value, 2048);
+            assert_eq!(resolved.deployment_file, 10);
+            assert_eq!(
+                resolved.transport_message,
+                crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES as u64
+            );
+            for invalid in [
+                "[limits]\nmax_persisted_value_size.kib = 2\nmax_persisted_value_size_bytes = 2048\n",
+                "[limits]\nmax_transport_message_size.bytes = 0\n",
+                "[limits]\nmax_deployment_file_size.gib = 4\n",
+            ] {
+                assert!(sizes(invalid).is_err(), "{invalid}");
+            }
         }
 
         /// A cell granting zero slots would leave its workload pending forever.

@@ -73,11 +73,19 @@ fn deserialize_public_http_servers<'de, D: serde::Deserializer<'de>>(
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CloudConfigToml {
-    /// VM memory in MB; omission uses the cloud default.
+    /// VM memory; omission uses the cloud default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) memory_mb: Option<std::num::NonZeroU32>,
+    pub(crate) memory: Option<MemorySizeConfig>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub(crate) integrations: std::collections::BTreeMap<String, CloudIntegrationToml>,
+}
+
+/// A whole number of MiB or GiB, the granularity cloud VMs are sized in.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MemorySizeConfig {
+    Mib(std::num::NonZeroU32),
+    Gib(std::num::NonZeroU32),
 }
 
 /// Obelisk reads only `env`; the other keys (`type` and its settings) belong to the cloud.
@@ -405,7 +413,7 @@ mod tests {
             r#"
             app_name = "first"
             [cloud]
-            memory_mb = 512
+            memory.mib = 512
             [public_env]
             B = {}
             A = {}
@@ -420,7 +428,7 @@ mod tests {
             # Same policy for another app.
             app_name = "second"
             [cloud]
-            memory_mb = 1024
+            memory.mib = 1024
             [secrets]
             TOKEN = {}
             [public_env]
@@ -506,7 +514,7 @@ mod tests {
                 REQUIRED_TOKEN = {{ optional = false, type = "env" }}
                 KEY = {{ type = "internal", exposed_to = {{ worker = "{lower}" }} }}
                 [cloud]
-                memory_mb = 512
+                memory.mib = 512
                 integrations.llm = {{ type = "llm", env = "LLM_URL" }}
                 [[outbound_http.allowed_host]]
                 pattern = "api.example.com"

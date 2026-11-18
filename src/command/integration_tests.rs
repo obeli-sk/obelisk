@@ -1018,7 +1018,7 @@ impl TestServer {
 
     async fn restart_with_persisted_value_limit(self, limit: i64) -> Self {
         self.restart(|server_doc| {
-            server_doc["limits"]["max_persisted_value_size_bytes"] = value(limit);
+            server_doc["limits"]["max_persisted_value_size"]["bytes"] = value(limit);
         })
         .await
     }
@@ -3971,7 +3971,7 @@ async fn replay_finished_execution_reports_final_version_webapi() {
 async fn replay_and_advance_oversized_result_webapi() {
     let server = TestServer::start_with_server_lines_and_component(
         test_addr!(127),
-        "limits.max_persisted_value_size_bytes = 256",
+        "limits.max_persisted_value_size.bytes = 256",
         "workflow_js",
         "test_make_record_workflow",
     )
@@ -4000,7 +4000,7 @@ async fn replay_and_advance_oversized_result_webapi() {
 async fn replay_after_restart_uses_original_persisted_value_limit() {
     let server = TestServer::start_with_server_lines_and_component(
         test_addr!(128),
-        "limits.max_persisted_value_size_bytes = 256",
+        "limits.max_persisted_value_size.bytes = 256",
         "workflow_js",
         "test_make_record_workflow",
     )
@@ -4106,7 +4106,7 @@ async fn submit_workflow_with_get_result() {
 async fn typed_js_submit_throws_when_child_params_exceed_persisted_value_limit() {
     let server = TestServer::start_with_server_lines(
         test_addr!(150),
-        "limits.max_persisted_value_size_bytes = 256",
+        "limits.max_persisted_value_size.bytes = 256",
     )
     .await;
     let exec_id = server.generate_execution_id().await;
@@ -4257,7 +4257,7 @@ async fn submit_nonexistent_function_returns_404() {
 async fn rest_submit_enforces_exact_persisted_value_boundary() {
     let server = TestServer::start_with_server_lines_and_component(
         test_addr!(125),
-        "limits.max_persisted_value_size_bytes = 16",
+        "limits.max_persisted_value_size.bytes = 16",
         "activity_exec",
         "testing:integration/exec-greet.greet-inline",
     )

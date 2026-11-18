@@ -166,7 +166,7 @@ async fn cloud_new_and_stage_load_local_policy() {
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let dir = tempfile::tempdir().unwrap();
-    let app_toml = "app_name='local-app'\n[cloud]\nmemory_mb=512\n[public_env]\nREGION={}\n";
+    let app_toml = "app_name='local-app'\n[cloud]\nmemory.mib=512\n[public_env]\nREGION={}\n";
     std::fs::write(dir.path().join("app.toml"), app_toml).unwrap();
     tokio::task::spawn_blocking(move || {
         let run = |args: &[&str], region: Option<&str>| {

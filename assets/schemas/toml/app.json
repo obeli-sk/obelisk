@@ -57,14 +57,16 @@
     "CloudConfigToml": {
       "type": "object",
       "properties": {
-        "memory_mb": {
-          "description": "VM memory in MB; omission uses the cloud default.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 1
+        "memory": {
+          "description": "VM memory; omission uses the cloud default.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemorySizeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "integrations": {
           "type": "object",
@@ -74,6 +76,39 @@
         }
       },
       "additionalProperties": false
+    },
+    "MemorySizeConfig": {
+      "description": "A whole number of MiB or GiB, the granularity cloud VMs are sized in.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "mib": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "mib"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "gib": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "gib"
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "CloudIntegrationToml": {
       "description": "Obelisk reads only `env`; the other keys (`type` and its settings) belong to the cloud.",

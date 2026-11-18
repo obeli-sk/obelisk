@@ -2164,11 +2164,11 @@ mod tests {
     }
     #[test]
     fn with_app_name_keeps_matching_text_verbatim() {
-        let text = "# comment\napp_name='demo'\n[cloud]\nmemory_mb=512\n";
+        let text = "# comment\napp_name='demo'\n[cloud]\nmemory.mib=512\n";
         assert_eq!(with_app_name(text, "demo").unwrap(), text);
         assert_eq!(
             with_app_name(text, "renamed").unwrap(),
-            "# comment\napp_name= \"renamed\"\n[cloud]\nmemory_mb=512\n"
+            "# comment\napp_name= \"renamed\"\n[cloud]\nmemory.mib=512\n"
         );
         assert_eq!(with_app_name("", "demo").unwrap(), "app_name = \"demo\"\n");
     }
@@ -2179,7 +2179,7 @@ mod tests {
         let path = directory.path().join("app.toml");
         tokio::fs::write(
             &path,
-            "app_name='demo'\n[cloud]\nmemory_mb=1024\n[public_env]\nREGION={optional=true}\n[secrets]\nKEY={optional=true}\n[[outbound_http.allowed_host]]\npattern='${REGION}'\n",
+            "app_name='demo'\n[cloud]\nmemory.mib=1024\n[public_env]\nREGION={optional=true}\n[secrets]\nKEY={optional=true}\n[[outbound_http.allowed_host]]\npattern='${REGION}'\n",
         )
         .await
         .unwrap();
