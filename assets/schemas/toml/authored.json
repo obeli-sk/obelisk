@@ -578,6 +578,7 @@
       "type": "object",
       "properties": {
         "params": {
+          "description": "Parameter declarations (name and WIT type), not argument values.",
           "type": [
             "array",
             "null"
@@ -587,6 +588,7 @@
           }
         },
         "return_type": {
+          "description": "WIT return type, e.g. `result<string, string>`.",
           "type": [
             "string",
             "null"
@@ -1250,7 +1252,7 @@
           "type": "string"
         },
         "params": {
-          "description": "JSON-encoded parameters to pass to the target function.",
+          "description": "JSON array of argument values passed to the target function, e.g. `[1, \"a\"]`.",
           "type": "string",
           "default": "[]"
         },

@@ -558,8 +558,10 @@ pub(crate) struct AuthoredFunctionInterfaceToml {
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct InlineFunctionInterfaceToml {
+    /// Parameter declarations (name and WIT type), not argument values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) params: Option<Vec<JsParamToml>>,
+    /// WIT return type, e.g. `result<string, string>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) return_type: Option<String>,
 }
@@ -957,7 +959,7 @@ pub struct CronComponentConfigToml {
     /// Fully qualified function name of the target to invoke on each schedule tick.
     #[schemars(with = "String")]
     pub ffqn: FunctionFqn,
-    /// JSON-encoded parameters to pass to the target function.
+    /// JSON array of argument values passed to the target function, e.g. `[1, "a"]`.
     #[serde(default = "default_schedule_params")]
     pub params: String,
     /// Cron expression or `@once`, `@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`.
