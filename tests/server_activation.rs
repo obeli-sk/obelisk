@@ -358,7 +358,7 @@ fn submit_reports_deployment_id_conflict() {
     server.stop();
 }
 
-// A cloud deploy submits before the app.toml that opens `external` is applied.
+// A cloud app push submits before the app.toml that opens `external` is applied.
 #[test]
 fn submit_defers_closed_http_server_to_activation() {
     const WEBHOOK: &str = "Dep_00000000000000000000000005";

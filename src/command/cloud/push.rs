@@ -4,12 +4,12 @@ use crate::config::deployment::{
 };
 
 impl CloudArgs {
-    pub(super) async fn deploy(self) -> anyhow::Result<()> {
+    pub(super) async fn push(self) -> anyhow::Result<()> {
         let prompt = (terminal() && !self.json).then_some(ask);
-        self.deploy_with_prompt(prompt).await
+        self.push_with_prompt(prompt).await
     }
 
-    async fn deploy_with_prompt(
+    async fn push_with_prompt(
         self,
         mut prompt: Option<impl FnMut(&Question) -> anyhow::Result<String>>,
     ) -> anyhow::Result<()> {
@@ -20,7 +20,7 @@ impl CloudArgs {
         let config_path = app_config_path(&target.command)?;
         let Cloud::App(CloudAppTarget {
             command:
-                CloudApp::Deploy {
+                CloudApp::Push {
                     selected: SelectedApp { app },
                     deployment,
                     empty_deployment,
@@ -43,7 +43,7 @@ impl CloudArgs {
         )
         .await?;
         let (config, app_config) = config_for_app(&name, config.zip(config_path), true)?
-            .expect("deploy requires an app config");
+            .expect("push requires an app config");
         let save_name = app.is_none();
         let explicit = explicit_values(&values)?;
         let prepared = if empty_deployment {
@@ -51,7 +51,7 @@ impl CloudArgs {
         } else {
             prepare_deployment_manifest_from_disk(&deployment).await?
         };
-        eprintln!("Deploying {name}");
+        eprintln!("Pushing {name}");
         let step =
             |command: &str| crate::client::step(format_args!("→ obelisk cloud app {command}"));
         let fill = values.fill || values.fill_non_interactive;
@@ -112,7 +112,7 @@ impl CloudArgs {
         )?;
         let id = ExecutionIdTopLevel::generate().to_string();
         let ulid = id.split_once('_').map_or(id.as_str(), |(_, ulid)| ulid);
-        let key = format!("deploy-{}", ulid.to_ascii_lowercase());
+        let key = format!("push-{}", ulid.to_ascii_lowercase());
         step(&format!("stage --draft {key}"));
         let opened = client
             .open_draft(&name, &key, applied_revision(&current)?)
@@ -162,7 +162,7 @@ impl CloudArgs {
                 None,
             )
             .await
-            .with_context(|| format!("Deployment staging failed; inspect `obelisk cloud app status --app {name}` and retry deploy"))?;
+            .with_context(|| format!("Deployment staging failed; inspect `obelisk cloud app status --app {name}` and retry the push"))?;
             let staged = client
                 .fenced(
                     &name,
@@ -190,7 +190,7 @@ impl CloudArgs {
             for other in drafts["drafts"].as_array().into_iter().flatten() {
                 if other["key"] != key.as_str() && other["summary"]["changed"] == true {
                     eprintln!(
-                        "Draft `{}` ({}) will be discarded when this deploy is applied",
+                        "Draft `{}` ({}) will be discarded when this push is applied",
                         other["key"].as_str().unwrap_or_default(),
                         output::draft_changes(other)
                     );
@@ -205,7 +205,7 @@ impl CloudArgs {
             .await;
         // A draft left by a failed apply is discarded by the next successful one.
         let current = current
-            .with_context(|| format!("Retry with `obelisk cloud app deploy --app {name}`"))?;
+            .with_context(|| format!("Retry with `obelisk cloud app push --app {name}`"))?;
         eprintln!("{}", output::lifecycle_outcome(&current));
         if let Some(outcome) = current.get("outcome") {
             outcomes.push(outcome.clone());
@@ -219,7 +219,7 @@ impl CloudArgs {
         if self.json {
             print_json(&result)
         } else {
-            let mut out = format!("Deployed {name}\n");
+            let mut out = format!("Pushed {name}\n");
             output::endpoints(&mut out, &current["endpoints"], "");
             eprint!("{out}");
             Ok(())
@@ -227,7 +227,7 @@ impl CloudArgs {
     }
 }
 
-/// Best-effort cleanup of a deploy's draft that was never applied.
+/// Best-effort cleanup of a push's draft that was never applied.
 async fn discard(client: &Client, name: &str, key: &str, id: u64) {
     let _ = client
         .fenced(name, key, id, Method::DELETE, &[], None)
@@ -251,7 +251,7 @@ fn optional_unset(filled: &Value, interactive: bool) {
         .collect::<Vec<_>>();
     if !interactive && !unset.is_empty() {
         eprintln!(
-            "Optional configuration not set: {}. Pass them with `--env` or `--secret`, or deploy with `--fill`.",
+            "Optional configuration not set: {}. Pass them with `--env` or `--secret`, or push with `--fill`.",
             unset.join(", ")
         );
     }
@@ -318,7 +318,7 @@ mod tests {
     ) -> axum::response::Response {
         let mut state = state.lock().unwrap();
         state.calls.push(format!("{method} {}", uri.path()));
-        // Deploy edits only the draft it created.
+        // Push edits only the draft it created.
         assert_eq!(uri.query(), None);
         let routed_path = uri.path().replace("/v1/apps/renamed", "/v1/apps/demo");
         let path = routed_path.as_str();
@@ -496,7 +496,7 @@ mod tests {
                 .fallback(any(handle))
                 .with_state(state.clone());
             let task = tokio::spawn(async move { axum::serve(listener, service).await.unwrap() });
-            let mut command = vec!["app", "deploy", "-a", app_path.to_str().unwrap()];
+            let mut command = vec!["app", "push", "-a", app_path.to_str().unwrap()];
             if scenario == "empty" {
                 command.push("--empty-deployment");
             } else {
@@ -513,11 +513,11 @@ mod tests {
                 let Cloud::App(target) = &mut args.command else {
                     unreachable!()
                 };
-                let CloudApp::Deploy { values, .. } = &mut target.command else {
+                let CloudApp::Push { values, .. } = &mut target.command else {
                     unreachable!()
                 };
                 values.fill = true;
-                args.deploy_with_prompt(Some(|q: &Question| {
+                args.push_with_prompt(Some(|q: &Question| {
                     Ok(match q {
                         Question::Value { .. } => "initial-value",
                         Question::Line(_) => "",
@@ -526,10 +526,10 @@ mod tests {
                 }))
                 .await
             } else if matches!(scenario, "rename" | "rename-override") {
-                args.deploy_with_prompt(Some(|_: &Question| Ok("renamed".to_owned())))
+                args.push_with_prompt(Some(|_: &Question| Ok("renamed".to_owned())))
                     .await
             } else {
-                args.deploy_with_prompt(None::<fn(&Question) -> anyhow::Result<String>>)
+                args.push_with_prompt(None::<fn(&Question) -> anyhow::Result<String>>)
                     .await
             };
             let state = state.lock().unwrap();
@@ -576,7 +576,7 @@ mod tests {
                             .calls
                             .last()
                             .unwrap()
-                            .starts_with("DELETE /v1/apps/demo/drafts/deploy-")
+                            .starts_with("DELETE /v1/apps/demo/drafts/push-")
                     );
                 }
             } else if scenario == "deployment-error" {
@@ -588,7 +588,7 @@ mod tests {
                         .calls
                         .last()
                         .unwrap()
-                        .starts_with("DELETE /v1/apps/demo/drafts/deploy-")
+                        .starts_with("DELETE /v1/apps/demo/drafts/push-")
                 );
                 assert!(!state.calls.contains(&"POST /v1/apps/demo/apply".to_owned()));
             } else {
@@ -602,7 +602,7 @@ mod tests {
                     state
                         .calls
                         .iter()
-                        .any(|call| call.starts_with("PUT /v1/apps/demo/drafts/deploy-")
+                        .any(|call| call.starts_with("PUT /v1/apps/demo/drafts/push-")
                             && call.ends_with("/config"))
                 );
                 // Applying consumes the proposal even when its contents are unchanged.

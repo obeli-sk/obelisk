@@ -1287,7 +1287,7 @@
               ]
             },
             {
-              "name": "deploy",
+              "name": "push",
               "about": "Publish the local project, creating or configuring the app and activating its deployment",
               "options": [
                 {
@@ -1312,7 +1312,7 @@
                 },
                 {
                   "name": "--empty-deployment",
-                  "help": "Deploy an empty deployment with no components"
+                  "help": "Push an empty deployment with no components"
                 },
                 {
                   "name": "--env",
