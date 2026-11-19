@@ -89,7 +89,7 @@ impl From<&Cloud> for Summary {
                         command: CloudSecrets::Set { .. } | CloudSecrets::Unset { .. },
                         ..
                     } => Self::Staged("Secret change staged.", apply),
-                    CloudApp::Deploy { .. }
+                    CloudApp::Push { .. }
                     | CloudApp::Stage { .. }
                     | CloudApp::Deployment { .. }
                     | CloudApp::Execution { .. }

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- *(cli)* `cloud app deploy` is renamed to `cloud app push`, pairing with `cloud app pull` and
+  keeping it apart from `cloud app deployment`.
 - Replace Chrono with Jiff for timestamps, scheduling and database access, preserving existing
   SQLite timestamp storage and RFC 3339 API fields.
 - *(cli)* `cloud app stage` creates a missing app with a bare app.toml and says so, accepts
@@ -14,11 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--empty-deployment` submits a deployment first and stages its ID with the configuration in the
   draft. It never applies, so a human can set the remaining secrets and run `cloud app apply`.
   `cloud app apply` sends no deployment ID: the provisioner activates the draft's staged
-  deployment, else keeps the active one. `cloud app deploy` creates a missing app bare, announces
+  deployment, else keeps the active one. `cloud app push` creates a missing app bare, announces
   it, and stages configuration, values and the uploaded deployment in its temporary draft before
   applying it.
 - *(cli)* `--empty` is renamed to `--empty-deployment` in `server run` and `deployment
-  submit|enqueue|apply`; `--empty` remains an alias. `cloud app deploy --empty-deployment` deploys
+  submit|enqueue|apply`; `--empty` remains an alias. `cloud app push --empty-deployment` pushes
   an empty deployment without reading deployment.toml.
 - *(cli)* `server run --empty-deployment --deployment-id <id>` stores the empty deployment under
   that ID, or reuses it when stored and empty, so a supervisor knows the ID before the first start.

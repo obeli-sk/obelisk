@@ -230,7 +230,7 @@ Manage apps through the Obelisk cloud control plane using `obelisk cloud`.
 ```sh
 obelisk cloud auth login
 obelisk generate new
-obelisk cloud app deploy
+obelisk cloud app push
 obelisk cloud app status
 obelisk cloud app execution list
 obelisk cloud app component list

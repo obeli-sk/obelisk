@@ -2061,7 +2061,7 @@ pub(crate) enum CloudApp {
         draft: CloudDraft,
     },
     /// Publish the local project, creating or configuring the app and activating its deployment.
-    Deploy {
+    Push {
         #[command(flatten)]
         selected: SelectedApp,
         /// App config path; defaults to ./app.toml.
@@ -2075,7 +2075,7 @@ pub(crate) enum CloudApp {
             conflicts_with = "empty_deployment"
         )]
         deployment: PathBuf,
-        /// Deploy an empty deployment with no components.
+        /// Push an empty deployment with no components.
         #[arg(long)]
         empty_deployment: bool,
         #[command(flatten)]
@@ -2147,7 +2147,7 @@ macro_rules! cloud_app_selected {
             | CloudApp::Events { selected, .. }
             | CloudApp::Stage { selected, .. }
             | CloudApp::Unstage { selected, .. }
-            | CloudApp::Deploy { selected, .. }
+            | CloudApp::Push { selected, .. }
             | CloudApp::Apply { selected, .. }
             | CloudApp::Enable { selected, .. }
             | CloudApp::Disable { selected, .. }

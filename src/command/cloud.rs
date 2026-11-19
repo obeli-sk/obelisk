@@ -20,8 +20,8 @@ use std::{
 };
 
 mod auth;
-mod deploy;
 mod output;
+mod push;
 mod stage;
 use output::Summary;
 
@@ -509,7 +509,7 @@ fn app_config_path(command: &CloudApp) -> anyhow::Result<Option<(PathBuf, bool)>
     let (CloudApp::New { app_config, .. }
     | CloudApp::Status { app_config, .. }
     | CloudApp::Stage { app_config, .. }
-    | CloudApp::Deploy { app_config, .. }) = command
+    | CloudApp::Push { app_config, .. }) = command
     else {
         return Ok(None);
     };
@@ -697,11 +697,11 @@ impl CloudArgs {
         if matches!(
             &self.command,
             Cloud::App(CloudAppTarget {
-                command: CloudApp::Deploy { .. },
+                command: CloudApp::Push { .. },
                 ..
             })
         ) {
-            return self.deploy().await;
+            return self.push().await;
         }
         if matches!(
             &self.command,
@@ -1009,7 +1009,7 @@ impl CloudArgs {
                             .await
                     }
                     CloudApp::New { .. } => unreachable!(),
-                    CloudApp::Deploy { .. } | CloudApp::Stage { .. } => {
+                    CloudApp::Push { .. } | CloudApp::Stage { .. } => {
                         unreachable!("command has its own output")
                     }
                 }
@@ -1211,7 +1211,7 @@ fn explicit_values(values: &CloudValues) -> anyhow::Result<Vec<PendingValue>> {
     for name in &values.secrets {
         if let Some((name, _)) = name.split_once('=') {
             bail!(
-                "`--secret` takes only a name and reads the same-named environment variable, e.g. `{name}=... obelisk cloud app deploy --secret {name}`"
+                "`--secret` takes only a name and reads the same-named environment variable, e.g. `{name}=... obelisk cloud app push --secret {name}`"
             );
         }
         config_name(name)?;
