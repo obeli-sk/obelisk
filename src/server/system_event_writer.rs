@@ -62,6 +62,15 @@ pub(crate) async fn record_with_cas(
     Ok(event_id)
 }
 
+/// Appends an event built by the caller, such as one reported through the API.
+pub(crate) async fn record_event(
+    db_pool: &dyn DbPool,
+    event: SystemEvent,
+) -> Result<(), concepts::storage::DbErrorWrite> {
+    log_event(&event);
+    db_pool.admin_conn().await?.append_system_event(event).await
+}
+
 fn log_event(event: &SystemEvent) {
     macro_rules! emit {
         ($level:expr) => {
