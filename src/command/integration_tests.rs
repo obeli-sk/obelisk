@@ -3370,6 +3370,56 @@ async fn system_event_retention_dry_run_webapi() {
 }
 
 #[tokio::test]
+async fn external_system_events_webapi() {
+    let server = TestServer::start(test_addr!(40_163)).await;
+    let url = format!("{}/v1/admin/system-events", server.base_url);
+    let event = json!({
+        "code": "ext.browser.request.denied",
+        "level": "warning",
+        "dedupe_key": "GET|https|a.com|443|host",
+        "details": {"host": "a.com"},
+    });
+    for _ in 0..2 {
+        let response = server.client.post(&url).json(&event).send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    }
+    let response = server
+        .client
+        .post(&url)
+        .json(&json!({"code": "outbound_http.denied", "level": "warning"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let listed: Value = server
+        .client
+        .get(format!("{url}?code=ext.browser"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let events = listed["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1, "deduplicated: {listed}");
+    assert_eq!(events[0]["code"], "ext.browser.request.denied");
+    assert_eq!(events[0]["level"], "warning");
+    assert_eq!(events[0]["details"]["host"], "a.com");
+    let info: Value = server
+        .client
+        .get(format!("{}/v1/info", server.base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(events[0]["deployment_id"], info["deployment_id"]);
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn admin_cleanup_webapi() {
     let server = TestServer::start(test_addr!(40_102)).await;
     let older_execution = server.generate_execution_id().await;

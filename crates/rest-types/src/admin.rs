@@ -33,6 +33,22 @@ pub struct SystemEventResponse {
     pub details: serde_json::Value,
 }
 
+/// An event reported by a process next to Obelisk, recorded under the current deployment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AppendSystemEventRequest {
+    /// Must start with `ext.`, followed by dot-separated segments of `a-z`, `0-9` and `_`;
+    /// at most 128 characters.
+    pub code: String,
+    #[schema(value_type = String)]
+    pub level: storage::SystemEventLevel,
+    /// At most one event is kept per code, deployment and dedupe key. At most 512 characters.
+    #[serde(default)]
+    pub dedupe_key: Option<String>,
+    /// At most 4000 bytes encoded.
+    #[serde(default)]
+    pub details: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct StorageStatusResponse {
     pub database_bytes: Option<u64>,

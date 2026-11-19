@@ -164,6 +164,7 @@ async fn until_terminated<T>(
         admin::delete_deployment,
         admin::retain_deployments,
         admin::list_system_events,
+        admin::append_system_event,
         admin::get_system_event,
         admin::storage_status,
         admin::node_run_id,
@@ -212,6 +213,7 @@ async fn until_terminated<T>(
         rest_types::admin::CleanupResponse,
         rest_types::admin::SystemEventsResponse,
         rest_types::admin::StorageStatusResponse,
+        rest_types::admin::AppendSystemEventRequest,
         rest_types::admin::RetainSystemEventsRequest,
         rest_types::admin::RetainSystemEventsResponse,
         rest_types::deployment::DeploymentSubmitErrorBody,
@@ -449,7 +451,10 @@ fn admin_router() -> Router<Arc<WebApiState>> {
             "/deployments/retain",
             routing::post(admin::retain_deployments),
         )
-        .route("/system-events", routing::get(admin::list_system_events))
+        .route(
+            "/system-events",
+            routing::get(admin::list_system_events).post(admin::append_system_event),
+        )
         .route(
             "/system-events/{event-id}",
             routing::get(admin::get_system_event),
@@ -593,9 +598,10 @@ pub(crate) mod admin {
     use super::*;
     use concepts::storage::{DeleteDeploymentResult, DeleteExecutionTreeResult, SystemEventCode};
     use rest_types::admin::{
-        CleanupRequest, CleanupResponse, DeleteDeploymentResponse, DeleteResponse,
-        RetainDeploymentsRequest, RetainSystemEventsRequest, RetainSystemEventsResponse,
-        StorageStatusResponse, SystemEventResponse, SystemEventsResponse,
+        AppendSystemEventRequest, CleanupRequest, CleanupResponse, DeleteDeploymentResponse,
+        DeleteResponse, RetainDeploymentsRequest, RetainSystemEventsRequest,
+        RetainSystemEventsResponse, StorageStatusResponse, SystemEventResponse,
+        SystemEventsResponse,
     };
 
     #[derive(Debug, Default, Deserialize, IntoParams)]
@@ -687,6 +693,33 @@ pub(crate) mod admin {
                 next_cursor,
             },
         ))
+    }
+
+    /// Records an event reported by a process next to Obelisk, under the current deployment.
+    /// Codes are restricted to the `ext.` prefix so they never pose as Obelisk's own events.
+    /// Answers 204 also when an event with the same code, deployment and dedupe key exists.
+    #[utoipa::path(post, path = "/v1/admin/system-events", tag = "admin", request_body = AppendSystemEventRequest, responses((status = 204), (status = 400)))]
+    pub(crate) async fn append_system_event(
+        State(state): State<Arc<WebApiState>>,
+        Json(request): Json<AppendSystemEventRequest>,
+    ) -> Result<Response, HttpResponse> {
+        let deployment_id = state.deployment_ctx.read().await.deployment_id;
+        let event = storage::SystemEvent::external(
+            request.code,
+            request.level,
+            Some(deployment_id),
+            request.dedupe_key,
+            request.details,
+        )
+        .map_err(|err| HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            message: err.to_string(),
+            accept: AcceptHeader::Json,
+        })?;
+        crate::server::system_event_writer::record_event(state.db_pool.as_ref(), event)
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        Ok(StatusCode::NO_CONTENT.into_response())
     }
 
     #[utoipa::path(get, path = "/v1/admin/system-events/{event_id}", tag = "admin", responses((status = 200, body = SystemEventResponse), (status = 404)))]

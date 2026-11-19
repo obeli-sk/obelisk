@@ -1762,7 +1762,18 @@ pub enum SystemEventValidationError {
     InvalidDetails(#[from] serde_json::Error),
     #[error("encoded system event details exceed 4000 bytes")]
     DetailsTooLarge,
+    #[error(
+        "external system event code must start with `{EXTERNAL_SYSTEM_EVENT_PREFIX}`, be at most \
+        128 characters, and consist of dot-separated segments of `a-z`, `0-9` and `_`"
+    )]
+    InvalidExternalCode,
+    #[error("system event dedupe key exceeds 512 characters")]
+    DedupeKeyTooLong,
 }
+
+/// Codes of events recorded by processes next to Obelisk start with this prefix; Obelisk's own
+/// codes never do.
+pub const EXTERNAL_SYSTEM_EVENT_PREFIX: &str = "ext.";
 
 static NODE_RUN_ID: std::sync::OnceLock<NodeRunId> = std::sync::OnceLock::new();
 static APP_CONFIG_DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -1806,6 +1817,52 @@ impl SystemEvent {
             dedupe_key: None,
             cas_digest: None,
             execution_id,
+            deployment_id,
+            details,
+        })
+    }
+
+    /// An event reported by a process next to Obelisk, under [`EXTERNAL_SYSTEM_EVENT_PREFIX`].
+    pub fn external(
+        code: String,
+        level: SystemEventLevel,
+        deployment_id: Option<DeploymentId>,
+        dedupe_key: Option<String>,
+        details: serde_json::Value,
+    ) -> Result<Self, SystemEventValidationError> {
+        let valid_code = code.len() <= 128
+            && code
+                .strip_prefix(EXTERNAL_SYSTEM_EVENT_PREFIX)
+                .is_some_and(|rest| {
+                    rest.split('.').all(|segment| {
+                        !segment.is_empty()
+                            && segment.bytes().all(|byte| {
+                                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                            })
+                    })
+                });
+        if !valid_code {
+            return Err(SystemEventValidationError::InvalidExternalCode);
+        }
+        if dedupe_key
+            .as_ref()
+            .is_some_and(|key| key.chars().count() > 512)
+        {
+            return Err(SystemEventValidationError::DedupeKeyTooLong);
+        }
+        if serde_json::to_vec(&details)?.len() > 4000 {
+            return Err(SystemEventValidationError::DetailsTooLarge);
+        }
+        Ok(Self {
+            event_id: SystemEventId::generate(),
+            node_run_id: node_run_id(),
+            app_config_digest: APP_CONFIG_DIGEST.get().cloned(),
+            created_at: Timestamp::now(),
+            level,
+            code,
+            dedupe_key,
+            cas_digest: None,
+            execution_id: None,
             deployment_id,
             details,
         })
@@ -4194,6 +4251,51 @@ mod tests {
         assert!(matches!(
             result,
             Err(SystemEventValidationError::DetailsTooLarge)
+        ));
+    }
+
+    #[test]
+    fn external_system_events_need_the_reserved_prefix() {
+        let external = |code: &str| {
+            SystemEvent::external(
+                code.to_owned(),
+                SystemEventLevel::Warning,
+                None,
+                None,
+                serde_json::json!({}),
+            )
+        };
+        let event = external("ext.browser.request.denied").unwrap();
+        assert_eq!(event.code, "ext.browser.request.denied");
+        assert_eq!(event.message(), "ext.browser.request.denied");
+        assert_eq!(event.level, SystemEventLevel::Warning);
+        for code in [
+            "outbound_http.denied",
+            "ext.",
+            "ext",
+            "ext..x",
+            "ext.Browser",
+            "ext.a-b",
+            "ext.x.",
+            &format!("ext.{}", "x".repeat(125)),
+        ] {
+            assert!(
+                matches!(
+                    external(code),
+                    Err(SystemEventValidationError::InvalidExternalCode)
+                ),
+                "{code}"
+            );
+        }
+        assert!(matches!(
+            SystemEvent::external(
+                "ext.x".to_owned(),
+                SystemEventLevel::Info,
+                None,
+                Some("k".repeat(513)),
+                serde_json::json!({}),
+            ),
+            Err(SystemEventValidationError::DedupeKeyTooLong)
         ));
     }
 

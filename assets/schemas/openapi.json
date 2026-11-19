@@ -271,6 +271,27 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Records an event reported by a process next to Obelisk, under the current deployment.\nCodes are restricted to the `ext.` prefix so they never pose as Obelisk's own events.\nAnswers 204 also when an event with the same code, deployment and dedupe key exists.",
+        "operationId": "append_system_event",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppendSystemEventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {}
+        }
       }
     },
     "/v1/admin/system-events/retain": {
@@ -3122,6 +3143,33 @@
           }
         },
         "additionalProperties": false
+      },
+      "AppendSystemEventRequest": {
+        "type": "object",
+        "description": "An event reported by a process next to Obelisk, recorded under the current deployment.",
+        "required": [
+          "code",
+          "level"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Must start with `ext.`, followed by dot-separated segments of `a-z`, `0-9` and `_`;\nat most 128 characters."
+          },
+          "dedupe_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "At most one event is kept per code, deployment and dedupe key. At most 512 characters."
+          },
+          "details": {
+            "description": "At most 4000 bytes encoded."
+          },
+          "level": {
+            "type": "string"
+          }
+        }
       },
       "BacktraceInfoSer": {
         "type": "object",
