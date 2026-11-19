@@ -204,8 +204,8 @@ impl CloudArgs {
             .apply(&name, body, Some(draft), Kind::Command(None))
             .await;
         // A draft left by a failed apply is discarded by the next successful one.
-        let current = current
-            .with_context(|| format!("Retry with `obelisk cloud app push --app {name}`"))?;
+        let current =
+            current.with_context(|| format!("Retry with `obelisk cloud app push --app {name}`"))?;
         eprintln!("{}", output::lifecycle_outcome(&current));
         if let Some(outcome) = current.get("outcome") {
             outcomes.push(outcome.clone());
