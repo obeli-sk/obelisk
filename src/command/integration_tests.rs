@@ -2098,7 +2098,11 @@ async fn list_functions() {
 
 #[tokio::test]
 async fn app_policy_webapi_reports_running_policy() {
-    let server = TestServer::start(test_addr!(40_144)).await;
+    let server = TestServer::start_with_server_lines(
+        test_addr!(40_144),
+        "http_server.external.public_url = \"https://hooks.example.test\"",
+    )
+    .await;
     let app: crate::config::app::AppConfigToml =
         toml::from_str(&std::fs::read_to_string(server.tmp_dir.path().join("app.toml")).unwrap())
             .unwrap();
@@ -2113,6 +2117,14 @@ async fn app_policy_webapi_reports_running_policy() {
     let parsed: rest_types::lifecycle::ServerInfoResponse =
         serde_json::from_value(info.clone()).unwrap();
     assert!(parsed.gc.is_some());
+    assert_eq!(
+        parsed.http_servers,
+        [rest_types::server::ServerInfoHttpServer {
+            name: "external".to_owned(),
+            has_routes: true,
+            public_url: Some("https://hooks.example.test".to_owned()),
+        }]
+    );
     assert_eq!(info["app_config_digest"], expected_digest);
 
     for endpoint in ["deployment-id", "execution-id"] {

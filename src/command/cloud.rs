@@ -1740,6 +1740,7 @@ mod tests {
                 switch_count: 0,
                 app_config_digest: "digest".to_owned(),
                 gc: None,
+                http_servers: Vec::new(),
                 started_at: jiff::Timestamp::now(),
             }),
             "/prefix/v1/tokens" if method == Method::POST => {

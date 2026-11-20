@@ -82,6 +82,7 @@ pub(crate) struct WebApiState {
     pub(crate) prepared_dirs: PreparedDirs,
     pub(crate) deployment_switch_manager: crate::command::server::DeploymentSwitchManagerHandle,
     pub(crate) gc_info: rest_types::server::ServerInfoGc,
+    pub(crate) http_servers_info: Vec<rest_types::server::ServerInfoHttpServer>,
 }
 
 async fn until_terminated<T>(
@@ -571,7 +572,7 @@ pub(crate) mod app_config {
 pub(crate) mod server_info {
     use super::{Arc, Response, State, StatusCode, Timestamp, WebApiState, pretty_json_response};
     use crate::args::shadow::PKG_VERSION;
-    use rest_types::server::ServerInfoResponse;
+    use rest_types::server::{ServerInfoHttpServer, ServerInfoResponse};
 
     pub(crate) async fn get(State(state): State<Arc<WebApiState>>) -> Response {
         let node_run_id = concepts::storage::initialize_node_run_id();
@@ -579,15 +580,26 @@ pub(crate) mod server_info {
             .ok()
             .and_then(|millis| Timestamp::from_millisecond(millis).ok())
             .expect("node run ID timestamp is generated from the current time");
+        let deployment_ctx = state.deployment_ctx.read().await;
         let body = ServerInfoResponse {
             app_name: state.server_verified.app_name.clone(),
             app_env_prefix: state.server_verified.app_env_prefix.clone(),
             obelisk_version: PKG_VERSION.to_string(),
-            deployment_id: state.deployment_ctx.read().await.deployment_id.to_string(),
+            deployment_id: deployment_ctx.deployment_id.to_string(),
             node_run_id: node_run_id.to_string(),
             switch_count: state.deployment_switch_manager.switch_count(),
             app_config_digest: state.server_verified.app_config_digest.to_string(),
             gc: Some(state.gc_info.clone()),
+            http_servers: state
+                .http_servers_info
+                .iter()
+                .map(|server| ServerInfoHttpServer {
+                    has_routes: deployment_ctx
+                        .http_servers_with_routes
+                        .contains(&server.name),
+                    ..server.clone()
+                })
+                .collect(),
             started_at,
         };
         pretty_json_response(StatusCode::OK, &body)

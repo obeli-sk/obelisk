@@ -4,6 +4,7 @@ export type DeploymentSwitchOutcome = "switched" | "restart_required";
 
 export interface LifecycleModels {
   ServerInfoResponse: ServerInfoResponse;
+  ServerInfoHttpServer: ServerInfoHttpServer;
   ServerInfoGc: ServerInfoGc;
   ServerInfoGcRetention: ServerInfoGcRetention;
   ServerInfoGcCountedRetention: ServerInfoGcCountedRetention;
@@ -20,6 +21,10 @@ export interface ServerInfoResponse {
   app_name: string;
   deployment_id: string;
   gc?: ServerInfoGc;
+  /**
+   * HTTP servers listening on this server, without the API listener.
+   */
+  http_servers?: ServerInfoHttpServer[];
   node_run_id: string;
   obelisk_version: string;
   started_at: string;
@@ -59,6 +64,18 @@ export interface ServerInfoGcCountedRetention {
 export interface ServerInfoGcRetentionPolicy {
   enabled: boolean;
   max_age_ms: number;
+  [k: string]: unknown;
+}
+export interface ServerInfoHttpServer {
+  name: string;
+  /**
+   * Whether the active deployment attaches any webhook route to this server.
+   */
+  has_routes: boolean;
+  /**
+   * `public_url` from server.toml.
+   */
+  public_url?: string;
   [k: string]: unknown;
 }
 export interface AppPolicyV1 {
@@ -205,6 +222,7 @@ export interface DeploymentSwitchPreconditionFailed {
 }
 
 export function parseServerInfoResponse(value: unknown): ServerInfoResponse;
+export function parseServerInfoHttpServer(value: unknown): ServerInfoHttpServer;
 export function parseServerInfoGc(value: unknown): ServerInfoGc;
 export function parseServerInfoGcRetention(value: unknown): ServerInfoGcRetention;
 export function parseServerInfoGcCountedRetention(value: unknown): ServerInfoGcCountedRetention;
