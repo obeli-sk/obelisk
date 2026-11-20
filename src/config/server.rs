@@ -978,6 +978,9 @@ pub(crate) struct WebUIConfig {
     /// Public URL of the Web UI, exposed to apps through the `webui-url` `public_env` source.
     #[serde(default, deserialize_with = "deserialize_public_url")]
     pub(crate) public_url: Option<String>,
+    /// Show the buttons that enqueue or apply a deployment. Hiding them does not restrict the API.
+    #[serde(default = "default_true")]
+    pub(crate) unstable_deployment_switch: bool,
 }
 
 impl Default for WebUIConfig {
@@ -986,6 +989,7 @@ impl Default for WebUIConfig {
             enabled: true,
             listening_addr: default_webui_listening_addr(),
             public_url: None,
+            unstable_deployment_switch: true,
         }
     }
 }

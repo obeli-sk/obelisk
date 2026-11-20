@@ -499,6 +499,11 @@
             "null"
           ],
           "default": null
+        },
+        "unstable_deployment_switch": {
+          "description": "Show the buttons that enqueue or apply a deployment. Hiding them does not restrict the API.",
+          "type": "boolean",
+          "default": true
         }
       },
       "additionalProperties": false

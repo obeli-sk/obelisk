@@ -578,6 +578,13 @@ pub(crate) const WEBHOOK_JS_LOCATION: &str = embedded_assets::WEBHOOK_JS_RUNTIME
 /// Component name of the operator-owned web UI webhook injected when the web UI is enabled.
 const COMPONENT_NAME_WEBUI: &str = "obelisk_webui";
 
+/// Settings passed to the built-in Web UI webhook.
+#[derive(Clone, Debug)]
+struct WebuiWebhook {
+    api_addr: String,
+    deployment_switch: bool,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SubmitError {
     #[error("must be a top-level execution id")]
@@ -1486,7 +1493,7 @@ pub(crate) async fn deployment_verify_config(
         server_verified.database_subscription_interruption,
         server_verified.workflows_max_events_per_run,
         server_verified.workflows_response_refresh_interval,
-        server_verified.api_addr_if_webui_enabled.clone(),
+        server_verified.webui.clone(),
         secret_registry,
         server_verified.global_http_config.clone(),
     ))
@@ -2823,7 +2830,7 @@ pub(crate) struct ServerVerified {
     database_subscription_interruption: Option<Duration>,
     workflows_max_events_per_run: usize,
     workflows_response_refresh_interval: usize,
-    api_addr_if_webui_enabled: Option<String>,
+    webui: Option<WebuiWebhook>,
     max_deployment_file_bytes: u32,
     max_persisted_value_size_bytes: u64,
     max_transport_message_size_bytes: u64,
@@ -3037,11 +3044,10 @@ impl ServerVerified {
             database_subscription_interruption,
             workflows_max_events_per_run,
             workflows_response_refresh_interval,
-            api_addr_if_webui_enabled: if webui_enabled {
-                Some(config.api.listening_addr.to_string()) // `config.api.enabled` checked above
-            } else {
-                None
-            },
+            webui: webui_enabled.then(|| WebuiWebhook {
+                api_addr: config.api.listening_addr.to_string(), // `config.api.enabled` checked above
+                deployment_switch: config.webui.unstable_deployment_switch,
+            }),
             max_deployment_file_bytes: size_limits.deployment_file,
             max_persisted_value_size_bytes: size_limits.persisted_value,
             max_transport_message_size_bytes: size_limits.transport_message,
@@ -5526,7 +5532,7 @@ impl DeploymentVerified {
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
         response_refresh_interval: usize,
-        api_addr_if_webui_enabled: Option<String>,
+        webui: Option<WebuiWebhook>,
         secret_registry: Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
     ) -> Result<DeploymentVerified, anyhow::Error> {
@@ -5539,8 +5545,8 @@ impl DeploymentVerified {
         // point; the authoritative per-request enforcement lives in `http_request_policy`.
         Self::verify_no_webui_server_bindings(&deployment)?;
 
-        if let Some(api_listening_addr) = api_addr_if_webui_enabled {
-            let target_url = format!("http://{api_listening_addr}");
+        if let Some(webui) = webui {
+            let target_url = format!("http://{}", webui.api_addr);
             deployment.webhooks_wasm.push(
                 crate::config::deployment::WebhookWasmComponentConfigResolved {
                     common: ComponentCommon {
@@ -5552,10 +5558,16 @@ impl DeploymentVerified {
                     routes: vec![WebhookRoute::default()],
                     forward_stdout: ComponentStdOutputToml::default(),
                     forward_stderr: ComponentStdOutputToml::default(),
-                    env_vars: vec![EnvVarConfig::KeyValue {
-                        key: "TARGET_URL".to_string(),
-                        value: target_url.clone(),
-                    }],
+                    env_vars: vec![
+                        EnvVarConfig::KeyValue {
+                            key: "TARGET_URL".to_string(),
+                            value: target_url.clone(),
+                        },
+                        EnvVarConfig::KeyValue {
+                            key: "DEPLOYMENT_SWITCH".to_string(),
+                            value: webui.deployment_switch.to_string(),
+                        },
+                    ],
                     exposed_secrets: Vec::new(),
                     backtrace: crate::config::deployment::ComponentBacktraceConfigResolved::default(
                     ),
