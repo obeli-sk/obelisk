@@ -2224,12 +2224,12 @@ async fn app_policy_webapi_reports_running_policy() {
     assert!(pulled.path().join("deployment.toml").is_file());
 
     let pulled_active = tempfile::tempdir().unwrap();
-    crate::args::Deployment::Pull {
+    crate::args::Deployment::Pull(crate::args::DeploymentPull {
         id: None,
         output: Some(pulled_active.path().to_path_buf()),
         force: false,
         include_generated_metadata: false,
-    }
+    })
     .run(crate::client::ClientStartup::new(
         server.base_url.clone(),
         Some(TEST_API_TOKEN.into()),

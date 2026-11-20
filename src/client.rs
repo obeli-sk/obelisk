@@ -106,10 +106,6 @@ impl ClientStartup {
         !self.cloud || self.verbose
     }
 
-    pub(crate) fn is_cloud(&self) -> bool {
-        self.cloud
-    }
-
     /// HTTP client for web-API calls, presenting the API token as a default header.
     pub(crate) fn web_api_client(&self) -> Result<HttpClient, anyhow::Error> {
         Ok(HttpClient::new(

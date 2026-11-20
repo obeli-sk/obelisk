@@ -355,40 +355,8 @@ fn parse_retention_age(value: &str) -> Result<std::time::Duration, String> {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Deployment {
-    /// Submit a deployment TOML; print the deployment ID.
-    /// Content already stored is resubmitted under its deployment ID unless one is supplied.
-    Submit {
-        /// Path to the deployment TOML file.
-        #[arg(
-            value_name = "PATH",
-            default_value = "deployment.toml",
-            default_value_if("empty", "true", None),
-            conflicts_with = "empty"
-        )]
-        file: Option<PathBuf>,
-        /// Submit an empty deployment with no components.
-        #[arg(long = "empty-deployment", alias = "empty")]
-        empty: bool,
-        /// Store a verified deployment while app or platform approval is pending.
-        /// Allows unavailable values and approvals; activation still checks strictly.
-        #[arg(long)]
-        allow_unavailable_runtime_config: bool,
-        /// Human-readable description. For already stored content, omitting it keeps the current
-        /// one and an empty string clears it.
-        #[arg(long)]
-        description: Option<String>,
-        /// Optional client-supplied deployment ID for idempotent submission.
-        ///
-        /// If a deployment with this ID already exists and its content digest
-        /// matches, the submission only refreshes it; a digest mismatch is an error.
-        /// Generate one with `obelisk generate deployment-id`.
-        #[arg(long)]
-        deployment_id: Option<DeploymentId>,
-        /// Print the deployment ID as a JSON string.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Submit and stage for cloud app apply, or enqueue for a standalone server restart.
+    Submit(DeploymentSubmit),
+    /// Submit and enqueue for activation on the next server restart.
     /// Content already stored is resubmitted under its deployment ID unless one is supplied.
     Enqueue {
         /// Path to a deployment TOML file, or an existing deployment ID.
@@ -450,63 +418,136 @@ pub(crate) enum Deployment {
         #[arg(long)]
         json: bool,
     },
-    /// List recent deployments.
-    List {
-        /// Output as JSON instead of human-readable text.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Print the ID of the currently active deployment.
-    Active {
-        /// Output as JSON instead of plain text.
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Show a deployment.
-    ///
-    /// By default prints the stored deployment manifest. Pass a FILE to print a single source
-    /// file, or `--json` to render the stored TOML manifest as JSON.
-    Show {
-        /// Deployment ID
-        #[arg(value_name = "ID")]
-        id: DeploymentId,
-        /// Print the content of a single source file, identified by its deployment-relative
-        /// path as shown in the TOML (e.g. `scripts/run.sh`).
-        #[arg(value_name = "FILE", conflicts_with = "json")]
-        file: Option<String>,
-        /// Print the stored TOML manifest as JSON instead of TOML.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Retrieve a deployment as editable TOML without generated metadata, plus its source files.
-    Pull {
-        /// Deployment ID. Defaults to the active deployment.
-        #[arg(value_name = "ID")]
-        id: Option<DeploymentId>,
-        /// Directory to write `deployment.toml` and source files into. Defaults to the
-        /// current directory.
-        #[arg(long, short)]
-        output: Option<PathBuf>,
-        /// Overwrite existing files in the output directory.
-        #[arg(long, short)]
-        force: bool,
-        /// Keep generated content digests and JavaScript module metadata in `deployment.toml`.
-        #[arg(long)]
-        include_generated_metadata: bool,
-    },
-    /// Print the content digest of a deployment TOML, or of an existing deployment.
-    /// Equal digests mean equal content, so tooling can skip resubmitting the active deployment.
-    Digest {
-        /// Path to a deployment TOML file, or an existing deployment ID.
-        #[arg(value_name = "PATH|ID", default_value = "deployment.toml")]
-        source: DeploymentSource,
-        /// Print the digest as a JSON string.
-        #[arg(long)]
-        json: bool,
-    },
+    List(DeploymentList),
+    Active(DeploymentActive),
+    Show(DeploymentShow),
+    Pull(DeploymentPull),
+    Digest(DeploymentDigest),
     /// Alias for `server verify --skip-db --deployment <PATH>`.
     Verify(DeploymentVerifyArgs),
+}
+
+/// Deployment commands of a cloud app. Cloud apps activate deployments by applying a draft.
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum CloudDeployment {
+    Submit(DeploymentSubmit),
+    List(DeploymentList),
+    Active(DeploymentActive),
+    Show(DeploymentShow),
+    Pull(DeploymentPull),
+    Digest(DeploymentDigest),
+}
+
+impl From<CloudDeployment> for Deployment {
+    fn from(command: CloudDeployment) -> Self {
+        match command {
+            CloudDeployment::Submit(args) => Deployment::Submit(args),
+            CloudDeployment::List(args) => Deployment::List(args),
+            CloudDeployment::Active(args) => Deployment::Active(args),
+            CloudDeployment::Show(args) => Deployment::Show(args),
+            CloudDeployment::Pull(args) => Deployment::Pull(args),
+            CloudDeployment::Digest(args) => Deployment::Digest(args),
+        }
+    }
+}
+
+/// Submit a deployment TOML; print the deployment ID.
+/// Content already stored is resubmitted under its deployment ID unless one is supplied.
+#[derive(Debug, clap::Args)]
+pub(crate) struct DeploymentSubmit {
+    /// Path to the deployment TOML file.
+    #[arg(
+        value_name = "PATH",
+        default_value = "deployment.toml",
+        default_value_if("empty", "true", None),
+        conflicts_with = "empty"
+    )]
+    pub(crate) file: Option<PathBuf>,
+    /// Submit an empty deployment with no components.
+    #[arg(long = "empty-deployment", alias = "empty")]
+    pub(crate) empty: bool,
+    /// Store a verified deployment while app or platform approval is pending.
+    /// Allows unavailable values and approvals; activation still checks strictly.
+    #[arg(long)]
+    pub(crate) allow_unavailable_runtime_config: bool,
+    /// Human-readable description. For already stored content, omitting it keeps the current
+    /// one and an empty string clears it.
+    #[arg(long)]
+    pub(crate) description: Option<String>,
+    /// Optional client-supplied deployment ID for idempotent submission.
+    ///
+    /// If a deployment with this ID already exists and its content digest
+    /// matches, the submission only refreshes it; a digest mismatch is an error.
+    /// Generate one with `obelisk generate deployment-id`.
+    #[arg(long)]
+    pub(crate) deployment_id: Option<DeploymentId>,
+    /// Print the deployment ID as a JSON string.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+/// List recent deployments.
+#[derive(Debug, clap::Args)]
+pub(crate) struct DeploymentList {
+    /// Output as JSON instead of human-readable text.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+/// Print the ID of the currently active deployment.
+#[derive(Debug, clap::Args)]
+pub(crate) struct DeploymentActive {
+    /// Output as JSON instead of plain text.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+/// Show a deployment.
+///
+/// By default prints the stored deployment manifest. Pass a FILE to print a single source
+/// file, or `--json` to render the stored TOML manifest as JSON.
+#[derive(Debug, clap::Args)]
+pub(crate) struct DeploymentShow {
+    /// Deployment ID
+    #[arg(value_name = "ID")]
+    pub(crate) id: DeploymentId,
+    /// Print the content of a single source file, identified by its deployment-relative
+    /// path as shown in the TOML (e.g. `scripts/run.sh`).
+    #[arg(value_name = "FILE", conflicts_with = "json")]
+    pub(crate) file: Option<String>,
+    /// Print the stored TOML manifest as JSON instead of TOML.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+/// Retrieve a deployment as editable TOML without generated metadata, plus its source files.
+#[derive(Debug, clap::Args)]
+pub(crate) struct DeploymentPull {
+    /// Deployment ID. Defaults to the active deployment.
+    #[arg(value_name = "ID")]
+    pub(crate) id: Option<DeploymentId>,
+    /// Directory to write `deployment.toml` and source files into. Defaults to the
+    /// current directory.
+    #[arg(long, short)]
+    pub(crate) output: Option<PathBuf>,
+    /// Overwrite existing files in the output directory.
+    #[arg(long, short)]
+    pub(crate) force: bool,
+    /// Keep generated content digests and JavaScript module metadata in `deployment.toml`.
+    #[arg(long)]
+    pub(crate) include_generated_metadata: bool,
+}
+
+/// Print the content digest of a deployment TOML, or of an existing deployment.
+/// Equal digests mean equal content, so tooling can skip resubmitting the active deployment.
+#[derive(Debug, clap::Args)]
+pub(crate) struct DeploymentDigest {
+    /// Path to a deployment TOML file, or an existing deployment ID.
+    #[arg(value_name = "PATH|ID", default_value = "deployment.toml")]
+    pub(crate) source: DeploymentSource,
+    /// Print the digest as a JSON string.
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
@@ -1357,23 +1398,35 @@ mod tests {
             )
             .unwrap();
             match args.command {
-                Subcommand::Deployment(DeploymentArgs { command, .. })
-                | Subcommand::Cloud(CloudArgs {
+                Subcommand::Deployment(DeploymentArgs { command, .. }) => command,
+                Subcommand::Cloud(CloudArgs {
                     command:
                         Cloud::App(CloudAppTarget {
                             command: CloudApp::Deployment { command, .. },
                             ..
                         }),
                     ..
-                }) => command,
+                }) => command.into(),
                 _ => panic!("expected deployment"),
             }
         };
-        for prefix in [
-            vec!["obelisk", "deployment"],
-            vec!["obelisk", "cloud", "app", "deployment"],
+        for (prefix, actions) in [
+            (
+                vec!["obelisk", "deployment"],
+                &["submit", "enqueue", "apply"][..],
+            ),
+            (
+                vec!["obelisk", "cloud", "app", "deployment"],
+                &["submit"][..],
+            ),
         ] {
-            for action in ["submit", "enqueue", "apply"] {
+            if prefix.contains(&"cloud") {
+                // Cloud apps activate deployments by applying a draft.
+                for action in ["enqueue", "apply"] {
+                    assert!(Args::try_parse_from(prefix.iter().copied().chain([action])).is_err());
+                }
+            }
+            for &action in actions {
                 for suffix in [
                     vec![],
                     vec!["--empty-deployment"],
@@ -1382,7 +1435,7 @@ mod tests {
                 ] {
                     let command = parse(&prefix, action, &suffix);
                     let (path, empty) = match command {
-                        Deployment::Submit { file, empty, .. } => (file, empty),
+                        Deployment::Submit(DeploymentSubmit { file, empty, .. }) => (file, empty),
                         Deployment::Apply { source, empty, .. }
                         | Deployment::Enqueue { source, empty, .. } => (
                             source.map(|source| match source {
@@ -1438,46 +1491,37 @@ mod tests {
 
     #[test]
     fn deployment_verify_accepts_only_deployment_inputs() {
-        for (prefix, suffix) in [
-            (
-                vec!["obelisk"],
-                vec!["--api-url", "https://cloud.example.test"],
-            ),
-            (vec!["obelisk", "cloud", "app"], vec![]),
-        ] {
-            let args = Args::try_parse_from(
-                prefix
-                    .into_iter()
-                    .chain(["deployment", "verify", "-d", "deployment.toml"])
-                    .chain(suffix),
-            )
-            .unwrap();
-            let verify = match args.command {
-                Subcommand::Deployment(args) => {
-                    assert_eq!(args.token.api_url, "https://cloud.example.test");
-                    let Deployment::Verify(verify) = args.command else {
-                        panic!()
-                    };
-                    verify
-                }
-                Subcommand::Cloud(args) => {
-                    let Cloud::App(CloudAppTarget {
-                        command:
-                            CloudApp::Deployment {
-                                command: Deployment::Verify(verify),
-                                ..
-                            },
-                        ..
-                    }) = args.command
-                    else {
-                        panic!()
-                    };
-                    verify
-                }
-                _ => panic!(),
-            };
-            assert_eq!(verify.deployment, PathBuf::from("deployment.toml"));
-        }
+        let args = Args::try_parse_from([
+            "obelisk",
+            "deployment",
+            "verify",
+            "-d",
+            "deployment.toml",
+            "--api-url",
+            "https://cloud.example.test",
+        ])
+        .unwrap();
+        let Subcommand::Deployment(args) = args.command else {
+            panic!()
+        };
+        assert_eq!(args.token.api_url, "https://cloud.example.test");
+        let Deployment::Verify(verify) = args.command else {
+            panic!()
+        };
+        assert_eq!(verify.deployment, PathBuf::from("deployment.toml"));
+        // Verification is local, so the cloud app tree does not offer it.
+        assert!(
+            Args::try_parse_from([
+                "obelisk",
+                "cloud",
+                "app",
+                "deployment",
+                "verify",
+                "-d",
+                "deployment.toml"
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -1972,7 +2016,7 @@ pub(crate) enum CloudApp {
         #[command(flatten)]
         selected: SelectedApp,
         #[command(subcommand)]
-        command: Deployment,
+        command: CloudDeployment,
     },
     /// Manage executions through the selected app's API.
     Execution {

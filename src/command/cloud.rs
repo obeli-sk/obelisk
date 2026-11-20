@@ -655,7 +655,10 @@ impl CloudArgs {
             Cloud::App(CloudAppTarget {
                 command: CloudApp::Deployment { command, .. },
                 ..
-            }) => Subcommand::Deployment(DeploymentArgs { command, token }),
+            }) => Subcommand::Deployment(DeploymentArgs {
+                command: command.into(),
+                token,
+            }),
             Cloud::App(CloudAppTarget {
                 command: CloudApp::Execution { command, .. },
                 ..
@@ -1724,12 +1727,6 @@ mod tests {
                     None => return axum::http::StatusCode::NOT_FOUND.into_response(),
                 }
             }
-            path if path.starts_with("/prefix/tenant/v1/deployments/")
-                && path.ends_with("/switch") =>
-            {
-                // app-proxy stages in the default draft, applying it when asked.
-                json!({"ok": if body["apply"] == true { "switched" } else { "restart_required" }})
-            }
             "/prefix/tenant/v1/components" => json!([]),
             "/prefix/tenant/v1/info" => json!(rest_types::server::ServerInfoResponse {
                 app_env_prefix: String::new(),
@@ -2079,32 +2076,6 @@ mod tests {
             args.apps_domain = Some(domain.to_owned());
             assert!(args.direct_api_url().await.is_err(), "{domain}");
         }
-    }
-
-    #[tokio::test]
-    async fn cloud_deployment_switch_uses_direct_api() {
-        let (origin, state, task) = server().await;
-        let deployment_id = concepts::prefixed_ulid::DeploymentId::generate().to_string();
-        for command in ["enqueue", "apply"] {
-            args(
-                "http://127.0.0.1:1",
-                &["app", "deployment", command, &deployment_id],
-            )
-            .run_app_api(format!("{origin}tenant"))
-            .await
-            .unwrap();
-        }
-        let received = state.lock().unwrap().received.clone();
-        let switch = format!("PUT /prefix/tenant/v1/deployments/{deployment_id}/switch");
-        assert_eq!(
-            received
-                .iter()
-                .filter(|(route, _)| *route == switch)
-                .map(|(_, body)| body["apply"].clone())
-                .collect::<Vec<_>>(),
-            vec![json!(false), json!(true)]
-        );
-        task.abort();
     }
 
     #[tokio::test]

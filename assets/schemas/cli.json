@@ -205,66 +205,6 @@
                   ]
                 },
                 {
-                  "name": "enqueue",
-                  "about": "Submit and stage for cloud app apply, or enqueue for a standalone server restart. Content already stored is resubmitted under its deployment ID unless one is supplied",
-                  "options": [
-                    {
-                      "name": "--empty-deployment",
-                      "help": "Enqueue an empty deployment with no components"
-                    },
-                    {
-                      "name": "--allow-unavailable-runtime-config",
-                      "help": "Submit and enqueue while app or platform approval is pending. Activation still checks strictly"
-                    },
-                    {
-                      "name": "--description",
-                      "help": "Human-readable description. For already stored content, omitting it keeps the current one and an empty string clears it"
-                    },
-                    {
-                      "name": "--deployment-id",
-                      "help": "Optional client-supplied deployment ID for idempotent submission"
-                    },
-                    {
-                      "name": "--json",
-                      "help": "Print the deployment ID as a JSON string"
-                    }
-                  ],
-                  "positionals": [
-                    {
-                      "name": "source",
-                      "help": "Path to a deployment TOML file, or an existing deployment ID"
-                    }
-                  ]
-                },
-                {
-                  "name": "apply",
-                  "about": "Submit (if a file is given) and apply immediately. Fails if not possible. Content already stored is resubmitted under its deployment ID unless one is supplied",
-                  "options": [
-                    {
-                      "name": "--empty-deployment",
-                      "help": "Apply an empty deployment with no components"
-                    },
-                    {
-                      "name": "--description",
-                      "help": "Human-readable description. For already stored content, omitting it keeps the current one and an empty string clears it"
-                    },
-                    {
-                      "name": "--deployment-id",
-                      "help": "Optional client-supplied deployment ID for idempotent submission"
-                    },
-                    {
-                      "name": "--json",
-                      "help": "Print the deployment ID as a JSON string"
-                    }
-                  ],
-                  "positionals": [
-                    {
-                      "name": "source",
-                      "help": "Path to a deployment TOML file, or an existing deployment ID"
-                    }
-                  ]
-                },
-                {
                   "name": "list",
                   "about": "List recent deployments",
                   "options": [
@@ -347,36 +287,6 @@
                     {
                       "name": "source",
                       "help": "Path to a deployment TOML file, or an existing deployment ID"
-                    }
-                  ]
-                },
-                {
-                  "name": "verify",
-                  "about": "Alias for `server verify --skip-db --deployment <PATH>`",
-                  "options": [
-                    {
-                      "name": "--api-url"
-                    },
-                    {
-                      "name": "--clean-cache",
-                      "help": "Delete both the codegen cache and the OCI image cache before verifying"
-                    },
-                    {
-                      "name": "--clean-codegen-cache",
-                      "help": "Delete only the codegen cache before verifying; OCI image cache is kept"
-                    },
-                    {
-                      "name": "--deployment",
-                      "short": "d",
-                      "help": "Path to the local deployment TOML file",
-                      "required": true,
-                      "accepts": {
-                        "path": true
-                      }
-                    },
-                    {
-                      "name": "--suppress-type-checking-errors",
-                      "help": "Do not fail when a component's imports/exports fail type checking against the deployment"
                     }
                   ]
                 }
@@ -2300,7 +2210,7 @@
         },
         {
           "name": "enqueue",
-          "about": "Submit and stage for cloud app apply, or enqueue for a standalone server restart. Content already stored is resubmitted under its deployment ID unless one is supplied",
+          "about": "Submit and enqueue for activation on the next server restart. Content already stored is resubmitted under its deployment ID unless one is supplied",
           "options": [
             {
               "name": "--empty-deployment",

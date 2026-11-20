@@ -21,14 +21,14 @@ impl args::Deployment {
     pub(crate) async fn run(self, client_startup: ClientStartup) -> Result<(), anyhow::Error> {
         let api_url = client_startup.api_url();
         match self {
-            args::Deployment::Submit {
+            args::Deployment::Submit(args::DeploymentSubmit {
                 file,
                 empty,
                 allow_unavailable_runtime_config,
                 description,
                 deployment_id,
                 json,
-            } => {
+            }) => {
                 let id = submit_deployment(
                     &client_startup,
                     api_url,
@@ -93,7 +93,7 @@ impl args::Deployment {
                 print_value(&id, json)
             }
 
-            args::Deployment::List { json } => {
+            args::Deployment::List(args::DeploymentList { json }) => {
                 let client = client_startup.web_api_client()?;
                 let deployments: Vec<DeploymentStateSer> = send_json(
                     client
@@ -141,7 +141,7 @@ impl args::Deployment {
                 Ok(())
             }
 
-            args::Deployment::Active { json } => {
+            args::Deployment::Active(args::DeploymentActive { json }) => {
                 let client = client_startup.web_api_client()?;
                 let info: ServerInfoResponse = send_json(
                     client
@@ -152,7 +152,7 @@ impl args::Deployment {
                 print_value(&info.deployment_id, json)
             }
 
-            args::Deployment::Show { id, file, json } => {
+            args::Deployment::Show(args::DeploymentShow { id, file, json }) => {
                 let client = client_startup.web_api_client()?;
                 let dep: DeploymentRecordSer = send_json(
                     client
@@ -188,12 +188,12 @@ impl args::Deployment {
                 Ok(())
             }
 
-            args::Deployment::Pull {
+            args::Deployment::Pull(args::DeploymentPull {
                 id,
                 output,
                 force,
                 include_generated_metadata,
-            } => {
+            }) => {
                 let id = if let Some(id) = id {
                     id
                 } else {
@@ -222,7 +222,7 @@ impl args::Deployment {
             }
 
             // `deployment verify` is dispatched through the local verification path in `main`.
-            args::Deployment::Digest { source, json } => {
+            args::Deployment::Digest(args::DeploymentDigest { source, json }) => {
                 let digest = match source {
                     DeploymentSource::File(path) => prepare_deployment_manifest_from_disk(&path)
                         .await?
@@ -685,11 +685,7 @@ async fn switch_deployment(
             eprintln!("Deployment already active; it will remain active after restart.");
         }
         (SwitchCommand::Enqueue, "restart_required") => {
-            if client_startup.is_cloud() {
-                eprintln!("Deployment staged for cloud app apply.");
-            } else {
-                eprintln!("Deployment enqueued. Restart the server to apply.");
-            }
+            eprintln!("Deployment enqueued. Restart the server to apply.");
         }
         (_, outcome) => bail!("unexpected outcome from server: {outcome}"),
     }
