@@ -436,8 +436,6 @@ pub(crate) enum CloudDeployment {
     Show(DeploymentShow),
     Pull(DeploymentPull),
     Digest(DeploymentDigest),
-    /// Alias for `server verify --skip-db --deployment <PATH>`.
-    Verify(DeploymentVerifyArgs),
 }
 
 impl From<CloudDeployment> for Deployment {
@@ -449,7 +447,6 @@ impl From<CloudDeployment> for Deployment {
             CloudDeployment::Show(args) => Deployment::Show(args),
             CloudDeployment::Pull(args) => Deployment::Pull(args),
             CloudDeployment::Digest(args) => Deployment::Digest(args),
-            CloudDeployment::Verify(args) => Deployment::Verify(args),
         }
     }
 }
@@ -1494,46 +1491,37 @@ mod tests {
 
     #[test]
     fn deployment_verify_accepts_only_deployment_inputs() {
-        for (prefix, suffix) in [
-            (
-                vec!["obelisk"],
-                vec!["--api-url", "https://cloud.example.test"],
-            ),
-            (vec!["obelisk", "cloud", "app"], vec![]),
-        ] {
-            let args = Args::try_parse_from(
-                prefix
-                    .into_iter()
-                    .chain(["deployment", "verify", "-d", "deployment.toml"])
-                    .chain(suffix),
-            )
-            .unwrap();
-            let verify = match args.command {
-                Subcommand::Deployment(args) => {
-                    assert_eq!(args.token.api_url, "https://cloud.example.test");
-                    let Deployment::Verify(verify) = args.command else {
-                        panic!()
-                    };
-                    verify
-                }
-                Subcommand::Cloud(args) => {
-                    let Cloud::App(CloudAppTarget {
-                        command:
-                            CloudApp::Deployment {
-                                command: CloudDeployment::Verify(verify),
-                                ..
-                            },
-                        ..
-                    }) = args.command
-                    else {
-                        panic!()
-                    };
-                    verify
-                }
-                _ => panic!(),
-            };
-            assert_eq!(verify.deployment, PathBuf::from("deployment.toml"));
-        }
+        let args = Args::try_parse_from([
+            "obelisk",
+            "deployment",
+            "verify",
+            "-d",
+            "deployment.toml",
+            "--api-url",
+            "https://cloud.example.test",
+        ])
+        .unwrap();
+        let Subcommand::Deployment(args) = args.command else {
+            panic!()
+        };
+        assert_eq!(args.token.api_url, "https://cloud.example.test");
+        let Deployment::Verify(verify) = args.command else {
+            panic!()
+        };
+        assert_eq!(verify.deployment, PathBuf::from("deployment.toml"));
+        // Verification is local, so the cloud app tree does not offer it.
+        assert!(
+            Args::try_parse_from([
+                "obelisk",
+                "cloud",
+                "app",
+                "deployment",
+                "verify",
+                "-d",
+                "deployment.toml"
+            ])
+            .is_err()
+        );
     }
 
     #[test]
