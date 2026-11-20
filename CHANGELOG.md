@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deployment, else keeps the active one. `cloud app push` creates a missing app bare, announces
   it, and stages configuration, values and the uploaded deployment in its temporary draft before
   applying it.
+- *(cli)* `cloud app deployment enqueue` and `apply` are removed instead of refusing to run.
+  Cloud apps activate a deployment with `cloud app stage --deployment` and `cloud app apply`, or
+  with `cloud app push`.
 - *(cli)* `--empty` is renamed to `--empty-deployment` in `server run` and `deployment
   submit|enqueue|apply`; `--empty` remains an alias. `cloud app push --empty-deployment` pushes
   an empty deployment without reading deployment.toml.
