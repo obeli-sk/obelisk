@@ -19,7 +19,7 @@ on:
         type: boolean
         default: true
       validate_webui:
-        description: "Validate that the latest tagged webui is bumped"
+        description: "Validate that the latest webui commit is bumped"
         required: true
         type: boolean
         default: true
