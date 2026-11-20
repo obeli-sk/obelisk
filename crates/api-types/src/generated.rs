@@ -1500,6 +1500,16 @@ pub struct ServerInfoGcRetentionPolicy {
     pub enabled: bool,
     pub max_age_ms: u64,
 }
+///`ServerInfoHttpServer`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ServerInfoHttpServer {
+    ///Whether the active deployment attaches any webhook route to this server.
+    pub has_routes: bool,
+    pub name: ::std::string::String,
+    ///`public_url` from server.toml.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub public_url: ::std::option::Option<::std::string::String>,
+}
 ///`ServerInfoResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ServerInfoResponse {
@@ -1509,6 +1519,9 @@ pub struct ServerInfoResponse {
     pub deployment_id: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub gc: ::std::option::Option<ServerInfoGc>,
+    ///HTTP servers listening on this server, without the API listener.
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub http_servers: ::std::vec::Vec<ServerInfoHttpServer>,
     pub node_run_id: ::std::string::String,
     pub obelisk_version: ::std::string::String,
     pub started_at: ::jiff::Timestamp,

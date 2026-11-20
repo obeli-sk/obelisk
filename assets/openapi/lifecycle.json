@@ -289,6 +289,13 @@
           "gc": {
             "$ref": "#/components/schemas/ServerInfoGc"
           },
+          "http_servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerInfoHttpServer"
+            },
+            "description": "HTTP servers listening on this server, without the API listener."
+          },
           "node_run_id": {
             "type": "string"
           },
@@ -304,6 +311,26 @@
             "format": "uint64",
             "minimum": 0,
             "description": "Deployment switches since this server run started. A switch request must send `If-Match: \"<node_run_id>:<switch_count>\"`."
+          }
+        }
+      },
+      "ServerInfoHttpServer": {
+        "type": "object",
+        "required": [
+          "name",
+          "has_routes"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "has_routes": {
+            "type": "boolean",
+            "description": "Whether the active deployment attaches any webhook route to this server."
+          },
+          "public_url": {
+            "type": "string",
+            "description": "`public_url` from server.toml."
           }
         }
       },

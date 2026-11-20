@@ -667,67 +667,141 @@ function validate22(data, { instancePath = "", parentData, parentDataProperty, r
                   var valid0 = true;
                 }
                 if (valid0) {
-                  if (data.node_run_id !== void 0) {
+                  if (data.http_servers !== void 0) {
+                    let data5 = data.http_servers;
                     const _errs10 = errors;
-                    if (typeof data.node_run_id !== "string") {
-                      validate22.errors = [{ instancePath: instancePath + "/node_run_id", schemaPath: "#/properties/node_run_id/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
-                      return false;
+                    if (errors === _errs10) {
+                      if (Array.isArray(data5)) {
+                        var valid1 = true;
+                        const len0 = data5.length;
+                        for (let i0 = 0; i0 < len0; i0++) {
+                          let data6 = data5[i0];
+                          const _errs12 = errors;
+                          const _errs13 = errors;
+                          if (errors === _errs13) {
+                            if (data6 && typeof data6 == "object" && !Array.isArray(data6)) {
+                              let missing1;
+                              if (data6.name === void 0 && (missing1 = "name") || data6.has_routes === void 0 && (missing1 = "has_routes")) {
+                                validate22.errors = [{ instancePath: instancePath + "/http_servers/" + i0, schemaPath: "#/components/schemas/ServerInfoHttpServer/required", keyword: "required", params: { missingProperty: missing1 }, message: "must have required property '" + missing1 + "'" }];
+                                return false;
+                              } else {
+                                if (data6.name !== void 0) {
+                                  const _errs15 = errors;
+                                  if (typeof data6.name !== "string") {
+                                    validate22.errors = [{ instancePath: instancePath + "/http_servers/" + i0 + "/name", schemaPath: "#/components/schemas/ServerInfoHttpServer/properties/name/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                                    return false;
+                                  }
+                                  var valid3 = _errs15 === errors;
+                                } else {
+                                  var valid3 = true;
+                                }
+                                if (valid3) {
+                                  if (data6.has_routes !== void 0) {
+                                    const _errs17 = errors;
+                                    if (typeof data6.has_routes !== "boolean") {
+                                      validate22.errors = [{ instancePath: instancePath + "/http_servers/" + i0 + "/has_routes", schemaPath: "#/components/schemas/ServerInfoHttpServer/properties/has_routes/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+                                      return false;
+                                    }
+                                    var valid3 = _errs17 === errors;
+                                  } else {
+                                    var valid3 = true;
+                                  }
+                                  if (valid3) {
+                                    if (data6.public_url !== void 0) {
+                                      const _errs19 = errors;
+                                      if (typeof data6.public_url !== "string") {
+                                        validate22.errors = [{ instancePath: instancePath + "/http_servers/" + i0 + "/public_url", schemaPath: "#/components/schemas/ServerInfoHttpServer/properties/public_url/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                                        return false;
+                                      }
+                                      var valid3 = _errs19 === errors;
+                                    } else {
+                                      var valid3 = true;
+                                    }
+                                  }
+                                }
+                              }
+                            } else {
+                              validate22.errors = [{ instancePath: instancePath + "/http_servers/" + i0, schemaPath: "#/components/schemas/ServerInfoHttpServer/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+                              return false;
+                            }
+                          }
+                          var valid1 = _errs12 === errors;
+                          if (!valid1) {
+                            break;
+                          }
+                        }
+                      } else {
+                        validate22.errors = [{ instancePath: instancePath + "/http_servers", schemaPath: "#/properties/http_servers/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
+                        return false;
+                      }
                     }
                     var valid0 = _errs10 === errors;
                   } else {
                     var valid0 = true;
                   }
                   if (valid0) {
-                    if (data.obelisk_version !== void 0) {
-                      const _errs12 = errors;
-                      if (typeof data.obelisk_version !== "string") {
-                        validate22.errors = [{ instancePath: instancePath + "/obelisk_version", schemaPath: "#/properties/obelisk_version/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                    if (data.node_run_id !== void 0) {
+                      const _errs21 = errors;
+                      if (typeof data.node_run_id !== "string") {
+                        validate22.errors = [{ instancePath: instancePath + "/node_run_id", schemaPath: "#/properties/node_run_id/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
                         return false;
                       }
-                      var valid0 = _errs12 === errors;
+                      var valid0 = _errs21 === errors;
                     } else {
                       var valid0 = true;
                     }
                     if (valid0) {
-                      if (data.started_at !== void 0) {
-                        let data7 = data.started_at;
-                        const _errs14 = errors;
-                        if (errors === _errs14) {
-                          if (errors === _errs14) {
-                            if (typeof data7 === "string") {
-                              if (!formats0.validate(data7)) {
-                                validate22.errors = [{ instancePath: instancePath + "/started_at", schemaPath: "#/properties/started_at/format", keyword: "format", params: { format: "date-time" }, message: 'must match format "date-time"' }];
-                                return false;
-                              }
-                            } else {
-                              validate22.errors = [{ instancePath: instancePath + "/started_at", schemaPath: "#/properties/started_at/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
-                              return false;
-                            }
-                          }
+                      if (data.obelisk_version !== void 0) {
+                        const _errs23 = errors;
+                        if (typeof data.obelisk_version !== "string") {
+                          validate22.errors = [{ instancePath: instancePath + "/obelisk_version", schemaPath: "#/properties/obelisk_version/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                          return false;
                         }
-                        var valid0 = _errs14 === errors;
+                        var valid0 = _errs23 === errors;
                       } else {
                         var valid0 = true;
                       }
                       if (valid0) {
-                        if (data.switch_count !== void 0) {
-                          let data8 = data.switch_count;
-                          const _errs16 = errors;
-                          if (!(typeof data8 == "number" && (!(data8 % 1) && !isNaN(data8)))) {
-                            validate22.errors = [{ instancePath: instancePath + "/switch_count", schemaPath: "#/properties/switch_count/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
-                            return false;
-                          }
-                          if (errors === _errs16) {
-                            if (typeof data8 == "number") {
-                              if (data8 < 0 || isNaN(data8)) {
-                                validate22.errors = [{ instancePath: instancePath + "/switch_count", schemaPath: "#/properties/switch_count/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                        if (data.started_at !== void 0) {
+                          let data12 = data.started_at;
+                          const _errs25 = errors;
+                          if (errors === _errs25) {
+                            if (errors === _errs25) {
+                              if (typeof data12 === "string") {
+                                if (!formats0.validate(data12)) {
+                                  validate22.errors = [{ instancePath: instancePath + "/started_at", schemaPath: "#/properties/started_at/format", keyword: "format", params: { format: "date-time" }, message: 'must match format "date-time"' }];
+                                  return false;
+                                }
+                              } else {
+                                validate22.errors = [{ instancePath: instancePath + "/started_at", schemaPath: "#/properties/started_at/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
                                 return false;
                               }
                             }
                           }
-                          var valid0 = _errs16 === errors;
+                          var valid0 = _errs25 === errors;
                         } else {
                           var valid0 = true;
+                        }
+                        if (valid0) {
+                          if (data.switch_count !== void 0) {
+                            let data13 = data.switch_count;
+                            const _errs27 = errors;
+                            if (!(typeof data13 == "number" && (!(data13 % 1) && !isNaN(data13)))) {
+                              validate22.errors = [{ instancePath: instancePath + "/switch_count", schemaPath: "#/properties/switch_count/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+                              return false;
+                            }
+                            if (errors === _errs27) {
+                              if (typeof data13 == "number") {
+                                if (data13 < 0 || isNaN(data13)) {
+                                  validate22.errors = [{ instancePath: instancePath + "/switch_count", schemaPath: "#/properties/switch_count/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                                  return false;
+                                }
+                              }
+                            }
+                            var valid0 = _errs27 === errors;
+                          } else {
+                            var valid0 = true;
+                          }
                         }
                       }
                     }
@@ -746,7 +820,7 @@ function validate22(data, { instancePath = "", parentData, parentDataProperty, r
   validate22.errors = vErrors;
   return errors === 0;
 }
-validate22.evaluated = { "props": { "app_config_digest": true, "app_env_prefix": true, "app_name": true, "deployment_id": true, "gc": true, "node_run_id": true, "obelisk_version": true, "started_at": true, "switch_count": true }, "dynamicProps": false, "dynamicItems": false };
+validate22.evaluated = { "props": { "app_config_digest": true, "app_env_prefix": true, "app_name": true, "deployment_id": true, "gc": true, "http_servers": true, "node_run_id": true, "obelisk_version": true, "started_at": true, "switch_count": true }, "dynamicProps": false, "dynamicItems": false };
 function validate20(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
@@ -765,12 +839,76 @@ function validate20(data, { instancePath = "", parentData, parentDataProperty, r
   validate20.errors = vErrors;
   return errors === 0;
 }
-validate20.evaluated = { "props": { "app_config_digest": true, "app_env_prefix": true, "app_name": true, "deployment_id": true, "gc": true, "node_run_id": true, "obelisk_version": true, "started_at": true, "switch_count": true }, "dynamicProps": false, "dynamicItems": false };
-var validateServerInfoGc = validate28;
-function validate29(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate20.evaluated = { "props": { "app_config_digest": true, "app_env_prefix": true, "app_name": true, "deployment_id": true, "gc": true, "http_servers": true, "node_run_id": true, "obelisk_version": true, "started_at": true, "switch_count": true }, "dynamicProps": false, "dynamicItems": false };
+var validateServerInfoHttpServer = validate28;
+function validate28(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  ;
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate29.evaluated;
+  const evaluated0 = validate28.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  const _errs0 = errors;
+  if (errors === _errs0) {
+    if (data && typeof data == "object" && !Array.isArray(data)) {
+      let missing0;
+      if (data.name === void 0 && (missing0 = "name") || data.has_routes === void 0 && (missing0 = "has_routes")) {
+        validate28.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoHttpServer/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
+        return false;
+      } else {
+        if (data.name !== void 0) {
+          const _errs2 = errors;
+          if (typeof data.name !== "string") {
+            validate28.errors = [{ instancePath: instancePath + "/name", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoHttpServer/properties/name/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+            return false;
+          }
+          var valid1 = _errs2 === errors;
+        } else {
+          var valid1 = true;
+        }
+        if (valid1) {
+          if (data.has_routes !== void 0) {
+            const _errs4 = errors;
+            if (typeof data.has_routes !== "boolean") {
+              validate28.errors = [{ instancePath: instancePath + "/has_routes", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoHttpServer/properties/has_routes/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+              return false;
+            }
+            var valid1 = _errs4 === errors;
+          } else {
+            var valid1 = true;
+          }
+          if (valid1) {
+            if (data.public_url !== void 0) {
+              const _errs6 = errors;
+              if (typeof data.public_url !== "string") {
+                validate28.errors = [{ instancePath: instancePath + "/public_url", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoHttpServer/properties/public_url/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                return false;
+              }
+              var valid1 = _errs6 === errors;
+            } else {
+              var valid1 = true;
+            }
+          }
+        }
+      }
+    } else {
+      validate28.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoHttpServer/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+      return false;
+    }
+  }
+  validate28.errors = vErrors;
+  return errors === 0;
+}
+validate28.evaluated = { "props": { "name": true, "has_routes": true, "public_url": true }, "dynamicProps": false, "dynamicItems": false };
+var validateServerInfoGc = validate29;
+function validate30(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate30.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -781,20 +919,20 @@ function validate29(data, { instancePath = "", parentData, parentDataProperty, r
     if (data && typeof data == "object" && !Array.isArray(data)) {
       let missing0;
       if (data.enabled === void 0 && (missing0 = "enabled") || data.interval_ms === void 0 && (missing0 = "interval_ms") || data.batch_size === void 0 && (missing0 = "batch_size") || data.batch_delay_ms === void 0 && (missing0 = "batch_delay_ms") || data.upload_grace_period_ms === void 0 && (missing0 = "upload_grace_period_ms") || data.retention === void 0 && (missing0 = "retention")) {
-        validate29.errors = [{ instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
+        validate30.errors = [{ instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
         return false;
       } else {
         if (data.batch_delay_ms !== void 0) {
           let data0 = data.batch_delay_ms;
           const _errs1 = errors;
           if (!(typeof data0 == "number" && (!(data0 % 1) && !isNaN(data0)))) {
-            validate29.errors = [{ instancePath: instancePath + "/batch_delay_ms", schemaPath: "#/properties/batch_delay_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+            validate30.errors = [{ instancePath: instancePath + "/batch_delay_ms", schemaPath: "#/properties/batch_delay_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
             return false;
           }
           if (errors === _errs1) {
             if (typeof data0 == "number") {
               if (data0 < 0 || isNaN(data0)) {
-                validate29.errors = [{ instancePath: instancePath + "/batch_delay_ms", schemaPath: "#/properties/batch_delay_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                validate30.errors = [{ instancePath: instancePath + "/batch_delay_ms", schemaPath: "#/properties/batch_delay_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
                 return false;
               }
             }
@@ -808,13 +946,13 @@ function validate29(data, { instancePath = "", parentData, parentDataProperty, r
             let data1 = data.batch_size;
             const _errs3 = errors;
             if (!(typeof data1 == "number" && (!(data1 % 1) && !isNaN(data1)))) {
-              validate29.errors = [{ instancePath: instancePath + "/batch_size", schemaPath: "#/properties/batch_size/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+              validate30.errors = [{ instancePath: instancePath + "/batch_size", schemaPath: "#/properties/batch_size/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
               return false;
             }
             if (errors === _errs3) {
               if (typeof data1 == "number") {
                 if (data1 < 0 || isNaN(data1)) {
-                  validate29.errors = [{ instancePath: instancePath + "/batch_size", schemaPath: "#/properties/batch_size/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                  validate30.errors = [{ instancePath: instancePath + "/batch_size", schemaPath: "#/properties/batch_size/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
                   return false;
                 }
               }
@@ -827,7 +965,7 @@ function validate29(data, { instancePath = "", parentData, parentDataProperty, r
             if (data.enabled !== void 0) {
               const _errs5 = errors;
               if (typeof data.enabled !== "boolean") {
-                validate29.errors = [{ instancePath: instancePath + "/enabled", schemaPath: "#/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+                validate30.errors = [{ instancePath: instancePath + "/enabled", schemaPath: "#/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
                 return false;
               }
               var valid0 = _errs5 === errors;
@@ -839,13 +977,13 @@ function validate29(data, { instancePath = "", parentData, parentDataProperty, r
                 let data3 = data.interval_ms;
                 const _errs7 = errors;
                 if (!(typeof data3 == "number" && (!(data3 % 1) && !isNaN(data3)))) {
-                  validate29.errors = [{ instancePath: instancePath + "/interval_ms", schemaPath: "#/properties/interval_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+                  validate30.errors = [{ instancePath: instancePath + "/interval_ms", schemaPath: "#/properties/interval_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
                   return false;
                 }
                 if (errors === _errs7) {
                   if (typeof data3 == "number") {
                     if (data3 < 0 || isNaN(data3)) {
-                      validate29.errors = [{ instancePath: instancePath + "/interval_ms", schemaPath: "#/properties/interval_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                      validate30.errors = [{ instancePath: instancePath + "/interval_ms", schemaPath: "#/properties/interval_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
                       return false;
                     }
                   }
@@ -870,13 +1008,13 @@ function validate29(data, { instancePath = "", parentData, parentDataProperty, r
                     let data5 = data.upload_grace_period_ms;
                     const _errs10 = errors;
                     if (!(typeof data5 == "number" && (!(data5 % 1) && !isNaN(data5)))) {
-                      validate29.errors = [{ instancePath: instancePath + "/upload_grace_period_ms", schemaPath: "#/properties/upload_grace_period_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+                      validate30.errors = [{ instancePath: instancePath + "/upload_grace_period_ms", schemaPath: "#/properties/upload_grace_period_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
                       return false;
                     }
                     if (errors === _errs10) {
                       if (typeof data5 == "number") {
                         if (data5 < 0 || isNaN(data5)) {
-                          validate29.errors = [{ instancePath: instancePath + "/upload_grace_period_ms", schemaPath: "#/properties/upload_grace_period_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                          validate30.errors = [{ instancePath: instancePath + "/upload_grace_period_ms", schemaPath: "#/properties/upload_grace_period_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
                           return false;
                         }
                       }
@@ -892,38 +1030,38 @@ function validate29(data, { instancePath = "", parentData, parentDataProperty, r
         }
       }
     } else {
-      validate29.errors = [{ instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+      validate30.errors = [{ instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
       return false;
     }
   }
-  validate29.errors = vErrors;
+  validate30.errors = vErrors;
   return errors === 0;
 }
-validate29.evaluated = { "props": { "batch_delay_ms": true, "batch_size": true, "enabled": true, "interval_ms": true, "retention": true, "upload_grace_period_ms": true }, "dynamicProps": false, "dynamicItems": false };
-function validate28(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate30.evaluated = { "props": { "batch_delay_ms": true, "batch_size": true, "enabled": true, "interval_ms": true, "retention": true, "upload_grace_period_ms": true }, "dynamicProps": false, "dynamicItems": false };
+function validate29(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate28.evaluated;
+  const evaluated0 = validate29.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
   if (evaluated0.dynamicItems) {
     evaluated0.items = void 0;
   }
-  if (!validate29(data, { instancePath, parentData, parentDataProperty, rootData, dynamicAnchors })) {
-    vErrors = vErrors === null ? validate29.errors : vErrors.concat(validate29.errors);
+  if (!validate30(data, { instancePath, parentData, parentDataProperty, rootData, dynamicAnchors })) {
+    vErrors = vErrors === null ? validate30.errors : vErrors.concat(validate30.errors);
     errors = vErrors.length;
   }
-  validate28.errors = vErrors;
+  validate29.errors = vErrors;
   return errors === 0;
 }
-validate28.evaluated = { "props": { "batch_delay_ms": true, "batch_size": true, "enabled": true, "interval_ms": true, "retention": true, "upload_grace_period_ms": true }, "dynamicProps": false, "dynamicItems": false };
-var validateServerInfoGcRetention = validate32;
-function validate33(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate29.evaluated = { "props": { "batch_delay_ms": true, "batch_size": true, "enabled": true, "interval_ms": true, "retention": true, "upload_grace_period_ms": true }, "dynamicProps": false, "dynamicItems": false };
+var validateServerInfoGcRetention = validate33;
+function validate34(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate33.evaluated;
+  const evaluated0 = validate34.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -934,7 +1072,7 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
     if (data && typeof data == "object" && !Array.isArray(data)) {
       let missing0;
       if (data.executions === void 0 && (missing0 = "executions") || data.deployments === void 0 && (missing0 = "deployments") || data.system_events === void 0 && (missing0 = "system_events")) {
-        validate33.errors = [{ instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
+        validate34.errors = [{ instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
         return false;
       } else {
         if (data.deployments !== void 0) {
@@ -945,13 +1083,13 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
             if (data0 && typeof data0 == "object" && !Array.isArray(data0)) {
               let missing1;
               if (data0.enabled === void 0 && (missing1 = "enabled") || data0.max_age_ms === void 0 && (missing1 = "max_age_ms") || data0.max_count === void 0 && (missing1 = "max_count")) {
-                validate33.errors = [{ instancePath: instancePath + "/deployments", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/required", keyword: "required", params: { missingProperty: missing1 }, message: "must have required property '" + missing1 + "'" }];
+                validate34.errors = [{ instancePath: instancePath + "/deployments", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/required", keyword: "required", params: { missingProperty: missing1 }, message: "must have required property '" + missing1 + "'" }];
                 return false;
               } else {
                 if (data0.enabled !== void 0) {
                   const _errs4 = errors;
                   if (typeof data0.enabled !== "boolean") {
-                    validate33.errors = [{ instancePath: instancePath + "/deployments/enabled", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+                    validate34.errors = [{ instancePath: instancePath + "/deployments/enabled", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
                     return false;
                   }
                   var valid2 = _errs4 === errors;
@@ -963,13 +1101,13 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
                     let data2 = data0.max_age_ms;
                     const _errs6 = errors;
                     if (!(typeof data2 == "number" && (!(data2 % 1) && !isNaN(data2)))) {
-                      validate33.errors = [{ instancePath: instancePath + "/deployments/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+                      validate34.errors = [{ instancePath: instancePath + "/deployments/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
                       return false;
                     }
                     if (errors === _errs6) {
                       if (typeof data2 == "number") {
                         if (data2 < 0 || isNaN(data2)) {
-                          validate33.errors = [{ instancePath: instancePath + "/deployments/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                          validate34.errors = [{ instancePath: instancePath + "/deployments/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
                           return false;
                         }
                       }
@@ -983,13 +1121,13 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
                       let data3 = data0.max_count;
                       const _errs8 = errors;
                       if (!(typeof data3 == "number" && (!(data3 % 1) && !isNaN(data3)))) {
-                        validate33.errors = [{ instancePath: instancePath + "/deployments/max_count", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+                        validate34.errors = [{ instancePath: instancePath + "/deployments/max_count", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
                         return false;
                       }
                       if (errors === _errs8) {
                         if (typeof data3 == "number") {
                           if (data3 < 0 || isNaN(data3)) {
-                            validate33.errors = [{ instancePath: instancePath + "/deployments/max_count", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                            validate34.errors = [{ instancePath: instancePath + "/deployments/max_count", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
                             return false;
                           }
                         }
@@ -1002,7 +1140,7 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
                 }
               }
             } else {
-              validate33.errors = [{ instancePath: instancePath + "/deployments", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+              validate34.errors = [{ instancePath: instancePath + "/deployments", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
               return false;
             }
           }
@@ -1019,13 +1157,13 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
               if (data4 && typeof data4 == "object" && !Array.isArray(data4)) {
                 let missing2;
                 if (data4.enabled === void 0 && (missing2 = "enabled") || data4.max_age_ms === void 0 && (missing2 = "max_age_ms") || data4.max_count === void 0 && (missing2 = "max_count")) {
-                  validate33.errors = [{ instancePath: instancePath + "/executions", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/required", keyword: "required", params: { missingProperty: missing2 }, message: "must have required property '" + missing2 + "'" }];
+                  validate34.errors = [{ instancePath: instancePath + "/executions", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/required", keyword: "required", params: { missingProperty: missing2 }, message: "must have required property '" + missing2 + "'" }];
                   return false;
                 } else {
                   if (data4.enabled !== void 0) {
                     const _errs13 = errors;
                     if (typeof data4.enabled !== "boolean") {
-                      validate33.errors = [{ instancePath: instancePath + "/executions/enabled", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+                      validate34.errors = [{ instancePath: instancePath + "/executions/enabled", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
                       return false;
                     }
                     var valid4 = _errs13 === errors;
@@ -1037,13 +1175,13 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
                       let data6 = data4.max_age_ms;
                       const _errs15 = errors;
                       if (!(typeof data6 == "number" && (!(data6 % 1) && !isNaN(data6)))) {
-                        validate33.errors = [{ instancePath: instancePath + "/executions/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+                        validate34.errors = [{ instancePath: instancePath + "/executions/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
                         return false;
                       }
                       if (errors === _errs15) {
                         if (typeof data6 == "number") {
                           if (data6 < 0 || isNaN(data6)) {
-                            validate33.errors = [{ instancePath: instancePath + "/executions/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                            validate34.errors = [{ instancePath: instancePath + "/executions/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
                             return false;
                           }
                         }
@@ -1057,13 +1195,13 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
                         let data7 = data4.max_count;
                         const _errs17 = errors;
                         if (!(typeof data7 == "number" && (!(data7 % 1) && !isNaN(data7)))) {
-                          validate33.errors = [{ instancePath: instancePath + "/executions/max_count", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+                          validate34.errors = [{ instancePath: instancePath + "/executions/max_count", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
                           return false;
                         }
                         if (errors === _errs17) {
                           if (typeof data7 == "number") {
                             if (data7 < 0 || isNaN(data7)) {
-                              validate33.errors = [{ instancePath: instancePath + "/executions/max_count", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                              validate34.errors = [{ instancePath: instancePath + "/executions/max_count", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
                               return false;
                             }
                           }
@@ -1076,7 +1214,7 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
                   }
                 }
               } else {
-                validate33.errors = [{ instancePath: instancePath + "/executions", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+                validate34.errors = [{ instancePath: instancePath + "/executions", schemaPath: "#/components/schemas/ServerInfoGcCountedRetention/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
                 return false;
               }
             }
@@ -1093,13 +1231,13 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
                 if (data8 && typeof data8 == "object" && !Array.isArray(data8)) {
                   let missing3;
                   if (data8.enabled === void 0 && (missing3 = "enabled") || data8.max_age_ms === void 0 && (missing3 = "max_age_ms")) {
-                    validate33.errors = [{ instancePath: instancePath + "/system_events", schemaPath: "#/components/schemas/ServerInfoGcRetentionPolicy/required", keyword: "required", params: { missingProperty: missing3 }, message: "must have required property '" + missing3 + "'" }];
+                    validate34.errors = [{ instancePath: instancePath + "/system_events", schemaPath: "#/components/schemas/ServerInfoGcRetentionPolicy/required", keyword: "required", params: { missingProperty: missing3 }, message: "must have required property '" + missing3 + "'" }];
                     return false;
                   } else {
                     if (data8.enabled !== void 0) {
                       const _errs22 = errors;
                       if (typeof data8.enabled !== "boolean") {
-                        validate33.errors = [{ instancePath: instancePath + "/system_events/enabled", schemaPath: "#/components/schemas/ServerInfoGcRetentionPolicy/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+                        validate34.errors = [{ instancePath: instancePath + "/system_events/enabled", schemaPath: "#/components/schemas/ServerInfoGcRetentionPolicy/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
                         return false;
                       }
                       var valid6 = _errs22 === errors;
@@ -1111,13 +1249,13 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
                         let data10 = data8.max_age_ms;
                         const _errs24 = errors;
                         if (!(typeof data10 == "number" && (!(data10 % 1) && !isNaN(data10)))) {
-                          validate33.errors = [{ instancePath: instancePath + "/system_events/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcRetentionPolicy/properties/max_age_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+                          validate34.errors = [{ instancePath: instancePath + "/system_events/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcRetentionPolicy/properties/max_age_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
                           return false;
                         }
                         if (errors === _errs24) {
                           if (typeof data10 == "number") {
                             if (data10 < 0 || isNaN(data10)) {
-                              validate33.errors = [{ instancePath: instancePath + "/system_events/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcRetentionPolicy/properties/max_age_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                              validate34.errors = [{ instancePath: instancePath + "/system_events/max_age_ms", schemaPath: "#/components/schemas/ServerInfoGcRetentionPolicy/properties/max_age_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
                               return false;
                             }
                           }
@@ -1129,7 +1267,7 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
                     }
                   }
                 } else {
-                  validate33.errors = [{ instancePath: instancePath + "/system_events", schemaPath: "#/components/schemas/ServerInfoGcRetentionPolicy/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+                  validate34.errors = [{ instancePath: instancePath + "/system_events", schemaPath: "#/components/schemas/ServerInfoGcRetentionPolicy/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
                   return false;
                 }
               }
@@ -1141,116 +1279,34 @@ function validate33(data, { instancePath = "", parentData, parentDataProperty, r
         }
       }
     } else {
-      validate33.errors = [{ instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+      validate34.errors = [{ instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
       return false;
     }
+  }
+  validate34.errors = vErrors;
+  return errors === 0;
+}
+validate34.evaluated = { "props": { "deployments": true, "executions": true, "system_events": true }, "dynamicProps": false, "dynamicItems": false };
+function validate33(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  ;
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate33.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  if (!validate34(data, { instancePath, parentData, parentDataProperty, rootData, dynamicAnchors })) {
+    vErrors = vErrors === null ? validate34.errors : vErrors.concat(validate34.errors);
+    errors = vErrors.length;
   }
   validate33.errors = vErrors;
   return errors === 0;
 }
 validate33.evaluated = { "props": { "deployments": true, "executions": true, "system_events": true }, "dynamicProps": false, "dynamicItems": false };
-function validate32(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
-  ;
-  let vErrors = null;
-  let errors = 0;
-  const evaluated0 = validate32.evaluated;
-  if (evaluated0.dynamicProps) {
-    evaluated0.props = void 0;
-  }
-  if (evaluated0.dynamicItems) {
-    evaluated0.items = void 0;
-  }
-  if (!validate33(data, { instancePath, parentData, parentDataProperty, rootData, dynamicAnchors })) {
-    vErrors = vErrors === null ? validate33.errors : vErrors.concat(validate33.errors);
-    errors = vErrors.length;
-  }
-  validate32.errors = vErrors;
-  return errors === 0;
-}
-validate32.evaluated = { "props": { "deployments": true, "executions": true, "system_events": true }, "dynamicProps": false, "dynamicItems": false };
-var validateServerInfoGcCountedRetention = validate35;
-function validate35(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
-  ;
-  let vErrors = null;
-  let errors = 0;
-  const evaluated0 = validate35.evaluated;
-  if (evaluated0.dynamicProps) {
-    evaluated0.props = void 0;
-  }
-  if (evaluated0.dynamicItems) {
-    evaluated0.items = void 0;
-  }
-  const _errs0 = errors;
-  if (errors === _errs0) {
-    if (data && typeof data == "object" && !Array.isArray(data)) {
-      let missing0;
-      if (data.enabled === void 0 && (missing0 = "enabled") || data.max_age_ms === void 0 && (missing0 = "max_age_ms") || data.max_count === void 0 && (missing0 = "max_count")) {
-        validate35.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
-        return false;
-      } else {
-        if (data.enabled !== void 0) {
-          const _errs2 = errors;
-          if (typeof data.enabled !== "boolean") {
-            validate35.errors = [{ instancePath: instancePath + "/enabled", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
-            return false;
-          }
-          var valid1 = _errs2 === errors;
-        } else {
-          var valid1 = true;
-        }
-        if (valid1) {
-          if (data.max_age_ms !== void 0) {
-            let data1 = data.max_age_ms;
-            const _errs4 = errors;
-            if (!(typeof data1 == "number" && (!(data1 % 1) && !isNaN(data1)))) {
-              validate35.errors = [{ instancePath: instancePath + "/max_age_ms", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
-              return false;
-            }
-            if (errors === _errs4) {
-              if (typeof data1 == "number") {
-                if (data1 < 0 || isNaN(data1)) {
-                  validate35.errors = [{ instancePath: instancePath + "/max_age_ms", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
-                  return false;
-                }
-              }
-            }
-            var valid1 = _errs4 === errors;
-          } else {
-            var valid1 = true;
-          }
-          if (valid1) {
-            if (data.max_count !== void 0) {
-              let data2 = data.max_count;
-              const _errs6 = errors;
-              if (!(typeof data2 == "number" && (!(data2 % 1) && !isNaN(data2)))) {
-                validate35.errors = [{ instancePath: instancePath + "/max_count", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
-                return false;
-              }
-              if (errors === _errs6) {
-                if (typeof data2 == "number") {
-                  if (data2 < 0 || isNaN(data2)) {
-                    validate35.errors = [{ instancePath: instancePath + "/max_count", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
-                    return false;
-                  }
-                }
-              }
-              var valid1 = _errs6 === errors;
-            } else {
-              var valid1 = true;
-            }
-          }
-        }
-      }
-    } else {
-      validate35.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
-      return false;
-    }
-  }
-  validate35.errors = vErrors;
-  return errors === 0;
-}
-validate35.evaluated = { "props": { "enabled": true, "max_age_ms": true, "max_count": true }, "dynamicProps": false, "dynamicItems": false };
-var validateServerInfoGcRetentionPolicy = validate36;
+var validateServerInfoGcCountedRetention = validate36;
 function validate36(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
@@ -1266,14 +1322,14 @@ function validate36(data, { instancePath = "", parentData, parentDataProperty, r
   if (errors === _errs0) {
     if (data && typeof data == "object" && !Array.isArray(data)) {
       let missing0;
-      if (data.enabled === void 0 && (missing0 = "enabled") || data.max_age_ms === void 0 && (missing0 = "max_age_ms")) {
-        validate36.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcRetentionPolicy/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
+      if (data.enabled === void 0 && (missing0 = "enabled") || data.max_age_ms === void 0 && (missing0 = "max_age_ms") || data.max_count === void 0 && (missing0 = "max_count")) {
+        validate36.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
         return false;
       } else {
         if (data.enabled !== void 0) {
           const _errs2 = errors;
           if (typeof data.enabled !== "boolean") {
-            validate36.errors = [{ instancePath: instancePath + "/enabled", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcRetentionPolicy/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+            validate36.errors = [{ instancePath: instancePath + "/enabled", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
             return false;
           }
           var valid1 = _errs2 === errors;
@@ -1285,13 +1341,13 @@ function validate36(data, { instancePath = "", parentData, parentDataProperty, r
             let data1 = data.max_age_ms;
             const _errs4 = errors;
             if (!(typeof data1 == "number" && (!(data1 % 1) && !isNaN(data1)))) {
-              validate36.errors = [{ instancePath: instancePath + "/max_age_ms", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcRetentionPolicy/properties/max_age_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+              validate36.errors = [{ instancePath: instancePath + "/max_age_ms", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
               return false;
             }
             if (errors === _errs4) {
               if (typeof data1 == "number") {
                 if (data1 < 0 || isNaN(data1)) {
-                  validate36.errors = [{ instancePath: instancePath + "/max_age_ms", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcRetentionPolicy/properties/max_age_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                  validate36.errors = [{ instancePath: instancePath + "/max_age_ms", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/properties/max_age_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
                   return false;
                 }
               }
@@ -1300,19 +1356,39 @@ function validate36(data, { instancePath = "", parentData, parentDataProperty, r
           } else {
             var valid1 = true;
           }
+          if (valid1) {
+            if (data.max_count !== void 0) {
+              let data2 = data.max_count;
+              const _errs6 = errors;
+              if (!(typeof data2 == "number" && (!(data2 % 1) && !isNaN(data2)))) {
+                validate36.errors = [{ instancePath: instancePath + "/max_count", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+                return false;
+              }
+              if (errors === _errs6) {
+                if (typeof data2 == "number") {
+                  if (data2 < 0 || isNaN(data2)) {
+                    validate36.errors = [{ instancePath: instancePath + "/max_count", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/properties/max_count/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                    return false;
+                  }
+                }
+              }
+              var valid1 = _errs6 === errors;
+            } else {
+              var valid1 = true;
+            }
+          }
         }
       }
     } else {
-      validate36.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcRetentionPolicy/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+      validate36.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcCountedRetention/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
       return false;
     }
   }
   validate36.errors = vErrors;
   return errors === 0;
 }
-validate36.evaluated = { "props": { "enabled": true, "max_age_ms": true }, "dynamicProps": false, "dynamicItems": false };
-var validateAppPolicyV1 = validate37;
-var schema51 = { "type": "object", "title": "AppPolicyV1", "required": ["format", "secrets", "public_env", "allowed_exec_activities", "outbound_http"], "properties": { "allowed_exec_activities": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "format": { "type": "string", "enum": ["obelisk-app-config-v1"] }, "outbound_http": { "type": "array", "items": { "type": "object", "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.", "properties": { "methods": { "anyOf": [{ "anyOf": [{ "type": "string", "description": 'All methods allowed (from `methods = "*"`).', "enum": ["*"] }, { "type": "array", "items": { "type": "string" }, "description": 'Specific methods list (from `methods = ["GET", "POST"]`).' }], "description": 'Input for method restrictions in TOML configuration.\nSupports both `methods = "*"` and `methods = ["GET", "POST"]` syntax.' }, { "type": "null" }], "description": 'Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = "*"` or `methods = ["*"]` to allow all methods.\n- `methods = ["GET", "POST"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).' }, "pattern": { "type": ["string", "null"], "description": 'Host pattern (e.g. `"api.example.com"`, `"*.example.com"`, `"http://localhost:8080"`).' }, "replace_in": { "type": "array", "items": { "type": "string", "description": "Where in the outgoing request placeholders are replaced.", "enum": ["headers", "body", "params"] }, "description": "Where in the request to perform placeholder replacement:\n- `headers` searches textual header values, including placeholders within larger values.\n- `params` searches URL query parameter values.\n- `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.\n\nDefault: empty (no replacement, deny by default).", "default": [] }, "request_url_regex": { "type": ["string", "null"], "description": "Optional regex restriction checked against `METHOD URL` with the query string removed.\nFor example, `GET https://api.example.com/v1/items`, so a `?` never matches.\nUnanchored: use ^ and $ to match the whole text.\nSupports `${VAR}` and `${VAR:-default}` env var interpolation.\nEnv var values are interpreted as regex syntax; use regex-escaped values when precision matters.\nOmit to allow all paths accepted by the host and method restrictions." }, "secrets": { "type": "array", "items": { "anyOf": [{ "type": "string" }, { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "optional": { "type": "boolean", "default": false } }, "additionalProperties": false }], "description": 'A reference to a secret registered in app.toml `[secrets]`.\nEither `"NAME"` (required) or `{ name = "NAME", optional = true }`.' }, "description": "Registered secret names (from the app-owned `app.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.", "default": [] }, "url_prefix": { "type": ["string", "null"], "description": "HTTP(S) URL prefix, mutually exclusive with pattern and `request_url_regex`." }, "url_regex_suffix": { "type": ["string", "null"], "description": "Regex appended to the literal URL prefix; leading ^ is forbidden, end with $ for an exact path.\nMatched without the query string, so a `?` never matches." } }, "additionalProperties": false, "required": ["methods", "request_url_regex", "secrets", "replace_in"] } }, "public_env": { "type": "array", "items": { "anyOf": [{ "type": "string" }, { "type": "object", "required": ["name", "optional"], "properties": { "name": { "type": "string" }, "optional": { "type": "boolean" } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source"], "properties": { "name": { "type": "string" }, "source": { "type": "string", "enum": ["api-url"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source"], "properties": { "name": { "type": "string" }, "source": { "type": "string", "enum": ["webui-url"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source", "http_server"], "properties": { "http_server": { "type": "string" }, "name": { "type": "string" }, "source": { "type": "string", "enum": ["http-server-url"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source"], "properties": { "name": { "type": "string" }, "source": { "type": "string", "enum": ["app-name"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }] } }, "public_http_servers": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "description": "`http_server` names that may serve webhooks without credentials. Omitted when empty." }, "secrets": { "type": "object", "additionalProperties": { "anyOf": [{ "type": "object", "required": ["type", "exposed_to"], "properties": { "exposed_to": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["optional", "exposed_to"], "properties": { "exposed_to": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "optional": { "type": "boolean" } }, "additionalProperties": false }] } } }, "additionalProperties": false };
+validate36.evaluated = { "props": { "enabled": true, "max_age_ms": true, "max_count": true }, "dynamicProps": false, "dynamicItems": false };
+var validateServerInfoGcRetentionPolicy = validate37;
 function validate37(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
@@ -1328,14 +1404,76 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
   if (errors === _errs0) {
     if (data && typeof data == "object" && !Array.isArray(data)) {
       let missing0;
+      if (data.enabled === void 0 && (missing0 = "enabled") || data.max_age_ms === void 0 && (missing0 = "max_age_ms")) {
+        validate37.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcRetentionPolicy/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
+        return false;
+      } else {
+        if (data.enabled !== void 0) {
+          const _errs2 = errors;
+          if (typeof data.enabled !== "boolean") {
+            validate37.errors = [{ instancePath: instancePath + "/enabled", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcRetentionPolicy/properties/enabled/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+            return false;
+          }
+          var valid1 = _errs2 === errors;
+        } else {
+          var valid1 = true;
+        }
+        if (valid1) {
+          if (data.max_age_ms !== void 0) {
+            let data1 = data.max_age_ms;
+            const _errs4 = errors;
+            if (!(typeof data1 == "number" && (!(data1 % 1) && !isNaN(data1)))) {
+              validate37.errors = [{ instancePath: instancePath + "/max_age_ms", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcRetentionPolicy/properties/max_age_ms/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+              return false;
+            }
+            if (errors === _errs4) {
+              if (typeof data1 == "number") {
+                if (data1 < 0 || isNaN(data1)) {
+                  validate37.errors = [{ instancePath: instancePath + "/max_age_ms", schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcRetentionPolicy/properties/max_age_ms/minimum", keyword: "minimum", params: { comparison: ">=", limit: 0 }, message: "must be >= 0" }];
+                  return false;
+                }
+              }
+            }
+            var valid1 = _errs4 === errors;
+          } else {
+            var valid1 = true;
+          }
+        }
+      }
+    } else {
+      validate37.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/ServerInfoGcRetentionPolicy/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+      return false;
+    }
+  }
+  validate37.errors = vErrors;
+  return errors === 0;
+}
+validate37.evaluated = { "props": { "enabled": true, "max_age_ms": true }, "dynamicProps": false, "dynamicItems": false };
+var validateAppPolicyV1 = validate38;
+var schema54 = { "type": "object", "title": "AppPolicyV1", "required": ["format", "secrets", "public_env", "allowed_exec_activities", "outbound_http"], "properties": { "allowed_exec_activities": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "format": { "type": "string", "enum": ["obelisk-app-config-v1"] }, "outbound_http": { "type": "array", "items": { "type": "object", "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.", "properties": { "methods": { "anyOf": [{ "anyOf": [{ "type": "string", "description": 'All methods allowed (from `methods = "*"`).', "enum": ["*"] }, { "type": "array", "items": { "type": "string" }, "description": 'Specific methods list (from `methods = ["GET", "POST"]`).' }], "description": 'Input for method restrictions in TOML configuration.\nSupports both `methods = "*"` and `methods = ["GET", "POST"]` syntax.' }, { "type": "null" }], "description": 'Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = "*"` or `methods = ["*"]` to allow all methods.\n- `methods = ["GET", "POST"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).' }, "pattern": { "type": ["string", "null"], "description": 'Host pattern (e.g. `"api.example.com"`, `"*.example.com"`, `"http://localhost:8080"`).' }, "replace_in": { "type": "array", "items": { "type": "string", "description": "Where in the outgoing request placeholders are replaced.", "enum": ["headers", "body", "params"] }, "description": "Where in the request to perform placeholder replacement:\n- `headers` searches textual header values, including placeholders within larger values.\n- `params` searches URL query parameter values.\n- `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.\n\nDefault: empty (no replacement, deny by default).", "default": [] }, "request_url_regex": { "type": ["string", "null"], "description": "Optional regex restriction checked against `METHOD URL` with the query string removed.\nFor example, `GET https://api.example.com/v1/items`, so a `?` never matches.\nUnanchored: use ^ and $ to match the whole text.\nSupports `${VAR}` and `${VAR:-default}` env var interpolation.\nEnv var values are interpreted as regex syntax; use regex-escaped values when precision matters.\nOmit to allow all paths accepted by the host and method restrictions." }, "secrets": { "type": "array", "items": { "anyOf": [{ "type": "string" }, { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "optional": { "type": "boolean", "default": false } }, "additionalProperties": false }], "description": 'A reference to a secret registered in app.toml `[secrets]`.\nEither `"NAME"` (required) or `{ name = "NAME", optional = true }`.' }, "description": "Registered secret names (from the app-owned `app.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.", "default": [] }, "url_prefix": { "type": ["string", "null"], "description": "HTTP(S) URL prefix, mutually exclusive with pattern and `request_url_regex`." }, "url_regex_suffix": { "type": ["string", "null"], "description": "Regex appended to the literal URL prefix; leading ^ is forbidden, end with $ for an exact path.\nMatched without the query string, so a `?` never matches." } }, "additionalProperties": false, "required": ["methods", "request_url_regex", "secrets", "replace_in"] } }, "public_env": { "type": "array", "items": { "anyOf": [{ "type": "string" }, { "type": "object", "required": ["name", "optional"], "properties": { "name": { "type": "string" }, "optional": { "type": "boolean" } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source"], "properties": { "name": { "type": "string" }, "source": { "type": "string", "enum": ["api-url"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source"], "properties": { "name": { "type": "string" }, "source": { "type": "string", "enum": ["webui-url"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source", "http_server"], "properties": { "http_server": { "type": "string" }, "name": { "type": "string" }, "source": { "type": "string", "enum": ["http-server-url"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["name", "type", "source"], "properties": { "name": { "type": "string" }, "source": { "type": "string", "enum": ["app-name"] }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }] } }, "public_http_servers": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "description": "`http_server` names that may serve webhooks without credentials. Omitted when empty." }, "secrets": { "type": "object", "additionalProperties": { "anyOf": [{ "type": "object", "required": ["type", "exposed_to"], "properties": { "exposed_to": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "type": { "type": "string", "enum": ["internal"] } }, "additionalProperties": false }, { "type": "object", "required": ["optional", "exposed_to"], "properties": { "exposed_to": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }, "optional": { "type": "boolean" } }, "additionalProperties": false }] } } }, "additionalProperties": false };
+function validate38(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  ;
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate38.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  const _errs0 = errors;
+  if (errors === _errs0) {
+    if (data && typeof data == "object" && !Array.isArray(data)) {
+      let missing0;
       if (data.format === void 0 && (missing0 = "format") || data.secrets === void 0 && (missing0 = "secrets") || data.public_env === void 0 && (missing0 = "public_env") || data.allowed_exec_activities === void 0 && (missing0 = "allowed_exec_activities") || data.outbound_http === void 0 && (missing0 = "outbound_http")) {
-        validate37.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
+        validate38.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
         return false;
       } else {
         const _errs2 = errors;
         for (const key0 in data) {
           if (!(key0 === "allowed_exec_activities" || key0 === "format" || key0 === "outbound_http" || key0 === "public_env" || key0 === "public_http_servers" || key0 === "secrets")) {
-            validate37.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" }];
+            validate38.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" }];
             return false;
             break;
           }
@@ -1356,7 +1494,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                       for (let i0 = 0; i0 < len0; i0++) {
                         const _errs8 = errors;
                         if (typeof data1[i0] !== "string") {
-                          validate37.errors = [{ instancePath: instancePath + "/allowed_exec_activities/" + key1.replace(/~/g, "~0").replace(/\//g, "~1") + "/" + i0, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/allowed_exec_activities/additionalProperties/items/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                          validate38.errors = [{ instancePath: instancePath + "/allowed_exec_activities/" + key1.replace(/~/g, "~0").replace(/\//g, "~1") + "/" + i0, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/allowed_exec_activities/additionalProperties/items/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
                           return false;
                         }
                         var valid3 = _errs8 === errors;
@@ -1365,7 +1503,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                         }
                       }
                     } else {
-                      validate37.errors = [{ instancePath: instancePath + "/allowed_exec_activities/" + key1.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/allowed_exec_activities/additionalProperties/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
+                      validate38.errors = [{ instancePath: instancePath + "/allowed_exec_activities/" + key1.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/allowed_exec_activities/additionalProperties/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
                       return false;
                     }
                   }
@@ -1375,7 +1513,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                   }
                 }
               } else {
-                validate37.errors = [{ instancePath: instancePath + "/allowed_exec_activities", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/allowed_exec_activities/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+                validate38.errors = [{ instancePath: instancePath + "/allowed_exec_activities", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/allowed_exec_activities/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
                 return false;
               }
             }
@@ -1388,11 +1526,11 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
               let data3 = data.format;
               const _errs10 = errors;
               if (typeof data3 !== "string") {
-                validate37.errors = [{ instancePath: instancePath + "/format", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/format/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                validate38.errors = [{ instancePath: instancePath + "/format", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/format/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
                 return false;
               }
               if (!(data3 === "obelisk-app-config-v1")) {
-                validate37.errors = [{ instancePath: instancePath + "/format", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/format/enum", keyword: "enum", params: { allowedValues: schema51.properties.format.enum }, message: "must be equal to one of the allowed values" }];
+                validate38.errors = [{ instancePath: instancePath + "/format", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/format/enum", keyword: "enum", params: { allowedValues: schema54.properties.format.enum }, message: "must be equal to one of the allowed values" }];
                 return false;
               }
               var valid1 = _errs10 === errors;
@@ -1414,13 +1552,13 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                         if (data5 && typeof data5 == "object" && !Array.isArray(data5)) {
                           let missing1;
                           if (data5.methods === void 0 && (missing1 = "methods") || data5.request_url_regex === void 0 && (missing1 = "request_url_regex") || data5.secrets === void 0 && (missing1 = "secrets") || data5.replace_in === void 0 && (missing1 = "replace_in")) {
-                            validate37.errors = [{ instancePath: instancePath + "/outbound_http/" + i1, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/required", keyword: "required", params: { missingProperty: missing1 }, message: "must have required property '" + missing1 + "'" }];
+                            validate38.errors = [{ instancePath: instancePath + "/outbound_http/" + i1, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/required", keyword: "required", params: { missingProperty: missing1 }, message: "must have required property '" + missing1 + "'" }];
                             return false;
                           } else {
                             const _errs16 = errors;
                             for (const key2 in data5) {
                               if (!(key2 === "methods" || key2 === "pattern" || key2 === "replace_in" || key2 === "request_url_regex" || key2 === "secrets" || key2 === "url_prefix" || key2 === "url_regex_suffix")) {
-                                validate37.errors = [{ instancePath: instancePath + "/outbound_http/" + i1, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key2 }, message: "must NOT have additional properties" }];
+                                validate38.errors = [{ instancePath: instancePath + "/outbound_http/" + i1, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key2 }, message: "must NOT have additional properties" }];
                                 return false;
                                 break;
                               }
@@ -1445,7 +1583,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                   errors++;
                                 }
                                 if (!(data6 === "*")) {
-                                  const err1 = { instancePath: instancePath + "/outbound_http/" + i1 + "/methods", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/methods/anyOf/0/anyOf/0/enum", keyword: "enum", params: { allowedValues: schema51.properties.outbound_http.items.properties.methods.anyOf[0].anyOf[0].enum }, message: "must be equal to one of the allowed values" };
+                                  const err1 = { instancePath: instancePath + "/outbound_http/" + i1 + "/methods", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/methods/anyOf/0/anyOf/0/enum", keyword: "enum", params: { allowedValues: schema54.properties.outbound_http.items.properties.methods.anyOf[0].anyOf[0].enum }, message: "must be equal to one of the allowed values" };
                                   if (vErrors === null) {
                                     vErrors = [err1];
                                   } else {
@@ -1528,7 +1666,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                     vErrors.push(err6);
                                   }
                                   errors++;
-                                  validate37.errors = vErrors;
+                                  validate38.errors = vErrors;
                                   return false;
                                 } else {
                                   errors = _errs18;
@@ -1549,7 +1687,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                   let data8 = data5.pattern;
                                   const _errs29 = errors;
                                   if (typeof data8 !== "string" && data8 !== null) {
-                                    validate37.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/pattern", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/pattern/type", keyword: "type", params: { type: schema51.properties.outbound_http.items.properties.pattern.type }, message: "must be string,null" }];
+                                    validate38.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/pattern", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/pattern/type", keyword: "type", params: { type: schema54.properties.outbound_http.items.properties.pattern.type }, message: "must be string,null" }];
                                     return false;
                                   }
                                   var valid5 = _errs29 === errors;
@@ -1568,11 +1706,11 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                           let data10 = data9[i3];
                                           const _errs33 = errors;
                                           if (typeof data10 !== "string") {
-                                            validate37.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/replace_in/" + i3, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/replace_in/items/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                                            validate38.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/replace_in/" + i3, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/replace_in/items/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
                                             return false;
                                           }
                                           if (!(data10 === "headers" || data10 === "body" || data10 === "params")) {
-                                            validate37.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/replace_in/" + i3, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/replace_in/items/enum", keyword: "enum", params: { allowedValues: schema51.properties.outbound_http.items.properties.replace_in.items.enum }, message: "must be equal to one of the allowed values" }];
+                                            validate38.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/replace_in/" + i3, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/replace_in/items/enum", keyword: "enum", params: { allowedValues: schema54.properties.outbound_http.items.properties.replace_in.items.enum }, message: "must be equal to one of the allowed values" }];
                                             return false;
                                           }
                                           var valid9 = _errs33 === errors;
@@ -1581,7 +1719,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                           }
                                         }
                                       } else {
-                                        validate37.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/replace_in", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/replace_in/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
+                                        validate38.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/replace_in", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/replace_in/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
                                         return false;
                                       }
                                     }
@@ -1594,7 +1732,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                       let data11 = data5.request_url_regex;
                                       const _errs35 = errors;
                                       if (typeof data11 !== "string" && data11 !== null) {
-                                        validate37.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/request_url_regex", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/request_url_regex/type", keyword: "type", params: { type: schema51.properties.outbound_http.items.properties.request_url_regex.type }, message: "must be string,null" }];
+                                        validate38.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/request_url_regex", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/request_url_regex/type", keyword: "type", params: { type: schema54.properties.outbound_http.items.properties.request_url_regex.type }, message: "must be string,null" }];
                                         return false;
                                       }
                                       var valid5 = _errs35 === errors;
@@ -1707,7 +1845,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                                   vErrors.push(err13);
                                                 }
                                                 errors++;
-                                                validate37.errors = vErrors;
+                                                validate38.errors = vErrors;
                                                 return false;
                                               } else {
                                                 errors = _errs40;
@@ -1725,7 +1863,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                               }
                                             }
                                           } else {
-                                            validate37.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/secrets", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/secrets/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
+                                            validate38.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/secrets", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/secrets/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
                                             return false;
                                           }
                                         }
@@ -1738,7 +1876,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                           let data16 = data5.url_prefix;
                                           const _errs50 = errors;
                                           if (typeof data16 !== "string" && data16 !== null) {
-                                            validate37.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/url_prefix", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/url_prefix/type", keyword: "type", params: { type: schema51.properties.outbound_http.items.properties.url_prefix.type }, message: "must be string,null" }];
+                                            validate38.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/url_prefix", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/url_prefix/type", keyword: "type", params: { type: schema54.properties.outbound_http.items.properties.url_prefix.type }, message: "must be string,null" }];
                                             return false;
                                           }
                                           var valid5 = _errs50 === errors;
@@ -1750,7 +1888,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                             let data17 = data5.url_regex_suffix;
                                             const _errs52 = errors;
                                             if (typeof data17 !== "string" && data17 !== null) {
-                                              validate37.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/url_regex_suffix", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/url_regex_suffix/type", keyword: "type", params: { type: schema51.properties.outbound_http.items.properties.url_regex_suffix.type }, message: "must be string,null" }];
+                                              validate38.errors = [{ instancePath: instancePath + "/outbound_http/" + i1 + "/url_regex_suffix", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/properties/url_regex_suffix/type", keyword: "type", params: { type: schema54.properties.outbound_http.items.properties.url_regex_suffix.type }, message: "must be string,null" }];
                                               return false;
                                             }
                                             var valid5 = _errs52 === errors;
@@ -1766,7 +1904,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                             }
                           }
                         } else {
-                          validate37.errors = [{ instancePath: instancePath + "/outbound_http/" + i1, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+                          validate38.errors = [{ instancePath: instancePath + "/outbound_http/" + i1, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/items/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
                           return false;
                         }
                       }
@@ -1776,7 +1914,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                       }
                     }
                   } else {
-                    validate37.errors = [{ instancePath: instancePath + "/outbound_http", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
+                    validate38.errors = [{ instancePath: instancePath + "/outbound_http", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/outbound_http/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
                     return false;
                   }
                 }
@@ -1941,7 +2079,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                       errors++;
                                     }
                                     if (!(data23 === "api-url")) {
-                                      const err24 = { instancePath: instancePath + "/public_env/" + i5 + "/source", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/2/properties/source/enum", keyword: "enum", params: { allowedValues: schema51.properties.public_env.items.anyOf[2].properties.source.enum }, message: "must be equal to one of the allowed values" };
+                                      const err24 = { instancePath: instancePath + "/public_env/" + i5 + "/source", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/2/properties/source/enum", keyword: "enum", params: { allowedValues: schema54.properties.public_env.items.anyOf[2].properties.source.enum }, message: "must be equal to one of the allowed values" };
                                       if (vErrors === null) {
                                         vErrors = [err24];
                                       } else {
@@ -1967,7 +2105,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                         errors++;
                                       }
                                       if (!(data24 === "internal")) {
-                                        const err26 = { instancePath: instancePath + "/public_env/" + i5 + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/2/properties/type/enum", keyword: "enum", params: { allowedValues: schema51.properties.public_env.items.anyOf[2].properties.type.enum }, message: "must be equal to one of the allowed values" };
+                                        const err26 = { instancePath: instancePath + "/public_env/" + i5 + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/2/properties/type/enum", keyword: "enum", params: { allowedValues: schema54.properties.public_env.items.anyOf[2].properties.type.enum }, message: "must be equal to one of the allowed values" };
                                         if (vErrors === null) {
                                           vErrors = [err26];
                                         } else {
@@ -2056,7 +2194,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                       errors++;
                                     }
                                     if (!(data26 === "webui-url")) {
-                                      const err32 = { instancePath: instancePath + "/public_env/" + i5 + "/source", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/3/properties/source/enum", keyword: "enum", params: { allowedValues: schema51.properties.public_env.items.anyOf[3].properties.source.enum }, message: "must be equal to one of the allowed values" };
+                                      const err32 = { instancePath: instancePath + "/public_env/" + i5 + "/source", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/3/properties/source/enum", keyword: "enum", params: { allowedValues: schema54.properties.public_env.items.anyOf[3].properties.source.enum }, message: "must be equal to one of the allowed values" };
                                       if (vErrors === null) {
                                         vErrors = [err32];
                                       } else {
@@ -2082,7 +2220,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                         errors++;
                                       }
                                       if (!(data27 === "internal")) {
-                                        const err34 = { instancePath: instancePath + "/public_env/" + i5 + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/3/properties/type/enum", keyword: "enum", params: { allowedValues: schema51.properties.public_env.items.anyOf[3].properties.type.enum }, message: "must be equal to one of the allowed values" };
+                                        const err34 = { instancePath: instancePath + "/public_env/" + i5 + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/3/properties/type/enum", keyword: "enum", params: { allowedValues: schema54.properties.public_env.items.anyOf[3].properties.type.enum }, message: "must be equal to one of the allowed values" };
                                         if (vErrors === null) {
                                           vErrors = [err34];
                                         } else {
@@ -2187,7 +2325,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                         errors++;
                                       }
                                       if (!(data30 === "http-server-url")) {
-                                        const err41 = { instancePath: instancePath + "/public_env/" + i5 + "/source", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/4/properties/source/enum", keyword: "enum", params: { allowedValues: schema51.properties.public_env.items.anyOf[4].properties.source.enum }, message: "must be equal to one of the allowed values" };
+                                        const err41 = { instancePath: instancePath + "/public_env/" + i5 + "/source", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/4/properties/source/enum", keyword: "enum", params: { allowedValues: schema54.properties.public_env.items.anyOf[4].properties.source.enum }, message: "must be equal to one of the allowed values" };
                                         if (vErrors === null) {
                                           vErrors = [err41];
                                         } else {
@@ -2213,7 +2351,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                           errors++;
                                         }
                                         if (!(data31 === "internal")) {
-                                          const err43 = { instancePath: instancePath + "/public_env/" + i5 + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/4/properties/type/enum", keyword: "enum", params: { allowedValues: schema51.properties.public_env.items.anyOf[4].properties.type.enum }, message: "must be equal to one of the allowed values" };
+                                          const err43 = { instancePath: instancePath + "/public_env/" + i5 + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/4/properties/type/enum", keyword: "enum", params: { allowedValues: schema54.properties.public_env.items.anyOf[4].properties.type.enum }, message: "must be equal to one of the allowed values" };
                                           if (vErrors === null) {
                                             vErrors = [err43];
                                           } else {
@@ -2303,7 +2441,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                       errors++;
                                     }
                                     if (!(data33 === "app-name")) {
-                                      const err49 = { instancePath: instancePath + "/public_env/" + i5 + "/source", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/5/properties/source/enum", keyword: "enum", params: { allowedValues: schema51.properties.public_env.items.anyOf[5].properties.source.enum }, message: "must be equal to one of the allowed values" };
+                                      const err49 = { instancePath: instancePath + "/public_env/" + i5 + "/source", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/5/properties/source/enum", keyword: "enum", params: { allowedValues: schema54.properties.public_env.items.anyOf[5].properties.source.enum }, message: "must be equal to one of the allowed values" };
                                       if (vErrors === null) {
                                         vErrors = [err49];
                                       } else {
@@ -2329,7 +2467,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                         errors++;
                                       }
                                       if (!(data34 === "internal")) {
-                                        const err51 = { instancePath: instancePath + "/public_env/" + i5 + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/5/properties/type/enum", keyword: "enum", params: { allowedValues: schema51.properties.public_env.items.anyOf[5].properties.type.enum }, message: "must be equal to one of the allowed values" };
+                                        const err51 = { instancePath: instancePath + "/public_env/" + i5 + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/items/anyOf/5/properties/type/enum", keyword: "enum", params: { allowedValues: schema54.properties.public_env.items.anyOf[5].properties.type.enum }, message: "must be equal to one of the allowed values" };
                                         if (vErrors === null) {
                                           vErrors = [err51];
                                         } else {
@@ -2370,7 +2508,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                             vErrors.push(err53);
                           }
                           errors++;
-                          validate37.errors = vErrors;
+                          validate38.errors = vErrors;
                           return false;
                         } else {
                           errors = _errs57;
@@ -2388,7 +2526,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                         }
                       }
                     } else {
-                      validate37.errors = [{ instancePath: instancePath + "/public_env", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
+                      validate38.errors = [{ instancePath: instancePath + "/public_env", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_env/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
                       return false;
                     }
                   }
@@ -2407,7 +2545,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                         for (let i6 = 0; i6 < len6; i6++) {
                           const _errs107 = errors;
                           if (typeof data35[i6] !== "string") {
-                            validate37.errors = [{ instancePath: instancePath + "/public_http_servers/" + i6, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_http_servers/items/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                            validate38.errors = [{ instancePath: instancePath + "/public_http_servers/" + i6, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_http_servers/items/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
                             return false;
                           }
                           var valid20 = _errs107 === errors;
@@ -2427,7 +2565,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                               }
                               if (typeof indices0[item0] == "number") {
                                 j0 = indices0[item0];
-                                validate37.errors = [{ instancePath: instancePath + "/public_http_servers", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_http_servers/uniqueItems", keyword: "uniqueItems", params: { i: i7, j: j0 }, message: "must NOT have duplicate items (items ## " + j0 + " and " + i7 + " are identical)" }];
+                                validate38.errors = [{ instancePath: instancePath + "/public_http_servers", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_http_servers/uniqueItems", keyword: "uniqueItems", params: { i: i7, j: j0 }, message: "must NOT have duplicate items (items ## " + j0 + " and " + i7 + " are identical)" }];
                                 return false;
                                 break;
                               }
@@ -2436,7 +2574,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                           }
                         }
                       } else {
-                        validate37.errors = [{ instancePath: instancePath + "/public_http_servers", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_http_servers/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
+                        validate38.errors = [{ instancePath: instancePath + "/public_http_servers", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/public_http_servers/type", keyword: "type", params: { type: "array" }, message: "must be array" }];
                         return false;
                       }
                     }
@@ -2553,7 +2691,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                           errors++;
                                         }
                                         if (!(data42 === "internal")) {
-                                          const err60 = { instancePath: instancePath + "/secrets/" + key9.replace(/~/g, "~0").replace(/\//g, "~1") + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/type/enum", keyword: "enum", params: { allowedValues: schema51.properties.secrets.additionalProperties.anyOf[0].properties.type.enum }, message: "must be equal to one of the allowed values" };
+                                          const err60 = { instancePath: instancePath + "/secrets/" + key9.replace(/~/g, "~0").replace(/\//g, "~1") + "/type", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/additionalProperties/anyOf/0/properties/type/enum", keyword: "enum", params: { allowedValues: schema54.properties.secrets.additionalProperties.anyOf[0].properties.type.enum }, message: "must be equal to one of the allowed values" };
                                           if (vErrors === null) {
                                             vErrors = [err60];
                                           } else {
@@ -2711,7 +2849,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                                 vErrors.push(err69);
                               }
                               errors++;
-                              validate37.errors = vErrors;
+                              validate38.errors = vErrors;
                               return false;
                             } else {
                               errors = _errs113;
@@ -2729,7 +2867,7 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
                             }
                           }
                         } else {
-                          validate37.errors = [{ instancePath: instancePath + "/secrets", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+                          validate38.errors = [{ instancePath: instancePath + "/secrets", schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/properties/secrets/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
                           return false;
                         }
                       }
@@ -2745,20 +2883,20 @@ function validate37(data, { instancePath = "", parentData, parentDataProperty, r
         }
       }
     } else {
-      validate37.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+      validate38.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/AppPolicyV1/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
       return false;
     }
   }
-  validate37.errors = vErrors;
+  validate38.errors = vErrors;
   return errors === 0;
 }
-validate37.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var validateDeploymentSwitchPayload = validate38;
-function validate38(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate38.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+var validateDeploymentSwitchPayload = validate39;
+function validate39(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate38.evaluated;
+  const evaluated0 = validate39.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -2771,7 +2909,7 @@ function validate38(data, { instancePath = "", parentData, parentDataProperty, r
       if (data.allow_unavailable_runtime_config !== void 0) {
         const _errs2 = errors;
         if (typeof data.allow_unavailable_runtime_config !== "boolean") {
-          validate38.errors = [{ instancePath: instancePath + "/allow_unavailable_runtime_config", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPayload/properties/allow_unavailable_runtime_config/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+          validate39.errors = [{ instancePath: instancePath + "/allow_unavailable_runtime_config", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPayload/properties/allow_unavailable_runtime_config/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
           return false;
         }
         var valid1 = _errs2 === errors;
@@ -2782,7 +2920,7 @@ function validate38(data, { instancePath = "", parentData, parentDataProperty, r
         if (data.apply !== void 0) {
           const _errs4 = errors;
           if (typeof data.apply !== "boolean") {
-            validate38.errors = [{ instancePath: instancePath + "/apply", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPayload/properties/apply/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+            validate39.errors = [{ instancePath: instancePath + "/apply", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPayload/properties/apply/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
             return false;
           }
           var valid1 = _errs4 === errors;
@@ -2791,20 +2929,20 @@ function validate38(data, { instancePath = "", parentData, parentDataProperty, r
         }
       }
     } else {
-      validate38.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPayload/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+      validate39.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPayload/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
       return false;
     }
   }
-  validate38.errors = vErrors;
+  validate39.errors = vErrors;
   return errors === 0;
 }
-validate38.evaluated = { "props": { "allow_unavailable_runtime_config": true, "apply": true }, "dynamicProps": false, "dynamicItems": false };
-var validateDeploymentSwitchResponse = validate39;
-var schema56 = { "type": "string", "enum": ["switched", "restart_required"] };
-function validate40(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate39.evaluated = { "props": { "allow_unavailable_runtime_config": true, "apply": true }, "dynamicProps": false, "dynamicItems": false };
+var validateDeploymentSwitchResponse = validate40;
+var schema59 = { "type": "string", "enum": ["switched", "restart_required"] };
+function validate41(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate40.evaluated;
+  const evaluated0 = validate41.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -2815,74 +2953,50 @@ function validate40(data, { instancePath = "", parentData, parentDataProperty, r
     if (data && typeof data == "object" && !Array.isArray(data)) {
       let missing0;
       if (data.ok === void 0 && (missing0 = "ok")) {
-        validate40.errors = [{ instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
+        validate41.errors = [{ instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
         return false;
       } else {
         if (data.ok !== void 0) {
           let data0 = data.ok;
           if (typeof data0 !== "string") {
-            validate40.errors = [{ instancePath: instancePath + "/ok", schemaPath: "#/components/schemas/DeploymentSwitchOutcome/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+            validate41.errors = [{ instancePath: instancePath + "/ok", schemaPath: "#/components/schemas/DeploymentSwitchOutcome/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
             return false;
           }
           if (!(data0 === "switched" || data0 === "restart_required")) {
-            validate40.errors = [{ instancePath: instancePath + "/ok", schemaPath: "#/components/schemas/DeploymentSwitchOutcome/enum", keyword: "enum", params: { allowedValues: schema56.enum }, message: "must be equal to one of the allowed values" }];
+            validate41.errors = [{ instancePath: instancePath + "/ok", schemaPath: "#/components/schemas/DeploymentSwitchOutcome/enum", keyword: "enum", params: { allowedValues: schema59.enum }, message: "must be equal to one of the allowed values" }];
             return false;
           }
         }
       }
     } else {
-      validate40.errors = [{ instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+      validate41.errors = [{ instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
       return false;
     }
+  }
+  validate41.errors = vErrors;
+  return errors === 0;
+}
+validate41.evaluated = { "props": { "ok": true }, "dynamicProps": false, "dynamicItems": false };
+function validate40(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  ;
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate40.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  if (!validate41(data, { instancePath, parentData, parentDataProperty, rootData, dynamicAnchors })) {
+    vErrors = vErrors === null ? validate41.errors : vErrors.concat(validate41.errors);
+    errors = vErrors.length;
   }
   validate40.errors = vErrors;
   return errors === 0;
 }
 validate40.evaluated = { "props": { "ok": true }, "dynamicProps": false, "dynamicItems": false };
-function validate39(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
-  ;
-  let vErrors = null;
-  let errors = 0;
-  const evaluated0 = validate39.evaluated;
-  if (evaluated0.dynamicProps) {
-    evaluated0.props = void 0;
-  }
-  if (evaluated0.dynamicItems) {
-    evaluated0.items = void 0;
-  }
-  if (!validate40(data, { instancePath, parentData, parentDataProperty, rootData, dynamicAnchors })) {
-    vErrors = vErrors === null ? validate40.errors : vErrors.concat(validate40.errors);
-    errors = vErrors.length;
-  }
-  validate39.errors = vErrors;
-  return errors === 0;
-}
-validate39.evaluated = { "props": { "ok": true }, "dynamicProps": false, "dynamicItems": false };
-var validateDeploymentSwitchOutcome = validate42;
-function validate42(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
-  ;
-  let vErrors = null;
-  let errors = 0;
-  const evaluated0 = validate42.evaluated;
-  if (evaluated0.dynamicProps) {
-    evaluated0.props = void 0;
-  }
-  if (evaluated0.dynamicItems) {
-    evaluated0.items = void 0;
-  }
-  if (typeof data !== "string") {
-    validate42.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchOutcome/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
-    return false;
-  }
-  if (!(data === "switched" || data === "restart_required")) {
-    validate42.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchOutcome/enum", keyword: "enum", params: { allowedValues: schema56.enum }, message: "must be equal to one of the allowed values" }];
-    return false;
-  }
-  validate42.errors = vErrors;
-  return errors === 0;
-}
-validate42.evaluated = { "dynamicProps": false, "dynamicItems": false };
-var validateDeploymentSwitchPreconditionFailed = validate43;
+var validateDeploymentSwitchOutcome = validate43;
 function validate43(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
@@ -2894,18 +3008,42 @@ function validate43(data, { instancePath = "", parentData, parentDataProperty, r
   if (evaluated0.dynamicItems) {
     evaluated0.items = void 0;
   }
+  if (typeof data !== "string") {
+    validate43.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchOutcome/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+    return false;
+  }
+  if (!(data === "switched" || data === "restart_required")) {
+    validate43.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchOutcome/enum", keyword: "enum", params: { allowedValues: schema59.enum }, message: "must be equal to one of the allowed values" }];
+    return false;
+  }
+  validate43.errors = vErrors;
+  return errors === 0;
+}
+validate43.evaluated = { "dynamicProps": false, "dynamicItems": false };
+var validateDeploymentSwitchPreconditionFailed = validate44;
+function validate44(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  ;
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate44.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
   const _errs0 = errors;
   if (errors === _errs0) {
     if (data && typeof data == "object" && !Array.isArray(data)) {
       let missing0;
       if (data.err === void 0 && (missing0 = "err") || data.if_match === void 0 && (missing0 = "if_match") || data.deployment_id === void 0 && (missing0 = "deployment_id")) {
-        validate43.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
+        validate44.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/required", keyword: "required", params: { missingProperty: missing0 }, message: "must have required property '" + missing0 + "'" }];
         return false;
       } else {
         if (data.err !== void 0) {
           const _errs2 = errors;
           if (typeof data.err !== "string") {
-            validate43.errors = [{ instancePath: instancePath + "/err", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/err/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+            validate44.errors = [{ instancePath: instancePath + "/err", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/err/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
             return false;
           }
           var valid1 = _errs2 === errors;
@@ -2916,7 +3054,7 @@ function validate43(data, { instancePath = "", parentData, parentDataProperty, r
           if (data.if_match !== void 0) {
             const _errs4 = errors;
             if (typeof data.if_match !== "string") {
-              validate43.errors = [{ instancePath: instancePath + "/if_match", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/if_match/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+              validate44.errors = [{ instancePath: instancePath + "/if_match", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/if_match/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
               return false;
             }
             var valid1 = _errs4 === errors;
@@ -2927,7 +3065,7 @@ function validate43(data, { instancePath = "", parentData, parentDataProperty, r
             if (data.deployment_id !== void 0) {
               const _errs6 = errors;
               if (typeof data.deployment_id !== "string") {
-                validate43.errors = [{ instancePath: instancePath + "/deployment_id", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/deployment_id/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                validate44.errors = [{ instancePath: instancePath + "/deployment_id", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/deployment_id/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
                 return false;
               }
               var valid1 = _errs6 === errors;
@@ -2938,7 +3076,7 @@ function validate43(data, { instancePath = "", parentData, parentDataProperty, r
               if (data.enqueued_deployment_id !== void 0) {
                 const _errs8 = errors;
                 if (typeof data.enqueued_deployment_id !== "string") {
-                  validate43.errors = [{ instancePath: instancePath + "/enqueued_deployment_id", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/enqueued_deployment_id/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                  validate44.errors = [{ instancePath: instancePath + "/enqueued_deployment_id", schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/properties/enqueued_deployment_id/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
                   return false;
                 }
                 var valid1 = _errs8 === errors;
@@ -2950,18 +3088,25 @@ function validate43(data, { instancePath = "", parentData, parentDataProperty, r
         }
       }
     } else {
-      validate43.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+      validate44.errors = [{ instancePath, schemaPath: "obelisk-lifecycle#/components/schemas/DeploymentSwitchPreconditionFailed/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
       return false;
     }
   }
-  validate43.errors = vErrors;
+  validate44.errors = vErrors;
   return errors === 0;
 }
-validate43.evaluated = { "props": { "err": true, "if_match": true, "deployment_id": true, "enqueued_deployment_id": true }, "dynamicProps": false, "dynamicItems": false };
+validate44.evaluated = { "props": { "err": true, "if_match": true, "deployment_id": true, "enqueued_deployment_id": true }, "dynamicProps": false, "dynamicItems": false };
 function parseServerInfoResponse(value) {
   if (!validateServerInfoResponse(value)) {
     const error = validateServerInfoResponse.errors[0];
     throw new TypeError("Invalid ServerInfoResponse at " + (error.instancePath || "/") + ": " + error.message);
+  }
+  return value;
+}
+function parseServerInfoHttpServer(value) {
+  if (!validateServerInfoHttpServer(value)) {
+    const error = validateServerInfoHttpServer.errors[0];
+    throw new TypeError("Invalid ServerInfoHttpServer at " + (error.instancePath || "/") + ": " + error.message);
   }
   return value;
 }
@@ -3046,6 +3191,7 @@ export {
   parseServerInfoGcCountedRetention,
   parseServerInfoGcRetention,
   parseServerInfoGcRetentionPolicy,
+  parseServerInfoHttpServer,
   parseServerInfoResponse,
   validateAppPolicyV1,
   validateDeploymentSwitchOutcome,
@@ -3056,5 +3202,6 @@ export {
   validateServerInfoGcCountedRetention,
   validateServerInfoGcRetention,
   validateServerInfoGcRetentionPolicy,
+  validateServerInfoHttpServer,
   validateServerInfoResponse
 };

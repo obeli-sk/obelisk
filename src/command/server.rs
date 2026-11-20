@@ -224,6 +224,8 @@ pub(crate) struct DeploymentContext {
     pub(crate) component_registry_ro: wasm_workers::registry::ComponentConfigRegistryRO,
     pub(crate) exec_task_handles: Vec<ExecutorTaskHandle>,
     pub(crate) replay_workers: Arc<ReplayWorkerRegistry>,
+    /// Names of HTTP servers this deployment attaches webhook routes to.
+    pub(crate) http_servers_with_routes: hashbrown::HashSet<String>,
     pub(crate) closed: bool,
 }
 
@@ -2654,6 +2656,16 @@ pub(crate) async fn run_internal(
         prepared_dirs: server_init.prepared_dirs.clone(),
         deployment_switch_manager: deployment_switch_manager.clone(),
         gc_info: maintenance_gc_config.server_info(),
+        http_servers_info: server_init
+            .server_verified
+            .http_servers
+            .iter()
+            .map(|server| rest_types::server::ServerInfoHttpServer {
+                name: server.name.to_string(),
+                has_routes: false,
+                public_url: server.public_url.clone(),
+            })
+            .collect(),
     });
     if let Some(api_listening_addr) = api_listening_addr {
         let app = app_router;
@@ -4322,6 +4334,7 @@ fn spawn_deployment_context(
     component_registry_ro: ComponentConfigRegistryRO,
     cancel_registry: &CancelRegistry,
     log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+    http_servers_to_webhooks_and_state: &HttpServersToWebhooksAndState,
 ) -> DeploymentContext {
     let mut exec_task_handles: Vec<ExecutorTaskHandle> = Vec::with_capacity(workers_linked.len());
     let mut replay_workers = ReplayWorkerRegistry::default();
@@ -4339,6 +4352,11 @@ fn spawn_deployment_context(
         component_registry_ro,
         exec_task_handles,
         replay_workers: Arc::new(replay_workers),
+        http_servers_with_routes: http_servers_to_webhooks_and_state
+            .iter()
+            .filter(|(_, (webhooks, _))| webhooks.iter().any(|(_, routes)| !routes.is_empty()))
+            .map(|(http_server, _)| http_server.name.to_string())
+            .collect(),
         closed: false,
     }
 }
@@ -4408,6 +4426,7 @@ async fn switch_hot_redeploy(
         server_compiled_linked.component_registry_ro,
         &cancel_registry,
         &log_forwarder_sender,
+        &server_compiled_linked.http_servers_to_webhooks_and_state,
     );
     drop(write_guard_ctx);
 
@@ -4786,6 +4805,7 @@ async fn spawn_tasks_and_threads(
             server_compiled_linked.component_registry_ro,
             cancel_registry,
             &log_forwarder_sender,
+            &server_compiled_linked.http_servers_to_webhooks_and_state,
         )));
     let webhook_registry = Arc::new(webhook_registry);
     let deployment_switch_manager = DeploymentSwitchManagerHandle::new(

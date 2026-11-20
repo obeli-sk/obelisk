@@ -5191,6 +5191,26 @@
           }
         }
       },
+      "ServerInfoHttpServer": {
+        "type": "object",
+        "required": [
+          "name",
+          "has_routes"
+        ],
+        "properties": {
+          "has_routes": {
+            "type": "boolean",
+            "description": "Whether the active deployment attaches any webhook route to this server."
+          },
+          "name": {
+            "type": "string"
+          },
+          "public_url": {
+            "type": "string",
+            "description": "`public_url` from server.toml."
+          }
+        }
+      },
       "ServerInfoResponse": {
         "type": "object",
         "required": [
@@ -5218,6 +5238,13 @@
           },
           "gc": {
             "$ref": "#/components/schemas/ServerInfoGc"
+          },
+          "http_servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerInfoHttpServer"
+            },
+            "description": "HTTP servers listening on this server, without the API listener."
           },
           "node_run_id": {
             "type": "string"
