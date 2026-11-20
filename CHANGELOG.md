@@ -6,38 +6,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.19](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.18...v0.43.0-rc.19)
+
+This release candidate renames `cloud app deploy` to `cloud app push` and lets `cloud app stage`
+stage a deployment next to the configuration, which `cloud app apply` then activates. Server
+checkpoints are removed in favor of deployment activation, and byte sizes in configuration take
+the unit as the key.
+
+### Added
+
+- *(sqlite)* `database.sqlite.litestream.sync = "deployments"` makes only deployment inserts wait
+  for Litestream, so a restored replica holds every submitted deployment without slowing other
+  commits. The default `"all"` keeps every commit synchronous.
+  [#1367](https://github.com/obeli-sk/obelisk/pull/1367)
+- *(api)* `POST /v1/admin/system-events` records events from processes running next to Obelisk.
+  The code must start with the reserved `ext.` prefix, the event is attached to the current
+  deployment, and an optional `dedupe_key` keeps one event per code, deployment and key.
+  [#1385](https://github.com/obeli-sk/obelisk/pull/1385)
+- *(api)* `GET /v1/info` lists `http_servers`, each with `has_routes` for the active deployment
+  and its server.toml `public_url`. [#1386](https://github.com/obeli-sk/obelisk/pull/1386)
+- *(webui)* `webui.unstable_deployment_switch = false` hides the Web UI's deployment switch
+  buttons for platforms that activate deployments themselves; the API still accepts switches.
+  [#1387](https://github.com/obeli-sk/obelisk/pull/1387)
+- *(cli)* `server run --empty-deployment --deployment-id <id>` stores the empty deployment under
+  that ID, or reuses it when stored and empty, so a supervisor knows the ID before the first start.
+  [#1366](https://github.com/obeli-sk/obelisk/pull/1366)
+
 ### Changed
-- *(cli)* `cloud app deploy` is renamed to `cloud app push`, pairing with `cloud app pull` and
-  keeping it apart from `cloud app deployment`.
-- Replace Chrono with Jiff for timestamps, scheduling and database access, preserving existing
-  SQLite timestamp storage and RFC 3339 API fields.
-- *(cli)* `cloud app stage` creates a missing app with a bare app.toml and says so, accepts
-  `--env`, `--secret`, `--fill` and `--fill-non-interactive`, and with `-d/--deployment` or
-  `--empty-deployment` submits a deployment first and stages its ID with the configuration in the
-  draft. It never applies, so a human can set the remaining secrets and run `cloud app apply`.
-  `cloud app apply` sends no deployment ID: the provisioner activates the draft's staged
+
+- **Breaking (RC):** *(cloud)* `cloud app deploy` is renamed to `cloud app push`, pairing with
+  `cloud app pull` and keeping it apart from `cloud app deployment`.
+  [#1384](https://github.com/obeli-sk/obelisk/pull/1384)
+- **Breaking (RC):** *(cloud)* `cloud app stage` creates a missing app with a bare app.toml and
+  says so, and accepts `--env`, `--secret`, `--fill` and `--fill-non-interactive`. With
+  `-d/--deployment` it stages a deployment in the draft: an existing deployment ID as is, or a
+  manifest submitted first; `--empty-deployment` submits an empty one. Without app.toml it keeps
+  the draft's configuration. It never applies, so a human can set the remaining secrets and run
+  `cloud app apply`, which sends no deployment ID: the provisioner activates the draft's staged
   deployment, else keeps the active one. `cloud app push` creates a missing app bare, announces
   it, and stages configuration, values and the uploaded deployment in its temporary draft before
-  applying it.
-- *(cli)* `cloud app deployment enqueue` and `apply` are removed instead of refusing to run.
+  applying it. [#1366](https://github.com/obeli-sk/obelisk/pull/1366)
+  [#1372](https://github.com/obeli-sk/obelisk/pull/1372)
+- **Breaking (RC):** *(cloud)* Drafts are opened with `PUT` and every edit, discard and apply
+  sends `If-Match: "draft-<id>"`, so a draft discarded and reopened by someone else is refused
+  with `412` instead of being edited or applied. Requires a provisioner that supports it.
+  [#1371](https://github.com/obeli-sk/obelisk/pull/1371)
+- **Breaking (RC):** *(cloud)* `cloud app deployment enqueue`, `apply` and `verify` are removed.
   Cloud apps activate a deployment with `cloud app stage --deployment` and `cloud app apply`, or
-  with `cloud app push`.
-- *(cli)* `cloud app deployment verify` is removed. It only verified locally; use
-  `deployment verify`.
+  with `cloud app push`; use `deployment verify` to verify locally.
+  [#1389](https://github.com/obeli-sk/obelisk/pull/1389)
+- *(config)* Byte sizes take the unit as the key (`bytes`, `kib`, `mib` or `gib`): app.toml
+  `cloud.memory_mb` becomes `memory.mib`, server.toml limits use `max_persisted_value_size`,
+  `max_deployment_file_size` and `max_transport_message_size`, and exec activities use
+  `max_output_size`. The 0.42 byte-count keys are still accepted with a deprecation warning;
+  setting both forms of one limit is an error.
+  [#1382](https://github.com/obeli-sk/obelisk/pull/1382)
+- *(config)* `cloud.integrations` entries in app.toml may carry any settings next to `env`.
+  Obelisk only reads `env`; `type` and the rest are validated by the cloud.
+  [#1370](https://github.com/obeli-sk/obelisk/pull/1370)
 - *(cli)* `--empty` is renamed to `--empty-deployment` in `server run` and `deployment
   submit|enqueue|apply`; `--empty` remains an alias. `cloud app push --empty-deployment` pushes
   an empty deployment without reading deployment.toml.
-- *(cli)* `server run --empty-deployment --deployment-id <id>` stores the empty deployment under
-  that ID, or reuses it when stored and empty, so a supervisor knows the ID before the first start.
-- *(server)* `database.sqlite.litestream.sync = "deployments"` makes only deployment inserts wait
-  for Litestream, so a restored replica holds every submitted deployment without slowing other
-  commits. The default `"all"` keeps every commit synchronous.
+  [#1366](https://github.com/obeli-sk/obelisk/pull/1366)
+- *(deployment)* A submit allowing unavailable runtime config accepts webhooks on HTTP servers
+  that server.toml configures but keeps closed, since the app.toml activating the deployment may
+  open them. Unknown servers are still rejected.
+  [#1369](https://github.com/obeli-sk/obelisk/pull/1369)
 - *(deployment)* Deployment retention keeps the most recently deactivated deployment instead of the
-  checkpointed one.
+  checkpointed one. [#1367](https://github.com/obeli-sk/obelisk/pull/1367)
+- *(server)* Started events of deployment submission, deployment switching, administrative
+  deletion and retention are logged at debug level.
+  [#1365](https://github.com/obeli-sk/obelisk/pull/1365)
+- *(build)* Updated Rust dependencies and the Web UI.
+  [#1376](https://github.com/obeli-sk/obelisk/pull/1376)
+  [#1380](https://github.com/obeli-sk/obelisk/pull/1380)
 
 ### Removed
-- *(server)* `obelisk server checkpoint` and the app checkpoint table. The launcher tracks the
-  last-good configuration; `/health` reads the active deployment.
+
+- **Breaking (RC):** *(server)* `obelisk server checkpoint` and the app checkpoint table. The
+  launcher tracks the last-good configuration; `/health` reads the active deployment.
+  [#1367](https://github.com/obeli-sk/obelisk/pull/1367)
+
+### Fixed
+
+- *(cli)* `deployment submit` reports the server's message on an ID or content conflict instead
+  of failing with "missing field `missing_digest_fields`".
+  [#1368](https://github.com/obeli-sk/obelisk/pull/1368)
+- *(cli)* Generated starter and WIT files are flushed before the command reports success, so an
+  immediate reader no longer sees empty or incomplete files.
+  [#1375](https://github.com/obeli-sk/obelisk/pull/1375)
+
+### Security
+
+- *(deps)* Wasmtime 50.0.3 fixes RUSTSEC-2026-0587, a WASI filesystem sandbox escape on Windows
+  through a drive-prefixed path component.
+  [#1392](https://github.com/obeli-sk/obelisk/pull/1392)
 
 ## [0.43.0-rc.18](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.17...v0.43.0-rc.18)
 
