@@ -162,6 +162,7 @@ fn command_future(
                     suppress_type_checking_errors,
                     suppress_linking_errors: false,
                     js_runtime,
+                    dev,
                 },
                 skip_db,
                 fixes,
@@ -192,6 +193,7 @@ fn command_future(
                     suppress_type_checking_errors,
                     suppress_linking_errors: false,
                     js_runtime: parse_js_runtime_from_env(&env_vars)?,
+                    dev: false,
                 },
             ))
         }

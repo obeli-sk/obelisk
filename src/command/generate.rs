@@ -1033,6 +1033,7 @@ async fn generate_wit_deps(
         suppress_type_checking_errors: true, // Just extracting WITs, not running components
         suppress_linking_errors: true,       // Just extracting WITs, not running components
         js_runtime: crate::command::server::JsRuntimeMode::default(),
+        dev: false,
     };
 
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
