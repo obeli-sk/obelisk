@@ -870,6 +870,8 @@ pub(crate) struct VerifyParams {
     pub(crate) suppress_type_checking_errors: bool,
     pub(crate) suppress_linking_errors: bool,
     pub(crate) js_runtime: JsRuntimeMode,
+    /// `--dev`, kept when `server verify` reloads the configuration after repairs.
+    pub(crate) dev: bool,
 }
 
 fn webhook_http_server_names(deployment: &DeploymentResolved) -> BTreeSet<String> {
@@ -950,7 +952,9 @@ pub(crate) async fn verify(
     fixes: crate::args::VerifyFixArgs,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<(), anyhow::Error> {
+    let dev = verify_params.dev;
     let deployment_path_for_fix = deployment.clone();
+    let startup_deployment_id = config.startup_deployment_id;
     ensure!(
         !skip_db || deployment.is_some(),
         "cannot skip database when deployment TOML file is not specified"
@@ -1035,7 +1039,7 @@ pub(crate) async fn verify(
                 EnvVarSecretsCleanup::Noop,
                 RuntimeConfigAvailability::AllowMissingValues,
                 false,
-                false,
+                dev,
             )?;
             (config_holder, config, secret_registry)
         } else {
@@ -1068,7 +1072,7 @@ pub(crate) async fn verify(
             EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::AllowMissingValues,
             false,
-            false,
+            dev,
         )?;
         (config_holder, config, secret_registry)
     } else {
@@ -1111,13 +1115,13 @@ pub(crate) async fn verify(
             .await?;
         }
     }
-    let (config_holder, config, secret_registry) = if fixes.any() {
+    let (config_holder, mut config, secret_registry) = if fixes.any() {
         let startup = prepare_server_startup(
             config_holder.config_source,
             config_holder.app_source,
             EnvVarSecretsCleanup::Noop,
             verify_params.runtime_config_availability,
-            false,
+            dev,
         )?;
         (
             startup.config_holder,
@@ -1127,6 +1131,8 @@ pub(crate) async fn verify(
     } else {
         (config_holder, config, secret_registry)
     };
+    // Reloading the configuration after repairs drops `--deployment-id`.
+    config.startup_deployment_id = startup_deployment_id;
 
     let (termination_sender, mut termination_watcher) = watch::channel(());
     let prepared_dirs = prepare_dirs(
@@ -2556,6 +2562,7 @@ pub(crate) async fn run_internal(
                 suppress_type_checking_errors: params.suppress_type_checking_errors,
                 suppress_linking_errors: false,
                 js_runtime: params.js_runtime,
+                dev: false,
             },
             &mut termination_watcher,
         ))
@@ -3850,6 +3857,7 @@ async fn submit_deployment_manifest(
                     suppress_type_checking_errors: false,
                     suppress_linking_errors: false,
                     js_runtime,
+                    dev: false,
                 },
                 termination_watcher,
             )
@@ -4293,6 +4301,7 @@ async fn prepare_switch_deployment(
         suppress_type_checking_errors: false,
         suppress_linking_errors: false,
         js_runtime: deployment_switch_manager.inner.server_verified.js_runtime,
+        dev: false,
     };
 
     // Cold switch: validation (compile + link) always runs before enqueuing, so a
@@ -5294,6 +5303,7 @@ async fn generate_secret_config_digests_with_server_config(
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
             js_runtime,
+            dev: false,
         },
         &mut termination_watcher,
     )
@@ -7569,6 +7579,7 @@ mod tests {
                 suppress_type_checking_errors: false,
                 suppress_linking_errors: false,
                 js_runtime: JsRuntimeMode::V8,
+                dev: false,
             },
             &mut termination,
         )
@@ -8136,6 +8147,7 @@ mod tests {
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
             js_runtime: JsRuntimeMode::BoaWasm,
+            dev: false,
         };
         let webui_enabled = None;
 
@@ -8228,6 +8240,7 @@ mod tests {
                 suppress_type_checking_errors: false,
                 suppress_linking_errors: false,
                 js_runtime: JsRuntimeMode::BoaWasm,
+                dev: false,
             },
             &mut termination_watcher,
         )
@@ -8258,6 +8271,7 @@ mod tests {
                 suppress_type_checking_errors: false,
                 suppress_linking_errors: false,
                 js_runtime: JsRuntimeMode::BoaWasm,
+                dev: false,
             },
             &mut termination_watcher,
         )
@@ -8413,6 +8427,7 @@ mod tests {
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
             js_runtime: JsRuntimeMode::BoaWasm,
+            dev: false,
         };
 
         // An allowlist missing the first digest must reject the deployment,

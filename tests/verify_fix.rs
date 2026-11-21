@@ -108,6 +108,72 @@ directory = "codegen-cache"
     }
 }
 
+#[test]
+fn verify_fix_keeps_dev_internal_server() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server_path = tmp.path().join("server.toml");
+    let app_path = tmp.path().join("app.toml");
+    let deployment_path = tmp.path().join("deployment.toml");
+    std::fs::write(
+        &server_path,
+        r#"webui.enabled = false
+http_server.internal.listening_addr = "127.0.0.1:19092"
+
+[database.sqlite]
+directory = "db"
+
+[wasm]
+cache_directory = "wasm-cache"
+
+[wasm.codegen_cache]
+directory = "codegen-cache"
+"#,
+    )
+    .unwrap();
+    std::fs::write(&app_path, "app_name = \"verify-fix-dev\"\n").unwrap();
+    std::fs::write(
+        &deployment_path,
+        r#"
+[[webhook_endpoint_js]]
+name = "hello"
+http_server = "internal"
+env_vars = ["OBELISK_VERIFY_FIX_TEST_ENV"]
+routes = ["/hello"]
+content = '''
+export default function handle() {
+    return new Response("hello");
+}
+'''
+"#,
+    )
+    .unwrap();
+
+    // `--dev` starts `internal` without credentials; repairs must not reload without it.
+    let output = Command::new(env!("CARGO_BIN_EXE_obelisk"))
+        .args(["server", "verify", "--dev", "--fix"])
+        .arg("--server-config")
+        .arg(&server_path)
+        .arg("--app-config")
+        .arg(&app_path)
+        .arg("--deployment")
+        .arg(&deployment_path)
+        .env("OBELISK_JS_RUNTIME", "v8")
+        .env("OBELISK_VERIFY_FIX_TEST_ENV", "hello")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "server verify --dev --fix failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let fixed_app = std::fs::read_to_string(&app_path).unwrap();
+    assert!(
+        fixed_app.contains("OBELISK_VERIFY_FIX_TEST_ENV"),
+        "{fixed_app}"
+    );
+}
+
 struct RepairFixture {
     dir: tempfile::TempDir,
 }
