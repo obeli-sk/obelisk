@@ -399,8 +399,8 @@ pub(super) fn endpoints(out: &mut String, endpoints: &Value, api: &str) {
     for (key, label) in [
         ("api", "API"),
         ("webui", "Web UI"),
-        ("internal", "Internal webhooks"),
-        ("external", "External webhooks"),
+        ("internal", "Internal server"),
+        ("external", "External server"),
     ] {
         if let Some(url) = endpoints[key].as_str() {
             let _ = match key {

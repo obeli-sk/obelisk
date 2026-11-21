@@ -85,11 +85,11 @@ async fn cloud_output() {
     for line in [
         "API: https://api--demo.example.com (unavailable)",
         "Web UI: https://webui--demo.example.com",
-        "Internal webhooks: https://internal--demo.example.com",
+        "Internal server: https://internal--demo.example.com",
     ] {
         assert!(status.contains(line), "{status}");
     }
-    assert!(!status.contains("External webhooks"), "{status}");
+    assert!(!status.contains("External server"), "{status}");
     assert!(status.contains("Intended state: running"), "{status}");
     assert!(
         status.contains("VM is started although the app is stopped."),

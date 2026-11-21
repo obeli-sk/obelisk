@@ -130,9 +130,6 @@ impl CloudArgs {
                     Some(Body::Toml(config_text)),
                 )
                 .await?;
-            if fill {
-                step("fill");
-            }
             let (staged, filled) =
                 stage_values(&client, &name, &key, staged, explicit, values).await?;
             let missing = output::draft_values(&staged, "missing");
