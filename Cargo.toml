@@ -259,11 +259,11 @@ axum = { version = "0.8.9", features = ["http2", "multipart"] }
 axum-accept = "0.0.7"
 axum-extra = { version = "0.12.6", features = ["query"] }
 base64 = "0.22.1" # keep on 0.22 to match axum/hyper-util; only reqwest/oci pull 0.23
-bytes = "1.12.1"
+bytes = "1.12.2"
 cargo_metadata = "0.23"
 cfg-if = "1.0.5"
 jiff = { version = "0.2.46", default-features = false, features = ["std", "arbitrary", "serde"] }
-clap = { version = "4.6.8", features = ["derive", "env"] }
+clap = { version = "4.6.9", features = ["derive", "env"] }
 config = { version = "0.15.27", default-features = false, features = [
     "toml",
     "preserve_order",
@@ -336,7 +336,7 @@ secrecy = "0.10.3"
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
-serde_with = "3.24.0"
+serde_with = "3.25.0"
 hmac = "0.13.0"
 sha2 = "0.11.1"
 subtle = "2.6.1"
@@ -359,8 +359,8 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.19"
-toml = { version = "1.2.1", features = ["preserve_order"] }
-toml_edit = "0.25.19"
+toml = { version = "1.2.2", features = ["preserve_order"] }
+toml_edit = "0.25.20"
 tower = "0.5.3"
 tower-http = { version = "0.6.11", features = ["trace", "cors"] } # keep in sync with reqwest's tower-http
 tracing = { version = "0.1", features = ["log"] }
@@ -368,7 +368,7 @@ tracing-appender = "0.2.5"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 ulid = { version = "3.0", features = ["serde"] }
-url = "2.5.8"
+url = "2.5.9"
 utoipa = { version = "6.0.0", features = ["jiff_0_2"] }
 wiremock = "0.6"
 
