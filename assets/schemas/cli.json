@@ -1052,11 +1052,19 @@
                 {
                   "name": "--force",
                   "short": "f",
-                  "help": "Overwrite existing files in the output directory"
+                  "help": "Overwrite existing files in the output directory, and the database restored by `cloud app pull --db`"
                 },
                 {
                   "name": "--include-generated-metadata",
                   "help": "Keep generated content digests and JavaScript module metadata in `deployment.toml`"
+                },
+                {
+                  "name": "--db",
+                  "value_name": "DIR",
+                  "help": "Also restore the app's database with `litestream` into DIR, by default the directory `obelisk server run` uses for this app",
+                  "accepts": {
+                    "path": true
+                  }
                 }
               ]
             },
@@ -2145,7 +2153,7 @@
             {
               "name": "--force",
               "short": "f",
-              "help": "Overwrite existing files in the output directory"
+              "help": "Overwrite existing files in the output directory, and the database restored by `cloud app pull --db`"
             },
             {
               "name": "--include-generated-metadata",

@@ -21,6 +21,7 @@ use std::{
 
 mod auth;
 mod output;
+mod pull_db;
 mod push;
 mod stage;
 use output::Summary;
@@ -726,8 +727,13 @@ impl CloudArgs {
                 ..
             })
         ) {
+            let restore = self.db_restore().await?;
             let api_url = self.direct_api_url().await?;
-            return self.run_app_api(api_url).await;
+            self.run_app_api(api_url).await?;
+            if let Some(restore) = restore {
+                restore.run().await?;
+            }
+            return Ok(());
         }
         let json = self.json;
         let verbose = self.verbose;

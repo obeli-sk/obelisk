@@ -11,6 +11,7 @@ cargo upgrade --version >> dev-deps.txt
 cargo-insta --version >> dev-deps.txt
 cargo nextest --version | head -n 1 >> dev-deps.txt
 echo "litecli $(litecli --version)" >> dev-deps.txt
+echo "litestream $(litestream version)" >> dev-deps.txt
 echo $(nixpkgs-fmt --version) >> dev-deps.txt
 echo "pkg-config $(pkg-config --version)" >> dev-deps.txt
 rustc --version >> dev-deps.txt

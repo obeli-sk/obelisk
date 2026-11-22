@@ -300,6 +300,7 @@
                 gzip
                 jq
                 litecli
+                litestream
                 nixd
                 nixpkgs-fmt
                 nodejs # API client generation
