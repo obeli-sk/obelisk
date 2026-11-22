@@ -4,170 +4,157 @@ use crate::config::deployment::{
     PreparedDeploymentManifest, prepare_deployment_manifest_from_disk,
 };
 
-impl CloudArgs {
-    pub(super) async fn stage(self) -> anyhow::Result<()> {
-        let prompt = (terminal() && !self.json).then_some(ask);
-        self.stage_with_prompt(prompt).await
-    }
+pub(super) async fn stage(session: &Session, args: CloudStage) -> anyhow::Result<()> {
+    let prompt = (terminal() && !session.json).then_some(ask);
+    stage_with_prompt(session, args, prompt).await
+}
 
-    async fn stage_with_prompt(
-        self,
-        mut prompt: Option<impl FnMut(&Question) -> anyhow::Result<String>>,
-    ) -> anyhow::Result<()> {
-        let client = Client::new(&self)?;
-        let Cloud::App(target) = &self.command else {
-            unreachable!()
-        };
-        let config_path = app_config_path(&target.command)?;
-        let Cloud::App(CloudAppTarget {
-            command:
-                CloudApp::Stage {
-                    selected: SelectedApp { app },
-                    draft: CloudDraft { key },
-                    deployment,
-                    empty_deployment,
-                    values,
-                    description,
-                    ..
-                },
-            ..
-        }) = self.command
-        else {
-            unreachable!()
-        };
+async fn stage_with_prompt(
+    session: &Session,
+    CloudStage {
+        selected: SelectedApp { app },
+        app_config,
+        draft: CloudDraft { key },
+        deployment,
+        empty_deployment,
+        values,
+        description,
+    }: CloudStage,
+    mut prompt: Option<impl FnMut(&Question) -> anyhow::Result<String>>,
+) -> anyhow::Result<()> {
+    let client = session.client()?;
+    let config_path = discover_app_config(app_config)?;
+    ensure!(
+        description.is_none()
+            || matches!(deployment, Some(DeploymentSource::File(_)))
+            || empty_deployment,
+        "`--description` requires a deployment manifest or `--empty-deployment`"
+    );
+    let config = match &config_path {
+        Some((path, _)) => Some(policy(path).await?),
+        None => None,
+    };
+    let name = app_name(
+        app.as_deref()
+            .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
+    )
+    .await?;
+    let config = config_for_app(&name, config.zip(config_path), false)?;
+    let explicit = explicit_values(&values)?;
+    ensure!(
+        config.is_some()
+            || deployment.is_some()
+            || empty_deployment
+            || values.fill
+            || values.fill_non_interactive
+            || !explicit.is_empty(),
+        "Nothing to stage: ./app.toml not found; pass --app-config, --deployment or values"
+    );
+    let (prepared, existing) = match (deployment, empty_deployment) {
+        (Some(DeploymentSource::Id(id)), _) => (None, Some(id.to_string())),
+        (Some(DeploymentSource::File(path)), _) => (
+            Some(prepare_deployment_manifest_from_disk(&path).await?),
+            None,
+        ),
+        (None, true) => (Some(PreparedDeploymentManifest::empty()), None),
+        (None, false) => (None, None),
+    };
+    let step = |command: &str| crate::client::step(format_args!("→ obelisk cloud app {command}"));
+    let current = if let Some(current) = client.lookup_app(&name).await? {
+        current
+    } else {
         ensure!(
-            description.is_none()
-                || matches!(deployment, Some(DeploymentSource::File(_)))
-                || empty_deployment,
-            "`--description` requires a deployment manifest or `--empty-deployment`"
+            existing.is_none(),
+            "App {name} does not exist, so it has no deployment to stage"
         );
-        let config = match &config_path {
-            Some((path, _)) => Some(policy(path).await?),
-            None => None,
-        };
-        let name = app_name(
-            app.as_deref()
-                .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
-        )
-        .await?;
-        let config = config_for_app(&name, config.zip(config_path), false)?;
-        let explicit = explicit_values(&values)?;
-        ensure!(
-            config.is_some()
-                || deployment.is_some()
-                || empty_deployment
-                || values.fill
-                || values.fill_non_interactive
-                || !explicit.is_empty(),
-            "Nothing to stage: ./app.toml not found; pass --app-config, --deployment or values"
-        );
-        let (prepared, existing) = match (deployment, empty_deployment) {
-            (Some(DeploymentSource::Id(id)), _) => (None, Some(id.to_string())),
-            (Some(DeploymentSource::File(path)), _) => (
-                Some(prepare_deployment_manifest_from_disk(&path).await?),
-                None,
-            ),
-            (None, true) => (Some(PreparedDeploymentManifest::empty()), None),
-            (None, false) => (None, None),
-        };
-        let step =
-            |command: &str| crate::client::step(format_args!("→ obelisk cloud app {command}"));
-        let current = if let Some(current) = client.lookup_app(&name).await? {
-            current
-        } else {
-            ensure!(
-                existing.is_none(),
-                "App {name} does not exist, so it has no deployment to stage"
-            );
-            // A bare app runs an empty deployment, so its API can receive the submission.
-            eprintln!("App {name} does not exist; creating it");
-            step("new");
-            client
-                .request(
-                    Method::POST,
-                    &["v1", "apps"],
-                    Some(json!({"app_toml":with_app_name("", &name)?})),
-                    Kind::Command(None),
-                )
-                .await?
-        };
-        // Submitting first leaves nothing staged when the submission fails.
-        let deployment_id = if let Some(prepared) = prepared {
-            let api_url = api_origin(
-                current["endpoints"]["api"]
-                    .as_str()
-                    .context("Control plane response is missing endpoints.api")?,
-            )?;
-            let startup = ClientStartup::cloud(
-                api_url.as_str().trim_end_matches('/').to_owned(),
-                self.api_token,
-                self.verbose,
-            );
-            step("deployment submit");
-            let id = crate::command::deployment::submit_prepared(
-                &startup,
-                startup.api_url(),
-                prepared,
-                true,
-                description,
-                None,
+        // A bare app runs an empty deployment, so its API can receive the submission.
+        eprintln!("App {name} does not exist; creating it");
+        step("new");
+        client
+            .request(
+                Method::POST,
+                &["v1", "apps"],
+                Some(json!({"app_toml":with_app_name("", &name)?})),
+                Kind::Command(None),
             )
-            .await
-            .context("The deployment was not submitted, nothing was staged")?;
-            Some(id.to_string())
-        } else {
-            existing
-        };
-        let mut staged = client.resolve_draft(&name, &key).await?;
-        let id = draft_id(&staged)?;
-        if let Some((config, _)) = config {
-            staged = client
-                .fenced(
-                    &name,
-                    &key,
-                    id,
-                    Method::PUT,
-                    &["config"],
-                    Some(Body::Toml(config.text)),
-                )
-                .await?;
-        }
-        let values = Values::new(
-            values.fill,
-            values.fill_non_interactive,
-            prompt.as_mut().map(|p| p as Prompt),
+            .await?
+    };
+    // Submitting first leaves nothing staged when the submission fails.
+    let deployment_id = if let Some(prepared) = prepared {
+        let api_url = api_origin(
+            current["endpoints"]["api"]
+                .as_str()
+                .context("Control plane response is missing endpoints.api")?,
         )?;
-        let (mut staged, _) = stage_values(&client, &name, &key, staged, explicit, values).await?;
-        if let Some(deployment_id) = deployment_id {
-            staged = client
-                .fenced(
-                    &name,
-                    &key,
-                    id,
-                    Method::PUT,
-                    &["deployment"],
-                    Some(Body::Json(json!({"deployment_id":deployment_id}))),
-                )
-                .await?;
-        }
-        if self.json {
-            return print_json(&staged);
-        }
-        let apply = format!(
-            "obelisk cloud app apply --app {name}{}",
+        let startup = ClientStartup::cloud(
+            api_url.as_str().trim_end_matches('/').to_owned(),
+            session.api_token.clone(),
+            session.verbose,
+        );
+        step("deployment submit");
+        let id = crate::command::deployment::submit_prepared(
+            &startup,
+            startup.api_url(),
+            prepared,
+            true,
+            description,
+            None,
+        )
+        .await
+        .context("The deployment was not submitted, nothing was staged")?;
+        Some(id.to_string())
+    } else {
+        existing
+    };
+    let mut staged = client.resolve_draft(&name, &key).await?;
+    let id = draft_id(&staged)?;
+    if let Some((config, _)) = config {
+        staged = client
+            .fenced(
+                &name,
+                &key,
+                id,
+                Method::PUT,
+                &["config"],
+                Some(Body::Toml(config.text)),
+            )
+            .await?;
+    }
+    let values = Values::new(
+        values.fill,
+        values.fill_non_interactive,
+        prompt.as_mut().map(|p| p as Prompt),
+    )?;
+    let (mut staged, _) = stage_values(&client, &name, &key, staged, explicit, values).await?;
+    if let Some(deployment_id) = deployment_id {
+        staged = client
+            .fenced(
+                &name,
+                &key,
+                id,
+                Method::PUT,
+                &["deployment"],
+                Some(Body::Json(json!({"deployment_id":deployment_id}))),
+            )
+            .await?;
+    }
+    if session.json {
+        return print_json(&staged);
+    }
+    let apply = format!(
+        "obelisk cloud app apply --app {name}{}",
+        output::draft_arg(&key)
+    );
+    let mut out = output::Summary::Staged("Changes staged.", apply).render(&staged);
+    if !output::draft_values(&staged, "missing").is_empty() {
+        let _ = writeln!(
+            out,
+            "Set them with `obelisk cloud app env set` or `obelisk cloud app secrets set --app {name}{}`, or in the dashboard, before applying.",
             output::draft_arg(&key)
         );
-        let mut out = output::Summary::Staged("Changes staged.", apply).render(&staged);
-        if !output::draft_values(&staged, "missing").is_empty() {
-            let _ = writeln!(
-                out,
-                "Set them with `obelisk cloud app env set` or `obelisk cloud app secrets set --app {name}{}`, or in the dashboard, before applying.",
-                output::draft_arg(&key)
-            );
-        }
-        eprint!("{out}");
-        Ok(())
     }
+    eprint!("{out}");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -316,10 +303,21 @@ mod tests {
                 "id" => command.extend(["-d", EXISTING]),
                 _ => {}
             }
-            super::super::tests::args(&origin, &command)
-                .stage_with_prompt(None::<fn(&Question) -> anyhow::Result<String>>)
-                .await
-                .unwrap();
+            let (session, command) = super::super::tests::args(&origin, &command).into_session();
+            let Cloud::App(CloudAppTarget {
+                command: CloudApp::Stage(stage_args),
+                ..
+            }) = command
+            else {
+                panic!("expected `app stage`")
+            };
+            stage_with_prompt(
+                &session,
+                stage_args,
+                None::<fn(&Question) -> anyhow::Result<String>>,
+            )
+            .await
+            .unwrap();
             {
                 let state = state.lock().unwrap();
                 assert_eq!(

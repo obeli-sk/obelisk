@@ -2,8 +2,8 @@ use super::output::print_json;
 use crate::args::CloudToken;
 use crate::args::{
     AdminArgs, App, AppArgs, ClientConnection, Cloud, CloudApp, CloudAppTarget, CloudArgs,
-    CloudCommandId, CloudDraft, CloudEnv, CloudSecrets, CloudValues, ComponentArgs, DeploymentArgs,
-    ExecutionArgs, SelectedApp, Subcommand,
+    CloudCommandId, CloudDb, CloudDraft, CloudEnv, CloudPush, CloudSecrets, CloudStage,
+    CloudValues, ComponentArgs, DeploymentArgs, ExecutionArgs, SelectedApp, Subcommand,
 };
 use crate::client::ClientStartup;
 use crate::config::app::{AppConfigToml, generate_app_name_hint, with_app_name};
@@ -20,8 +20,8 @@ use std::{
 };
 
 mod auth;
+mod db;
 mod output;
-mod pull_db;
 mod push;
 mod stage;
 use output::Summary;
@@ -133,13 +133,6 @@ fn api_origin(value: &str) -> anyhow::Result<Url> {
 struct AppNameTaken;
 
 impl Client {
-    fn new(args: &CloudArgs) -> anyhow::Result<Self> {
-        Self::build(
-            args.api_url.as_deref().unwrap_or(DEFAULT_API_URL),
-            args.api_token.as_ref(),
-            args.verbose,
-        )
-    }
     fn build(api_url: &str, token: Option<&SecretString>, verbose: bool) -> anyhow::Result<Self> {
         let origin = api_origin(api_url)?;
         let mut headers = header::HeaderMap::new();
@@ -530,16 +523,6 @@ async fn policy(path: &Path) -> anyhow::Result<LocalConfig> {
     Ok(config)
 }
 /// App config path of commands that read one, with whether `-a` was given.
-fn app_config_path(command: &CloudApp) -> anyhow::Result<Option<(PathBuf, bool)>> {
-    let (CloudApp::New { app_config, .. }
-    | CloudApp::Status { app_config, .. }
-    | CloudApp::Stage { app_config, .. }
-    | CloudApp::Push { app_config, .. }) = command
-    else {
-        return Ok(None);
-    };
-    discover_app_config(app_config.clone())
-}
 fn discover_app_config(app_config: Option<PathBuf>) -> anyhow::Result<Option<(PathBuf, bool)>> {
     let explicit = app_config.is_some();
     Ok(crate::config::app::resolve_app_config(app_config)?.map(|path| (path, explicit)))
@@ -634,16 +617,21 @@ async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<V
         }
     }
 }
-impl CloudArgs {
-    fn selected_app(&self) -> Option<&str> {
-        match &self.command {
-            Cloud::App(args) => args.command.selected_app(),
-            Cloud::Auth(_) | Cloud::Token(_) => None,
-        }
+/// The resolved connection and output flags, once the command is taken out of `CloudArgs`.
+struct Session {
+    api_url: String,
+    apps_domain: Option<String>,
+    api_token: Option<SecretString>,
+    verbose: bool,
+    json: bool,
+}
+
+impl Session {
+    fn client(&self) -> anyhow::Result<Client> {
+        Client::build(&self.api_url, self.api_token.as_ref(), self.verbose)
     }
     /// The tenant API is reachable without asking the provisioner.
-    async fn direct_api_url(&self) -> anyhow::Result<String> {
-        let name = app_name(self.selected_app()).await?;
+    fn direct_api_url(&self, name: &str) -> anyhow::Result<String> {
         let domain = self
             .apps_domain
             .as_deref()
@@ -669,383 +657,456 @@ impl CloudArgs {
         );
         Ok(format!("https://api--{hostname}"))
     }
-    async fn run_app_api(self, api_url: String) -> anyhow::Result<()> {
-        let startup = ClientStartup::cloud(api_url.clone(), self.api_token, self.verbose);
-        let token = ClientConnection {
+    async fn selected_api_url(&self, selected: &SelectedApp) -> anyhow::Result<String> {
+        self.direct_api_url(&app_name(selected.app.as_deref()).await?)
+    }
+    /// Runs a tenant API command against an app's API with the cloud token.
+    async fn run_app_api(
+        &self,
+        api_url: String,
+        command: impl FnOnce(ClientConnection) -> Subcommand,
+    ) -> anyhow::Result<()> {
+        let startup = ClientStartup::cloud(api_url.clone(), self.api_token.clone(), self.verbose);
+        let command = command(ClientConnection {
             api_url,
             api_token: None,
             verbose: self.verbose,
-        };
-        let command = match self.command {
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::Deployment { command, .. },
-                ..
-            }) => Subcommand::Deployment(DeploymentArgs {
-                command: command.into(),
-                token,
-            }),
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::Execution { command, .. },
-                ..
-            }) => Subcommand::Execution(ExecutionArgs { command, token }),
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::Component { command, .. },
-                ..
-            }) => Subcommand::Component(ComponentArgs { command, token }),
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::Admin { command, .. },
-                ..
-            }) => Subcommand::Admin(AdminArgs { command, token }),
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::Pull { pull, .. },
-                ..
-            }) => Subcommand::App(AppArgs {
-                command: App::Pull(pull),
-                token,
-            }),
-            _ => unreachable!(),
-        };
+        });
         crate::command_future(command, Some(startup))?.await
+    }
+}
+
+impl CloudArgs {
+    fn into_session(self) -> (Session, Cloud) {
+        let CloudArgs {
+            json,
+            verbose,
+            api_token,
+            account: _,
+            api_url,
+            apps_domain,
+            command,
+        } = self;
+        let session = Session {
+            api_url: api_url.unwrap_or_else(|| DEFAULT_API_URL.to_owned()),
+            apps_domain,
+            api_token,
+            verbose,
+            json,
+        };
+        (session, command)
     }
     pub(crate) async fn run(mut self) -> anyhow::Result<()> {
         if self.verbose {
             crate::client::enable_trace();
         }
-        if let Cloud::Auth(command) = &self.command {
-            return auth::run(&self, command).await;
-        }
-        let credentials = match &mut self.command {
-            Cloud::Auth(_) => unreachable!("handled above"),
-            Cloud::Token(args) => &mut args.credentials,
-            Cloud::App(args) => &mut args.credentials,
+        let credentials = match self.command {
+            Cloud::Auth(command) => return auth::run(command, self.json, self.verbose).await,
+            Cloud::Token(ref mut args) => &mut args.credentials,
+            Cloud::App(ref mut args) => &mut args.credentials,
         };
         self.api_token = credentials.api_token.take();
         self.account = credentials.account.take();
         auth::resolve(&mut self)?;
-        if matches!(
-            &self.command,
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::Push { .. },
-                ..
-            })
-        ) {
-            return self.push().await;
+        let (session, command) = self.into_session();
+        dispatch(&session, command).await
+    }
+    /// Dispatches with the credentials as set, skipping the saved login.
+    #[cfg(test)]
+    async fn dispatch(self) -> anyhow::Result<()> {
+        let (session, command) = self.into_session();
+        dispatch(&session, command).await
+    }
+    #[cfg(test)]
+    async fn execute(self) -> anyhow::Result<Value> {
+        let (session, command) = self.into_session();
+        execute(&session, command).await
+    }
+}
+
+async fn dispatch(session: &Session, command: Cloud) -> anyhow::Result<()> {
+    let (command, credentials) = match command {
+        Cloud::App(CloudAppTarget {
+            command,
+            credentials,
+        }) => (command, credentials),
+        command => return print_result(session, command).await,
+    };
+    match command {
+        CloudApp::Push(args) => push::push(session, args).await,
+        CloudApp::Stage(args) => stage::stage(session, args).await,
+        CloudApp::Db {
+            selected,
+            command: CloudDb::Pull { output, force },
+        } => {
+            let name = app_name(selected.app.as_deref()).await?;
+            db::DbRestore::new(session, name, output, force)
+                .await?
+                .run()
+                .await
         }
-        if matches!(
-            &self.command,
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::Stage { .. },
-                ..
-            })
-        ) {
-            return self.stage().await;
-        }
-        if matches!(
-            self.command,
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::Deployment { .. }
-                    | CloudApp::Execution { .. }
-                    | CloudApp::Component { .. }
-                    | CloudApp::Admin { .. }
-                    | CloudApp::Pull { .. },
-                ..
-            })
-        ) {
-            let restore = self.db_restore().await?;
-            let api_url = self.direct_api_url().await?;
-            self.run_app_api(api_url).await?;
-            if let Some(restore) = restore {
-                restore.run().await?;
-            }
-            return Ok(());
-        }
-        let json = self.json;
-        let verbose = self.verbose;
-        let summary = Summary::from(&self.command);
-        let value = self.execute().await?;
-        if json {
-            print_json(&value)
-        } else {
-            eprint!(
-                "{}",
-                if verbose {
-                    human_output(&value)
-                } else {
-                    summary.render(&value)
+        CloudApp::Pull { selected, pull, db } => {
+            let name = app_name(selected.app.as_deref()).await?;
+            // Fails on a missing or old `litestream` before any file is written.
+            let restore = match db {
+                Some(output) => {
+                    Some(db::DbRestore::new(session, name.clone(), output, pull.force).await?)
                 }
-            );
-            Ok(())
+                None => None,
+            };
+            session
+                .run_app_api(session.direct_api_url(&name)?, |token| {
+                    Subcommand::App(AppArgs {
+                        command: App::Pull(pull),
+                        token,
+                    })
+                })
+                .await?;
+            match restore {
+                Some(restore) => restore.run().await,
+                None => Ok(()),
+            }
+        }
+        CloudApp::Deployment { selected, command } => {
+            let api_url = session.selected_api_url(&selected).await?;
+            session
+                .run_app_api(api_url, |token| {
+                    Subcommand::Deployment(DeploymentArgs {
+                        command: command.into(),
+                        token,
+                    })
+                })
+                .await
+        }
+        CloudApp::Execution { selected, command } => {
+            let api_url = session.selected_api_url(&selected).await?;
+            session
+                .run_app_api(api_url, |token| {
+                    Subcommand::Execution(ExecutionArgs { command, token })
+                })
+                .await
+        }
+        CloudApp::Component { selected, command } => {
+            let api_url = session.selected_api_url(&selected).await?;
+            session
+                .run_app_api(api_url, |token| {
+                    Subcommand::Component(ComponentArgs { command, token })
+                })
+                .await
+        }
+        CloudApp::Admin { selected, command } => {
+            let api_url = session.selected_api_url(&selected).await?;
+            session
+                .run_app_api(api_url, |token| {
+                    Subcommand::Admin(AdminArgs { command, token })
+                })
+                .await
+        }
+        command => {
+            print_result(
+                session,
+                Cloud::App(CloudAppTarget {
+                    credentials,
+                    command,
+                }),
+            )
+            .await
         }
     }
-    async fn execute(self) -> anyhow::Result<Value> {
-        let client = Client::new(&self)?;
-        match self.command {
-            Cloud::Auth(_) => unreachable!("handled in run"),
-            Cloud::Token(args) => token_command(&client, args.command).await,
-            Cloud::App(CloudAppTarget {
-                command: CloudApp::List,
-                ..
-            }) => {
-                client
-                    .request(Method::GET, &["v1", "apps"], None, Kind::Read)
-                    .await
+}
+
+/// Runs a command whose result is a JSON value and prints it.
+async fn print_result(session: &Session, command: Cloud) -> anyhow::Result<()> {
+    let summary = Summary::from(&command);
+    let value = execute(session, command).await?;
+    if session.json {
+        print_json(&value)
+    } else {
+        eprint!(
+            "{}",
+            if session.verbose {
+                human_output(&value)
+            } else {
+                summary.render(&value)
             }
-            Cloud::App(CloudAppTarget {
-                command:
-                    CloudApp::New {
-                        selected: SelectedApp { app },
-                        app_config,
-                        values,
-                        command_id,
-                    },
-                ..
-            }) => {
-                let config_path = discover_app_config(app_config)?;
-                let config = match &config_path {
-                    Some((path, _)) => Some(policy(path).await?),
-                    None => None,
-                };
-                let name = app_name(
-                    app.as_deref()
-                        .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
+        );
+        Ok(())
+    }
+}
+
+async fn execute(session: &Session, command: Cloud) -> anyhow::Result<Value> {
+    let client = session.client()?;
+    match command {
+        Cloud::Auth(_) => unreachable!("handled in run"),
+        Cloud::Token(args) => token_command(&client, args.command).await,
+        Cloud::App(CloudAppTarget {
+            command: CloudApp::List,
+            ..
+        }) => {
+            client
+                .request(Method::GET, &["v1", "apps"], None, Kind::Read)
+                .await
+        }
+        Cloud::App(CloudAppTarget {
+            command:
+                CloudApp::New {
+                    selected: SelectedApp { app },
+                    app_config,
+                    values,
+                    command_id,
+                },
+            ..
+        }) => {
+            let config_path = discover_app_config(app_config)?;
+            let config = match &config_path {
+                Some((path, _)) => Some(policy(path).await?),
+                None => None,
+            };
+            let name = app_name(
+                app.as_deref()
+                    .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
+            )
+            .await?;
+            let config =
+                config_for_app(&name, config.zip(config_path), false)?.map(|(config, _)| config);
+            let explicit = explicit_values(&values)?;
+            ensure!(
+                !(values.fill || values.fill_non_interactive || !explicit.is_empty())
+                    || config.is_some(),
+                "Initial values require an app config"
+            );
+            let mut body = json!({"app_toml":with_app_name("", &name)?});
+            if let Some(config) = config {
+                body["app_toml"] = json!(config.text);
+                let mut ask = ask;
+                let values = initial_values(
+                    &user_supplied_policy(&desired_config(&config)),
+                    explicit,
+                    Values::new(
+                        values.fill,
+                        values.fill_non_interactive,
+                        terminal().then_some(&mut ask),
+                    )?,
+                )?;
+                body["env"] = values["env"].clone();
+                body["secrets"] = values["secrets"].clone();
+            }
+            client
+                .request(
+                    Method::POST,
+                    &["v1", "apps"],
+                    Some(body),
+                    Kind::SecretCommand(command_id.id),
                 )
-                .await?;
-                let config = config_for_app(&name, config.zip(config_path), false)?
-                    .map(|(config, _)| config);
-                let explicit = explicit_values(&values)?;
-                ensure!(
-                    !(values.fill || values.fill_non_interactive || !explicit.is_empty())
-                        || config.is_some(),
-                    "Initial values require an app config"
-                );
-                let mut body = json!({"app_toml":with_app_name("", &name)?});
-                if let Some(config) = config {
-                    body["app_toml"] = json!(config.text);
-                    let mut ask = ask;
-                    let values = initial_values(
-                        &user_supplied_policy(&desired_config(&config)),
-                        explicit,
-                        Values::new(
-                            values.fill,
-                            values.fill_non_interactive,
-                            terminal().then_some(&mut ask),
-                        )?,
-                    )?;
-                    body["env"] = values["env"].clone();
-                    body["secrets"] = values["secrets"].clone();
+                .await
+        }
+        Cloud::App(CloudAppTarget { command, .. }) => {
+            let app = command.selected_app().map(str::to_owned);
+            let config_path = match &command {
+                CloudApp::Status { app_config, .. } => discover_app_config(app_config.clone())?,
+                _ => None,
+            };
+            let config = match &config_path {
+                // Status only reports a readable discovered ./app.toml.
+                Some((path, false)) if matches!(command, CloudApp::Status { .. }) => {
+                    policy(path).await.ok()
                 }
-                client
-                    .request(
-                        Method::POST,
-                        &["v1", "apps"],
-                        Some(body),
-                        Kind::SecretCommand(command_id.id),
-                    )
-                    .await
-            }
-            Cloud::App(CloudAppTarget { command, .. }) => {
-                let app = command.selected_app().map(str::to_owned);
-                let config_path = app_config_path(&command)?;
-                let config = match &config_path {
-                    // Status only reports a readable discovered ./app.toml.
-                    Some((path, false)) if matches!(command, CloudApp::Status { .. }) => {
-                        policy(path).await.ok()
+                Some((path, _)) => Some(policy(path).await?),
+                None => None,
+            };
+            let name = &app_name(
+                app.as_deref()
+                    .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
+            )
+            .await?;
+            let local = config_for_app(name, config.zip(config_path), false)?;
+            match command {
+                CloudApp::Deployment { .. }
+                | CloudApp::Execution { .. }
+                | CloudApp::Component { .. }
+                | CloudApp::Admin { .. }
+                | CloudApp::Pull { .. }
+                | CloudApp::Db { .. } => unreachable!("dispatched in run"),
+                CloudApp::List => unreachable!("handled above"),
+                CloudApp::Status { .. } => {
+                    let mut value = client
+                        .app(name, Method::GET, &["status"], None, Kind::Read)
+                        .await?;
+                    let drafts = client
+                        .app(name, Method::GET, &["drafts"], None, Kind::Read)
+                        .await?;
+                    value["drafts"] = drafts["drafts"].clone();
+                    if let Some((config, path)) = local {
+                        let comparison = compare_config(&client, name, &config.text).await;
+                        value["local_config"] = json!({
+                            "path": path.display().to_string(),
+                            "comparison": comparison.as_ref().ok(),
+                            "error": comparison.err().map(|error| format!("{error:#}")),
+                        });
                     }
-                    Some((path, _)) => Some(policy(path).await?),
-                    None => None,
-                };
-                let name = &app_name(
-                    app.as_deref()
-                        .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
-                )
-                .await?;
-                let local = config_for_app(name, config.zip(config_path), false)?;
-                match command {
-                    CloudApp::Deployment { .. }
-                    | CloudApp::Execution { .. }
-                    | CloudApp::Component { .. }
-                    | CloudApp::Admin { .. }
-                    | CloudApp::Pull { .. } => unreachable!("API commands are dispatched in run"),
-                    CloudApp::List => unreachable!("handled above"),
-                    CloudApp::Status { .. } => {
-                        let mut value = client
-                            .app(name, Method::GET, &["status"], None, Kind::Read)
-                            .await?;
-                        let drafts = client
-                            .app(name, Method::GET, &["drafts"], None, Kind::Read)
-                            .await?;
-                        value["drafts"] = drafts["drafts"].clone();
-                        if let Some((config, path)) = local {
-                            let comparison = compare_config(&client, name, &config.text).await;
-                            value["local_config"] = json!({
-                                "path": path.display().to_string(),
-                                "comparison": comparison.as_ref().ok(),
-                                "error": comparison.err().map(|error| format!("{error:#}")),
-                            });
-                        }
-                        Ok(value)
+                    Ok(value)
+                }
+                CloudApp::Events { limit, .. } => client.events(name, limit).await,
+                CloudApp::Logs { limit, since, .. } => client.logs(name, limit, since).await,
+                CloudApp::Unstage {
+                    draft: CloudDraft { key },
+                    ..
+                } => match client
+                    .optional(&["v1", "apps", name, "drafts", &key])
+                    .await?
+                {
+                    Some(draft) => {
+                        client
+                            .fenced(name, &key, draft_id(&draft)?, Method::DELETE, &[], None)
+                            .await
                     }
-                    CloudApp::Events { limit, .. } => client.events(name, limit).await,
-                    CloudApp::Logs { limit, since, .. } => client.logs(name, limit, since).await,
-                    CloudApp::Unstage {
-                        draft: CloudDraft { key },
-                        ..
-                    } => match client
-                        .optional(&["v1", "apps", name, "drafts", &key])
-                        .await?
-                    {
-                        Some(draft) => {
+                    None => Ok(json!({"discarded":false})),
+                },
+                CloudApp::Apply {
+                    force,
+                    reapply,
+                    draft: CloudDraft { key },
+                    command_id,
+                    ..
+                } => {
+                    if let Some(result) = client.accepted(&command_id).await? {
+                        return Ok(result);
+                    }
+                    let current = client.app(name, Method::GET, &[], None, Kind::Read).await?;
+                    let draft = if reapply {
+                        None
+                    } else {
+                        Some(
                             client
-                                .fenced(name, &key, draft_id(&draft)?, Method::DELETE, &[], None)
-                                .await
-                        }
-                        None => Ok(json!({"discarded":false})),
-                    },
-                    CloudApp::Apply {
-                        force,
-                        reapply,
-                        draft: CloudDraft { key },
-                        command_id,
-                        ..
-                    } => {
-                        if let Some(result) = client.accepted(&command_id).await? {
-                            return Ok(result);
-                        }
-                        let current = client.app(name, Method::GET, &[], None, Kind::Read).await?;
-                        let draft = if reapply {
-                            None
-                        } else {
-                            Some(
-                                client
-                                    .optional(&["v1", "apps", name, "drafts", &key])
-                                    .await?
-                                    .with_context(|| {
-                                        format!(
-                                            "Nothing staged in draft `{key}`; stage changes with `obelisk cloud app stage`, `env set` or `secrets set`{}, or reconcile the applied revision with `--reapply`",
-                                            output::draft_arg(&key)
-                                        )
-                                    })?,
-                            )
-                        };
-                        let body =
-                            apply_request(name, &key, draft.as_ref(), &current, force, self.json)?;
-                        let id = draft.as_ref().map(draft_id).transpose()?;
-                        client.apply(name, body, id, command_id.into()).await
-                    }
-                    CloudApp::Enable { command_id, .. } => {
-                        client
-                            .command(name, Method::POST, &["enable"], command_id)
-                            .await
-                    }
-                    CloudApp::Disable { command_id, .. } => {
-                        client
-                            .command(name, Method::POST, &["disable"], command_id)
-                            .await
-                    }
-                    CloudApp::Delete { command_id, .. } => {
-                        client.command(name, Method::DELETE, &[], command_id).await
-                    }
-                    CloudApp::Env {
-                        command: CloudEnv::List,
-                        ..
-                    } => {
-                        client
-                            .app(name, Method::GET, &["env"], None, Kind::Read)
-                            .await
-                    }
-                    CloudApp::Env {
-                        command:
-                            CloudEnv::Set {
-                                name: variable,
-                                value,
-                                draft: CloudDraft { key },
-                            },
-                        ..
-                    } => {
-                        config_name(&variable)?;
-                        client
-                            .draft(
-                                name,
-                                &key,
-                                Method::PUT,
-                                &["env", &variable],
-                                Some(Body::Json(json!({"value":value}))),
-                            )
-                            .await
-                    }
-                    CloudApp::Env {
-                        command:
-                            CloudEnv::Unset {
-                                name: variable,
-                                draft: CloudDraft { key },
-                            },
-                        ..
-                    } => {
-                        config_name(&variable)?;
-                        client
-                            .draft(name, &key, Method::DELETE, &["env", &variable], None)
-                            .await
-                    }
-                    CloudApp::Secrets {
-                        command: CloudSecrets::List,
-                        ..
-                    } => {
-                        client
-                            .app(name, Method::GET, &["secrets"], None, Kind::Secret)
-                            .await
-                    }
-                    CloudApp::Secrets {
-                        command:
-                            CloudSecrets::Set {
-                                name: secret,
-                                from_env,
-                                stdin,
-                                draft: CloudDraft { key },
-                            },
-                        ..
-                    } => {
-                        config_name(&secret)?;
-                        let value = if stdin {
-                            let mut value = String::new();
-                            std::io::stdin()
-                                .read_to_string(&mut value)
-                                .context("Cannot read secret from stdin")?;
-                            value
-                        } else {
-                            std::env::var(from_env.context("Select --from-env or --stdin")?)
-                                .map_err(|_| {
-                                    anyhow::anyhow!(
-                                        "Secret source environment variable is missing or not UTF-8"
+                                .optional(&["v1", "apps", name, "drafts", &key])
+                                .await?
+                                .with_context(|| {
+                                    format!(
+                                        "Nothing staged in draft `{key}`; stage changes with `obelisk cloud app stage`, `env set` or `secrets set`{}, or reconcile the applied revision with `--reapply`",
+                                        output::draft_arg(&key)
                                     )
-                                })?
-                        };
-                        client
-                            .draft(
-                                name,
-                                &key,
-                                Method::PUT,
-                                &["secrets", &secret],
-                                Some(Body::Json(json!({"value":value}))),
-                            )
-                            .await
-                    }
-                    CloudApp::Secrets {
-                        command:
-                            CloudSecrets::Unset {
-                                name: secret,
-                                draft: CloudDraft { key },
+                                })?,
+                        )
+                    };
+                    let body =
+                        apply_request(name, &key, draft.as_ref(), &current, force, session.json)?;
+                    let id = draft.as_ref().map(draft_id).transpose()?;
+                    client.apply(name, body, id, command_id.into()).await
+                }
+                CloudApp::Enable { command_id, .. } => {
+                    client
+                        .command(name, Method::POST, &["enable"], command_id)
+                        .await
+                }
+                CloudApp::Disable { command_id, .. } => {
+                    client
+                        .command(name, Method::POST, &["disable"], command_id)
+                        .await
+                }
+                CloudApp::Delete { command_id, .. } => {
+                    client.command(name, Method::DELETE, &[], command_id).await
+                }
+                CloudApp::Env {
+                    command: CloudEnv::List,
+                    ..
+                } => {
+                    client
+                        .app(name, Method::GET, &["env"], None, Kind::Read)
+                        .await
+                }
+                CloudApp::Env {
+                    command:
+                        CloudEnv::Set {
+                            name: variable,
+                            value,
+                            draft: CloudDraft { key },
+                        },
+                    ..
+                } => {
+                    config_name(&variable)?;
+                    client
+                        .draft(
+                            name,
+                            &key,
+                            Method::PUT,
+                            &["env", &variable],
+                            Some(Body::Json(json!({"value":value}))),
+                        )
+                        .await
+                }
+                CloudApp::Env {
+                    command:
+                        CloudEnv::Unset {
+                            name: variable,
+                            draft: CloudDraft { key },
+                        },
+                    ..
+                } => {
+                    config_name(&variable)?;
+                    client
+                        .draft(name, &key, Method::DELETE, &["env", &variable], None)
+                        .await
+                }
+                CloudApp::Secrets {
+                    command: CloudSecrets::List,
+                    ..
+                } => {
+                    client
+                        .app(name, Method::GET, &["secrets"], None, Kind::Secret)
+                        .await
+                }
+                CloudApp::Secrets {
+                    command:
+                        CloudSecrets::Set {
+                            name: secret,
+                            from_env,
+                            stdin,
+                            draft: CloudDraft { key },
+                        },
+                    ..
+                } => {
+                    config_name(&secret)?;
+                    let value = if stdin {
+                        let mut value = String::new();
+                        std::io::stdin()
+                            .read_to_string(&mut value)
+                            .context("Cannot read secret from stdin")?;
+                        value
+                    } else {
+                        std::env::var(from_env.context("Select --from-env or --stdin")?).map_err(
+                            |_| {
+                                anyhow::anyhow!(
+                                    "Secret source environment variable is missing or not UTF-8"
+                                )
                             },
-                        ..
-                    } => {
-                        config_name(&secret)?;
-                        client
-                            .draft(name, &key, Method::DELETE, &["secrets", &secret], None)
-                            .await
-                    }
-                    CloudApp::New { .. } => unreachable!(),
-                    CloudApp::Push { .. } | CloudApp::Stage { .. } => {
-                        unreachable!("command has its own output")
-                    }
+                        )?
+                    };
+                    client
+                        .draft(
+                            name,
+                            &key,
+                            Method::PUT,
+                            &["secrets", &secret],
+                            Some(Body::Json(json!({"value":value}))),
+                        )
+                        .await
+                }
+                CloudApp::Secrets {
+                    command:
+                        CloudSecrets::Unset {
+                            name: secret,
+                            draft: CloudDraft { key },
+                        },
+                    ..
+                } => {
+                    config_name(&secret)?;
+                    client
+                        .draft(name, &key, Method::DELETE, &["secrets", &secret], None)
+                        .await
+                }
+                CloudApp::New { .. } => unreachable!(),
+                CloudApp::Push { .. } | CloudApp::Stage { .. } => {
+                    unreachable!("command has its own output")
                 }
             }
         }
@@ -2092,6 +2153,29 @@ mod tests {
             ));
         }
     }
+    /// Runs a tenant API command against `api_url` instead of the app's API.
+    async fn run_app_api(args: CloudArgs, api_url: String) -> anyhow::Result<()> {
+        let (session, command) = args.into_session();
+        let Cloud::App(CloudAppTarget { command, .. }) = command else {
+            panic!("expected `cloud app`")
+        };
+        session
+            .run_app_api(api_url, |token| match command {
+                CloudApp::Deployment { command, .. } => Subcommand::Deployment(DeploymentArgs {
+                    command: command.into(),
+                    token,
+                }),
+                CloudApp::Execution { command, .. } => {
+                    Subcommand::Execution(ExecutionArgs { command, token })
+                }
+                CloudApp::Component { command, .. } => {
+                    Subcommand::Component(ComponentArgs { command, token })
+                }
+                CloudApp::Admin { command, .. } => Subcommand::Admin(AdminArgs { command, token }),
+                _ => panic!("not a tenant API command"),
+            })
+            .await
+    }
     #[tokio::test]
     async fn cloud_api_url_rejects_invalid_domains() {
         for domain in [
@@ -2105,7 +2189,8 @@ mod tests {
         ] {
             let mut args = args("http://127.0.0.1:1", &["app", "status"]);
             args.apps_domain = Some(domain.to_owned());
-            assert!(args.direct_api_url().await.is_err(), "{domain}");
+            let (session, _) = args.into_session();
+            assert!(session.direct_api_url("demo").is_err(), "{domain}");
         }
     }
 
@@ -2123,8 +2208,7 @@ mod tests {
             vec!["app", "component", "list", "--imports"],
             vec!["app", "admin", "node-run-id"],
         ] {
-            args(&origin, &command)
-                .run_app_api(api_url.clone())
+            run_app_api(args(&origin, &command), api_url.clone())
                 .await
                 .unwrap();
         }
@@ -2155,12 +2239,14 @@ mod tests {
         let (origin, state, task) = server().await;
         state.lock().unwrap().redirect = true;
         assert!(
-            args("http://127.0.0.1:1", &["app", "deployment", "active"])
-                .run_app_api(format!("{origin}tenant"))
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("307")
+            run_app_api(
+                args("http://127.0.0.1:1", &["app", "deployment", "active"]),
+                format!("{origin}tenant")
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("307")
         );
         assert_eq!(state.lock().unwrap().received.len(), 1);
         task.abort();
@@ -2191,7 +2277,7 @@ mod tests {
             .await
             .unwrap();
         args(&origin, &["app", "stage", "-a", path.to_str().unwrap()])
-            .stage()
+            .dispatch()
             .await
             .unwrap();
         args(&origin, &["app", "apply"]).execute().await.unwrap();
@@ -2390,7 +2476,7 @@ mod tests {
         let path = path.to_str().unwrap();
         for command in ["new", "status", "stage"] {
             let error = args(&origin, &["app", command, "-a", path])
-                .execute()
+                .dispatch()
                 .await
                 .unwrap_err();
             assert!(
@@ -2436,7 +2522,11 @@ mod tests {
     #[tokio::test]
     async fn cloud_fill_asks_per_value_and_collects_before_writing() {
         let (origin, state, task) = server().await;
-        let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
+        let client = args(&origin, &["app", "status"])
+            .into_session()
+            .0
+            .client()
+            .unwrap();
         let policy = json!({
             "public_env":["PATH", "ALREADY_SET", {"name":"HOME", "optional":true}, {"name":"OBELISK_CLOUD_TEST_EMPTY", "optional":true}, {"name":"SELF_API", "type":"internal", "source":"api-url"}, {"name":"BROWSER_UI", "type":"internal", "source":"webui-url"}],
             "secrets":{"OBELISK_CLOUD_TEST_PROMPT_SECRET":{},"ALREADY_SET":{},"HOME":{"optional":true},"OBELISK_API_TOKEN":{"type":"internal"}}
@@ -2580,7 +2670,11 @@ mod tests {
     #[tokio::test]
     async fn cloud_fill_validates_before_mutation_and_secret_errors_are_redacted() {
         let (origin, state, task) = server().await;
-        let client = Client::new(&args(&origin, &["app", "status"])).unwrap();
+        let client = args(&origin, &["app", "status"])
+            .into_session()
+            .0
+            .client()
+            .unwrap();
         let draft = json!({
             "policy":{"public_env":["CLOUD_TEST_MISSING_REQUIRED"],"secrets":{}},
             "cloud":{},"env":{},"secrets":[],"draft_id":1,

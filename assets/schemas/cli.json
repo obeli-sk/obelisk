@@ -1052,7 +1052,7 @@
                 {
                   "name": "--force",
                   "short": "f",
-                  "help": "Overwrite existing files in the output directory, and the database restored by `cloud app pull --db`"
+                  "help": "Overwrite existing files in the output directory, and the database restored by `--db`"
                 },
                 {
                   "name": "--include-generated-metadata",
@@ -1061,10 +1061,41 @@
                 {
                   "name": "--db",
                   "value_name": "DIR",
-                  "help": "Also restore the app's database with `litestream` into DIR, by default the directory `obelisk server run` uses for this app",
+                  "help": "After pulling the files, also run `cloud app db pull --output DIR`",
                   "accepts": {
                     "path": true
                   }
+                }
+              ]
+            },
+            {
+              "name": "db",
+              "about": "Work with the app's database replica",
+              "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                }
+              ],
+              "subcommands": [
+                {
+                  "name": "pull",
+                  "about": "Restore the app's database from its replica with `litestream`, version 0.5.18 or newer",
+                  "options": [
+                    {
+                      "name": "--output",
+                      "short": "o",
+                      "help": "Directory to write `obelisk.sqlite` into. Defaults to the directory `obelisk server run` uses for this app",
+                      "accepts": {
+                        "path": true
+                      }
+                    },
+                    {
+                      "name": "--force",
+                      "short": "f",
+                      "help": "Overwrite an existing database"
+                    }
+                  ]
                 }
               ]
             },
@@ -2172,7 +2203,7 @@
             {
               "name": "--force",
               "short": "f",
-              "help": "Overwrite existing files in the output directory, and the database restored by `cloud app pull --db`"
+              "help": "Overwrite existing files in the output directory, and the database restored by `--db`"
             },
             {
               "name": "--include-generated-metadata",

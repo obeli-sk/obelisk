@@ -175,7 +175,7 @@ pub(crate) struct AppPull {
     /// current directory.
     #[arg(long, short)]
     pub(crate) output: Option<PathBuf>,
-    /// Overwrite existing files in the output directory, and the database restored by `cloud app pull --db`.
+    /// Overwrite existing files in the output directory, and the database restored by `--db`.
     #[arg(long, short)]
     pub(crate) force: bool,
     /// Keep generated content digests and JavaScript module metadata in `deployment.toml`.
@@ -2056,10 +2056,17 @@ pub(crate) enum CloudApp {
         selected: SelectedApp,
         #[command(flatten)]
         pull: AppPull,
-        /// Also restore the app's database with `litestream` into DIR, by default the directory `obelisk server run` uses for this app.
+        /// After pulling the files, also run `cloud app db pull --output DIR`.
         #[arg(long, value_name = "DIR", num_args = 0..=1)]
         #[expect(clippy::option_option, reason = "clap's optional-value flag")]
         db: Option<Option<PathBuf>>,
+    },
+    /// Work with the app's database replica.
+    Db {
+        #[command(flatten)]
+        selected: SelectedApp,
+        #[command(subcommand)]
+        command: CloudDb,
     },
     /// Create a stopped app; apply explicitly to start it.
     New {
@@ -2101,28 +2108,7 @@ pub(crate) enum CloudApp {
         since: Option<jiff::Timestamp>,
     },
     /// Stage app.toml, values and optionally a deployment in a draft, creating a missing app; never applies.
-    Stage {
-        #[command(flatten)]
-        selected: SelectedApp,
-        /// App config path; defaults to ./app.toml if present, otherwise the draft's config is kept.
-        #[arg(short = 'a', long)]
-        app_config: Option<PathBuf>,
-        #[command(flatten)]
-        draft: CloudDraft,
-        /// Stage an existing deployment ID, or submit a deployment manifest and stage it;
-        /// otherwise the draft's deployment is kept.
-        #[arg(short = 'd', long, value_name = "PATH|ID")]
-        deployment: Option<DeploymentSource>,
-        /// Submit an empty deployment with no components and stage it.
-        #[arg(long, conflicts_with = "deployment")]
-        empty_deployment: bool,
-        #[command(flatten)]
-        values: CloudValues,
-        /// Human-readable description of the submitted deployment. For already stored content,
-        /// omitting it keeps the current one and an empty string clears it.
-        #[arg(long)]
-        description: Option<String>,
-    },
+    Stage(CloudStage),
     /// Discard a draft and its staged changes.
     Unstage {
         #[command(flatten)]
@@ -2131,30 +2117,7 @@ pub(crate) enum CloudApp {
         draft: CloudDraft,
     },
     /// Publish the local project, creating or configuring the app and activating its deployment.
-    Push {
-        #[command(flatten)]
-        selected: SelectedApp,
-        /// App config path; defaults to ./app.toml.
-        #[arg(short = 'a', long)]
-        app_config: Option<PathBuf>,
-        /// Deployment manifest path.
-        #[arg(
-            short = 'd',
-            long,
-            default_value = "deployment.toml",
-            conflicts_with = "empty_deployment"
-        )]
-        deployment: PathBuf,
-        /// Push an empty deployment with no components.
-        #[arg(long)]
-        empty_deployment: bool,
-        #[command(flatten)]
-        values: CloudValues,
-        /// Human-readable description. For already stored content, omitting it keeps the current
-        /// one and an empty string clears it.
-        #[arg(long)]
-        description: Option<String>,
-    },
+    Push(CloudPush),
     /// Apply the staged changes of a draft with its staged deployment, else the active one.
     Apply {
         #[command(flatten)]
@@ -2202,40 +2165,31 @@ pub(crate) enum CloudApp {
     },
 }
 
-// Binds by reference or mutably, following `$app`.
-macro_rules! cloud_app_selected {
-    ($app:expr) => {
-        match $app {
-            CloudApp::List => None,
+impl CloudApp {
+    pub(crate) fn selected_app(&self) -> Option<&str> {
+        let selected = match self {
+            CloudApp::List => return None,
             CloudApp::Deployment { selected, .. }
             | CloudApp::Execution { selected, .. }
             | CloudApp::Component { selected, .. }
             | CloudApp::Admin { selected, .. }
             | CloudApp::Pull { selected, .. }
+            | CloudApp::Db { selected, .. }
             | CloudApp::New { selected, .. }
             | CloudApp::Status { selected, .. }
             | CloudApp::Events { selected, .. }
             | CloudApp::Logs { selected, .. }
-            | CloudApp::Stage { selected, .. }
+            | CloudApp::Stage(CloudStage { selected, .. })
             | CloudApp::Unstage { selected, .. }
-            | CloudApp::Push { selected, .. }
+            | CloudApp::Push(CloudPush { selected, .. })
             | CloudApp::Apply { selected, .. }
             | CloudApp::Enable { selected, .. }
             | CloudApp::Disable { selected, .. }
             | CloudApp::Delete { selected, .. }
             | CloudApp::Env { selected, .. }
-            | CloudApp::Secrets { selected, .. } => Some(selected),
-        }
-    };
-}
-
-impl CloudApp {
-    pub(crate) fn selected_app(&self) -> Option<&str> {
-        cloud_app_selected!(self).and_then(|selected| selected.app.as_deref())
-    }
-    #[cfg(test)]
-    pub(crate) fn selected_mut(&mut self) -> Option<&mut SelectedApp> {
-        cloud_app_selected!(self)
+            | CloudApp::Secrets { selected, .. } => selected,
+        };
+        selected.app.as_deref()
     }
 }
 
@@ -2252,6 +2206,70 @@ pub(crate) enum CloudEnv {
         name: String,
         #[command(flatten)]
         draft: CloudDraft,
+    },
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct CloudStage {
+    #[command(flatten)]
+    pub(crate) selected: SelectedApp,
+    /// App config path; defaults to ./app.toml if present, otherwise the draft's config is kept.
+    #[arg(short = 'a', long)]
+    pub(crate) app_config: Option<PathBuf>,
+    #[command(flatten)]
+    pub(crate) draft: CloudDraft,
+    /// Stage an existing deployment ID, or submit a deployment manifest and stage it;
+    /// otherwise the draft's deployment is kept.
+    #[arg(short = 'd', long, value_name = "PATH|ID")]
+    pub(crate) deployment: Option<DeploymentSource>,
+    /// Submit an empty deployment with no components and stage it.
+    #[arg(long, conflicts_with = "deployment")]
+    pub(crate) empty_deployment: bool,
+    #[command(flatten)]
+    pub(crate) values: CloudValues,
+    /// Human-readable description of the submitted deployment. For already stored content,
+    /// omitting it keeps the current one and an empty string clears it.
+    #[arg(long)]
+    pub(crate) description: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct CloudPush {
+    #[command(flatten)]
+    pub(crate) selected: SelectedApp,
+    /// App config path; defaults to ./app.toml.
+    #[arg(short = 'a', long)]
+    pub(crate) app_config: Option<PathBuf>,
+    /// Deployment manifest path.
+    #[arg(
+        short = 'd',
+        long,
+        default_value = "deployment.toml",
+        conflicts_with = "empty_deployment"
+    )]
+    pub(crate) deployment: PathBuf,
+    /// Push an empty deployment with no components.
+    #[arg(long)]
+    pub(crate) empty_deployment: bool,
+    #[command(flatten)]
+    pub(crate) values: CloudValues,
+    /// Human-readable description. For already stored content, omitting it keeps the current
+    /// one and an empty string clears it.
+    #[arg(long)]
+    pub(crate) description: Option<String>,
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum CloudDb {
+    /// Restore the app's database from its replica with `litestream`, version 0.5.18 or newer.
+    Pull {
+        /// Directory to write `obelisk.sqlite` into. Defaults to the directory `obelisk server run`
+        /// uses for this app.
+        #[arg(long, short, value_name = "DIR")]
+        output: Option<PathBuf>,
+        /// Overwrite an existing database.
+        #[arg(long, short)]
+        force: bool,
     },
 }
 

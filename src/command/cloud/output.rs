@@ -47,8 +47,7 @@ impl From<&Cloud> for Summary {
             }) => Self::Apps,
             Cloud::App(CloudAppTarget { command, .. }) => {
                 let key = match command {
-                    CloudApp::Stage { draft, .. }
-                    | CloudApp::Unstage { draft, .. }
+                    CloudApp::Unstage { draft, .. }
                     | CloudApp::Env {
                         command: CloudEnv::Set { draft, .. } | CloudEnv::Unset { draft, .. },
                         ..
@@ -92,13 +91,14 @@ impl From<&Cloud> for Summary {
                         command: CloudSecrets::Set { .. } | CloudSecrets::Unset { .. },
                         ..
                     } => Self::Staged("Secret change staged.", apply),
-                    CloudApp::Push { .. }
-                    | CloudApp::Stage { .. }
+                    CloudApp::Push(_)
+                    | CloudApp::Stage(_)
                     | CloudApp::Deployment { .. }
                     | CloudApp::Execution { .. }
                     | CloudApp::Component { .. }
                     | CloudApp::Admin { .. }
-                    | CloudApp::Pull { .. } => unreachable!("command has its own output"),
+                    | CloudApp::Pull { .. }
+                    | CloudApp::Db { .. } => unreachable!("command has its own output"),
                     CloudApp::List => unreachable!("matched above"),
                 }
             }
