@@ -2,7 +2,6 @@
 
 use crate::command::server::RuntimeConfigAvailability;
 use crate::config::env_var::StartupEnvVars;
-use anyhow::bail;
 use concepts::component_id::SecretExposureDigest;
 use hashbrown::{HashMap, HashSet};
 use indexmap::IndexMap;
@@ -326,7 +325,43 @@ pub(crate) struct SecretRegistry {
     public_values: HashMap<String, String>,
     exposure_grants: HashMap<String, BTreeMap<String, SecretExposureDigests>>,
     environment_audit: serde_json::Value,
+    /// Required values that were unset, kept when resolved with deferred checking.
+    missing: MissingRuntimeValues,
 }
+
+/// Required secrets and public environment variables whose sources are unset.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct MissingRuntimeValues {
+    pub(crate) secrets: BTreeSet<String>,
+    pub(crate) public_env: BTreeSet<String>,
+}
+
+impl MissingRuntimeValues {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.secrets.is_empty() && self.public_env.is_empty()
+    }
+}
+
+impl std::fmt::Display for MissingRuntimeValues {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut messages = Vec::new();
+        if !self.secrets.is_empty() {
+            messages.push(format!(
+                "secrets sourced from environment variables are not set: {:?}",
+                self.secrets
+            ));
+        }
+        if !self.public_env.is_empty() {
+            messages.push(format!(
+                "required app.toml public environment variables are not set: {:?}",
+                self.public_env
+            ));
+        }
+        write!(f, "{}", messages.join("; "))
+    }
+}
+
+impl std::error::Error for MissingRuntimeValues {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum EnvVarSecretsCleanup {
@@ -350,6 +385,7 @@ impl SecretRegistry {
                 "public_env": {},
                 "secrets": {},
             }),
+            missing: MissingRuntimeValues::default(),
         }
     }
 
@@ -443,6 +479,7 @@ impl SecretRegistry {
                 "public_env": {},
                 "secrets": {},
             }),
+            missing: MissingRuntimeValues::default(),
         }
     }
 
@@ -506,6 +543,25 @@ impl SecretRegistry {
         runtime_config_availability: RuntimeConfigAvailability,
         env_vars: &StartupEnvVars,
     ) -> anyhow::Result<Self> {
+        let registry = Self::resolve_deferred(
+            secrets,
+            public_env,
+            env_var_cleanup,
+            runtime_config_availability,
+            env_vars,
+        );
+        registry.ensure_runtime_values()?;
+        Ok(registry)
+    }
+
+    /// Like [`Self::resolve`], but keeps missing required values for [`Self::ensure_runtime_values`].
+    pub(crate) fn resolve_deferred(
+        secrets: SecretsToml,
+        public_env: PublicEnvToml,
+        env_var_cleanup: EnvVarSecretsCleanup,
+        runtime_config_availability: RuntimeConfigAvailability,
+        env_vars: &StartupEnvVars,
+    ) -> Self {
         let mut values = HashMap::new();
         let mut absent = HashSet::new();
 
@@ -556,11 +612,6 @@ impl SecretRegistry {
             exposure_grants.insert(logical_name.clone(), exposed_to);
             sensitive.insert(logical_name);
         }
-        if runtime_config_availability == RuntimeConfigAvailability::Strict
-            && !missing_env_vars.is_empty()
-        {
-            bail!("secrets sourced from environment variables are not set: {missing_env_vars:?}");
-        }
         if env_var_cleanup == EnvVarSecretsCleanup::Wipe {
             for src in &sources {
                 // SAFETY: `resolve_and_wipe` runs during single-threaded startup, before the
@@ -590,16 +641,11 @@ impl SecretRegistry {
             .filter(|name| !public_values.contains_key(*name))
             .cloned()
             .collect();
-        if runtime_config_availability == RuntimeConfigAvailability::Strict
-            && !missing_public.is_empty()
-        {
-            bail!("required app.toml public environment variables are not set: {missing_public:?}");
-        }
         let public_env_audit: std::collections::BTreeMap<_, _> = public_allowed
             .iter()
             .map(|name| (name.clone(), public_values.contains_key(name)))
             .collect();
-        Ok(Self {
+        Self {
             values,
             internal,
             absent,
@@ -612,7 +658,24 @@ impl SecretRegistry {
                 "public_env": public_env_audit,
                 "secrets": secret_audit,
             }),
-        })
+            missing: if runtime_config_availability == RuntimeConfigAvailability::Strict {
+                MissingRuntimeValues {
+                    secrets: missing_env_vars,
+                    public_env: missing_public,
+                }
+            } else {
+                MissingRuntimeValues::default()
+            },
+        }
+    }
+
+    /// Fails with [`MissingRuntimeValues`] when a strict resolution found unset required values.
+    pub(crate) fn ensure_runtime_values(&self) -> Result<(), MissingRuntimeValues> {
+        if self.missing.is_empty() {
+            Ok(())
+        } else {
+            Err(self.missing.clone())
+        }
     }
 
     pub(crate) fn with_internal_token(&self, token: Option<&SecretString>) -> anyhow::Result<Self> {
@@ -903,6 +966,39 @@ mod tests {
         .to_string();
         assert!(err.contains("not set"), "unexpected error: {err}");
         assert!(err.contains("LOGICAL"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn deferred_resolution_keeps_missing_secrets_and_public_env() {
+        let env_vars = StartupEnvVars::capture();
+        let mut secrets = SecretsToml::new();
+        secrets.insert(
+            "LOGICAL".to_string(),
+            SecretConfigToml::Env(EnvSecretConfigToml {
+                _source: EnvSecretType::Env,
+                env: "OBELISK_TEST_DEFINITELY_UNSET_7C1D".to_string(),
+                optional: false,
+                exposed_to: BTreeMap::new(),
+            }),
+        );
+        let public_env: PublicEnvToml =
+            toml::from_str("OBELISK_TEST_PUBLIC_UNSET_7C1D = {}").unwrap();
+        let registry = SecretRegistry::resolve_deferred(
+            secrets,
+            public_env,
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+            &env_vars,
+        );
+        let missing = registry.ensure_runtime_values().unwrap_err();
+        assert_eq!(missing.secrets, ["LOGICAL".to_string()].into());
+        assert_eq!(
+            missing.public_env,
+            ["OBELISK_TEST_PUBLIC_UNSET_7C1D".to_string()].into()
+        );
+        let message = missing.to_string();
+        assert!(message.contains("secrets sourced from environment variables are not set"));
+        assert!(message.contains("public environment variables are not set"));
     }
 
     #[test]

@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(server)* `server run` with unset required secrets or public environment variables now opens
+  the database and records `server.startup.failed` with stage `runtime_values` and the names in
+  `missing_secrets` and `missing_env` before exiting. Both lists are reported together; previously
+  missing secrets hid missing public environment variables.
+
 ## [0.43.0-rc.19](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.18...v0.43.0-rc.19)
 
 This release candidate renames `cloud app deploy` to `cloud app push` and lets `cloud app stage`

@@ -59,6 +59,7 @@ use crate::config::deployment::resolve_manifest;
 use crate::config::deployment::{AllowedHostToml, MethodsInput, MethodsInputStar};
 use crate::config::env_var::EnvVarConfig;
 use crate::config::secret_registry::EnvVarSecretsCleanup;
+use crate::config::secret_registry::MissingRuntimeValues;
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::server::AllowExecActivities;
 use crate::config::server::CancelWatcherTomlConfig;
@@ -2354,16 +2355,21 @@ async fn record_startup_failed<T>(
         return result;
     };
     let (error, error_truncated) = bounded_system_event_text(&format!("{err:#}"));
+    let mut details = serde_json::json!({
+        "stage": stage,
+        "error": error,
+        "error_truncated": error_truncated,
+    });
+    if let Some(missing) = err.downcast_ref::<MissingRuntimeValues>() {
+        details["missing_secrets"] = serde_json::json!(missing.secrets);
+        details["missing_env"] = serde_json::json!(missing.public_env);
+    }
     crate::server::system_event_writer::record(
         db_pool,
         concepts::storage::SystemEventCode::ServerStartupFailed,
         None,
         deployment_id,
-        serde_json::json!({
-            "stage": stage,
-            "error": error,
-            "error_truncated": error_truncated,
-        }),
+        details,
     )
     .await;
     Err(err)
@@ -2458,6 +2464,16 @@ pub(crate) async fn run_internal(
             (db_pool, db_close)
         }
     };
+    // `server run` defers missing required values until they can be recorded.
+    record_startup_failed(
+        db_pool.as_ref(),
+        "runtime_values",
+        None,
+        secret_registry
+            .ensure_runtime_values()
+            .map_err(anyhow::Error::from),
+    )
+    .await?;
     let runtime_config_availability = RuntimeConfigAvailability::Strict;
     let span = Span::current();
     let (active_deployment_id, deployment_resolved, persist) = record_startup_failed(
@@ -8690,5 +8706,42 @@ mod tests {
                 .expect_err("oversized blob");
             assert_eq!(err.oversized_files.len(), 1);
         }
+    }
+
+    #[tokio::test]
+    async fn missing_runtime_values_are_recorded_as_structured_startup_failure() {
+        use crate::config::secret_registry::MissingRuntimeValues;
+        use concepts::storage::{DbPool as _, SystemEventFilter};
+        use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_pool = SqlitePool::new(dir.path().join("obelisk.sqlite"), SqliteConfig::default())
+            .await
+            .unwrap();
+        let missing = MissingRuntimeValues {
+            secrets: ["API_KEY".to_string()].into(),
+            public_env: ["REGION".to_string()].into(),
+        };
+        let result: anyhow::Result<()> = Err(missing.into());
+        super::record_startup_failed(&db_pool, "runtime_values", None, result)
+            .await
+            .unwrap_err();
+        let events = db_pool
+            .admin_conn()
+            .await
+            .unwrap()
+            .list_system_events(SystemEventFilter {
+                code: Some("server.startup.failed".to_string()),
+                limit: 10,
+                ..SystemEventFilter::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        let details = &events[0].details;
+        assert_eq!(details["stage"], "runtime_values");
+        assert_eq!(details["missing_secrets"], serde_json::json!(["API_KEY"]));
+        assert_eq!(details["missing_env"], serde_json::json!(["REGION"]));
+        concepts::storage::DbPoolCloseable::close(&db_pool).await;
     }
 }
