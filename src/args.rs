@@ -1386,6 +1386,17 @@ pub(crate) struct CancelCommand {
 mod tests {
     use super::*;
     #[test]
+    fn since_takes_a_time_or_a_duration_ago() {
+        let time: jiff::Timestamp = "2026-11-22T15:28:01.548908094Z".parse().unwrap();
+        assert_eq!(parse_since("2026-11-22T15:28:01.548908094Z"), Ok(time));
+        let ago = jiff::Timestamp::now().duration_since(parse_since("30m").unwrap());
+        assert!(
+            (ago - jiff::SignedDuration::from_mins(30)).abs() < jiff::SignedDuration::from_secs(5),
+            "{ago:?}"
+        );
+        assert!(parse_since("yesterday").is_err());
+    }
+    #[test]
     fn deployment_sources_default_to_project_file_without_overriding_empty_or_ids() {
         use clap::Parser as _;
         let parse = |prefix: &[&str], action: &str, suffix: &[&str]| {
@@ -2078,6 +2089,17 @@ pub(crate) enum CloudApp {
         #[arg(short = 'n', long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=50))]
         limit: u8,
     },
+    /// Show the logs of the app's Machines, oldest first; Fly keeps about a week.
+    Logs {
+        #[command(flatten)]
+        selected: SelectedApp,
+        /// Number of lines to show: the newest ones, or the first ones after `--since`.
+        #[arg(short = 'n', long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=500))]
+        limit: u16,
+        /// Show lines after this RFC 3339 time, or after this long ago, e.g. `30m` or `2h`.
+        #[arg(long, value_parser = parse_since)]
+        since: Option<jiff::Timestamp>,
+    },
     /// Stage app.toml, values and optionally a deployment in a draft, creating a missing app; never applies.
     Stage {
         #[command(flatten)]
@@ -2193,6 +2215,7 @@ macro_rules! cloud_app_selected {
             | CloudApp::New { selected, .. }
             | CloudApp::Status { selected, .. }
             | CloudApp::Events { selected, .. }
+            | CloudApp::Logs { selected, .. }
             | CloudApp::Stage { selected, .. }
             | CloudApp::Unstage { selected, .. }
             | CloudApp::Push { selected, .. }
@@ -2252,4 +2275,17 @@ pub(crate) enum CloudSecrets {
         #[command(flatten)]
         draft: CloudDraft,
     },
+}
+
+/// An RFC 3339 time, or a duration before now.
+fn parse_since(value: &str) -> Result<jiff::Timestamp, String> {
+    if let Ok(time) = value.parse::<jiff::Timestamp>() {
+        return Ok(time);
+    }
+    let ago = value.parse::<jiff::SignedDuration>().map_err(|_| {
+        format!("expected an RFC 3339 time or a duration like `30m`, got `{value}`")
+    })?;
+    jiff::Timestamp::now()
+        .checked_sub(ago)
+        .map_err(|error| error.to_string())
 }

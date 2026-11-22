@@ -412,6 +412,30 @@ impl Client {
             .context("Cloud request failed")?;
         self.response(response, Kind::Read, None).await
     }
+    async fn logs(
+        &self,
+        name: &str,
+        limit: u16,
+        since: Option<jiff::Timestamp>,
+    ) -> anyhow::Result<Value> {
+        let mut url = self.url(&["v1", "apps", name, "logs"])?;
+        url.query_pairs_mut()
+            .append_pair("limit", &limit.to_string());
+        if let Some(since) = since {
+            // The cursor is the Unix nanosecond after which lines are returned.
+            let after = u64::try_from(since.as_nanosecond()).context("`--since` is before 1970")?;
+            url.query_pairs_mut()
+                .append_pair("after", &after.to_string());
+        }
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("Cloud request failed")?;
+        self.response(response, Kind::Read, None).await
+    }
     async fn app_toml(
         &self,
         name: &str,
@@ -862,6 +886,7 @@ impl CloudArgs {
                         Ok(value)
                     }
                     CloudApp::Events { limit, .. } => client.events(name, limit).await,
+                    CloudApp::Logs { limit, since, .. } => client.logs(name, limit, since).await,
                     CloudApp::Unstage {
                         draft: CloudDraft { key },
                         ..
