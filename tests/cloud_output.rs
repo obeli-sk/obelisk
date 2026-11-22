@@ -113,13 +113,13 @@ async fn cloud_output() {
     assert!(run(&["app", "events"]).await.1.contains("limit 5"));
     assert_eq!(
         run(&["app", "logs"]).await.1,
-        "2026-11-22T15:28:01.548908094Z  m1  app     limit 100 after -\n"
+        "2026-11-22T15:28:01.548908094Z  info   m1  app     limit 100 after -\n"
     );
     assert_eq!(
         run(&["app", "logs", "-n", "1", "--since", "2026-11-22T15:28:00Z"])
             .await
             .1,
-        "2026-11-22T15:28:01.548908094Z  m1  app     limit 1 after 1795361280000000000\n\
+        "2026-11-22T15:28:01.548908094Z  info   m1  app     limit 1 after 1795361280000000000\n\
          More lines may follow; continue with `--since 2026-11-22T15:28:01.548908094Z`.\n"
     );
     for command in [vec!["app", "list"], vec!["token", "list"]] {
