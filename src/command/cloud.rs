@@ -20,8 +20,8 @@ use std::{
 };
 
 mod auth;
+mod db;
 mod output;
-mod pull_db;
 mod push;
 mod stage;
 use output::Summary;
@@ -743,6 +743,20 @@ impl CloudArgs {
         if matches!(
             self.command,
             Cloud::App(CloudAppTarget {
+                command: CloudApp::Db { .. },
+                ..
+            })
+        ) {
+            return self
+                .db_restore()
+                .await?
+                .expect("every `cloud app db` command restores a database")
+                .run()
+                .await;
+        }
+        if matches!(
+            self.command,
+            Cloud::App(CloudAppTarget {
                 command: CloudApp::Deployment { .. }
                     | CloudApp::Execution { .. }
                     | CloudApp::Component { .. }
@@ -865,7 +879,8 @@ impl CloudArgs {
                     | CloudApp::Execution { .. }
                     | CloudApp::Component { .. }
                     | CloudApp::Admin { .. }
-                    | CloudApp::Pull { .. } => unreachable!("API commands are dispatched in run"),
+                    | CloudApp::Pull { .. }
+                    | CloudApp::Db { .. } => unreachable!("dispatched in run"),
                     CloudApp::List => unreachable!("handled above"),
                     CloudApp::Status { .. } => {
                         let mut value = client

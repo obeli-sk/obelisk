@@ -1,5 +1,5 @@
 use super::{CloudArgs, DEFAULT_API_URL, app_name};
-use crate::args::{AppPull, Cloud, CloudApp, CloudAppTarget};
+use crate::args::{AppPull, Cloud, CloudApp, CloudAppTarget, CloudDb};
 use crate::config::server::SQLITE_FILE_NAME;
 use anyhow::{Context as _, bail, ensure};
 use reqwest::Url;
@@ -19,17 +19,25 @@ pub(super) struct DbRestore {
 
 impl CloudArgs {
     pub(super) async fn db_restore(&self) -> anyhow::Result<Option<DbRestore>> {
-        let Cloud::App(CloudAppTarget {
-            command:
-                CloudApp::Pull {
-                    db: Some(directory),
-                    pull: AppPull { force, .. },
-                    ..
-                },
-            ..
-        }) = &self.command
-        else {
-            return Ok(None);
+        let (directory, force) = match &self.command {
+            Cloud::App(CloudAppTarget {
+                command:
+                    CloudApp::Pull {
+                        db: Some(directory),
+                        pull: AppPull { force, .. },
+                        ..
+                    },
+                ..
+            }) => (directory, force),
+            Cloud::App(CloudAppTarget {
+                command:
+                    CloudApp::Db {
+                        command: CloudDb::Pull { output, force },
+                        ..
+                    },
+                ..
+            }) => (output, force),
+            _ => return Ok(None),
         };
         let app_name = app_name(self.selected_app()).await?;
         let token = self
@@ -55,7 +63,7 @@ impl CloudArgs {
             Some(directory) => (directory.clone(), true),
             None => (
                 crate::project_dirs()
-                    .context("Cannot determine the data directory; pass `--db DIR`")?
+                    .context("Cannot determine the data directory; pass the database directory explicitly")?
                     .data_dir()
                     .join("apps")
                     .join(&app_name)

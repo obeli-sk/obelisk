@@ -175,7 +175,7 @@ pub(crate) struct AppPull {
     /// current directory.
     #[arg(long, short)]
     pub(crate) output: Option<PathBuf>,
-    /// Overwrite existing files in the output directory, and the database restored by `cloud app pull --db`.
+    /// Overwrite existing files in the output directory, and the database restored by `--db`.
     #[arg(long, short)]
     pub(crate) force: bool,
     /// Keep generated content digests and JavaScript module metadata in `deployment.toml`.
@@ -2056,10 +2056,17 @@ pub(crate) enum CloudApp {
         selected: SelectedApp,
         #[command(flatten)]
         pull: AppPull,
-        /// Also restore the app's database with `litestream` into DIR, by default the directory `obelisk server run` uses for this app.
+        /// After pulling the files, also run `cloud app db pull --output DIR`.
         #[arg(long, value_name = "DIR", num_args = 0..=1)]
         #[expect(clippy::option_option, reason = "clap's optional-value flag")]
         db: Option<Option<PathBuf>>,
+    },
+    /// Work with the app's database replica.
+    Db {
+        #[command(flatten)]
+        selected: SelectedApp,
+        #[command(subcommand)]
+        command: CloudDb,
     },
     /// Create a stopped app; apply explicitly to start it.
     New {
@@ -2212,6 +2219,7 @@ macro_rules! cloud_app_selected {
             | CloudApp::Component { selected, .. }
             | CloudApp::Admin { selected, .. }
             | CloudApp::Pull { selected, .. }
+            | CloudApp::Db { selected, .. }
             | CloudApp::New { selected, .. }
             | CloudApp::Status { selected, .. }
             | CloudApp::Events { selected, .. }
@@ -2252,6 +2260,20 @@ pub(crate) enum CloudEnv {
         name: String,
         #[command(flatten)]
         draft: CloudDraft,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum CloudDb {
+    /// Restore the app's database from its replica with `litestream`.
+    Pull {
+        /// Directory to write `obelisk.sqlite` into. Defaults to the directory `obelisk server run`
+        /// uses for this app.
+        #[arg(long, short, value_name = "DIR")]
+        output: Option<PathBuf>,
+        /// Overwrite an existing database.
+        #[arg(long, short)]
+        force: bool,
     },
 }
 

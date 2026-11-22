@@ -98,7 +98,8 @@ impl From<&Cloud> for Summary {
                     | CloudApp::Execution { .. }
                     | CloudApp::Component { .. }
                     | CloudApp::Admin { .. }
-                    | CloudApp::Pull { .. } => unreachable!("command has its own output"),
+                    | CloudApp::Pull { .. }
+                    | CloudApp::Db { .. } => unreachable!("command has its own output"),
                     CloudApp::List => unreachable!("matched above"),
                 }
             }
