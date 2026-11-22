@@ -2265,7 +2265,7 @@ pub(crate) enum CloudEnv {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum CloudDb {
-    /// Restore the app's database from its replica with `litestream`.
+    /// Restore the app's database from its replica with `litestream`, version 0.5.18 or newer.
     Pull {
         /// Directory to write `obelisk.sqlite` into. Defaults to the directory `obelisk server run`
         /// uses for this app.

@@ -15,6 +15,54 @@ pub(super) struct DbRestore {
     access_key_id: String,
     secret_access_key: SecretString,
     force: bool,
+    verbose: bool,
+}
+
+/// Older releases cannot decode the page headers the cloud's Litestream writes.
+const MIN_LITESTREAM: (u64, u64, u64) = (0, 5, 18);
+
+/// Fails unless `litestream` is on PATH and at least `MIN_LITESTREAM`; an unparsable version,
+/// such as a development build, is let through.
+async fn check_litestream() -> anyhow::Result<()> {
+    let (major, minor, patch) = MIN_LITESTREAM;
+    let output = match tokio::process::Command::new("litestream")
+        .arg("version")
+        .stdin(Stdio::null())
+        .output()
+        .await
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            bail!(
+                "`litestream` was not found on PATH; install Litestream {major}.{minor}.{patch} or newer to restore the database"
+            )
+        }
+        Err(err) => return Err(err).context("cannot run `litestream version`"),
+    };
+    let found = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if let Some(version) = parse_version(&found) {
+        ensure!(
+            version >= MIN_LITESTREAM,
+            "Litestream {major}.{minor}.{patch} or newer is required to restore the database, found {found}"
+        );
+    }
+    Ok(())
+}
+
+fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = text.strip_prefix('v').unwrap_or(text).splitn(3, '.');
+    let mut next = |last: bool| {
+        let part = parts.next()?;
+        let digits = if last {
+            &part[..part
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(part.len())]
+        } else {
+            part
+        };
+        digits.parse().ok()
+    };
+    Some((next(false)?, next(false)?, next(true)?))
 }
 
 impl CloudArgs {
@@ -40,6 +88,7 @@ impl CloudArgs {
             _ => return Ok(None),
         };
         let app_name = app_name(self.selected_app()).await?;
+        check_litestream().await?;
         let token = self
             .api_token
             .as_ref()
@@ -79,6 +128,7 @@ impl CloudArgs {
             access_key_id: group.to_owned(),
             secret_access_key: token.clone(),
             force: *force,
+            verbose: self.verbose,
         }))
     }
 }
@@ -103,15 +153,19 @@ impl DbRestore {
                 self.secret_access_key.expose_secret(),
             )
             .stdin(Stdio::null());
-        let status = match command.status().await {
-            Ok(status) => status,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                bail!(
-                    "`litestream` was not found on PATH; install Litestream 0.5 to restore the database"
-                )
-            }
-            Err(err) => return Err(err).context("cannot run `litestream`"),
-        };
+        if self.verbose {
+            eprintln!(
+                "Running LITESTREAM_ACCESS_KEY_ID={} LITESTREAM_SECRET_ACCESS_KEY=<API token> litestream restore -o {}{} '{}'",
+                self.access_key_id,
+                db_path.display(),
+                if self.force { " -force" } else { "" },
+                self.replica_url
+            );
+        }
+        let status = command
+            .status()
+            .await
+            .context("cannot run `litestream restore`")?;
         ensure!(
             status.success(),
             "`litestream restore` failed ({status}){}",
@@ -133,5 +187,18 @@ impl DbRestore {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_version;
+
+    #[test]
+    fn litestream_versions() {
+        assert_eq!(parse_version("v0.5.18"), Some((0, 5, 18)));
+        assert_eq!(parse_version("0.5.11"), Some((0, 5, 11)));
+        assert_eq!(parse_version("0.5.18-rc1"), Some((0, 5, 18)));
+        assert_eq!(parse_version("(development build)"), None);
     }
 }

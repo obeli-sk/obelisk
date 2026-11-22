@@ -1080,7 +1080,7 @@
               "subcommands": [
                 {
                   "name": "pull",
-                  "about": "Restore the app's database from its replica with `litestream`",
+                  "about": "Restore the app's database from its replica with `litestream`, version 0.5.18 or newer",
                   "options": [
                     {
                       "name": "--output",
