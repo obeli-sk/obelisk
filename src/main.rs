@@ -76,13 +76,7 @@ fn command_future(
                 mut config,
                 secret_registry,
                 js_runtime,
-            } = prepare_server_startup(
-                server_config.clone(),
-                app_config,
-                EnvVarSecretsCleanup::Wipe,
-                RuntimeConfigAvailability::Strict,
-                dev,
-            )?;
+            } = prepare_server_run_startup(server_config.clone(), app_config, dev)?;
             config.startup_deployment_id = deployment_id;
             Box::pin(run(
                 config_holder,
@@ -280,6 +274,23 @@ fn prepare_server_startup(
     )
 }
 
+/// `server run` startup: missing required values are recorded once the database is open.
+fn prepare_server_run_startup(
+    server_config: Option<PathBuf>,
+    app_config: Option<PathBuf>,
+    dev: bool,
+) -> anyhow::Result<ServerStartup> {
+    prepare_server_startup_inner(
+        server_config,
+        app_config,
+        EnvVarSecretsCleanup::Wipe,
+        RuntimeConfigAvailability::Strict,
+        true,
+        dev,
+        true,
+    )
+}
+
 fn prepare_server_startup_with_exec_policy(
     server_config: Option<PathBuf>,
     app_config: Option<PathBuf>,
@@ -287,6 +298,26 @@ fn prepare_server_startup_with_exec_policy(
     runtime_config_availability: RuntimeConfigAvailability,
     check_exec_policy: bool,
     dev: bool,
+) -> anyhow::Result<ServerStartup> {
+    prepare_server_startup_inner(
+        server_config,
+        app_config,
+        env_var_cleanup,
+        runtime_config_availability,
+        check_exec_policy,
+        dev,
+        false,
+    )
+}
+
+fn prepare_server_startup_inner(
+    server_config: Option<PathBuf>,
+    app_config: Option<PathBuf>,
+    env_var_cleanup: EnvVarSecretsCleanup,
+    runtime_config_availability: RuntimeConfigAvailability,
+    check_exec_policy: bool,
+    dev: bool,
+    defer_missing_values: bool,
 ) -> anyhow::Result<ServerStartup> {
     if env_var_cleanup == EnvVarSecretsCleanup::Wipe {
         assert_ne!(
@@ -352,13 +383,17 @@ fn prepare_server_startup_with_exec_policy(
     config.app_source_path.clone_from(&config_holder.app_source);
     config.app_policy = app_policy;
 
-    let secret_registry = Arc::new(SecretRegistry::resolve(
+    let secret_registry = SecretRegistry::resolve_deferred(
         config.secrets.clone(),
         config.public_env.clone(),
         env_var_cleanup,
         runtime_config_availability,
         &app_env_vars,
-    )?);
+    );
+    if !defer_missing_values {
+        secret_registry.ensure_runtime_values()?;
+    }
+    let secret_registry = Arc::new(secret_registry);
     Ok(ServerStartup {
         config_holder,
         config,
