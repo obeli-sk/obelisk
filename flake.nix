@@ -195,7 +195,7 @@
                   exit 1
                 fi
                 ''}
-                export CARGO_ZIGBUILD_ZIG_PATH="${pkgs.zig_0_13}/bin/zig"
+                export CARGO_ZIGBUILD_ZIG_PATH="${pkgs.zig_0_15}/bin/zig"
                 echo "Setting zig to $CARGO_ZIGBUILD_ZIG_PATH"
                 exec ${pkgs.cargo-zigbuild}/bin/cargo-zigbuild "$@"
               '';
@@ -215,7 +215,7 @@
                 # Add Zig when cross compiling
                 ++ pkgs.lib.optionals (customTarget != null) [
                   cargoZigbuildWrapped
-                  pkgs.zig_0_13
+                  pkgs.zig_0_15
                 ]
                 # Add macOS SDK only if targeting macOS
                 ++ pkgs.lib.optionals isMacOSTarget [
