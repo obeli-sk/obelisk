@@ -21,6 +21,7 @@ use std::{
 
 mod auth;
 mod output;
+mod pull_db;
 mod push;
 mod stage;
 use output::Summary;
@@ -726,6 +727,9 @@ impl CloudArgs {
                 ..
             })
         ) {
+            if let Some(restore) = self.db_restore().await? {
+                restore.run().await?;
+            }
             let api_url = self.direct_api_url().await?;
             return self.run_app_api(api_url).await;
         }

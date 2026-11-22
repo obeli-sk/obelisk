@@ -175,7 +175,7 @@ pub(crate) struct AppPull {
     /// current directory.
     #[arg(long, short)]
     pub(crate) output: Option<PathBuf>,
-    /// Overwrite existing files in the output directory.
+    /// Overwrite existing files in the output directory, and the database restored by `cloud app pull --db`.
     #[arg(long, short)]
     pub(crate) force: bool,
     /// Keep generated content digests and JavaScript module metadata in `deployment.toml`.
@@ -2045,6 +2045,10 @@ pub(crate) enum CloudApp {
         selected: SelectedApp,
         #[command(flatten)]
         pull: AppPull,
+        /// Also restore the app's database with `litestream` into DIR, by default the directory `obelisk server run` uses for this app.
+        #[arg(long, value_name = "DIR", num_args = 0..=1)]
+        #[expect(clippy::option_option, reason = "clap's optional-value flag")]
+        db: Option<Option<PathBuf>>,
     },
     /// Create a stopped app; apply explicitly to start it.
     New {
