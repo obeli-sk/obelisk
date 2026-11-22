@@ -181,8 +181,9 @@ impl Summary {
                 for line in logs {
                     let _ = writeln!(
                         out,
-                        "{}  {}  {:<6}  {}",
+                        "{}  {:<5}  {}  {:<6}  {}",
                         text(line, "timestamp", ""),
+                        text(line, "level", "-"),
                         text(line, "machine_id", "-"),
                         text(line, "source", "-"),
                         text(line, "message", "")
@@ -714,8 +715,8 @@ mod tests {
             {"timestamp":"2026-11-22T15:28:01.468044322Z","level":"info","message":"Machine started in 778ms","machine_id":"84ed09eb490928","region":"ams","source":"runner"},
             {"timestamp":"2026-11-22T15:28:01.548908094Z","level":"info","message":"Server started","machine_id":"84ed09eb490928","region":"ams","source":"app"},
         ],"next":"1795361281548908094"});
-        let lines = "2026-11-22T15:28:01.468044322Z  84ed09eb490928  runner  Machine started in 778ms\n\
-                     2026-11-22T15:28:01.548908094Z  84ed09eb490928  app     Server started\n";
+        let lines = "2026-11-22T15:28:01.468044322Z  info   84ed09eb490928  runner  Machine started in 778ms\n\
+                     2026-11-22T15:28:01.548908094Z  info   84ed09eb490928  app     Server started\n";
         assert_eq!(Summary::Logs(None).render(&logs), lines);
         assert_eq!(Summary::Logs(Some(3)).render(&logs), lines);
         assert_eq!(
