@@ -213,7 +213,7 @@ fn select(args: &mut CloudArgs, path: Option<&Path>) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) async fn run(args: &CloudArgs, command: &CloudAuth) -> anyhow::Result<()> {
+pub(super) async fn run(command: CloudAuth, json: bool, verbose: bool) -> anyhow::Result<()> {
     let path = store_path().context("Cannot determine the configuration directory")?;
     let value = match command {
         CloudAuth::Login {
@@ -223,20 +223,20 @@ pub(super) async fn run(args: &CloudArgs, command: &CloudAuth) -> anyhow::Result
             default,
         } => {
             login(
-                args,
+                verbose,
                 api_url.as_deref(),
                 &path,
-                *no_browser,
+                no_browser,
                 account.as_deref(),
-                *default,
+                default,
             )
             .await?
         }
-        CloudAuth::Status => status(args, &path).await?,
-        CloudAuth::Switch { account } => switch(&path, account)?,
-        CloudAuth::Logout { account } => logout(args, account.as_deref(), &path).await?,
+        CloudAuth::Status => status(&path, json, verbose).await?,
+        CloudAuth::Switch { account } => switch(&path, &account)?,
+        CloudAuth::Logout { account } => logout(account.as_deref(), &path, verbose).await?,
     };
-    if args.json {
+    if json {
         print_json(&value)
     } else {
         if value["accounts"].as_array().is_some_and(Vec::is_empty) {
@@ -364,7 +364,7 @@ struct Redeemed {
 }
 
 async fn login(
-    args: &CloudArgs,
+    verbose: bool,
     api_url: Option<&str>,
     path: &Path,
     no_browser: bool,
@@ -387,16 +387,7 @@ async fn login(
         eprintln!("Visit this page in any browser:\n\n{page}\n");
     }
     let code = read_pasted_code().await?;
-    finish_login(
-        api_url,
-        path,
-        &code,
-        &verifier,
-        args.verbose,
-        account,
-        default,
-    )
-    .await
+    finish_login(api_url, path, &code, &verifier, verbose, account, default).await
 }
 
 async fn finish_login(
@@ -500,12 +491,12 @@ async fn token_state(entry: &Account, verbose: bool) -> String {
     }
 }
 
-async fn status(args: &CloudArgs, path: &Path) -> anyhow::Result<Value> {
-    if args.verbose {
+async fn status(path: &Path, json: bool, verbose: bool) -> anyhow::Result<Value> {
+    if verbose {
         eprintln!("Credentials file: {}", path.display());
     }
     let store = Store::load(path)?;
-    if non_empty_env("OBELISK_CLOUD_API_TOKEN").is_some() && !args.json {
+    if non_empty_env("OBELISK_CLOUD_API_TOKEN").is_some() && !json {
         eprintln!("OBELISK_CLOUD_API_TOKEN is set and takes precedence.\n");
     }
     let mut accounts = Vec::new();
@@ -517,7 +508,7 @@ async fn status(args: &CloudArgs, path: &Path) -> anyhow::Result<Value> {
             "apps_domain": entry.apps_domain,
             "token_name": entry.token_name,
             "expires_at": entry.expiry(),
-            "token_state": token_state(entry, args.verbose).await,
+            "token_state": token_state(entry, verbose).await,
         }));
     }
     Ok(json!({ "accounts": accounts }))
@@ -533,7 +524,7 @@ fn switch(path: &Path, name: &str) -> anyhow::Result<Value> {
     Ok(json!({ "default": name }))
 }
 
-async fn logout(args: &CloudArgs, name: Option<&str>, path: &Path) -> anyhow::Result<Value> {
+async fn logout(name: Option<&str>, path: &Path, verbose: bool) -> anyhow::Result<Value> {
     let mut store = Store::load(path)?;
     let selected = non_empty_env("OBELISK_CLOUD_ACCOUNT");
     let name = name.or(selected.as_deref());
@@ -544,7 +535,7 @@ async fn logout(args: &CloudArgs, name: Option<&str>, path: &Path) -> anyhow::Re
         )
     })?;
     let name = name.to_owned();
-    revoke(entry, args.verbose).await;
+    revoke(entry, verbose).await;
     store.remove(&name);
     store.save(path)?;
     Ok(json!({ "logged_out": name, "default": store.default }))
@@ -1027,9 +1018,7 @@ mod tests {
         let stored = Store::load(&path).unwrap();
         assert_eq!(stored.accounts.len(), 3);
         assert!(!stored.accounts.contains_key("local"));
-        let logged_out = logout(&parsed(None, None), Some("renamed"), &path)
-            .await
-            .unwrap();
+        let logged_out = logout(Some("renamed"), &path, false).await.unwrap();
         assert_eq!(logged_out["logged_out"], "renamed");
         assert!(!Store::load(&path).unwrap().accounts.contains_key("renamed"));
     }

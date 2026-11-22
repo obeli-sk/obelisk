@@ -1,5 +1,4 @@
-use super::{CloudArgs, DEFAULT_API_URL, app_name};
-use crate::args::{AppPull, Cloud, CloudApp, CloudAppTarget, CloudDb};
+use super::Session;
 use crate::config::server::SQLITE_FILE_NAME;
 use anyhow::{Context as _, bail, ensure};
 use reqwest::Url;
@@ -65,31 +64,17 @@ fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
     Some((next(false)?, next(false)?, next(true)?))
 }
 
-impl CloudArgs {
-    pub(super) async fn db_restore(&self) -> anyhow::Result<Option<DbRestore>> {
-        let (directory, force) = match &self.command {
-            Cloud::App(CloudAppTarget {
-                command:
-                    CloudApp::Pull {
-                        db: Some(directory),
-                        pull: AppPull { force, .. },
-                        ..
-                    },
-                ..
-            }) => (directory, force),
-            Cloud::App(CloudAppTarget {
-                command:
-                    CloudApp::Db {
-                        command: CloudDb::Pull { output, force },
-                        ..
-                    },
-                ..
-            }) => (output, force),
-            _ => return Ok(None),
-        };
-        let app_name = app_name(self.selected_app()).await?;
+impl DbRestore {
+    /// Validates everything a restore needs, including the installed `litestream`, so that
+    /// `app pull --db` fails before writing any file.
+    pub(super) async fn new(
+        session: &Session,
+        app_name: String,
+        directory: Option<PathBuf>,
+        force: bool,
+    ) -> anyhow::Result<Self> {
         check_litestream().await?;
-        let token = self
+        let token = session
             .api_token
             .as_ref()
             .context("An API token is required to read the database replica")?;
@@ -103,13 +88,13 @@ impl CloudArgs {
                 "The API token is not an `obk_` token, which reading the database replica requires"
             );
         };
-        let api_url = self.api_url.as_deref().unwrap_or(DEFAULT_API_URL);
+        let api_url = &session.api_url;
         let endpoint = Url::parse(api_url)
             .with_context(|| format!("Invalid cloud API URL `{api_url}`"))?
             .origin()
             .ascii_serialization();
         let (directory, explicit_directory) = match directory {
-            Some(directory) => (directory.clone(), true),
+            Some(directory) => (directory, true),
             None => (
                 crate::project_dirs()
                     .context("Cannot determine the data directory; pass the database directory explicitly")?
@@ -120,20 +105,17 @@ impl CloudArgs {
                 false,
             ),
         };
-        Ok(Some(DbRestore {
+        Ok(DbRestore {
             replica_url: format!("s3://{app_name}/sqlite?endpoint={endpoint}&forcePathStyle=true"),
             app_name,
             directory,
             explicit_directory,
             access_key_id: group.to_owned(),
             secret_access_key: token.clone(),
-            force: *force,
-            verbose: self.verbose,
-        }))
+            force,
+            verbose: session.verbose,
+        })
     }
-}
-
-impl DbRestore {
     pub(super) async fn run(self) -> anyhow::Result<()> {
         tokio::fs::create_dir_all(&self.directory)
             .await
