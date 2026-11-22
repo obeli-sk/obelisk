@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(cli)* `cloud app logs` shows the logs of the app's Machines, the newest `-n` lines (default
+  100, at most 500) or the first ones after `--since`, an RFC 3339 time or a duration like `30m`.
+
 ### Changed
 
 - *(server)* `server run` with unset required secrets or public environment variables now opens

@@ -1140,6 +1140,25 @@
               ]
             },
             {
+              "name": "logs",
+              "about": "Show the logs of the app's Machines, oldest first; Fly keeps about a week",
+              "options": [
+                {
+                  "name": "--app",
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                },
+                {
+                  "name": "--limit",
+                  "short": "n",
+                  "help": "Number of lines to show: the newest ones, or the first ones after `--since`"
+                },
+                {
+                  "name": "--since",
+                  "help": "Show lines after this RFC 3339 time, or after this long ago, e.g. `30m` or `2h`"
+                }
+              ]
+            },
+            {
               "name": "stage",
               "about": "Stage app.toml, values and optionally a deployment in a draft, creating a missing app; never applies",
               "options": [

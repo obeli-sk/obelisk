@@ -41,6 +41,16 @@ async fn cloud_output() {
                 }]}))
             }),
         )
+        .route(
+            "/v1/apps/demo/logs",
+            get(|Query(query): Query<std::collections::HashMap<String, String>>| async move {
+                Json(json!({"logs":[{
+                    "timestamp":"2026-11-22T15:28:01.548908094Z", "level":"info", "machine_id":"m1",
+                    "region":"ams", "source":"app",
+                    "message":format!("limit {} after {}", query["limit"], query.get("after").map_or("-", String::as_str))
+                }], "next":"1795361281548908094"}))
+            }),
+        )
         .route("/v1/tokens", get(|| async { Json(json!({"tokens":[]})) }).post(|Json(body): Json<Value>| async move {
             assert!(body.get("hash").is_none());
             assert!(body["global"] == true || !body["apps"].as_array().unwrap().is_empty());
@@ -101,6 +111,17 @@ async fn cloud_output() {
         "1970-01-01 00:00:00 UTC  warn   limit 7  (machine.health.critical)\n"
     );
     assert!(run(&["app", "events"]).await.1.contains("limit 5"));
+    assert_eq!(
+        run(&["app", "logs"]).await.1,
+        "2026-11-22T15:28:01.548908094Z  m1  app     limit 100 after -\n"
+    );
+    assert_eq!(
+        run(&["app", "logs", "-n", "1", "--since", "2026-11-22T15:28:00Z"])
+            .await
+            .1,
+        "2026-11-22T15:28:01.548908094Z  m1  app     limit 1 after 1795361280000000000\n\
+         More lines may follow; continue with `--since 2026-11-22T15:28:01.548908094Z`.\n"
+    );
     for command in [vec!["app", "list"], vec!["token", "list"]] {
         let (stdout, text) = run(&command).await;
         assert!(stdout.is_empty() && !text.is_empty(), "{stdout}");

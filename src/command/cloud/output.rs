@@ -10,6 +10,8 @@ pub(super) enum Summary {
     Lifecycle,
     Status,
     Events,
+    /// The limit when paging forward from `--since`.
+    Logs(Option<u16>),
     Token(Option<&'static str>),
     Tokens,
     Env,
@@ -67,6 +69,7 @@ impl From<&Cloud> for Summary {
                 match command {
                     CloudApp::Status { .. } => Self::Status,
                     CloudApp::Events { .. } => Self::Events,
+                    CloudApp::Logs { limit, since, .. } => Self::Logs(since.map(|_| *limit)),
                     CloudApp::New { .. } => Self::App("App created."),
                     CloudApp::Apply { .. } | CloudApp::Enable { .. } | CloudApp::Disable { .. } => {
                         Self::Lifecycle
@@ -171,6 +174,30 @@ impl Summary {
                     }
                 } else {
                     out.push_str("No events.\n");
+                }
+            }
+            Self::Logs(forward) => {
+                let logs = value["logs"].as_array().map_or(&[][..], Vec::as_slice);
+                for line in logs {
+                    let _ = writeln!(
+                        out,
+                        "{}  {}  {:<6}  {}",
+                        text(line, "timestamp", ""),
+                        text(line, "machine_id", "-"),
+                        text(line, "source", "-"),
+                        text(line, "message", "")
+                    );
+                }
+                match (logs.last(), forward) {
+                    (None, _) => out.push_str("No logs.\n"),
+                    (Some(last), Some(limit)) if logs.len() >= usize::from(*limit) => {
+                        let _ = writeln!(
+                            out,
+                            "More lines may follow; continue with `--since {}`.",
+                            text(last, "timestamp", "")
+                        );
+                    }
+                    _ => {}
                 }
             }
             Self::Token(message) => {
@@ -678,6 +705,28 @@ mod tests {
         assert_eq!(
             Summary::Events.render(&json!({"events":[]})),
             "No events.\n"
+        );
+    }
+
+    #[test]
+    fn logs_hint_continuation_when_paging_forward() {
+        let logs = json!({"logs":[
+            {"timestamp":"2026-11-22T15:28:01.468044322Z","level":"info","message":"Machine started in 778ms","machine_id":"84ed09eb490928","region":"ams","source":"runner"},
+            {"timestamp":"2026-11-22T15:28:01.548908094Z","level":"info","message":"Server started","machine_id":"84ed09eb490928","region":"ams","source":"app"},
+        ],"next":"1795361281548908094"});
+        let lines = "2026-11-22T15:28:01.468044322Z  84ed09eb490928  runner  Machine started in 778ms\n\
+                     2026-11-22T15:28:01.548908094Z  84ed09eb490928  app     Server started\n";
+        assert_eq!(Summary::Logs(None).render(&logs), lines);
+        assert_eq!(Summary::Logs(Some(3)).render(&logs), lines);
+        assert_eq!(
+            Summary::Logs(Some(2)).render(&logs),
+            format!(
+                "{lines}More lines may follow; continue with `--since 2026-11-22T15:28:01.548908094Z`.\n"
+            )
+        );
+        assert_eq!(
+            Summary::Logs(None).render(&json!({"logs":[],"next":null})),
+            "No logs.\n"
         );
     }
 
