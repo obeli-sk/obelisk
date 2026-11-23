@@ -292,11 +292,17 @@ impl Generate {
                         }))?
                     );
                 } else {
-                    println!("{token}");
+                    let stdout_is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
+                    // No trailing newline when captured (`> token.txt`, pipes), so the
+                    // token can be used as a secret file verbatim.
+                    if stdout_is_terminal {
+                        println!("{token}");
+                    } else {
+                        print!("{token}");
+                        std::io::Write::flush(&mut std::io::stdout())?;
+                    }
                     // Quiet when stdout is captured ($(...), direnv, pipes).
-                    if server_config.is_none()
-                        && std::io::IsTerminal::is_terminal(&std::io::stdout())
-                    {
+                    if server_config.is_none() && stdout_is_terminal {
                         eprintln!(
                             "Add to server.toml (or rerun with --server-config <server.toml>):"
                         );
