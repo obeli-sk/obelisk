@@ -2,6 +2,7 @@ use crate::command::server::cas_deployment_dir;
 use crate::config::deployment::{
     DeploymentResolved, DeploymentToml, OCI_SCHEMA_PREFIX, sanitize_deployment_relative_path,
 };
+use crate::config::env_var::{StartupEnvVars, interpolate_startup_env_vars};
 use crate::config::file_provider::parse_wit_dir;
 use anyhow::{Context, bail, ensure};
 use concepts::ContentDigest;
@@ -69,6 +70,8 @@ pub(crate) async fn prepare_deployment_manifest_from_disk(
     let deployment_toml = tokio::fs::read_to_string(deployment_toml_path)
         .await
         .with_context(|| format!("cannot read deployment manifest {deployment_toml_path:?}"))?;
+    let deployment_toml = interpolate_locations(deployment_toml)
+        .with_context(|| format!("cannot interpolate {deployment_toml_path:?}"))?;
     let deployment_dir = canonicalize_parent(deployment_toml_path)
         .with_context(|| format!("cannot resolve parent of {deployment_toml_path:?}"))?;
     prepare_deployment_manifest(&deployment_toml, &deployment_dir).await
@@ -148,6 +151,41 @@ pub(crate) async fn prepare_deployment_manifest(
         deployment_toml,
         digest,
         files,
+    })
+}
+
+/// Expand `${VAR}` in authored `location` values from the submitter's environment.
+pub(crate) fn interpolate_locations(deployment_toml: String) -> anyhow::Result<String> {
+    if !deployment_toml.contains("${") {
+        return Ok(deployment_toml);
+    }
+    let mut doc = deployment_toml
+        .parse::<DocumentMut>()
+        .context("cannot parse deployment manifest as TOML")?;
+    let env_vars = StartupEnvVars::capture();
+    let mut changed = false;
+    for (section, item) in doc.iter_mut() {
+        let tables = item
+            .as_array_of_tables_mut()
+            .into_iter()
+            .flat_map(|tables| tables.iter_mut());
+        for location in tables.filter_map(|table| table.get_mut("location")?.as_value_mut()) {
+            if let Some(raw) = location.as_str()
+                && raw.contains("${")
+            {
+                let resolved = interpolate_startup_env_vars(raw, &env_vars)
+                    .with_context(|| format!("cannot interpolate `{section}` location `{raw}`"))?;
+                let decor = location.decor().clone();
+                *location = resolved.into();
+                *location.decor_mut() = decor;
+                changed = true;
+            }
+        }
+    }
+    Ok(if changed {
+        doc.to_string()
+    } else {
+        deployment_toml
     })
 }
 
@@ -1580,6 +1618,49 @@ location = "components/a.wasm"
             prepared
                 .deployment_toml
                 .contains("content_digest = \"sha256:")
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_from_disk_interpolates_locations() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("a.wasm"), b"\0asm")
+            .await
+            .unwrap();
+        let path = dir.path().join("deployment.toml");
+        tokio::fs::write(
+            &path,
+            r#"
+[[activity_wasm]]
+name = "a"
+location = "${OBELISK_TEST_UNSET_LOCATION:-a.wasm}" # local fallback
+"#,
+        )
+        .await
+        .unwrap();
+
+        let prepared = prepare_deployment_manifest_from_disk(&path).await.unwrap();
+
+        assert_eq!(prepared.files[0].path, "a.wasm");
+        assert!(
+            prepared
+                .deployment_toml
+                .contains("location = \"a.wasm\" # local fallback\n")
+        );
+
+        tokio::fs::write(
+            &path,
+            "[[activity_wasm]]\nname = \"a\"\nlocation = \"${OBELISK_TEST_UNSET_LOCATION}\"\n",
+        )
+        .await
+        .unwrap();
+        let err = prepare_deployment_manifest_from_disk(&path)
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{err:#}")
+                .contains("environment variable not set: `OBELISK_TEST_UNSET_LOCATION`"),
+            "{err:#}"
         );
     }
 
