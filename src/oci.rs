@@ -1,6 +1,9 @@
 use crate::args::TomlComponentType;
 use crate::config::deployment::{AllowedHostToml, DurationConfig, JsParamToml, OCI_SCHEMA_PREFIX};
-use crate::config::{content_digest_to_js_file, content_digest_to_wasm_file};
+use crate::config::{
+    content_digest_to_js_file, content_digest_to_js_graph_file, content_digest_to_wasm_file,
+};
+use crate::javascript::graph::JsGraph;
 use anyhow::{Context, bail, ensure};
 use concepts::{ContentDigest, FunctionFqn, component_id::Digest};
 use futures_util::TryFutureExt;
@@ -28,6 +31,9 @@ pub const METADATA_ANNOTATION_KEY: &str = "obelisk.component_metadata:0.2.0";
 /// Media type for the single OCI layer of a JS component image.
 /// The layer contains the UTF-8 JavaScript source code (the `.js` file content).
 pub const JS_LAYER_MEDIA_TYPE: &str = "application/vnd.obelisk.js.v0+javascript";
+/// Media type for the single OCI layer of a multi-file JS component image.
+/// The layer is the canonical JSON `{"entry": ..., "files": {path: source}}` of the module graph.
+pub const JS_GRAPH_LAYER_MEDIA_TYPE: &str = "application/vnd.obelisk.js-graph.v0+json";
 /// Media type for the single OCI layer of an exec activity image.
 /// The layer contains the UTF-8 script source (the `inline` content, including the shebang line).
 pub const EXEC_LAYER_MEDIA_TYPE: &str = "application/vnd.obelisk.exec.v0";
@@ -112,6 +118,14 @@ impl ComponentMetadataAnnotation {
 pub(crate) struct JsCacheResult {
     pub(crate) js_path: PathBuf,
     pub(crate) manifest_digest: String,
+    /// The cached file is an encoded [`JsGraph`] rather than a single source.
+    pub(crate) graph: bool,
+}
+
+/// What `push_js` uploads: a single source keeps the original layer so older servers can pull it.
+pub(crate) enum JsPushSource {
+    Single(String),
+    Graph(JsGraph),
 }
 
 pub(crate) struct ExecCacheResult {
@@ -250,13 +264,25 @@ pub(crate) async fn pull_js_to_cache(
         && let metadata_file = digest_to_metadata_file(metadata_dir, &meta_digest)
         && let Ok(content) = tokio::fs::read_to_string(&metadata_file).await
         && let Ok(content_digest) = ContentDigest::from_str(&content)
-        && let js_path = content_digest_to_js_file(js_cache_dir, &content_digest)
-        && let Ok(()) = verify_cached_file(&js_path, &content_digest).await
     {
-        return Ok(JsCacheResult {
-            js_path,
-            manifest_digest: manifest_digest.to_string(),
-        });
+        for (js_path, graph) in [
+            (
+                content_digest_to_js_file(js_cache_dir, &content_digest),
+                false,
+            ),
+            (
+                content_digest_to_js_graph_file(js_cache_dir, &content_digest),
+                true,
+            ),
+        ] {
+            if let Ok(()) = verify_cached_file(&js_path, &content_digest).await {
+                return Ok(JsCacheResult {
+                    js_path,
+                    manifest_digest: manifest_digest.to_string(),
+                    graph,
+                });
+            }
+        }
     }
 
     info!("Fetching JS metadata");
@@ -279,11 +305,13 @@ pub(crate) async fn pull_js_to_cache(
         .into_iter()
         .next()
         .context("JS OCI image must have exactly one layer")?;
-    ensure!(
-        layer.media_type == JS_LAYER_MEDIA_TYPE,
-        "expected JS layer media type {JS_LAYER_MEDIA_TYPE}, got {}",
-        layer.media_type
-    );
+    let graph = match layer.media_type.as_str() {
+        JS_LAYER_MEDIA_TYPE => false,
+        JS_GRAPH_LAYER_MEDIA_TYPE => true,
+        other => bail!(
+            "expected JS layer media type {JS_LAYER_MEDIA_TYPE} or {JS_GRAPH_LAYER_MEDIA_TYPE}, got {other}"
+        ),
+    };
     let content_digest =
         ContentDigest::from_str(&layer.digest).context("JS layer digest must be well-formed")?;
 
@@ -291,11 +319,16 @@ pub(crate) async fn pull_js_to_cache(
     debug!("Writing JS digest {content_digest} to metadata file {metadata_file:?}");
     tokio::fs::write(&metadata_file, content_digest.to_string()).await?;
 
-    let js_path = content_digest_to_js_file(js_cache_dir, &content_digest);
+    let js_path = if graph {
+        content_digest_to_js_graph_file(js_cache_dir, &content_digest)
+    } else {
+        content_digest_to_js_file(js_cache_dir, &content_digest)
+    };
     if let Ok(()) = verify_cached_file(&js_path, &content_digest).await {
         return Ok(JsCacheResult {
             js_path,
             manifest_digest,
+            graph,
         });
     }
 
@@ -319,6 +352,7 @@ pub(crate) async fn pull_js_to_cache(
     Ok(JsCacheResult {
         js_path,
         manifest_digest,
+        graph,
     })
 }
 
@@ -516,9 +550,9 @@ pub(crate) async fn push(
     Ok(())
 }
 
-/// Push a JS source string to an OCI registry.
+/// Push a JS source or module graph to an OCI registry.
 pub(crate) async fn push_js(
-    js_source: String,
+    js_source: JsPushSource,
     reference: &Reference,
     metadata: &ComponentMetadataAnnotation,
 ) -> Result<(), anyhow::Error> {
@@ -526,11 +560,14 @@ pub(crate) async fn push_js(
         bail!("cannot push a digest reference");
     }
 
-    let layer = oci_client::client::ImageLayer::new(
-        js_source.into_bytes(),
-        JS_LAYER_MEDIA_TYPE.to_string(),
-        None,
-    );
+    let (data, media_type) = match js_source {
+        JsPushSource::Single(source) => (source.into_bytes(), JS_LAYER_MEDIA_TYPE),
+        JsPushSource::Graph(graph) => (
+            JsGraph::encode(&graph.entry_path, &graph.files),
+            JS_GRAPH_LAYER_MEDIA_TYPE,
+        ),
+    };
+    let layer = oci_client::client::ImageLayer::new(data, media_type.to_string(), None);
 
     // Minimal empty config blob
     let config = oci_client::client::Config {

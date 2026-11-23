@@ -89,13 +89,37 @@ enum ComponentPushData {
         metadata: ComponentMetadataAnnotation,
     },
     Js {
-        source: String,
+        source: JsSource,
         metadata: ComponentMetadataAnnotation,
     },
     Exec {
         script: String,
         metadata: ComponentMetadataAnnotation,
     },
+}
+
+#[derive(Debug)]
+enum JsSource {
+    Inline(String),
+    /// Deployment-relative entry of a module graph.
+    Path(String),
+}
+
+fn js_source(
+    name: &str,
+    location: Option<&ScriptLocationPathOrOci>,
+    content: Option<&String>,
+) -> anyhow::Result<JsSource> {
+    match (location, content) {
+        (None, Some(content)) => Ok(JsSource::Inline(content.clone())),
+        (Some(ScriptLocationPathOrOci::Path(path)), None) => Ok(JsSource::Path(path.clone())),
+        (Some(ScriptLocationPathOrOci::Oci(_)), None) => {
+            bail!("component '{name}' uses OCI source, only local sources are supported for push")
+        }
+        (None, None) | (Some(_), Some(_)) => {
+            bail!("component '{name}' must set exactly one of `location` or `content`")
+        }
+    }
 }
 
 /// Find a component by name in the deployment TOML and build metadata for push.
@@ -165,19 +189,7 @@ fn find_component_for_push(
                 .iter()
                 .find(|(_, n)| n.to_string() == name)
                 .expect("name is in map so it must be in the list");
-            let source = match (&cfg.location, &cfg.content) {
-                (None, Some(content)) => content.clone(),
-                (Some(ScriptLocationPathOrOci::Path(path)), None) => std::fs::read_to_string(path)
-                    .with_context(|| format!("cannot read JS file {path:?}"))?,
-                (Some(ScriptLocationPathOrOci::Oci(_)), None) => {
-                    bail!(
-                        "component '{name}' uses OCI source, only local sources are supported for push"
-                    );
-                }
-                (None, None) | (Some(_), Some(_)) => {
-                    bail!("component '{name}' must set exactly one of `location` or `content`");
-                }
-            };
+            let source = js_source(name, cfg.location.as_ref(), cfg.content.as_ref())?;
             let (params, return_type) = synthesized_interface(&cfg.interface)?;
             Ok(ComponentPushData::Js {
                 source,
@@ -197,19 +209,7 @@ fn find_component_for_push(
                 .iter()
                 .find(|(_, n)| n.to_string() == name)
                 .expect("name is in map so it must be in the list");
-            let source = match (&cfg.location, &cfg.content) {
-                (None, Some(content)) => content.clone(),
-                (Some(ScriptLocationPathOrOci::Path(path)), None) => std::fs::read_to_string(path)
-                    .with_context(|| format!("cannot read JS file {path:?}"))?,
-                (Some(ScriptLocationPathOrOci::Oci(_)), None) => {
-                    bail!(
-                        "component '{name}' uses OCI source, only local sources are supported for push"
-                    );
-                }
-                (None, None) | (Some(_), Some(_)) => {
-                    bail!("component '{name}' must set exactly one of `location` or `content`");
-                }
-            };
+            let source = js_source(name, cfg.location.as_ref(), cfg.content.as_ref())?;
             let (params, return_type) = synthesized_interface(&cfg.interface)?;
             Ok(ComponentPushData::Js {
                 source,
@@ -227,19 +227,7 @@ fn find_component_for_push(
                 .iter()
                 .find(|c| c.name.to_string() == name)
                 .expect("name is in map so it must be in the list");
-            let source = match (&cfg.location, &cfg.content) {
-                (None, Some(content)) => content.clone(),
-                (Some(ScriptLocationPathOrOci::Path(path)), None) => std::fs::read_to_string(path)
-                    .with_context(|| format!("cannot read JS file {path:?}"))?,
-                (Some(ScriptLocationPathOrOci::Oci(_)), None) => {
-                    bail!(
-                        "component '{name}' uses OCI source, only local sources are supported for push"
-                    );
-                }
-                (None, None) | (Some(_), Some(_)) => {
-                    bail!("component '{name}' must set exactly one of `location` or `content`");
-                }
-            };
+            let source = js_source(name, cfg.location.as_ref(), cfg.content.as_ref())?;
             Ok(ComponentPushData::Js {
                 source,
                 metadata: ComponentMetadataAnnotation::WebhookEndpointJs {
@@ -320,6 +308,29 @@ async fn push_component(
     match find_component_for_push(&validated, component_name)? {
         ComponentPushData::Wasm { path, metadata } => oci::push(path, reference, &metadata).await,
         ComponentPushData::Js { source, metadata } => {
+            let source = match source {
+                JsSource::Inline(content) => oci::JsPushSource::Single(content),
+                JsSource::Path(entry) => {
+                    let deployment_dir = deployment_path
+                        .canonicalize()
+                        .with_context(|| format!("cannot canonicalize {deployment_path:?}"))?
+                        .parent()
+                        .context("deployment file must have a parent directory")?
+                        .to_path_buf();
+                    let mut graph =
+                        crate::javascript::graph::collect_graph(&deployment_dir, &entry)
+                            .await
+                            .with_context(|| {
+                                format!("cannot collect JS module graph from `{entry}`")
+                            })?;
+                    if graph.files.len() == 1 {
+                        let (_, source) = graph.files.pop_first().expect("checked length");
+                        oci::JsPushSource::Single(source)
+                    } else {
+                        oci::JsPushSource::Graph(graph)
+                    }
+                }
+            };
             oci::push_js(source, reference, &metadata).await
         }
         ComponentPushData::Exec { script, metadata } => {

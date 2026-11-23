@@ -966,7 +966,7 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
                     .with_context(|| {
                         format!("cannot create metadata directory {metadata_dir:?}")
                     })?;
-                let crate::oci::JsCacheResult { js_path, .. } =
+                let crate::oci::JsCacheResult { js_path, graph, .. } =
                     crate::oci::pull_js_to_cache(image, &js_cache_dir, &metadata_dir)
                         .await
                         .with_context(|| format!("cannot pull JS from OCI: {image}"))?;
@@ -976,6 +976,18 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
                         *expected == hash,
                         "content digest mismatch for OCI JS `{image}`: expected {expected}, got {hash}"
                     );
+                }
+                if graph {
+                    let bytes = tokio::fs::read(&js_path)
+                        .await
+                        .with_context(|| format!("cannot read cached JS graph {js_path:?}"))?;
+                    let graph = crate::javascript::graph::JsGraph::decode(&bytes)
+                        .await
+                        .with_context(|| format!("invalid JS module graph in {image}"))?;
+                    return Ok(JsContent {
+                        entry_path: graph.entry_path,
+                        files: graph.files,
+                    });
                 }
                 let file_name = js_path
                     .file_name()

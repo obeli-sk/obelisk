@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(cli)* `cloud app logs` shows the logs of the app's Machines, the newest `-n` lines (default
   100, at most 500) or the first ones after `--since`, an RFC 3339 time or a duration like `30m`.
+- *(cli)* `component push` uploads a JS component that imports other files as its whole module
+  graph, in a layer of type `application/vnd.obelisk.js-graph.v0+json`, and `oci://` JS locations
+  load such graphs. A JS file without relative imports keeps the single-file layer, so older
+  servers can still pull it. Local JS paths are now read relative to the deployment file.
 
 ### Changed
 
