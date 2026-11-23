@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{
     AppendRequest, CreateRequest, CronAdvanceRequest, DbConnection, DbErrorRead, ExecutionRequest,
-    HistoryEvent, HistoryEventScheduleAt, Unlocked,
+    HistoryEvent, HistoryEventScheduleAt, LogEntry, LogInfoAppendRow, LogLevel, Unlocked,
 };
 use concepts::time::ClockFn;
 use concepts::{
@@ -11,7 +11,8 @@ use concepts::{
 use executor::worker::{Worker, WorkerContext, WorkerResult, WorkerResultOk};
 use jiff::Timestamp;
 use std::sync::Arc;
-use tracing::debug;
+use tokio::sync::mpsc;
+use tracing::warn;
 
 const TRACKER_EVENT_WATERMARK: u32 = 1_000;
 
@@ -28,6 +29,8 @@ pub struct CronWorker {
     pub db_pool: Arc<dyn concepts::storage::DbPool>,
     #[debug(skip)]
     pub clock_fn: Box<dyn ClockFn>,
+    #[debug(skip)]
+    pub log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +73,7 @@ impl CronWorker {
         deployment_id: DeploymentId,
         db_pool: Arc<dyn concepts::storage::DbPool>,
         clock_fn: Box<dyn ClockFn>,
+        log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     ) -> Self {
         Self {
             component_id,
@@ -81,6 +85,7 @@ impl CronWorker {
             deployment_id,
             db_pool,
             clock_fn,
+            log_forwarder_sender,
         }
     }
 
@@ -189,11 +194,6 @@ impl Worker for CronWorker {
                 max_persisted_value_size_bytes,
             })
         } else {
-            debug!(
-                ?running,
-                ?next_fire,
-                "Skipping tick, previous execution is not finished"
-            );
             None
         };
         let successor = next_fire
@@ -217,6 +217,9 @@ impl Worker for CronWorker {
             Some(_) => Some(current_execution_id.clone()),
             None => None,
         };
+        let skip_message = running.as_ref().zip(next_fire).map(|(running, next)| {
+            format!("Cron tick skipped, `{running}` is not finished, next tick at {next}")
+        });
         let event = match next_fire {
             Some(unlocked_at) if !rollover => ExecutionRequest::Unlocked(Unlocked {
                 unlocked_at,
@@ -238,7 +241,7 @@ impl Worker for CronWorker {
         db_connection
             .advance_cron(CronAdvanceRequest {
                 cron_digest: self.component_id.component_digest.clone(),
-                execution_id: current_execution_id,
+                execution_id: current_execution_id.clone(),
                 version,
                 current_time: now,
                 batch,
@@ -248,6 +251,22 @@ impl Worker for CronWorker {
             })
             .await
             .map_err(executor::worker::WorkerError::DbError)?;
+
+        if let Some(message) = skip_message {
+            warn!(execution_id = %current_execution_id, target_ffqn = %self.target_ffqn, "{message}");
+            let row = LogInfoAppendRow {
+                execution_id: current_execution_id,
+                run_id: ctx.locked_event.run_id,
+                log_entry: LogEntry::Log {
+                    created_at: now,
+                    level: LogLevel::Warn,
+                    message,
+                },
+            };
+            if let Err(err) = self.log_forwarder_sender.try_send(row) {
+                warn!("Cannot forward cron skip log: {err}");
+            }
+        }
 
         Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
     }
@@ -741,6 +760,22 @@ mod tests {
         overlap: CronOverlap,
         clock_fn: SimClock,
     ) -> CronWorker {
+        make_worker_with_log_sender(
+            db_pool,
+            cron_schedule,
+            overlap,
+            clock_fn,
+            mpsc::channel(1).0,
+        )
+    }
+
+    fn make_worker_with_log_sender(
+        db_pool: Arc<dyn DbPool>,
+        cron_schedule: CronOrOnce,
+        overlap: CronOverlap,
+        clock_fn: SimClock,
+        log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
+    ) -> CronWorker {
         CronWorker::new(
             make_cron_component_id(),
             TARGET_FFQN,
@@ -751,6 +786,7 @@ mod tests {
             DEPLOYMENT_ID_DUMMY,
             db_pool,
             Box::new(clock_fn),
+            log_forwarder_sender,
         )
     }
 
@@ -1102,15 +1138,21 @@ mod tests {
         let t2 = "2025-01-15T12:00:00Z".parse::<Timestamp>().unwrap();
         let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(t0);
-        let worker = make_worker_with_overlap(
+        let (log_sender, mut log_receiver) = mpsc::channel(10);
+        let worker = make_worker_with_log_sender(
             db_pool.clone(),
             parse_cron("0 * * * *"),
             CronOverlap::Skip,
             sim_clock.clone(),
+            log_sender,
         );
         let seed = create_seed(&db_pool, t0).await;
 
         tick(&worker, &db_pool, t0).await;
+        assert!(
+            log_receiver.try_recv().is_err(),
+            "scheduling tick must not warn"
+        );
         let children = scheduled_children(&db_pool, &seed).await;
         assert_eq!(1, children.len());
 
@@ -1127,6 +1169,13 @@ mod tests {
             "skipped tick must reschedule, got: {:?}",
             seed_log.pending_state
         );
+        let row = log_receiver.try_recv().unwrap();
+        assert_eq!(seed, row.execution_id);
+        let LogEntry::Log { level, message, .. } = row.log_entry else {
+            panic!("expected a log entry, got {:?}", row.log_entry);
+        };
+        assert_eq!(LogLevel::Warn, level);
+        assert!(message.contains(&children[0].to_string()), "{message}");
 
         let child = lock(&db_pool, &make_target_component_id(), t1).await;
         conn.append(
@@ -1147,6 +1196,10 @@ mod tests {
         sim_clock.move_time_to(t2);
         tick(&worker, &db_pool, t2).await;
         assert_eq!(2, scheduled_children(&db_pool, &seed).await.len());
+        assert!(
+            log_receiver.try_recv().is_err(),
+            "scheduling tick must not warn"
+        );
     }
 
     #[tokio::test]
