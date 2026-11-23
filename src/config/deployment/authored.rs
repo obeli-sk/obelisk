@@ -31,6 +31,8 @@ pub(crate) async fn load_deployment_validated(
     }
     info!("Using deployment file {:?}", deployment_toml);
     let source = tokio::fs::read_to_string(deployment_toml).await?;
+    let source = super::prepared::interpolate_locations(source)
+        .with_context(|| format!("cannot interpolate {deployment_toml:?}"))?;
     super::prepared::reject_generated_deployment_metadata(&source.parse()?)?;
     let deployment_dir = deployment_toml
         .canonicalize()
