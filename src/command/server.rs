@@ -5149,22 +5149,32 @@ impl DeploymentVerified {
             )
             .chain(self.activities_exec.iter().map(|c| c.program.clone()))
             .collect();
-        for (runtime, files) in self
+        for (runtime, entry_path, files) in self
             .activities_js
             .iter()
-            .map(|c| (&c.wasm_path, &c.js_files))
+            .map(|c| (&c.wasm_path, &c.js_entry_path, &c.js_files))
             .chain(
                 self.workflows_js
                     .iter()
-                    .map(|c| (&c.wasm_path, &c.js_files)),
+                    .map(|c| (&c.wasm_path, &c.js_entry_path, &c.js_files)),
             )
             .chain(
                 self.webhooks_js_by_names
                     .values()
-                    .map(|c| (&c.wasm_path, &c.js_files)),
+                    .map(|c| (&c.wasm_path, &c.js_entry_path, &c.js_files)),
             )
         {
             paths.extend(runtime.iter().map(|p| p.to_path_buf()));
+            if files.len() > 1 {
+                let encoded = crate::javascript::graph::JsGraph::encode(entry_path, files);
+                let digest = ContentDigest(concepts::component_id::Digest(
+                    Sha256::digest(&encoded).into(),
+                ));
+                paths.insert(crate::config::content_digest_to_js_graph_file(
+                    &root.join("js"),
+                    &digest,
+                ));
+            }
             for content in files.values() {
                 let digest = ContentDigest(concepts::component_id::Digest(
                     Sha256::digest(content.as_bytes()).into(),

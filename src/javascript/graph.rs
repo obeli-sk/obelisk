@@ -8,7 +8,7 @@
 //! graph round-trips as ordinary deployment files.
 
 use crate::config::deployment::sanitize_deployment_relative_path;
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use boa_engine::Source;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
@@ -130,6 +130,58 @@ pub(crate) async fn collect_graph_with(
         entry_path: entry_key,
         files,
     })
+}
+
+/// Canonical JSON of a module graph, the layer of a multi-file JS OCI image.
+#[derive(serde::Serialize)]
+struct EncodedGraph<'a> {
+    entry: &'a str,
+    files: &'a BTreeMap<String, String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DecodedGraph {
+    entry: String,
+    files: BTreeMap<String, String>,
+}
+
+struct MapModuleReader<'a>(&'a BTreeMap<String, String>);
+
+#[async_trait::async_trait]
+impl ModuleSourceReader for MapModuleReader<'_> {
+    async fn read_source(&self, dep_path: &str) -> anyhow::Result<String> {
+        self.0
+            .get(dep_path)
+            .cloned()
+            .with_context(|| format!("module `{dep_path}` is missing from the graph"))
+    }
+}
+
+impl JsGraph {
+    pub(crate) fn encode(entry_path: &str, files: &BTreeMap<String, String>) -> Vec<u8> {
+        serde_json::to_vec(&EncodedGraph {
+            entry: entry_path,
+            files,
+        })
+        .expect("string maps always serialize")
+    }
+
+    /// Accepts only the canonical encoding of a closed graph, so the blob digest follows from its files.
+    pub(crate) async fn decode(bytes: &[u8]) -> anyhow::Result<JsGraph> {
+        let decoded: DecodedGraph =
+            serde_json::from_slice(bytes).context("invalid JS module graph")?;
+        ensure!(
+            Self::encode(&decoded.entry, &decoded.files) == bytes,
+            "JS module graph is not canonically encoded"
+        );
+        let graph = collect_graph_with(&MapModuleReader(&decoded.files), &decoded.entry).await?;
+        ensure!(
+            graph.entry_path == decoded.entry && graph.files == decoded.files,
+            "JS module graph must hold exactly the modules reachable from its entry"
+        );
+        Ok(graph)
+    }
 }
 
 fn reject_typescript(path: &str) -> anyhow::Result<()> {
@@ -343,6 +395,51 @@ mod tests {
 
         let err = collect_graph(dir.path(), "index.js").await.unwrap_err();
         assert!(format!("{err:#}").contains("escapes") || format!("{err:#}").contains("traversal"));
+    }
+
+    #[tokio::test]
+    async fn encoded_graph_round_trips_and_rejects_altered_blobs() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "webhook/login.js",
+            "import { ok } from './lib/http.js';\nexport default () => ok();\n",
+        )
+        .await;
+        write(
+            dir.path(),
+            "webhook/lib/http.js",
+            "export const ok = () => \"ok\";\n",
+        )
+        .await;
+        let graph = collect_graph(dir.path(), "webhook/login.js").await.unwrap();
+        let encoded = JsGraph::encode(&graph.entry_path, &graph.files);
+
+        let decoded = JsGraph::decode(&encoded).await.unwrap();
+        assert_eq!(decoded.entry_path, "webhook/login.js");
+        assert_eq!(decoded.files, graph.files);
+
+        let pretty = serde_json::to_vec_pretty(
+            &serde_json::from_slice::<serde_json::Value>(&encoded).unwrap(),
+        )
+        .unwrap();
+        let err = JsGraph::decode(&pretty).await.unwrap_err();
+        assert!(err.to_string().contains("canonically"), "{err:?}");
+
+        let mut stray = graph.files.clone();
+        stray.insert("webhook/unused.js".into(), "export {};\n".into());
+        let err = JsGraph::decode(&JsGraph::encode(&graph.entry_path, &stray))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("reachable"), "{err:?}");
+
+        let mut missing = graph.files.clone();
+        missing.remove("webhook/lib/http.js");
+        assert!(
+            JsGraph::decode(&JsGraph::encode(&graph.entry_path, &missing))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
