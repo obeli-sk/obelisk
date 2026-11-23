@@ -5979,7 +5979,7 @@ impl DbExternalApi for SqlitePool {
         description: Option<String>,
         now: Timestamp,
     ) -> Result<(), DbErrorWrite> {
-        self.transaction(
+        self.transaction_durable(
             move |tx| {
                 let rows = tx
                     .execute(
@@ -5998,6 +5998,9 @@ impl DbExternalApi for SqlitePool {
             },
             TxType::Other,
             "refresh_deployment",
+            // A resubmit reports the deployment as stored, so its earlier insert must be replicated.
+            TxSync::Replicate,
+            None,
         )
         .await
     }

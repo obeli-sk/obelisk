@@ -2615,7 +2615,8 @@ pub trait DbExternalApi: DbConnection {
     ) -> Result<EnqueueOutcome, DbErrorWrite>;
 
     /// Bump `updated_at`, which deployment retention orders by. A `None` description keeps the
-    /// current one, an empty one clears it.
+    /// current one, an empty one clears it. Returns once the deployment is as durable as after
+    /// [`Self::insert_deployment_with_components`], since a resubmit reports it as stored.
     async fn refresh_deployment(
         &self,
         deployment_id: DeploymentId,
