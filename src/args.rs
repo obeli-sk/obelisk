@@ -697,8 +697,10 @@ pub(crate) enum Generate {
     /// Generate a random API token and print it to stdout.
     ///
     /// Stdout carries only the token, so it composes with client env injection:
-    /// `OBELISK_API_TOKEN=$(obelisk generate token)`. When run interactively,
-    /// the token's `api.token_hashes` entry is also printed to stderr.
+    /// `OBELISK_API_TOKEN=$(obelisk generate token)`. When stdout is not a terminal,
+    /// no trailing newline is printed, so `> token.txt` yields a verbatim secret file.
+    /// When run interactively, the token's `api.token_hashes` entry is also printed
+    /// to stderr.
     /// The plaintext token is printed once and never stored; revoke it by
     /// deleting its `api.token_hashes` entry and restarting the server.
     Token {
