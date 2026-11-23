@@ -68,12 +68,19 @@ pub(crate) struct ComponentCommonVerified {
     pub(crate) location: ComponentLocationToml,
 }
 
+/// A fetched WASM file with the backtrace sources its OCI image carries.
+pub(crate) struct FetchedWasm {
+    pub(crate) content_digest: ContentDigest,
+    pub(crate) wasm_path: PathBuf,
+    pub(crate) backtrace_sources: oci::BacktraceSources,
+}
+
 pub(crate) trait ComponentLocationFetchExt {
     async fn fetch(
         &self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
-    ) -> Result<(ContentDigest, PathBuf), anyhow::Error>;
+    ) -> Result<FetchedWasm, anyhow::Error>;
 }
 
 impl ComponentLocationFetchExt for ComponentLocationToml {
@@ -84,13 +91,13 @@ impl ComponentLocationFetchExt for ComponentLocationToml {
         &self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
-    ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
+    ) -> Result<FetchedWasm, anyhow::Error> {
         use utils::sha256sum::calculate_sha256_file;
 
         debug!("Fetching {self:?}");
         let stopwatch = std::time::Instant::now();
 
-        let (actual_digest, path) = match &self {
+        let fetched = match &self {
             ComponentLocationToml::Path(wasm_path) => {
                 let wasm_path = PathBuf::from(wasm_path);
                 if !wasm_path.exists() {
@@ -99,21 +106,28 @@ impl ComponentLocationFetchExt for ComponentLocationToml {
                 let actual_digest = calculate_sha256_file(&wasm_path)
                     .await
                     .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
-                (actual_digest, wasm_path)
+                FetchedWasm {
+                    content_digest: actual_digest,
+                    wasm_path,
+                    backtrace_sources: oci::BacktraceSources::default(),
+                }
             }
             ComponentLocationToml::Oci(image) => {
                 let image = oci_client::Reference::from_str(image)
                     .map_err(|e| anyhow!("invalid OCI reference `{image}`: {e}"))?;
-                let (digest, path, _, _) =
-                    oci::pull_to_cache_dir(&image, wasm_cache_dir, metadata_dir)
-                        .await
-                        .context("try cleaning the cache directory with `--clean-cache`")?;
-                (digest, path)
+                let pulled = oci::pull_to_cache_dir(&image, wasm_cache_dir, metadata_dir)
+                    .await
+                    .context("try cleaning the cache directory with `--clean-cache`")?;
+                FetchedWasm {
+                    content_digest: pulled.content_digest,
+                    wasm_path: pulled.wasm_path,
+                    backtrace_sources: pulled.backtrace_sources,
+                }
             }
         };
         let stopwatch = stopwatch.elapsed();
         debug!("Fetching done in {stopwatch:?}");
-        Ok((actual_digest, path))
+        Ok(fetched)
     }
 }
 
@@ -122,7 +136,7 @@ pub(crate) trait ComponentCommonFetchExt {
         self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
-    ) -> Result<(ComponentCommonVerified, ContentDigest, PathBuf), anyhow::Error>;
+    ) -> Result<(ComponentCommonVerified, FetchedWasm), anyhow::Error>;
 }
 
 impl ComponentCommonFetchExt for ComponentCommon {
@@ -130,14 +144,14 @@ impl ComponentCommonFetchExt for ComponentCommon {
         self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
-    ) -> Result<(ComponentCommonVerified, ContentDigest, PathBuf), anyhow::Error> {
-        let (content_digest, wasm_path) = self.location.fetch(wasm_cache_dir, metadata_dir).await?;
+    ) -> Result<(ComponentCommonVerified, FetchedWasm), anyhow::Error> {
+        let fetched = self.location.fetch(wasm_cache_dir, metadata_dir).await?;
 
         let verified = ComponentCommonVerified {
             name: self.name,
             location: self.location,
         };
-        Ok((verified, content_digest, wasm_path))
+        Ok((verified, fetched))
     }
 }
 
@@ -274,8 +288,14 @@ impl ActivityStubComponentConfigResolvedExt for ActivityStubComponentConfigResol
         match self {
             Self::File(file) => {
                 let expected_content_digest = file.content_digest;
-                let (common, content_digest, wasm_path) =
-                    file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+                let (
+                    common,
+                    FetchedWasm {
+                        content_digest,
+                        wasm_path,
+                        ..
+                    },
+                ) = file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
                 verify_fetched_content_digest(
                     &content_digest,
                     expected_content_digest.as_ref(),
@@ -370,8 +390,14 @@ impl ActivityExternalComponentConfigResolvedExt for ActivityExternalComponentCon
         match self {
             Self::File(file) => {
                 let expected_content_digest = file.content_digest;
-                let (common, content_digest, wasm_path) =
-                    file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+                let (
+                    common,
+                    FetchedWasm {
+                        content_digest,
+                        wasm_path,
+                        ..
+                    },
+                ) = file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
                 verify_fetched_content_digest(
                     &content_digest,
                     expected_content_digest.as_ref(),
@@ -486,8 +512,14 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
         fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
         let expected_content_digest = self.content_digest;
-        let (common, content_digest, wasm_path) =
-            self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+        let (
+            common,
+            FetchedWasm {
+                content_digest,
+                wasm_path,
+                backtrace_sources: oci_backtrace_sources,
+            },
+        ) = self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
         verify_fetched_content_digest(
             &content_digest,
             expected_content_digest.as_ref(),
@@ -500,6 +532,8 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
                 .into_iter()
                 .map(|(name, digest)| (name, FrameSource::Digest(digest)))
                 .collect();
+        let frame_files_to_sources =
+            with_oci_sources(frame_files_to_sources, oci_backtrace_sources);
         let env_vars =
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
         let (allowed_hosts, _advisories) =
@@ -1169,8 +1203,14 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
             );
         }
         let expected_content_digest = self.content_digest;
-        let (common, content_digest, wasm_path) =
-            self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+        let (
+            common,
+            FetchedWasm {
+                content_digest,
+                wasm_path,
+                backtrace_sources: oci_backtrace_sources,
+            },
+        ) = self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
         verify_fetched_content_digest(
             &content_digest,
             expected_content_digest.as_ref(),
@@ -1209,6 +1249,8 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
             .into_iter()
             .map(|(name, digest)| (name, FrameSource::Digest(digest)))
             .collect();
+        let frame_files_to_sources =
+            with_oci_sources(frame_files_to_sources, oci_backtrace_sources);
         let retry_config = ComponentRetryConfig {
             max_retries: None,
             retry_exp_backoff,
@@ -1806,6 +1848,19 @@ pub(crate) async fn resolve_script_toml(
     }
 }
 
+/// Adds the sources an OCI image carries; the deployment's own `backtrace.sources` win.
+fn with_oci_sources(
+    mut frame_files: FrameFilesToSource,
+    oci_sources: oci::BacktraceSources,
+) -> FrameFilesToSource {
+    for (key, content) in oci_sources.files {
+        frame_files
+            .entry(key)
+            .or_insert(FrameSource::Content(content));
+    }
+    frame_files
+}
+
 pub(crate) fn resolve_backtrace(
     backtrace: &ComponentBacktraceConfig,
     component_files: &BTreeMap<String, ContentDigest>,
@@ -1949,8 +2004,14 @@ impl WebhookWasmComponentConfigResolvedExt for WebhookWasmComponentConfigResolve
         subscription_interruption: Option<Duration>,
     ) -> Result<(ConfigName, WebhookWasmComponentConfigVerified), anyhow::Error> {
         let expected_content_digest = self.content_digest;
-        let (common, content_digest, wasm_path) =
-            self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+        let (
+            common,
+            FetchedWasm {
+                content_digest,
+                wasm_path,
+                backtrace_sources: oci_backtrace_sources,
+            },
+        ) = self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
         super::verify_fetched_content_digest(
             &content_digest,
             expected_content_digest.as_ref(),
@@ -1962,6 +2023,8 @@ impl WebhookWasmComponentConfigResolvedExt for WebhookWasmComponentConfigResolve
             .into_iter()
             .map(|(name, digest)| (name, FrameSource::Digest(digest)))
             .collect();
+        let frame_files_to_sources =
+            with_oci_sources(frame_files_to_sources, oci_backtrace_sources);
         let component_id = ComponentId::new(
             ComponentType::WebhookEndpoint,
             StrVariant::from(common.name.clone()),

@@ -922,6 +922,10 @@ pub(crate) enum Component {
         /// Path to the input deployment TOML file.
         #[arg(long, short, required = true)]
         deployment: PathBuf,
+        /// Store the WASM component's `backtrace.sources` in the image. Deployments pulling it
+        /// use them for frame keys they do not map themselves.
+        #[arg(long)]
+        backtrace_sources: bool,
     },
     /// Add a component to the deployment TOML configuration file from an OCI reference.
     Add {

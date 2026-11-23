@@ -28,6 +28,9 @@ use tracing::{debug, info, instrument, warn};
 use utils::{sha256sum::calculate_sha256_file, wasm_tools::WasmComponent};
 
 pub const METADATA_ANNOTATION_KEY: &str = "obelisk.component_metadata:0.2.0";
+/// OCI manifest annotation carrying a WASM component's backtrace sources as JSON
+/// `{"files": {frame_key: source}}`, keyed like the deployment's `backtrace.sources`.
+pub const BACKTRACE_SOURCES_ANNOTATION_KEY: &str = "obelisk.backtrace_sources:0";
 /// Media type for the single OCI layer of a JS component image.
 /// The layer contains the UTF-8 JavaScript source code (the `.js` file content).
 pub const JS_LAYER_MEDIA_TYPE: &str = "application/vnd.obelisk.js.v0+javascript";
@@ -115,6 +118,20 @@ impl ComponentMetadataAnnotation {
     }
 }
 
+/// Backtrace sources of a WASM component image, see [`BACKTRACE_SOURCES_ANNOTATION_KEY`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BacktraceSources {
+    pub(crate) files: BTreeMap<String, String>,
+}
+
+pub(crate) struct WasmCacheResult {
+    pub(crate) content_digest: ContentDigest,
+    pub(crate) wasm_path: PathBuf,
+    pub(crate) manifest_digest: String,
+    pub(crate) backtrace_sources: BacktraceSources,
+}
+
 pub(crate) struct JsCacheResult {
     pub(crate) js_path: PathBuf,
     pub(crate) manifest_digest: String,
@@ -139,6 +156,17 @@ const OCI_CLIENT_RETRIES: u64 = 10;
 // Content of this file is a sha sum of the downloaded WASM file.
 fn digest_to_metadata_file(metadata_dir: &Path, metadata_file: &Digest) -> PathBuf {
     metadata_dir.join(format!("{}.txt", metadata_file.with_infix("_")))
+}
+
+/// Suffix of the backtrace sources file, a sibling of the manifest's `.txt` metadata file.
+pub(crate) const BACKTRACE_SOURCES_FILE_SUFFIX: &str = ".backtrace.json";
+
+// Backtrace sources annotation of the manifest, written for every pulled WASM image.
+fn digest_to_backtrace_sources_file(metadata_dir: &Path, manifest_digest: &Digest) -> PathBuf {
+    metadata_dir.join(format!(
+        "{}{BACKTRACE_SOURCES_FILE_SUFFIX}",
+        manifest_digest.with_infix("_")
+    ))
 }
 
 pub(crate) async fn verify_cached_file(
@@ -168,15 +196,7 @@ pub(crate) async fn pull_to_cache_dir(
     image: &Reference,
     wasm_cache_dir: &Path,
     metadata_dir: &Path,
-) -> Result<
-    (
-        ContentDigest,
-        PathBuf,
-        String,
-        Option<ComponentMetadataAnnotation>,
-    ),
-    anyhow::Error,
-> {
+) -> Result<WasmCacheResult, anyhow::Error> {
     let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
     let auth = get_oci_auth(image)?;
     // Happy path: image's metadata digest mapping.txt -> content digest -> file -> verify hash
@@ -187,15 +207,26 @@ pub(crate) async fn pull_to_cache_dir(
         && let Ok(content) = tokio::fs::read_to_string(&metadata_file).await
         && let Ok(content_digest) = ContentDigest::from_str(&content)
         && let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, &content_digest)
+        && let Ok(sources) = tokio::fs::read_to_string(digest_to_backtrace_sources_file(
+            metadata_dir,
+            &metadata_digest,
+        ))
+        .await
+        && let Ok(backtrace_sources) = serde_json::from_str(&sources)
         && let Ok(()) = verify_cached_file(&wasm_path, &content_digest).await
     {
-        return Ok((content_digest, wasm_path, manifest_digest.to_string(), None));
+        return Ok(WasmCacheResult {
+            content_digest,
+            wasm_path,
+            manifest_digest: manifest_digest.to_string(),
+            backtrace_sources,
+        });
     }
     // The mapping file will be recreated. We need to fetch metadata anyway for `layer`
     // and use that as the source of truth.
 
     info!("Fetching metadata");
-    let (layer, content_digest, manifest_digest, component_metadata) = {
+    let (layer, content_digest, manifest_digest, backtrace_sources) = {
         let LayerWithAnnotations {
             layer_content_digest,
             layer,
@@ -211,23 +242,33 @@ pub(crate) async fn pull_to_cache_dir(
                 "manifest digest specified in {image} must be respected by the oci client, got {metadata_digest}"
             );
         }
-        // Create new file in the metadata directory.
-        let metadata_file =
-            digest_to_metadata_file(metadata_dir, &Digest::from_str(&metadata_digest)?);
+        let backtrace_sources = extract_backtrace_sources(manifest_annotations.as_ref())?;
+        // Create new files in the metadata directory.
+        let parsed_digest = Digest::from_str(&metadata_digest)?;
+        tokio::fs::write(
+            digest_to_backtrace_sources_file(metadata_dir, &parsed_digest),
+            serde_json::to_string(&backtrace_sources)?,
+        )
+        .await?;
+        let metadata_file = digest_to_metadata_file(metadata_dir, &parsed_digest);
         debug!("Writing WASM digest {layer_content_digest} to metadata file {metadata_file:?}");
         tokio::fs::write(&metadata_file, layer_content_digest.to_string()).await?;
-
-        let comp_metadata = extract_component_metadata(manifest_annotations.as_ref());
-        (layer, layer_content_digest, metadata_digest, comp_metadata)
+        (
+            layer,
+            layer_content_digest,
+            metadata_digest,
+            backtrace_sources,
+        )
+    };
+    let result = |wasm_path| WasmCacheResult {
+        content_digest: content_digest.clone(),
+        wasm_path,
+        manifest_digest: manifest_digest.clone(),
+        backtrace_sources: backtrace_sources.clone(),
     };
     let wasm_path = content_digest_to_wasm_file(wasm_cache_dir, &content_digest);
     if let Ok(()) = verify_cached_file(&wasm_path, &content_digest).await {
-        return Ok((
-            content_digest,
-            wasm_path,
-            manifest_digest.clone(),
-            component_metadata,
-        ));
+        return Ok(result(wasm_path));
     }
     pull_blob_to_file(
         client.client.as_ref(),
@@ -240,12 +281,7 @@ pub(crate) async fn pull_to_cache_dir(
     .await
     .with_context(|| format!("Unable to pull image {image}"))?;
 
-    Ok((
-        content_digest,
-        wasm_path,
-        manifest_digest.clone(),
-        component_metadata,
-    ))
+    Ok(result(wasm_path))
 }
 
 /// Pull a JS image from OCI to the local JS cache directory.
@@ -482,6 +518,17 @@ fn extract_component_metadata(
         .and_then(|json| serde_json::from_str(json).ok())
 }
 
+/// A malformed annotation fails the pull: the sources would otherwise be silently missing.
+fn extract_backtrace_sources(
+    annotations: Option<&BTreeMap<String, String>>,
+) -> anyhow::Result<BacktraceSources> {
+    match annotations.and_then(|m| m.get(BACKTRACE_SOURCES_ANNOTATION_KEY)) {
+        Some(json) => serde_json::from_str(json)
+            .with_context(|| format!("invalid `{BACKTRACE_SOURCES_ANNOTATION_KEY}` annotation")),
+        None => Ok(BacktraceSources::default()),
+    }
+}
+
 fn get_oci_auth(reference: &Reference) -> Result<oci_client::secrets::RegistryAuth, anyhow::Error> {
     /// Translate the registry into a key for the auth lookup.
     fn get_docker_config_auth_key(reference: &Reference) -> &str {
@@ -509,6 +556,7 @@ pub(crate) async fn push(
     wasm_path: PathBuf,
     reference: &Reference,
     metadata: &ComponentMetadataAnnotation,
+    backtrace_sources: &BacktraceSources,
 ) -> Result<(), anyhow::Error> {
     if reference.digest().is_some() {
         bail!("cannot push a digest reference");
@@ -533,10 +581,16 @@ pub(crate) async fn push(
         .context("Unable to parse component")?;
     let auth = get_oci_auth(reference)?;
 
-    let annotations = BTreeMap::from([(
+    let mut annotations = BTreeMap::from([(
         METADATA_ANNOTATION_KEY.to_string(),
         serde_json::to_string(metadata)?,
     )]);
+    if !backtrace_sources.files.is_empty() {
+        annotations.insert(
+            BACKTRACE_SOURCES_ANNOTATION_KEY.to_string(),
+            serde_json::to_string(backtrace_sources)?,
+        );
+    }
     let resp = client
         .push(reference, &auth, layer, conf, Some(annotations))
         .await

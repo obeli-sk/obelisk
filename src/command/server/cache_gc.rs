@@ -225,8 +225,19 @@ fn collect_entry(
         collect(root, path, protected, entries)?;
     } else {
         let mut pinned = protected.iter().any(|p| p.starts_with(path));
-        if metadata.is_file() && path.extension().is_some_and(|ext| ext == "txt") {
-            match fs::read_to_string(path) {
+        // Backtrace sources share the pin of their manifest's `.txt` file.
+        let mapping = if path.extension().is_some_and(|ext| ext == "txt") {
+            Some(path.to_path_buf())
+        } else {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(crate::oci::BACKTRACE_SOURCES_FILE_SUFFIX))
+                .map(|stem| path.with_file_name(format!("{stem}.txt")))
+        };
+        if metadata.is_file()
+            && let Some(mapping) = mapping
+        {
+            match fs::read_to_string(mapping) {
                 Ok(content) => {
                     if let Ok(digest) = content.trim().parse::<concepts::ContentDigest>() {
                         let prefix = digest.0.with_infix("_");
@@ -236,7 +247,11 @@ fn collect_entry(
                         });
                     }
                 }
-                Err(err) if err.kind() == io::ErrorKind::InvalidData => {}
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        io::ErrorKind::InvalidData | io::ErrorKind::NotFound
+                    ) => {}
                 Err(err) => return Err(err.into()),
             }
         }
@@ -365,16 +380,29 @@ mod tests {
         let wasm = root.join(format!("{}.wasm", digest.0.with_infix("_")));
         write(&wasm, 0);
         let mapping = root.join("metadata/mapping.txt");
+        let sources = root.join(format!(
+            "metadata/mapping{}",
+            crate::oci::BACKTRACE_SOURCES_FILE_SUFFIX
+        ));
+        let orphan_sources = root.join(format!(
+            "metadata/orphan{}",
+            crate::oci::BACKTRACE_SOURCES_FILE_SUFFIX
+        ));
         fs::create_dir_all(mapping.parent().unwrap()).unwrap();
         fs::write(&mapping, digest.to_string()).unwrap();
+        fs::write(&sources, "{}").unwrap();
+        fs::write(&orphan_sources, "{}").unwrap();
         let lease = pin(root, &BTreeSet::from([wasm.clone()])).unwrap();
         sweep(root, 0).unwrap();
         assert!(wasm.exists());
         assert!(mapping.exists());
+        assert!(sources.exists());
+        assert!(!orphan_sources.exists());
         drop(lease);
         sweep(root, 0).unwrap();
         assert!(!wasm.exists());
         assert!(!mapping.exists());
+        assert!(!sources.exists());
     }
 
     #[cfg(unix)]

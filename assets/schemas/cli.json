@@ -770,6 +770,10 @@
                       "accepts": {
                         "path": true
                       }
+                    },
+                    {
+                      "name": "--backtrace-sources",
+                      "help": "Store the WASM component's `backtrace.sources` in the image. Deployments pulling it use them for frame keys they do not map themselves"
                     }
                   ],
                   "positionals": [
@@ -2122,6 +2126,10 @@
               "accepts": {
                 "path": true
               }
+            },
+            {
+              "name": "--backtrace-sources",
+              "help": "Store the WASM component's `backtrace.sources` in the image. Deployments pulling it use them for frame keys they do not map themselves"
             }
           ],
           "positionals": [

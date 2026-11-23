@@ -6813,7 +6813,7 @@ async fn fetch_activity_js_runtime(
         ACTIVITY_JS_LOCATION
             .parse()
             .context("cannot parse built-in activity-js runtime location")?;
-    let (_content_digest, wasm_path) = location
+    let crate::config::deployment::FetchedWasm { wasm_path, .. } = location
         .fetch(&wasm_cache_dir, &metadata_dir)
         .await
         .context("cannot fetch activity-js runtime")?;
@@ -6852,7 +6852,7 @@ async fn fetch_workflow_js_runtime(
         WORKFLOW_JS_LOCATION
             .parse()
             .context("cannot parse built-in workflow-js runtime location")?;
-    let (_content_digest, wasm_path) = location
+    let crate::config::deployment::FetchedWasm { wasm_path, .. } = location
         .fetch(&wasm_cache_dir, &metadata_dir)
         .await
         .context("cannot fetch workflow-js runtime")?;
@@ -6891,7 +6891,7 @@ async fn fetch_webhook_js_runtime(
     let location: crate::config::deployment::ComponentLocationToml = WEBHOOK_JS_LOCATION
         .parse()
         .context("cannot parse built-in webhook-js runtime location")?;
-    let (_content_digest, wasm_path) = location
+    let crate::config::deployment::FetchedWasm { wasm_path, .. } = location
         .fetch(&wasm_cache_dir, &metadata_dir)
         .await
         .context("cannot fetch webhook-js runtime")?;
