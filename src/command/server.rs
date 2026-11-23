@@ -7467,6 +7467,7 @@ impl WorkerLinked {
                     deployment_id,
                     db_pool.clone(),
                     Now.clone_box(),
+                    log_forwarder_sender.clone(),
                 ))
             }
         };
