@@ -62,7 +62,8 @@ impl args::Component {
                 component_name,
                 deployment,
                 location,
-            } => push_component(&component_name, &deployment, &location).await,
+                backtrace_sources,
+            } => push_component(&component_name, &deployment, &location, backtrace_sources).await,
             args::Component::Add {
                 location,
                 component_name,
@@ -87,6 +88,8 @@ enum ComponentPushData {
     Wasm {
         path: PathBuf,
         metadata: ComponentMetadataAnnotation,
+        /// Frame key to deployment-relative source path, from `backtrace.sources`.
+        backtrace_sources: hashbrown::HashMap<String, String>,
     },
     Js {
         source: JsSource,
@@ -145,6 +148,7 @@ fn find_component_for_push(
             };
             Ok(ComponentPushData::Wasm {
                 path: PathBuf::from(path),
+                backtrace_sources: cfg.backtrace.frame_files_to_sources.clone(),
                 metadata: ComponentMetadataAnnotation::ActivityWasm {
                     env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
                     allowed_hosts: cfg.allowed_hosts.clone(),
@@ -163,6 +167,7 @@ fn find_component_for_push(
             };
             Ok(ComponentPushData::Wasm {
                 path: PathBuf::from(path),
+                backtrace_sources: cfg.backtrace.frame_files_to_sources.clone(),
                 metadata: ComponentMetadataAnnotation::WebhookEndpointWasm {
                     env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
                     allowed_hosts: cfg.allowed_hosts.clone(),
@@ -180,6 +185,7 @@ fn find_component_for_push(
             };
             Ok(ComponentPushData::Wasm {
                 path: PathBuf::from(path),
+                backtrace_sources: cfg.backtrace.frame_files_to_sources.clone(),
                 metadata: ComponentMetadataAnnotation::WorkflowWasm {},
             })
         }
@@ -303,20 +309,42 @@ async fn push_component(
     component_name: &str,
     deployment_path: &std::path::Path,
     reference: &oci_client::Reference,
+    include_backtrace_sources: bool,
 ) -> anyhow::Result<()> {
     let validated = crate::config::deployment::load_deployment_validated(deployment_path).await?;
+    let deployment_dir = deployment_path
+        .canonicalize()
+        .with_context(|| format!("cannot canonicalize {deployment_path:?}"))?
+        .parent()
+        .context("deployment file must have a parent directory")?
+        .to_path_buf();
     match find_component_for_push(&validated, component_name)? {
-        ComponentPushData::Wasm { path, metadata } => oci::push(path, reference, &metadata).await,
+        ComponentPushData::Wasm {
+            path,
+            metadata,
+            backtrace_sources,
+        } => {
+            // Sources travel in the image, so a server pulling it needs no local files.
+            let mut files = std::collections::BTreeMap::new();
+            if !include_backtrace_sources && !backtrace_sources.is_empty() {
+                info!("Not storing backtrace sources, pass `--backtrace-sources` to include them");
+            }
+            for (key, path) in backtrace_sources
+                .into_iter()
+                .filter(|_| include_backtrace_sources)
+            {
+                let source_path = deployment_dir.join(&path);
+                let source = tokio::fs::read_to_string(&source_path)
+                    .await
+                    .with_context(|| format!("cannot read backtrace source {source_path:?}"))?;
+                files.insert(key, source);
+            }
+            oci::push(path, reference, &metadata, &oci::BacktraceSources { files }).await
+        }
         ComponentPushData::Js { source, metadata } => {
             let source = match source {
                 JsSource::Inline(content) => oci::JsPushSource::Single(content),
                 JsSource::Path(entry) => {
-                    let deployment_dir = deployment_path
-                        .canonicalize()
-                        .with_context(|| format!("cannot canonicalize {deployment_path:?}"))?
-                        .parent()
-                        .context("deployment file must have a parent directory")?
-                        .to_path_buf();
                     let mut graph =
                         crate::javascript::graph::collect_graph(&deployment_dir, &entry)
                             .await
@@ -422,10 +450,11 @@ async fn add_component_from_oci(
             TomlComponentType::ActivityWasm
             | TomlComponentType::WorkflowWasm
             | TomlComponentType::WebhookEndpointWasm => {
-                let (_digest, _path, manifest_digest, _meta2) =
-                    oci::pull_to_cache_dir(&oci_ref, &wasm_cache_dir, &metadata_dir)
-                        .await
-                        .context("failed to pull OCI image")?;
+                let oci::WasmCacheResult {
+                    manifest_digest, ..
+                } = oci::pull_to_cache_dir(&oci_ref, &wasm_cache_dir, &metadata_dir)
+                    .await
+                    .context("failed to pull OCI image")?;
                 info!("Fetched OCI image, manifest_digest: {manifest_digest}");
                 Some(manifest_digest)
             }
