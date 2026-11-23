@@ -295,6 +295,11 @@ impl Durability {
                 }
                 Err(err) => {
                     // Waiters keep waiting: nothing they wait for may be revealed before it is durable.
+                    // A Litestream failure follows a successful fsync, so only replication waiters
+                    // wait, unless every sync must replicate.
+                    if matches!(err, SyncError::Litestream(_)) && !self.replicate_all {
+                        self.synced(target, false);
+                    }
                     error!("Cannot sync the SQLite WAL - {err}");
                     tokio::time::sleep(delay).await;
                     delay = (delay * 2).min(MAX_RETRY_DELAY);
@@ -491,6 +496,38 @@ mod tests {
         server.await.unwrap();
         assert_eq!(1, bodies.lock().unwrap().len());
         syncer.abort();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_replication_releases_local_waiters() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("litestream.sock");
+        let durability = Arc::new(Durability::new(
+            &dir.path().join("db.sqlite"),
+            Some(socket.clone()),
+            false,
+        ));
+        let (server, bodies) = fake_litestream(&socket, vec![500; 100]);
+        let syncer = tokio::spawn(durability.clone().run_syncer());
+        let replicated_seq = durability.committed(true);
+        let replication = tokio::spawn({
+            let durability = durability.clone();
+            async move { durability.wait_replicated(replicated_seq).await }
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            // Committed while the replica refuses uploads.
+            while bodies.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let seq = durability.committed(true);
+            durability.wait_seq(seq).await;
+        })
+        .await
+        .unwrap();
+        assert!(!replication.is_finished());
+        syncer.abort();
+        server.abort();
     }
 
     #[cfg(unix)]
