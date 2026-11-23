@@ -276,6 +276,19 @@ impl ComponentConfigRegistry {
         }
     }
 
+    /// Set the import of an inserted cron to its target function, so the cron's target is listed.
+    /// Call after all components are inserted. A missing target is left for linking to report.
+    pub fn resolve_cron_import(&mut self, name: &StrVariant, target_ffqn: &FunctionFqn) {
+        let inner = &mut self.inner;
+        if let Some((_, target)) = inner.exported_ffqns_ext.get(target_ffqn) {
+            let component = inner
+                .names_to_components
+                .get_mut(name)
+                .expect("cron must be inserted");
+            component.imports = vec![target.clone()];
+        }
+    }
+
     /// Verify that each imported function can be matched by looking at the available exports.
     /// This is a best effort to give function-level error messages.
     /// WASI imports and host functions are not validated at the moment, those errors

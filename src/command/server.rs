@@ -6407,7 +6407,7 @@ async fn compile_and_link(
             }
         }
     }
-    // Register cron components in the registry (no WASM, no imports/exports)
+    // Register cron components in the registry (no WASM or exports, the target is its only import)
     for cron in &crons {
         let component_config = ComponentConfig {
             component_id: cron.component_id.clone(),
@@ -6417,6 +6417,9 @@ async fn compile_and_link(
             wit_origin: WitOrigin::Synthesized,
         };
         component_registry.insert(component_config)?; // Mostly just for name uniqueness checking
+    }
+    for cron in &crons {
+        component_registry.resolve_cron_import(&cron.component_id.name, &cron.target_ffqn);
     }
     for worker in &workers_compiled {
         if let CompiledWorkerKind::WorkflowJs(workflow_js) = &worker.worker {
