@@ -49,6 +49,12 @@
     "outbound_http_pool": {
       "$ref": "#/$defs/OutboundHttpPoolToml"
     },
+    "integrations": {
+      "$ref": "#/$defs/IntegrationsToml",
+      "default": {
+        "origins": []
+      }
+    },
     "workflows": {
       "$ref": "#/$defs/WorkflowsGlobalConfigToml"
     },
@@ -1088,6 +1094,21 @@
           "default": {
             "seconds": 4
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "IntegrationsToml": {
+      "description": "Platform services that activities and webhooks call, such as a hosting platform's integrations.",
+      "type": "object",
+      "properties": {
+        "origins": {
+          "description": "Origins (`scheme://host[:port]`) whose requests get `Obelisk-Int-*` headers, such as\n`Obelisk-Int-Execution-Id`. Matched on scheme, host and port as written in the request URL.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
         }
       },
       "additionalProperties": false

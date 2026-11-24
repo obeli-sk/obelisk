@@ -136,6 +136,7 @@ pub(crate) fn build_http_policy(
     policy.global_allowlist = Some(build_authorization_hosts(global_http_config.entries()));
     policy.component_policy_hash = audit_http_policy(allowed_hosts).0;
     policy.server_policy_hash = audit_http_policy(global_http_config.entries()).0;
+    policy.integration_origins = global_http_config.integration_origins().clone();
     policy
 }
 
@@ -148,6 +149,7 @@ pub(crate) fn build_http_policy_native(
     policy.global_allowlist = Some(build_authorization_hosts(global_http_config.entries()));
     policy.component_policy_hash = audit_http_policy(allowed_hosts).0;
     policy.server_policy_hash = audit_http_policy(global_http_config.entries()).0;
+    policy.integration_origins = global_http_config.integration_origins().clone();
     (policy, placeholders)
 }
 
@@ -228,6 +230,7 @@ fn build_http_policy_inner(
             global_allowlist: None,
             component_policy_hash: String::new(),
             server_policy_hash: String::new(),
+            integration_origins: std::sync::Arc::default(),
         },
         placeholders,
     )
@@ -314,7 +317,9 @@ mod tests {
                 .body(empty_body())
                 .unwrap();
 
-            policy.apply(&mut request).unwrap();
+            policy
+                .apply(&mut request, &concepts::ExecutionId::generate())
+                .unwrap();
 
             assert_eq!(
                 request.headers().get("authorization").unwrap(),

@@ -375,7 +375,9 @@ mod allowed_hosts {
                     .body(body)
                     .unwrap();
                 assert_eq!(
-                    policy.apply(&mut request).is_ok(),
+                    policy
+                        .apply(&mut request, &concepts::ExecutionId::generate())
+                        .is_ok(),
                     allowed,
                     "{method} {url}"
                 );

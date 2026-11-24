@@ -207,6 +207,13 @@
 # max_idle_per_host = 16           # Idle connections kept per scheme, host and port. Set to 0 to open a new connection for every request.
 # idle_timeout.seconds = 4         # How long an idle connection is kept unless the server sends a `Keep-Alive: timeout` hint (honored minus 1s).
 
+## Platform integrations reached over outbound HTTP, for hosting platforms.
+## Requests to these origins (scheme, host and port as written in the URL) get the caller's
+## execution ID in `Obelisk-Int-Execution-Id`. Components may not send `Obelisk-Int-*` headers
+## to any destination.
+# [integrations]
+# origins = ["http://127.0.0.1:9195"]
+
 ## Global Workflow Configuration
 # [workflows]
 # subscription_interruption.seconds = 1    # Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism. Value can be "none" or a duration.
