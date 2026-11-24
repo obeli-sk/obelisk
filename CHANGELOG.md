@@ -6,14 +6,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0-rc.20](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.19...v0.43.0-rc.20)
+
+This release candidate lets cloud app owners read their app's logs and restore its database from
+the Litestream replica, pushes multi-file JS components and WASM backtrace sources to OCI, and
+interpolates environment variables in component locations. Wasmtime is updated to 51.
+
 ### Added
 
-- *(cli)* `cloud app logs` shows the logs of the app's Machines, the newest `-n` lines (default
-  100, at most 500) or the first ones after `--since`, an RFC 3339 time or a duration like `30m`.
-- *(cli)* `component push` uploads a JS component that imports other files as its whole module
+- *(cloud)* `cloud app logs` shows the logs of the app's Machines with their level, the newest
+  `-n` lines (default 100, at most 500) or the first ones after `--since`, an RFC 3339 time or a
+  duration like `30m`. [#1401](https://github.com/obeli-sk/obelisk/pull/1401)
+  [#1403](https://github.com/obeli-sk/obelisk/pull/1403)
+- *(cloud)* `cloud app db pull` restores the app's database from its Litestream replica with the
+  API token, running `litestream restore` (0.5.18 or newer) from PATH. Without `--output DIR` it
+  restores into the directory a local `obelisk server run` uses for the app, so a pulled app.toml
+  runs on it unchanged; an existing database is kept unless `--force` is given. `cloud app pull
+  --db [DIR]` runs the same restore after pulling the files.
+  [#1399](https://github.com/obeli-sk/obelisk/pull/1399)
+  [#1404](https://github.com/obeli-sk/obelisk/pull/1404)
+- *(oci)* `component push` uploads a JS component that imports other files as its whole module
   graph, in a layer of type `application/vnd.obelisk.js-graph.v0+json`, and `oci://` JS locations
   load such graphs. A JS file without relative imports keeps the single-file layer, so older
   servers can still pull it. Local JS paths are now read relative to the deployment file.
+  [#1406](https://github.com/obeli-sk/obelisk/pull/1406)
+- *(oci)* `component push --backtrace-sources` stores the WASM component's `backtrace.sources` in
+  the image's `obelisk.backtrace_sources:0` manifest annotation. Deployments pulling the image use
+  them for frame keys they do not map themselves.
+  [#1411](https://github.com/obeli-sk/obelisk/pull/1411)
+- *(deployment)* Component `location` values expand `${VAR}` and `${VAR:-default}` from the
+  submitter's environment when the deployment is read from disk, so one manifest can point to a
+  local build in development and an OCI reference elsewhere.
+  [#1405](https://github.com/obeli-sk/obelisk/pull/1405)
+- *(cron)* A tick skipped by `overlap = "skip"` appends a warning to the cron execution's log and
+  emits a tracing warning naming the unfinished execution and the next tick.
+  [#1408](https://github.com/obeli-sk/obelisk/pull/1408)
+- *(api)* `/v1/components` lists a cron's target function as the cron component's import.
+  [#1409](https://github.com/obeli-sk/obelisk/pull/1409)
 
 ### Changed
 
@@ -21,6 +50,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the database and records `server.startup.failed` with stage `runtime_values` and the names in
   `missing_secrets` and `missing_env` before exiting. Both lists are reported together; previously
   missing secrets hid missing public environment variables.
+  [#1400](https://github.com/obeli-sk/obelisk/pull/1400)
+- *(sqlite)* While Litestream sync fails, commits that only wait for the local disk are released
+  after the fsync instead of stalling behind the replica; with `litestream.sync = "all"` every
+  commit still waits for replication. Resubmitting an already stored deployment now also waits for
+  replication. [#1412](https://github.com/obeli-sk/obelisk/pull/1412)
+- *(cloud)* `cloud app push` labels endpoints "Internal server" and "External server" and no
+  longer suggests the removed `cloud app fill`.
+  [#1397](https://github.com/obeli-sk/obelisk/pull/1397)
+- *(cli)* `server verify --dev` with a repair flag keeps `--dev` and `--deployment-id` when
+  reloading the configuration, so deployments with internal webhooks pass the final verification.
+  [#1397](https://github.com/obeli-sk/obelisk/pull/1397)
+- *(build)* Wasmtime 51.0.0, wasm-tools 0.263, zig 0.15 for cross builds, and updated Rust
+  dependencies and Web UI. [#1395](https://github.com/obeli-sk/obelisk/pull/1395)
+  [#1396](https://github.com/obeli-sk/obelisk/pull/1396)
+  [#1402](https://github.com/obeli-sk/obelisk/pull/1402)
+  [#1410](https://github.com/obeli-sk/obelisk/pull/1410)
+
+### Fixed
+
+- *(cli)* `generate token` omits the trailing newline when its output is not a terminal, so a
+  token redirected to a file or piped into a tool is used verbatim.
+  [#1407](https://github.com/obeli-sk/obelisk/pull/1407)
 
 ## [0.43.0-rc.19](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.18...v0.43.0-rc.19)
 
