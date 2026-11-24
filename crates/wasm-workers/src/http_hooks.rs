@@ -3,6 +3,7 @@ use crate::http_request_policy::{HttpRequestPolicy, PolicyError, PolicyLayer};
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
 use concepts::{
+    ExecutionId,
     prefixed_ulid::{DeploymentId, SystemEventId},
     storage::{DbPool, LogLevel, SystemEvent, SystemEventCode},
 };
@@ -297,6 +298,37 @@ fn classify_tls_error(err: &std::io::Error) -> TlsFailure {
     }
 }
 
+/// Persist an `outbound_http.denied` event linked to the deployment's policy event.
+fn spawn_denial_event(
+    sink: SystemEventSink,
+    execution_id: ExecutionId,
+    dedupe_key: String,
+    mut payload: serde_json::Value,
+) {
+    let SystemEventSink {
+        deployment_id,
+        policy_event_id,
+        db_pool,
+    } = sink;
+    payload["policy_event_id"] = serde_json::json!(policy_event_id);
+    tokio::spawn(async move {
+        let event = SystemEvent::new(
+            SystemEventCode::OutboundHttpDenied,
+            Some(execution_id),
+            Some(deployment_id),
+            payload,
+        )
+        .map(|event| event.with_dedupe_key(dedupe_key));
+        if let Ok(event) = event {
+            let result =
+                async { db_pool.admin_conn().await?.append_system_event(event).await }.await;
+            if let Err(err) = result {
+                tracing::warn!("Cannot persist outbound HTTP denial: {err}");
+            }
+        }
+    });
+}
+
 impl HttpHooks {
     fn send_request_traced(
         &mut self,
@@ -314,7 +346,9 @@ impl HttpHooks {
 
         // Apply HTTP policy (allowlist + placeholder replacement in headers and query params)
         let attempted_url = request.uri().to_string();
-        let http_policy_res = self.http_policy.apply(&mut request);
+        let http_policy_res = self
+            .http_policy
+            .apply(&mut request, &self.component_logger.execution_id);
         if let Err(err) = http_policy_res {
             if let (
                 Some(system_events),
@@ -359,40 +393,42 @@ impl HttpHooks {
                 let host = host.clone();
                 let port = *port;
                 let rejected_by = denied_by.audit_name();
-                let SystemEventSink {
-                    deployment_id,
-                    policy_event_id,
-                    db_pool,
-                } = system_events.clone();
-                tokio::spawn(async move {
-                    let event = SystemEvent::new(
-                        SystemEventCode::OutboundHttpDenied,
-                        Some(execution_id),
-                        Some(deployment_id),
-                        serde_json::json!({
-                            "component": component,
-                            "method": method,
-                            "scheme": scheme,
-                            "host": host,
-                            "port": port,
-                            "url": attempted_url,
-                            "rejected_by": rejected_by,
-                            "component_policy_hash": component_policy_hash,
-                            "server_policy_hash": server_policy_hash,
-                            "policy_event_id": policy_event_id,
-                            "server_toml": server_toml,
-                        }),
-                    )
-                    .map(|event| event.with_dedupe_key(dedupe_key));
-                    if let Ok(event) = event {
-                        let result =
-                            async { db_pool.admin_conn().await?.append_system_event(event).await }
-                                .await;
-                        if let Err(err) = result {
-                            tracing::warn!("Cannot persist outbound HTTP denial: {err}");
-                        }
-                    }
-                });
+                spawn_denial_event(
+                    system_events.clone(),
+                    execution_id,
+                    dedupe_key,
+                    serde_json::json!({
+                        "component": component,
+                        "method": method,
+                        "scheme": scheme,
+                        "host": host,
+                        "port": port,
+                        "url": attempted_url,
+                        "rejected_by": rejected_by,
+                        "component_policy_hash": component_policy_hash,
+                        "server_policy_hash": server_policy_hash,
+                        "server_toml": server_toml,
+                    }),
+                );
+            } else if let (Some(system_events), PolicyError::ReservedHeader { header, .. }) =
+                (self.system_events.as_ref(), &err)
+            {
+                let dedupe_key = format!(
+                    "{}|{}|reserved_header|{header}",
+                    self.http_policy.component_policy_hash, self.component_name,
+                );
+                spawn_denial_event(
+                    system_events.clone(),
+                    self.component_logger.execution_id.clone(),
+                    dedupe_key,
+                    serde_json::json!({
+                        "component": self.component_name,
+                        "method": request.method().as_str(),
+                        "url": attempted_url,
+                        "rejected_by": "reserved_header",
+                        "header": header,
+                    }),
+                );
             }
             // Generate a helpful TOML snippet for the user
             let log_msg = generate_toml_snippet(
@@ -772,6 +808,7 @@ mod tests {
             global_allowlist: Some(Vec::new()),
             component_policy_hash: String::new(),
             server_policy_hash: String::new(),
+            integration_origins: Arc::default(),
         };
         let message = generate_toml_snippet(
             &PolicyError::RequestDenied {

@@ -858,7 +858,9 @@ fn webhook_global_http_allowlist(
     operator_global: &GlobalHttpConfig,
 ) -> GlobalHttpConfig {
     if self_authorize {
-        GlobalHttpConfig::from(allowed_hosts.clone()).with_client(operator_global.client().clone())
+        GlobalHttpConfig::from(allowed_hosts.clone())
+            .with_client(operator_global.client().clone())
+            .with_integration_origins(operator_global.integration_origins().clone())
     } else {
         operator_global.clone()
     }
@@ -3001,8 +3003,13 @@ impl ServerVerified {
         let (server_hosts, _advisories) =
             resolve_allowed_hosts(config.outbound_http.allowed_hosts, false, &secret_registry)
                 .context("invalid app.toml `[[outbound_http.allowed_host]]` entry")?;
+        let integration_origins = config
+            .integrations
+            .parse_origins()
+            .context("invalid server.toml `integrations.origins`")?;
         let global_http_config = GlobalHttpConfig::from(server_hosts)
-            .with_client(OutboundHttpClient::new(config.outbound_http_pool.into()));
+            .with_client(OutboundHttpClient::new(config.outbound_http_pool.into()))
+            .with_integration_origins(integration_origins);
         let (server_policy_hash, server_policy) =
             wasm_workers::http_request_policy::audit_http_policy(global_http_config.entries());
         let webui_server_policy = if webui_enabled {

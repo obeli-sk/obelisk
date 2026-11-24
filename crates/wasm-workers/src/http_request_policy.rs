@@ -1,3 +1,4 @@
+use concepts::ExecutionId;
 use hyper::Uri;
 use hyper::http::Method;
 use rand::RngCore;
@@ -10,6 +11,61 @@ use std::sync::Arc;
 use tracing::{debug, trace};
 use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use worker_common::SecretResolver;
+
+/// Prefix of request headers that Obelisk sets for integrations; components cannot send them.
+pub const INTEGRATION_HEADER_PREFIX: &str = "obelisk-int-";
+/// The caller's execution ID, sent to integration origins.
+pub const EXECUTION_ID_HEADER: &str = "obelisk-int-execution-id";
+
+/// An operator-listed integration origin that receives `Obelisk-Int-*` headers.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct IntegrationOrigin {
+    scheme: String,
+    host: String,
+    port: u16,
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("integration origin must be `http(s)://host[:port]` without a path: `{0}`")]
+pub struct IntegrationOriginError(String);
+
+impl IntegrationOrigin {
+    /// Parse `scheme://host[:port]`; a missing port is the scheme's default.
+    ///
+    /// # Errors
+    /// Returns an error on a missing or unsupported scheme, a missing host, or a path or query.
+    pub fn parse(input: &str) -> Result<Self, IntegrationOriginError> {
+        let err = || IntegrationOriginError(input.to_owned());
+        let uri: Uri = input.parse().map_err(|_| err())?;
+        if !matches!(uri.scheme_str(), Some("http" | "https"))
+            || uri.authority().is_none_or(|a| a.as_str().contains('@'))
+            || uri
+                .path_and_query()
+                .is_some_and(|pq| pq.as_str() != "/" && !pq.as_str().is_empty())
+            || input.ends_with('/')
+        {
+            return Err(err());
+        }
+        let (scheme, host, port, _) = extract_request_target(&uri).ok_or_else(err)?;
+        Ok(Self {
+            scheme,
+            host: host.to_ascii_lowercase(),
+            port,
+        })
+    }
+
+    fn matches(&self, scheme: &str, host: &str, port: u16) -> bool {
+        self.scheme.eq_ignore_ascii_case(scheme)
+            && self.host.eq_ignore_ascii_case(host)
+            && self.port == port
+    }
+}
+
+impl fmt::Display for IntegrationOrigin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}://{}:{}", self.scheme, self.host, self.port)
+    }
+}
 
 /// Where in the outgoing request placeholders are replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -359,6 +415,8 @@ pub struct HttpRequestPolicy {
     pub global_allowlist: Option<Vec<AllowedHostPolicy>>,
     pub component_policy_hash: String,
     pub server_policy_hash: String,
+    /// Destinations that receive `Obelisk-Int-*` headers, from `server.toml`.
+    pub integration_origins: Arc<[IntegrationOrigin]>,
 }
 
 /// Return a canonical snapshot and hash of one realized policy input.
@@ -495,6 +553,10 @@ fn request_match_input(uri: &hyper::Uri, method: &Method) -> Option<String> {
 pub enum PolicyError {
     #[error("outgoing HTTP request has no host in URI: {0}")]
     RequestHasNoHost(Uri),
+    #[error(
+        "outgoing HTTP request {request_url} sets header `{header}`; `Obelisk-Int-*` headers are reserved for Obelisk"
+    )]
+    ReservedHeader { request_url: String, header: String },
     #[error("outgoing HTTP request {request_url} denied by {denied_by}")]
     RequestDenied {
         method: Method,
@@ -533,11 +595,24 @@ impl From<PolicyError> for ErrorCode {
 
 impl HttpRequestPolicy {
     /// Check if a host is allowed and perform secret placeholder replacement in headers and query parameters.
+    /// Requests to an integration origin get the caller's `execution_id` header.
     /// Returns the (possibly modified) request, or an error if the host is denied.
     pub fn apply(
         &self,
         request: &mut hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
+        execution_id: &ExecutionId,
     ) -> Result<(), PolicyError> {
+        // Header names are lowercase, so the prefix check is case-insensitive.
+        if let Some(header) = request
+            .headers()
+            .keys()
+            .find(|name| name.as_str().starts_with(INTEGRATION_HEADER_PREFIX))
+        {
+            return Err(PolicyError::ReservedHeader {
+                request_url: request.uri().to_string(),
+                header: header.as_str().to_owned(),
+            });
+        }
         let Some((scheme, host, port, path)) = extract_request_target(request.uri()) else {
             return Err(PolicyError::RequestHasNoHost(request.uri().clone()));
         };
@@ -634,6 +709,15 @@ impl HttpRequestPolicy {
 
         // 5. Body replacement needs async buffering, collect applicable secrets
         //    for the caller to apply via `apply_body_replacement`.
+
+        if self
+            .integration_origins
+            .iter()
+            .any(|origin| origin.matches(&scheme, &host, port))
+            && let Ok(value) = hyper::header::HeaderValue::from_str(&execution_id.to_string())
+        {
+            request.headers_mut().insert(EXECUTION_ID_HEADER, value);
+        }
 
         Ok(())
     }
@@ -816,6 +900,7 @@ impl AllowedHostConfig {
 pub struct GlobalHttpConfig {
     entries: Arc<[AllowedHostConfig]>,
     client: crate::http_client::OutboundHttpClient,
+    integration_origins: Arc<[IntegrationOrigin]>,
 }
 
 impl GlobalHttpConfig {
@@ -833,6 +918,19 @@ impl GlobalHttpConfig {
     pub fn with_client(self, client: crate::http_client::OutboundHttpClient) -> Self {
         Self { client, ..self }
     }
+
+    #[must_use]
+    pub fn integration_origins(&self) -> &Arc<[IntegrationOrigin]> {
+        &self.integration_origins
+    }
+
+    #[must_use]
+    pub fn with_integration_origins(self, integration_origins: Arc<[IntegrationOrigin]>) -> Self {
+        Self {
+            integration_origins,
+            ..self
+        }
+    }
 }
 
 impl From<Arc<[AllowedHostConfig]>> for GlobalHttpConfig {
@@ -840,6 +938,7 @@ impl From<Arc<[AllowedHostConfig]>> for GlobalHttpConfig {
         Self {
             entries,
             client: crate::http_client::OutboundHttpClient::default(),
+            integration_origins: Arc::default(),
         }
     }
 }
@@ -1215,6 +1314,7 @@ mod tests {
             global_allowlist: None,
             component_policy_hash: String::new(),
             server_policy_hash: String::new(),
+            integration_origins: Arc::default(),
         };
         let uri = format!(
             "https://api.example.com/{PLACEHOLDER}?{PLACEHOLDER}=unchanged&token=Bearer-{PLACEHOLDER}"
@@ -1224,7 +1324,9 @@ mod tests {
             .body(empty_body())
             .unwrap();
 
-        policy.apply(&mut request).unwrap();
+        policy
+            .apply(&mut request, &concepts::ExecutionId::generate())
+            .unwrap();
 
         assert_eq!(request.uri().path(), format!("/{PLACEHOLDER}"));
         let params = url::form_urlencoded::parse(request.uri().query().unwrap().as_bytes())
@@ -1284,6 +1386,7 @@ mod tests {
             global_allowlist: None,
             component_policy_hash: String::new(),
             server_policy_hash: String::new(),
+            integration_origins: Arc::default(),
         };
 
         let mut request = hyper::Request::builder()
@@ -1294,7 +1397,9 @@ mod tests {
             .body(empty_body())
             .unwrap();
 
-        policy.apply(&mut request).unwrap();
+        policy
+            .apply(&mut request, &concepts::ExecutionId::generate())
+            .unwrap();
 
         // Headers: s1 and s2 replaced, s3 (params-only) left as the placeholder.
         assert_eq!(request.headers().get("h-s1").unwrap(), "v-REAL_1");
@@ -1353,6 +1458,7 @@ mod tests {
             )])]),
             component_policy_hash: String::new(),
             server_policy_hash: String::new(),
+            integration_origins: Arc::default(),
         };
 
         let mut request = hyper::Request::builder()
@@ -1362,7 +1468,9 @@ mod tests {
             .body(empty_body())
             .unwrap();
 
-        policy.apply(&mut request).unwrap();
+        policy
+            .apply(&mut request, &concepts::ExecutionId::generate())
+            .unwrap();
 
         // S1 in headers: authorized by both -> replaced.
         assert_eq!(request.headers().get("h1").unwrap(), "v-REAL_1");
@@ -1389,13 +1497,16 @@ mod tests {
             global_allowlist: Some(vec![host("other.example.com")]),
             component_policy_hash: String::new(),
             server_policy_hash: String::new(),
+            integration_origins: Arc::default(),
         };
         let mut request = hyper::Request::builder()
             .uri("https://api.example.com/path")
             .body(empty_body())
             .unwrap();
 
-        let err = policy.apply(&mut request).unwrap_err();
+        let err = policy
+            .apply(&mut request, &concepts::ExecutionId::generate())
+            .unwrap_err();
         assert!(matches!(err, PolicyError::RequestDenied { .. }));
     }
 
@@ -1428,6 +1539,7 @@ mod tests {
             ]),
             component_policy_hash: String::new(),
             server_policy_hash: String::new(),
+            integration_origins: Arc::default(),
         };
 
         // Host api: both sides authorize S -> replaced.
@@ -1436,7 +1548,9 @@ mod tests {
             .header("h", format!("v-{PLACEHOLDER}"))
             .body(empty_body())
             .unwrap();
-        policy.apply(&mut req_a).unwrap();
+        policy
+            .apply(&mut req_a, &concepts::ExecutionId::generate())
+            .unwrap();
         assert_eq!(req_a.headers().get("h").unwrap(), "v-REAL_S");
 
         // Host other: global allowlist authorizes no secret here -> left as placeholder,
@@ -1446,7 +1560,9 @@ mod tests {
             .header("h", format!("v-{PLACEHOLDER}"))
             .body(empty_body())
             .unwrap();
-        policy.apply(&mut req_b).unwrap();
+        policy
+            .apply(&mut req_b, &concepts::ExecutionId::generate())
+            .unwrap();
         assert_eq!(req_b.headers().get("h").unwrap(), "v-PH_S");
     }
 
@@ -1461,13 +1577,16 @@ mod tests {
             global_allowlist: Some(Vec::new()),
             component_policy_hash: String::new(),
             server_policy_hash: String::new(),
+            integration_origins: Arc::default(),
         };
         let mut request = hyper::Request::builder()
             .uri("https://api.example.com/path")
             .body(empty_body())
             .unwrap();
 
-        let err = policy.apply(&mut request).unwrap_err();
+        let err = policy
+            .apply(&mut request, &concepts::ExecutionId::generate())
+            .unwrap_err();
         assert!(matches!(
             err,
             PolicyError::RequestDenied {
@@ -1484,13 +1603,16 @@ mod tests {
             global_allowlist: Some(Vec::new()),
             component_policy_hash: String::new(),
             server_policy_hash: String::new(),
+            integration_origins: Arc::default(),
         };
         let mut request = hyper::Request::builder()
             .uri("https://api.example.com/path")
             .body(empty_body())
             .unwrap();
 
-        let err = policy.apply(&mut request).unwrap_err();
+        let err = policy
+            .apply(&mut request, &concepts::ExecutionId::generate())
+            .unwrap_err();
         assert!(matches!(
             err,
             PolicyError::RequestDenied {
@@ -1536,5 +1658,96 @@ mod tests {
         assert!(is_text_content_type("application/x-www-form-urlencoded"));
         assert!(!is_text_content_type("application/octet-stream"));
         assert!(!is_text_content_type("image/png"));
+    }
+
+    fn integration_policy(origins: &[&str]) -> HttpRequestPolicy {
+        let host = |name: &str| AllowedHostPolicy {
+            pattern: HostPattern::parse(name).unwrap(),
+            request_url_regex: None,
+            secrets: Vec::new(),
+        };
+        HttpRequestPolicy {
+            hosts: vec![host("http://127.0.0.1:*"), host("http://localhost:*")],
+            global_allowlist: None,
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
+            integration_origins: origins
+                .iter()
+                .map(|origin| IntegrationOrigin::parse(origin).unwrap())
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn integration_origin_parse() {
+        let origin = IntegrationOrigin::parse("http://LocalHost:9195").unwrap();
+        assert_eq!("http://localhost:9195", origin.to_string());
+        assert_eq!(
+            "https://example.com:443",
+            IntegrationOrigin::parse("https://example.com")
+                .unwrap()
+                .to_string()
+        );
+        for invalid in [
+            "127.0.0.1:9195",
+            "ftp://127.0.0.1",
+            "http://127.0.0.1:9195/",
+            "http://127.0.0.1:9195/v1",
+            "http://127.0.0.1:9195?a=b",
+            "http://user@127.0.0.1:9195",
+        ] {
+            assert!(IntegrationOrigin::parse(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn integration_origin_gets_execution_id() {
+        let policy = integration_policy(&["http://127.0.0.1:9195"]);
+        let execution_id = concepts::ExecutionId::generate();
+        let send = |uri: &str| {
+            let mut request = hyper::Request::builder()
+                .uri(uri)
+                .body(empty_body())
+                .unwrap();
+            policy.apply(&mut request, &execution_id).unwrap();
+            request
+                .headers()
+                .get(EXECUTION_ID_HEADER)
+                .map(|value| value.to_str().unwrap().to_owned())
+        };
+        assert_eq!(
+            Some(execution_id.to_string()),
+            send("http://127.0.0.1:9195/v1/sessions")
+        );
+        assert_eq!(None, send("http://127.0.0.1:9196/v1/sessions"));
+        assert_eq!(None, send("http://localhost:9195/v1/sessions"));
+    }
+
+    #[test]
+    fn reserved_header_is_denied_everywhere() {
+        let policy = integration_policy(&["http://127.0.0.1:9195"]);
+        for uri in ["http://127.0.0.1:9195/", "http://localhost:9195/"] {
+            let mut request = hyper::Request::builder()
+                .uri(uri)
+                .header("Obelisk-Int-Execution-Id", "E_forged")
+                .body(empty_body())
+                .unwrap();
+            let err = policy
+                .apply(&mut request, &concepts::ExecutionId::generate())
+                .unwrap_err();
+            assert!(
+                matches!(&err, PolicyError::ReservedHeader { header, .. } if header == "obelisk-int-execution-id"),
+                "{err}"
+            );
+        }
+        // Other `obelisk-` headers are not reserved.
+        let mut request = hyper::Request::builder()
+            .uri("http://localhost:9195/")
+            .header("Obelisk-Trace", "1")
+            .body(empty_body())
+            .unwrap();
+        policy
+            .apply(&mut request, &concepts::ExecutionId::generate())
+            .unwrap();
     }
 }

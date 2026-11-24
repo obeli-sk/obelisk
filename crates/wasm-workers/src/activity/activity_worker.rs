@@ -1712,6 +1712,7 @@ pub(crate) mod tests {
     async fn http_get_simple(
         #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
         locking_strategy: LockingStrategy,
+        #[values(false, true)] integration: bool,
     ) {
         use std::ops::Deref;
         use wiremock::{
@@ -1738,7 +1739,17 @@ pub(crate) mod tests {
             TokioSleep,
             {
                 let uri = uri.clone();
-                move |component_id| activity_config_allowed_host(component_id, &uri)
+                move |component_id| {
+                    let mut config = activity_config_allowed_host(component_id, &uri);
+                    if integration {
+                        config.global_http_config = config
+                            .global_http_config
+                            .with_integration_origins(Arc::from([
+                                crate::http_request_policy::IntegrationOrigin::parse(&uri).unwrap(),
+                            ]));
+                    }
+                    config
+                }
             },
         )
         .await;
@@ -1840,6 +1851,15 @@ pub(crate) mod tests {
         );
         assert_eq!("GET", method);
         assert_eq!(format!("{uri}/"), *uri_actual);
+        // Only integration origins learn the caller's execution ID.
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(
+            integration.then(|| execution_id.to_string()),
+            received[0]
+                .headers
+                .get(crate::http_request_policy::EXECUTION_ID_HEADER)
+                .map(|value| value.to_str().unwrap().to_owned())
+        );
         drop(db_connection);
         drop(exec_task);
         db_close.close().await;

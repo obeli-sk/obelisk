@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(server)* `[integrations] origins` in `server.toml` lists platform origins that receive the
+  calling activity's or webhook's execution ID in the `Obelisk-Int-Execution-Id` request header.
+  Origins match on scheme, host and port.
+
+### Changed
+
+- **Breaking:** *(server)* Outbound HTTP requests that set an `Obelisk-Int-*` header are denied, with an
+  `outbound_http.denied` system event whose `rejected_by` is `reserved_header`. The prefix is
+  reserved for headers Obelisk sends to integrations.
+
+  
 ## [0.43.0-rc.20](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.19...v0.43.0-rc.20)
 
 This release candidate lets cloud app owners read their app's logs and restore its database from

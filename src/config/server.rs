@@ -106,6 +106,8 @@ pub(crate) struct ServerConfigToml {
     pub(crate) webhooks: WebhooksGlobalConfigToml,
     #[serde(default)]
     pub(crate) outbound_http_pool: OutboundHttpPoolToml,
+    #[serde(default)]
+    pub(crate) integrations: IntegrationsToml,
     #[serde(default, rename = "workflows")]
     pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
     #[serde(default)]
@@ -812,6 +814,30 @@ const fn default_webhook_request_timeout() -> DurationConfig {
 
 const fn default_max_stream_duration() -> DurationConfig {
     DurationConfig::Minutes(10)
+}
+
+/// Platform services that activities and webhooks call, such as a hosting platform's integrations.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IntegrationsToml {
+    /// Origins (`scheme://host[:port]`) whose requests get `Obelisk-Int-*` headers, such as
+    /// `Obelisk-Int-Execution-Id`. Matched on scheme, host and port as written in the request URL.
+    #[serde(default)]
+    pub(crate) origins: Vec<String>,
+}
+
+impl IntegrationsToml {
+    pub(crate) fn parse_origins(
+        &self,
+    ) -> Result<
+        std::sync::Arc<[wasm_workers::http_request_policy::IntegrationOrigin]>,
+        wasm_workers::http_request_policy::IntegrationOriginError,
+    > {
+        self.origins
+            .iter()
+            .map(|origin| wasm_workers::http_request_policy::IntegrationOrigin::parse(origin))
+            .collect()
+    }
 }
 
 /// Reuse of idle outbound HTTP/1 connections made by activities and webhooks.
@@ -2608,6 +2634,22 @@ mod tests {
             let config: crate::config::app::AppConfigToml =
                 toml::from_str("app_name = 'test-app'").unwrap();
             assert!(config.outbound_http.allowed_hosts.is_empty());
+        }
+    }
+
+    mod integrations {
+        use super::*;
+
+        #[test]
+        fn origins_parse_and_reject_paths() {
+            let config: ServerConfigToml =
+                toml::from_str("[integrations]\norigins = ['http://127.0.0.1:9195']").unwrap();
+            let origins = config.integrations.parse_origins().unwrap();
+            assert_eq!("http://127.0.0.1:9195", origins[0].to_string());
+
+            let config: ServerConfigToml =
+                toml::from_str("[integrations]\norigins = ['http://127.0.0.1:9195/v1']").unwrap();
+            assert!(config.integrations.parse_origins().is_err());
         }
     }
 
