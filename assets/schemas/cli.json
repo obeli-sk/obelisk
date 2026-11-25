@@ -1475,6 +1475,39 @@
               ]
             }
           ]
+        },
+        {
+          "name": "status",
+          "about": "Show the account's plan, any hold stopping its apps, this month's allowances and its apps",
+          "options": [
+            {
+              "name": "--api-token",
+              "help": "Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`"
+            },
+            {
+              "name": "--account",
+              "help": "Saved account name or alias to use for this command instead of the default one"
+            }
+          ]
+        },
+        {
+          "name": "events",
+          "about": "List recent account events, such as allowance warnings and holds, newest first",
+          "options": [
+            {
+              "name": "--api-token",
+              "help": "Cloud API bearer token; ignores `obelisk cloud auth login`. Alone it targets `https://cloud.obeli.sk/api`; a custom deployment also needs `OBELISK_CLOUD_API_URL` and `OBELISK_CLOUD_APPS_DOMAIN`"
+            },
+            {
+              "name": "--account",
+              "help": "Saved account name or alias to use for this command instead of the default one"
+            },
+            {
+              "name": "--limit",
+              "short": "n",
+              "help": "Number of events to show"
+            }
+          ]
         }
       ]
     },
