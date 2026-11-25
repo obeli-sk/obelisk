@@ -23,18 +23,13 @@ async fn push_with_prompt(
     mut prompt: Option<impl FnMut(&Question) -> anyhow::Result<String>>,
 ) -> anyhow::Result<()> {
     let client = session.client()?;
-    let config_path = discover_app_config(app_config)?;
+    let config_path = crate::config::app::resolve_app_config(app_config)?;
     let config = match &config_path {
-        Some((path, _)) => Some(policy(path).await?),
+        Some(path) => Some(policy(path).await?),
         None => None,
     };
-    let mut name = app_name(
-        app.as_deref()
-            .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
-    )
-    .await?;
-    let (config, app_config) =
-        config_for_app(&name, config.zip(config_path), true)?.expect("push requires an app config");
+    let (mut name, config) = select_app(app.as_deref(), config.zip(config_path), true).await?;
+    let (config, app_config) = config.expect("push requires an app config");
     let save_name = app.is_none();
     let explicit = explicit_values(&values)?;
     let prepared = if empty_deployment {
@@ -446,6 +441,9 @@ mod tests {
                 "app_name='demo'\n[public_env]\nINITIAL_REGION={}\n[secrets]\nINITIAL_KEY={}\n"
             } else if scenario == "missing" {
                 "app_name='demo'\n[public_env]\nPATH={}\n"
+            } else if scenario == "rename-override" {
+                // --app overrides an app_name that is valid only locally.
+                "app_name='demo_local'\n"
             } else if matches!(scenario, "new-integration" | "integration") {
                 "app_name='demo'\n[cloud.integrations]\nllm={type='llm',env='PATH'}\n[public_env]\nPATH={}\n"
             } else {
@@ -569,7 +567,7 @@ mod tests {
                     if scenario == "rename" {
                         "renamed"
                     } else {
-                        "demo"
+                        "demo_local"
                     }
                 );
                 assert!(

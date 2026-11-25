@@ -466,19 +466,47 @@ fn applied_revision(app: &Value) -> anyhow::Result<u64> {
         .as_u64()
         .context("Cloud app response is missing applied_revision")
 }
+/// Selected app: `--app` or `OBELISK_APP_NAME`, else `app_name` in ./app.toml.
 async fn app_name(name: Option<&str>) -> anyhow::Result<String> {
-    let name = match name {
-        Some(name) => name.to_owned(),
-        None => {
-            policy(Path::new("app.toml"))
-                .await
-                .context("Select an app with --app, OBELISK_APP_NAME or app_name in ./app.toml")?
-                .config
-                .app_name
-        }
-    };
-    validate_cloud_app_name(&name)?;
+    let (name, _) = select_app(name, None, false).await?;
     Ok(name)
+}
+/// Selects the app (`--app` or `OBELISK_APP_NAME`, else the config's `app_name`) and renames the config to it.
+async fn select_app(
+    app: Option<&str>,
+    config: Option<(LocalConfig, PathBuf)>,
+    required: bool,
+) -> anyhow::Result<(String, Option<(LocalConfig, PathBuf)>)> {
+    let Some(name) = app else {
+        let (config, path) = match config {
+            Some(config) => config,
+            None if required => bail!("No app config: ./app.toml not found; pass --app-config"),
+            None => {
+                let path = PathBuf::from("app.toml");
+                (
+                    policy(&path).await.context(
+                        "Select an app with --app, OBELISK_APP_NAME or app_name in ./app.toml",
+                    )?,
+                    path,
+                )
+            }
+        };
+        validate_cloud_app_name(&config.app_name).with_context(|| generate_app_name_hint(&path))?;
+        return Ok((config.app_name.clone(), Some((config, path))));
+    };
+    validate_cloud_app_name(name)?;
+    let config = config
+        .map(|(config, path)| {
+            let config = LocalConfig::parse(with_app_name(&config.text, name)?)
+                .with_context(|| format!("Invalid app config {}", path.display()))?;
+            anyhow::Ok((config, path))
+        })
+        .transpose()?;
+    ensure!(
+        config.is_some() || !required,
+        "No app config: ./app.toml not found; pass --app-config"
+    );
+    Ok((name.to_owned(), config))
 }
 fn validate_cloud_app_name(name: &str) -> anyhow::Result<()> {
     crate::config::app::validate_app_name(name)?;
@@ -526,37 +554,7 @@ async fn policy(path: &Path) -> anyhow::Result<LocalConfig> {
         .with_context(|| format!("Cannot read app config {}", path.display()))?;
     let config = LocalConfig::parse(text)
         .with_context(|| format!("Invalid app config {}", path.display()))?;
-    validate_cloud_app_name(&config.app_name).with_context(|| generate_app_name_hint(path))?;
     Ok(config)
-}
-/// App config path of commands that read one, with whether `-a` was given.
-fn discover_app_config(app_config: Option<PathBuf>) -> anyhow::Result<Option<(PathBuf, bool)>> {
-    let explicit = app_config.is_some();
-    Ok(crate::config::app::resolve_app_config(app_config)?.map(|path| (path, explicit)))
-}
-/// Never use another app's config: an explicit or required one is an error, a discovered optional one is ignored.
-fn config_for_app(
-    name: &str,
-    config: Option<(LocalConfig, (PathBuf, bool))>,
-    required: bool,
-) -> anyhow::Result<Option<(LocalConfig, PathBuf)>> {
-    let Some((config, (path, explicit))) = config else {
-        ensure!(
-            !required,
-            "No app config: ./app.toml not found; pass --app-config"
-        );
-        return Ok(None);
-    };
-    if config.app_name != name {
-        let other = &config.app_name;
-        ensure!(
-            !explicit && !required,
-            "{} is for app `{other}`, but the selected app is `{name}` (from --app or OBELISK_APP_NAME); pass `--app {other}` or fix `app_name`",
-            path.display()
-        );
-        return Ok(None);
-    }
-    Ok(Some((config, path)))
 }
 async fn token_command(client: &Client, command: CloudToken) -> anyhow::Result<Value> {
     let mut path = vec!["v1", "tokens"];
@@ -882,24 +880,21 @@ async fn execute(session: &Session, command: Cloud) -> anyhow::Result<Value> {
         }
         Cloud::App(CloudAppTarget { command, .. }) => {
             let app = command.selected_app().map(str::to_owned);
-            let config_path = match &command {
-                CloudApp::Status { app_config, .. } => discover_app_config(app_config.clone())?,
+            let config = match &command {
+                CloudApp::Status { app_config, .. } => {
+                    match crate::config::app::resolve_app_config(app_config.clone())? {
+                        // Status only reports a readable discovered ./app.toml.
+                        Some(path) if app_config.is_none() => {
+                            policy(&path).await.ok().map(|config| (config, path))
+                        }
+                        Some(path) => Some((policy(&path).await?, path)),
+                        None => None,
+                    }
+                }
                 _ => None,
             };
-            let config = match &config_path {
-                // Status only reports a readable discovered ./app.toml.
-                Some((path, false)) if matches!(command, CloudApp::Status { .. }) => {
-                    policy(path).await.ok()
-                }
-                Some((path, _)) => Some(policy(path).await?),
-                None => None,
-            };
-            let name = &app_name(
-                app.as_deref()
-                    .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
-            )
-            .await?;
-            let local = config_for_app(name, config.zip(config_path), false)?;
+            let (name, local) = select_app(app.as_deref(), config, false).await?;
+            let name = &name;
             match command {
                 CloudApp::Deployment { .. }
                 | CloudApp::Execution { .. }
@@ -2425,25 +2420,25 @@ mod tests {
         task.abort();
     }
     #[tokio::test]
-    async fn cloud_commands_reject_explicit_config_of_another_app() {
+    async fn selected_app_overrides_app_name_of_config() {
         let (origin, state, task) = server().await;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("app.toml");
-        tokio::fs::write(&path, "app_name='other'\n").await.unwrap();
+        // Valid locally but not as a cloud app name.
+        tokio::fs::write(&path, "app_name = 'demo_local'\n")
+            .await
+            .unwrap();
         let path = path.to_str().unwrap();
-        for command in ["status", "stage"] {
-            let error = args(&origin, &["app", command, "-a", path])
-                .dispatch()
-                .await
-                .unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .contains("is for app `other`, but the selected app is `demo`"),
-                "{command}: {error}"
-            );
-        }
-        assert!(state.lock().unwrap().received.is_empty());
+        args(&origin, &["app", "status", "-a", path])
+            .dispatch()
+            .await
+            .unwrap();
+        let received = state.lock().unwrap().received.clone();
+        let (_, compared) = received
+            .iter()
+            .find(|(route, _)| route == "POST /prefix/v1/apps/demo/config/compare")
+            .unwrap();
+        assert_eq!(compared.as_str().unwrap(), "app_name = \"demo\"\n");
         task.abort();
     }
     #[tokio::test]

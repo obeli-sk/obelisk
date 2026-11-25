@@ -165,7 +165,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 }
               ],
               "subcommands": [
@@ -298,7 +298,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 }
               ],
               "subcommands": [
@@ -713,7 +713,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 }
               ],
               "subcommands": [
@@ -828,7 +828,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 }
               ],
               "subcommands": [
@@ -1043,7 +1043,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--output",
@@ -1078,7 +1078,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 }
               ],
               "subcommands": [
@@ -1109,7 +1109,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--command-id",
@@ -1123,7 +1123,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--app-config",
@@ -1141,7 +1141,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--limit",
@@ -1156,7 +1156,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--limit",
@@ -1175,7 +1175,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--app-config",
@@ -1226,7 +1226,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--draft",
@@ -1240,7 +1240,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--app-config",
@@ -1290,7 +1290,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--draft",
@@ -1315,7 +1315,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--command-id",
@@ -1328,7 +1328,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--command-id",
@@ -1341,7 +1341,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 },
                 {
                   "name": "--command-id",
@@ -1354,7 +1354,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 }
               ],
               "subcommands": [
@@ -1402,7 +1402,7 @@
               "options": [
                 {
                   "name": "--app",
-                  "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
+                  "help": "Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default"
                 }
               ],
               "subcommands": [
