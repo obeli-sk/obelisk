@@ -2239,7 +2239,8 @@ pub(crate) struct CloudStage {
     #[command(flatten)]
     pub(crate) draft: CloudDraft,
     /// Stage an existing deployment ID, or submit a deployment manifest and stage it;
-    /// otherwise the draft's deployment is kept.
+    /// otherwise the draft's deployment is kept. When the app does not exist yet,
+    /// defaults to ./deployment.toml.
     #[arg(short = 'd', long, value_name = "PATH|ID")]
     pub(crate) deployment: Option<DeploymentSource>,
     /// Submit an empty deployment with no components and stage it.

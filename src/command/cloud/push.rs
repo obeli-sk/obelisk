@@ -44,23 +44,30 @@ async fn push_with_prompt(
     };
     eprintln!("Pushing {name}");
     let step = |command: &str| crate::client::step(format_args!("→ obelisk cloud app {command}"));
-    let fill = values.fill || values.fill_non_interactive;
+    let interactive = values.fill;
+    // Set when this push created the app with its config and values, leaving only the deployment.
+    let mut created = None;
     let current = if let Some(current) = client.lookup_app(&name).await? {
         current
     } else {
-        if !fill {
-            // Refuse before creating the app when required values are missing.
-            collect_values(
-                &format!(
-                    "Retry with `--fill`, or `--fill-non-interactive` to read same-named environment variables, {STAGE_HINT}"
-                ),
-                &without(user_supplied_policy(&desired_config(&config)), &explicit),
-                &serde_json::Map::new(),
-                &[],
-                Values::Check,
-            )?;
+        // Creation applies app.toml and the values, so the apply below only switches the deployment.
+        let (report, pending) = collect_values(
+            &format!(
+                "Retry with `--fill`, or `--fill-non-interactive` to read same-named environment variables, {STAGE_HINT}"
+            ),
+            &without(user_supplied_policy(&desired_config(&config)), &explicit),
+            &serde_json::Map::new(),
+            &[],
+            Values::new(
+                values.fill,
+                values.fill_non_interactive,
+                prompt.as_mut().map(|p| p as Prompt),
+            )?,
+        )?;
+        let mut initial = json!({"env":{},"secrets":{}});
+        for (kind, value_name, value, _) in explicit.iter().cloned().chain(pending) {
+            initial[kind][value_name] = json!(value);
         }
-        // A bare app runs an empty deployment; the draft below configures it.
         let original_name = name.clone();
         eprintln!("App {name} does not exist; creating it");
         let current = loop {
@@ -69,8 +76,12 @@ async fn push_with_prompt(
                 .request(
                     Method::POST,
                     &["v1", "apps"],
-                    Some(json!({"app_toml":with_app_name("", &name)?})),
-                    Kind::Command(None),
+                    Some(json!({
+                        "app_toml": with_app_name(&config.text, &name)?,
+                        "env": initial["env"],
+                        "secrets": initial["secrets"],
+                    })),
+                    Kind::SecretCommand(None),
                 )
                 .await
             {
@@ -95,10 +106,10 @@ async fn push_with_prompt(
             )?;
             eprintln!("Updated app_name to {name} in {}", app_config.display());
         }
+        created = Some(json!({"declarations":report}));
         current
     };
     let config_text = with_app_name(&config.text, &name)?;
-    let interactive = values.fill;
     let values = Values::new(
         values.fill,
         values.fill_non_interactive,
@@ -114,24 +125,29 @@ async fn push_with_prompt(
     let draft = draft_id(&opened)?;
     // Values are checked before the upload; the deployment joins the draft once submitted.
     let staged = async {
-        let staged = client
-            .fenced(
-                &name,
-                &key,
-                draft,
-                Method::PUT,
-                &["config"],
-                Some(Body::Toml(config_text)),
-            )
-            .await?;
-        let (staged, filled) =
-            stage_values(&client, &name, &key, staged, explicit, values).await?;
-        let missing = output::draft_values(&staged, "missing");
-        ensure!(
-            missing.is_empty(),
-            "Missing values: {}. Pass them with `--env NAME[=VALUE]` or `--secret NAME`, retry with `--fill` or `--fill-non-interactive`, {STAGE_HINT}",
-            missing.join(", ")
-        );
+        let filled = if let Some(filled) = created.take() {
+            filled
+        } else {
+            let staged = client
+                .fenced(
+                    &name,
+                    &key,
+                    draft,
+                    Method::PUT,
+                    &["config"],
+                    Some(Body::Toml(config_text)),
+                )
+                .await?;
+            let (staged, filled) =
+                stage_values(&client, &name, &key, staged, explicit, values).await?;
+            let missing = output::draft_values(&staged, "missing");
+            ensure!(
+                missing.is_empty(),
+                "Missing values: {}. Pass them with `--env NAME[=VALUE]` or `--secret NAME`, retry with `--fill` or `--fill-non-interactive`, {STAGE_HINT}",
+                missing.join(", ")
+            );
+            filled
+        };
         optional_unset(&filled, interactive);
         let api_url = api_origin(
             current["endpoints"]["api"]
@@ -337,10 +353,10 @@ mod tests {
                     )
                         .into_response();
                 }
-                // The app starts bare; its configuration and values go to the draft.
-                assert_eq!(app["policy"], staged_config("app_name='demo'\n")["policy"]);
-                assert!(body.get("env").is_none() && body.get("secrets").is_none());
+                // Creation applies the app.toml and values; the push draft adds only the deployment.
                 state.drafts = MockDrafts::new(body["app_toml"].as_str().unwrap(), 1);
+                state.drafts.applied["env"] = body["env"].clone();
+                state.drafts.applied["secrets"] = body["secrets"].clone();
                 app["status"] = json!("running");
                 app["revision"] = json!(1);
                 app["applied_revision"] = json!(1);
@@ -597,13 +613,15 @@ mod tests {
                     state.calls.contains(&"POST /v1/apps".to_owned()),
                     matches!(scenario, "new" | "new-values" | "new-integration")
                 );
-                // A new app is created bare and configured through the same draft.
-                assert!(
+                // A new app is created with its config, so the draft carries only the deployment.
+                assert_eq!(
                     state
                         .calls
                         .iter()
                         .any(|call| call.starts_with("PUT /v1/apps/demo/drafts/push-")
-                            && call.ends_with("/config"))
+                            && call.ends_with("/config")),
+                    !scenario.starts_with("new"),
+                    "{scenario}"
                 );
                 // Applying consumes the proposal even when its contents are unchanged.
                 assert!(state.drafts.drafts.is_empty());

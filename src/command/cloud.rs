@@ -94,6 +94,8 @@ enum Kind {
     /// Error bodies are redacted; staged secret edits are not provisioner commands.
     Secret,
     Command(Option<ExecutionIdTopLevel>),
+    /// A command carrying secret values, so error bodies are redacted.
+    SecretCommand(Option<ExecutionIdTopLevel>),
 }
 impl From<CloudCommandId> for Kind {
     fn from(command_id: CloudCommandId) -> Self {
@@ -189,7 +191,7 @@ impl Client {
         if let Some(id) = draft_id {
             request = request.header(header::IF_MATCH, format!("\"draft-{id}\""));
         }
-        let command_id = if let Kind::Command(id) = kind {
+        let command_id = if let Kind::Command(id) | Kind::SecretCommand(id) = kind {
             let id = id.unwrap_or_else(ExecutionIdTopLevel::generate);
             crate::client::trace(format_args!("Cloud command execution ID: {id}"));
             request = request.header("Idempotency-Key", id.to_string());
@@ -293,6 +295,12 @@ impl Client {
                     .is_ok_and(|body| body["code"] == "app_name_taken")
             {
                 return Err(AppNameTaken.into());
+            }
+            if matches!(kind, Kind::SecretCommand(_)) {
+                bail!(
+                    "Cloud app creation failed: HTTP {status}. Command ID: {}",
+                    command_id.expect("Creation command ID")
+                );
             }
             if !self.verbose {
                 let message = output::error_message(&body);
@@ -2650,6 +2658,18 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("409"));
+        assert!(!error.to_string().contains("DO-NOT-ECHO-SECRET"));
+        let error = client
+            .request(
+                Method::POST,
+                &["v1", "apps"],
+                Some(json!({"app_name":"demo","secrets":{"KEY":"DO-NOT-ECHO-SECRET"}})),
+                Kind::SecretCommand(None),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("409"));
+        assert!(error.to_string().contains("Command ID"));
         assert!(!error.to_string().contains("DO-NOT-ECHO-SECRET"));
         state.lock().unwrap().error = false;
         state.lock().unwrap().redirect = true;

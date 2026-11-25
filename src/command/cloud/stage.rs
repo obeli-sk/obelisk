@@ -6,7 +6,7 @@ use crate::config::deployment::{
 
 pub(super) async fn stage(session: &Session, args: CloudStage) -> anyhow::Result<()> {
     let prompt = (terminal() && !session.json).then_some(ask);
-    stage_with_prompt(session, args, prompt).await
+    stage_with_prompt(session, args, prompt, Path::new("deployment.toml")).await
 }
 
 async fn stage_with_prompt(
@@ -21,6 +21,7 @@ async fn stage_with_prompt(
         description,
     }: CloudStage,
     mut prompt: Option<impl FnMut(&Question) -> anyhow::Result<String>>,
+    default_deployment: &Path,
 ) -> anyhow::Result<()> {
     let client = session.client()?;
     let config_path = discover_app_config(app_config)?;
@@ -50,7 +51,7 @@ async fn stage_with_prompt(
             || !explicit.is_empty(),
         "Nothing to stage: ./app.toml not found; pass --app-config, --deployment or values"
     );
-    let (prepared, existing) = match (deployment, empty_deployment) {
+    let (mut prepared, existing) = match (deployment, empty_deployment) {
         (Some(DeploymentSource::Id(id)), _) => (None, Some(id.to_string())),
         (Some(DeploymentSource::File(path)), _) => (
             Some(prepare_deployment_manifest_from_disk(&path).await?),
@@ -67,6 +68,14 @@ async fn stage_with_prompt(
             existing.is_none(),
             "App {name} does not exist, so it has no deployment to stage"
         );
+        // Applying the draft of a new app should bring up the whole app, not an empty deployment.
+        if prepared.is_none() {
+            ensure!(
+                default_deployment.is_file(),
+                "App {name} does not exist and ./deployment.toml was not found; pass `--deployment PATH` or `--empty-deployment`"
+            );
+            prepared = Some(prepare_deployment_manifest_from_disk(default_deployment).await?);
+        }
         // A bare app runs an empty deployment, so its API can receive the submission.
         eprintln!("App {name} does not exist; creating it");
         step("new");
@@ -258,22 +267,33 @@ mod tests {
     #[tokio::test]
     async fn stage_creates_a_missing_app_and_stages_its_deployment() {
         test_utils::set_up();
-        for scenario in ["new", "config-only", "empty", "id", "manifest-only"] {
+        for scenario in [
+            "new",
+            "new-default",
+            "new-without-deployment",
+            "config-only",
+            "empty",
+            "id",
+            "manifest-only",
+        ] {
             let directory = tempfile::tempdir().unwrap();
             let app_path = directory.path().join("app.toml");
             let deployment_path = directory.path().join("deployment.toml");
-            let config = if scenario == "new" {
+            let new = scenario.starts_with("new");
+            let config = if new {
                 "app_name='demo'\n[secrets]\nKEY={}\n"
             } else {
                 "app_name='demo'\n[cloud]\nmemory.mib=512\n"
             };
             std::fs::write(&app_path, config).unwrap();
-            std::fs::write(&deployment_path, "").unwrap();
+            if scenario != "new-without-deployment" {
+                std::fs::write(&deployment_path, "").unwrap();
+            }
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", listener.local_addr().unwrap());
             let existing = staged_config("app_name='demo'\n");
             let state = Arc::new(Mutex::new(Server {
-                app: (scenario != "new").then(|| {
+                app: (!new).then(|| {
                     let mut app = existing;
                     app["status"] = json!("running");
                     app["applied_revision"] = json!(1);
@@ -311,19 +331,26 @@ mod tests {
             else {
                 panic!("expected `app stage`")
             };
-            stage_with_prompt(
+            // A new app stages ./deployment.toml unless a deployment is given.
+            let result = stage_with_prompt(
                 &session,
                 stage_args,
                 None::<fn(&Question) -> anyhow::Result<String>>,
+                &deployment_path,
             )
-            .await
-            .unwrap();
+            .await;
+            if scenario == "new-without-deployment" {
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains("--empty-deployment"), "{error}");
+                // Nothing is created when there is nothing to deploy.
+                assert_eq!(state.lock().unwrap().calls, ["GET /v1/apps/demo"]);
+                task.abort();
+                continue;
+            }
+            result.unwrap();
             {
                 let state = state.lock().unwrap();
-                assert_eq!(
-                    state.calls.contains(&"POST /v1/apps".to_owned()),
-                    scenario == "new"
-                );
+                assert_eq!(state.calls.contains(&"POST /v1/apps".to_owned()), new);
                 assert!(!state.calls.iter().any(|call| call.ends_with("/apply")));
                 assert!(!state.calls.iter().any(|call| call.ends_with("/switch")));
                 let draft = state.drafts.drafts.get("default").unwrap();

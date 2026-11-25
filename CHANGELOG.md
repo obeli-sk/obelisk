@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which makes it the way to be sure no existing app is reused, e.g. in CI. It no longer takes `-a`,
   `--env`, `--secret`, `--fill` or `--fill-non-interactive`; configure the app with `cloud app stage`
   or `cloud app push`. A `push` refused for missing values suggests `stage`.
+- *(cloud)* `cloud app push` creates a missing app with its app.toml and values in one request,
+  so the apply only switches to the submitted deployment instead of reconfiguring a bare app.
+- *(cloud)* `cloud app stage` of a missing app also submits and stages `./deployment.toml` (or
+  `--deployment`/`--empty-deployment`), so applying the draft brings up the whole app; without a
+  deployment it fails before creating the app.
 
   
 ## [0.43.0-rc.20](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.19...v0.43.0-rc.20)
