@@ -1,22 +1,34 @@
 # Site health dashboard
 
 A cron schedule probes one website every 5 minutes, and a web page shows its uptime, latency
-history and the log of recent probes. It is built from three components:
+history and the log of recent probes.
 
-- `src/activity/check-url.js` performs one GET request. A network error throws, so Obelisk retries the
-  activity (`max_retries` in `deployment.toml`) before the workflow sees the error.
-- `src/workflow/check-site.js` is a durable workflow that runs the activity and returns the probed URL with
-  its outcome, recording an outage once the retries are exhausted. The `[[cron]]` entry in `deployment.toml` schedules it.
-- `src/webhook/dashboard.js` serves the page. `GET /api/status` lists recent workflow runs through the
-  Obelisk API and reads their results; `POST /api/check` schedules a probe right away.
+## Deploy to Obelisk Cloud
 
-Run it from this directory:
+Push from this directory.
+
+```sh
+obelisk cloud app push
+```
+
+Open the external server URL printed by the push. Select **Probe now** to run a check immediately.
+
+## Run locally
 
 ```sh
 obelisk server run --app-config app.toml --deployment deployment.toml
 ```
 
 Then open <http://localhost:9090/>.
+
+## Components
+
+- `src/activity/check-url.js` performs one GET request. A network error throws, so Obelisk retries the
+  activity (`max_retries` in `deployment.toml`) before the workflow sees the error.
+- `src/workflow/check-site.js` is a durable workflow that runs the activity and returns the probed URL with
+  its outcome, recording an outage once the retries are exhausted. The `[[cron]]` entry in `deployment.toml` schedules it.
+- `src/webhook/dashboard.js` serves the page. `GET /api/status` reads recent workflow results through the
+  Obelisk API. `POST /api/check` schedules a probe right away.
 
 ## Monitoring another site
 

@@ -4,13 +4,28 @@ The webhook in `src/webhook/handle.js` calls the durable workflow in `src/workfl
 The workflow uses the activity in `src/activity/fetch-status.js` to fetch `https://example.com/`
 and return its HTTP status code.
 
-Run it from this directory:
+## Deploy to Obelisk Cloud
+
+Push from this directory.
+
+```sh
+obelisk cloud app push
+```
+
+Call `/run` on the external server URL printed by the push. Replace the example
+hostname with your app's hostname.
+
+```sh
+curl https://my-app.obelisk.works/run
+```
+
+## Run locally
 
 ```sh
 obelisk server run --app-config app.toml --deployment deployment.toml
 ```
 
-Then, in another terminal:
+Call the webhook from another terminal.
 
 ```sh
 curl http://localhost:9090/run
