@@ -94,7 +94,6 @@ enum Kind {
     /// Error bodies are redacted; staged secret edits are not provisioner commands.
     Secret,
     Command(Option<ExecutionIdTopLevel>),
-    SecretCommand(Option<ExecutionIdTopLevel>),
 }
 impl From<CloudCommandId> for Kind {
     fn from(command_id: CloudCommandId) -> Self {
@@ -190,7 +189,7 @@ impl Client {
         if let Some(id) = draft_id {
             request = request.header(header::IF_MATCH, format!("\"draft-{id}\""));
         }
-        let command_id = if let Kind::Command(id) | Kind::SecretCommand(id) = kind {
+        let command_id = if let Kind::Command(id) = kind {
             let id = id.unwrap_or_else(ExecutionIdTopLevel::generate);
             crate::client::trace(format_args!("Cloud command execution ID: {id}"));
             request = request.header("Idempotency-Key", id.to_string());
@@ -294,12 +293,6 @@ impl Client {
                     .is_ok_and(|body| body["code"] == "app_name_taken")
             {
                 return Err(AppNameTaken.into());
-            }
-            if matches!(kind, Kind::SecretCommand(_)) {
-                bail!(
-                    "Cloud app creation failed: HTTP {status}. Command ID: {}",
-                    command_id.expect("Creation command ID")
-                );
             }
             if !self.verbose {
                 let message = output::error_message(&body);
@@ -865,52 +858,17 @@ async fn execute(session: &Session, command: Cloud) -> anyhow::Result<Value> {
             command:
                 CloudApp::New {
                     selected: SelectedApp { app },
-                    app_config,
-                    values,
                     command_id,
                 },
             ..
         }) => {
-            let config_path = discover_app_config(app_config)?;
-            let config = match &config_path {
-                Some((path, _)) => Some(policy(path).await?),
-                None => None,
-            };
-            let name = app_name(
-                app.as_deref()
-                    .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
-            )
-            .await?;
-            let config =
-                config_for_app(&name, config.zip(config_path), false)?.map(|(config, _)| config);
-            let explicit = explicit_values(&values)?;
-            ensure!(
-                !(values.fill || values.fill_non_interactive || !explicit.is_empty())
-                    || config.is_some(),
-                "Initial values require an app config"
-            );
-            let mut body = json!({"app_toml":with_app_name("", &name)?});
-            if let Some(config) = config {
-                body["app_toml"] = json!(config.text);
-                let mut ask = ask;
-                let values = initial_values(
-                    &user_supplied_policy(&desired_config(&config)),
-                    explicit,
-                    Values::new(
-                        values.fill,
-                        values.fill_non_interactive,
-                        terminal().then_some(&mut ask),
-                    )?,
-                )?;
-                body["env"] = values["env"].clone();
-                body["secrets"] = values["secrets"].clone();
-            }
+            let name = app_name(app.as_deref()).await?;
             client
                 .request(
                     Method::POST,
                     &["v1", "apps"],
-                    Some(body),
-                    Kind::SecretCommand(command_id.id),
+                    Some(json!({"app_toml":with_app_name("", &name)?})),
+                    Kind::Command(command_id.id),
                 )
                 .await
         }
@@ -1582,25 +1540,6 @@ fn collect_values(
         );
     }
     Ok((report, pending))
-}
-
-fn initial_values(
-    policy: &Value,
-    explicit: Vec<PendingValue>,
-    values: Values,
-) -> anyhow::Result<Value> {
-    let (_, pending) = collect_values(
-        "Retry with `--fill`, or `--fill-non-interactive` to read same-named environment variables",
-        &without(policy.clone(), &explicit),
-        &serde_json::Map::new(),
-        &[],
-        values,
-    )?;
-    let mut values = json!({"env":{},"secrets":{}});
-    for (kind, name, value, _) in explicit.into_iter().chain(pending) {
-        values[kind][name] = json!(value);
-    }
-    Ok(values)
 }
 
 #[cfg(test)]
@@ -2286,10 +2225,7 @@ mod tests {
         )
         .await
         .unwrap();
-        args(&origin, &["app", "new", "-a", path.to_str().unwrap()])
-            .execute()
-            .await
-            .unwrap();
+        args(&origin, &["app", "new"]).execute().await.unwrap();
         args(&origin, &["app", "stage", "-a", path.to_str().unwrap()])
             .dispatch()
             .await
@@ -2318,8 +2254,7 @@ mod tests {
         assert_eq!(received.len(), before_env + 4);
         let app_toml = std::fs::read_to_string(&path).unwrap();
         assert_eq!(received[0].0, "POST /prefix/v1/apps");
-        assert_eq!(received[0].1["app_toml"], app_toml);
-        assert!(received[0].1.get("policy").is_none());
+        assert_eq!(received[0].1, json!({"app_toml":"app_name = \"demo\"\n"}));
         // Stage looks the app up before staging, creating it only when missing.
         assert_eq!(received[1].0, "GET /prefix/v1/apps/demo");
         assert_eq!(received[2].0, "GET /prefix/v1/apps/demo/drafts/default");
@@ -2488,7 +2423,7 @@ mod tests {
         let path = directory.path().join("app.toml");
         tokio::fs::write(&path, "app_name='other'\n").await.unwrap();
         let path = path.to_str().unwrap();
-        for command in ["new", "status", "stage"] {
+        for command in ["status", "stage"] {
             let error = args(&origin, &["app", command, "-a", path])
                 .dispatch()
                 .await
@@ -2715,18 +2650,6 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("409"));
-        assert!(!error.to_string().contains("DO-NOT-ECHO-SECRET"));
-        let error = client
-            .request(
-                Method::POST,
-                &["v1", "apps"],
-                Some(json!({"app_name":"demo","secrets":{"KEY":"DO-NOT-ECHO-SECRET"}})),
-                Kind::SecretCommand(None),
-            )
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("409"));
-        assert!(error.to_string().contains("Command ID"));
         assert!(!error.to_string().contains("DO-NOT-ECHO-SECRET"));
         state.lock().unwrap().error = false;
         state.lock().unwrap().redirect = true;

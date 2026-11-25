@@ -125,7 +125,7 @@ fn server_and_cloud_enforce_the_same_app_names() {
 }
 
 #[tokio::test]
-async fn cloud_new_and_stage_load_local_policy() {
+async fn cloud_new_creates_bare_app_and_stage_loads_local_policy() {
     use axum::{Json, body::Bytes, routing::any};
     use serde_json::{Value, json};
     use std::sync::{Arc, Mutex};
@@ -185,23 +185,10 @@ async fn cloud_new_and_stage_load_local_policy() {
             }
             command.output().unwrap()
         };
-        for (args, error) in [
-            (
-                &["app", "new"][..],
-                "env REGION. Retry with `--fill`, or `--fill-non-interactive`",
-            ),
-            (&["app", "new", "--fill"], "`--fill` requires a terminal"),
-            (
-                &["app", "new", "--fill-non-interactive"],
-                "env REGION. Set them as environment variables",
-            ),
-        ] {
-            let output = run(args, None);
-            assert!(!output.status.success());
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(stderr.contains(error), "{stderr}");
-        }
-        assert_success(&run(&["app", "new", "--fill-non-interactive"], Some("eu")));
+        // Required values do not block creating a bare app.
+        assert_success(&run(&["app", "new"], None));
+        let output = run(&["app", "new", "--fill"], None);
+        assert!(!output.status.success());
         assert_success(&run(&["app", "stage"], None));
     })
     .await
@@ -210,9 +197,10 @@ async fn cloud_new_and_stage_load_local_policy() {
     assert_eq!(requests.len(), 4);
     assert_eq!(requests[0].0, "POST");
     assert_eq!(requests[0].1, "/v1/apps");
+    // Only the name is taken from ./app.toml.
     assert_eq!(
         requests[0].2,
-        json!({"app_toml":app_toml,"env":{"REGION":"eu"},"secrets":{}})
+        json!({"app_toml":"app_name = \"local-app\"\n"})
     );
     // Stage looks the app up first; the mock answers, so it is not created again.
     assert_eq!(requests[1].0, "GET");

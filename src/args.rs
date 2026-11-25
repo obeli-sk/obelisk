@@ -2093,15 +2093,10 @@ pub(crate) enum CloudApp {
         #[command(subcommand)]
         command: CloudDb,
     },
-    /// Create a stopped app; apply explicitly to start it.
+    /// Create a bare app, failing when the name exists; configure it with `stage` or `push`.
     New {
         #[command(flatten)]
         selected: SelectedApp,
-        /// App config path; defaults to ./app.toml if present.
-        #[arg(short = 'a', long)]
-        app_config: Option<PathBuf>,
-        #[command(flatten)]
-        values: CloudValues,
         #[command(flatten)]
         command_id: CloudCommandId,
     },

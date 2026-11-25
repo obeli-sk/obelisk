@@ -3,6 +3,8 @@ use crate::config::deployment::{
     PreparedDeploymentManifest, prepare_deployment_manifest_from_disk,
 };
 
+const STAGE_HINT: &str = "or run `obelisk cloud app stage` to stage app.toml in the default draft, creating a missing app, then fill the values from the CLI or dashboard and run `obelisk cloud app apply`";
+
 pub(super) async fn push(session: &Session, args: CloudPush) -> anyhow::Result<()> {
     let prompt = (terminal() && !session.json).then_some(ask);
     push_with_prompt(session, args, prompt).await
@@ -48,9 +50,13 @@ async fn push_with_prompt(
     } else {
         if !fill {
             // Refuse before creating the app when required values are missing.
-            initial_values(
-                &user_supplied_policy(&desired_config(&config)),
-                explicit.clone(),
+            collect_values(
+                &format!(
+                    "Retry with `--fill`, or `--fill-non-interactive` to read same-named environment variables, {STAGE_HINT}"
+                ),
+                &without(user_supplied_policy(&desired_config(&config)), &explicit),
+                &serde_json::Map::new(),
+                &[],
                 Values::Check,
             )?;
         }
@@ -123,7 +129,7 @@ async fn push_with_prompt(
         let missing = output::draft_values(&staged, "missing");
         ensure!(
             missing.is_empty(),
-            "Missing values: {}. Pass them with `--env NAME[=VALUE]` or `--secret NAME`, or retry with `--fill` or `--fill-non-interactive`",
+            "Missing values: {}. Pass them with `--env NAME[=VALUE]` or `--secret NAME`, retry with `--fill` or `--fill-non-interactive`, {STAGE_HINT}",
             missing.join(", ")
         );
         optional_unset(&filled, interactive);

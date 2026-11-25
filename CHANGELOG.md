@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** *(server)* Outbound HTTP requests that set an `Obelisk-Int-*` header are denied, with an
   `outbound_http.denied` system event whose `rejected_by` is `reserved_header`. The prefix is
   reserved for headers Obelisk sends to integrations.
+- **Breaking:** *(cloud)* `cloud app new` only creates a bare app and fails when the name exists,
+  which makes it the way to be sure no existing app is reused, e.g. in CI. It no longer takes `-a`,
+  `--env`, `--secret`, `--fill` or `--fill-non-interactive`; configure the app with `cloud app stage`
+  or `cloud app push`. A `push` refused for missing values suggests `stage`.
 
   
 ## [0.43.0-rc.20](https://github.com/obeli-sk/obelisk/compare/v0.43.0-rc.19...v0.43.0-rc.20)
