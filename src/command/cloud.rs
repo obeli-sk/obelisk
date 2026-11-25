@@ -393,7 +393,13 @@ impl Client {
             .await
     }
     async fn events(&self, name: &str, limit: u8) -> anyhow::Result<Value> {
-        let mut url = self.url(&["v1", "apps", name, "events"])?;
+        self.events_at(&["v1", "apps", name, "events"], limit).await
+    }
+    async fn account_events(&self, limit: u8) -> anyhow::Result<Value> {
+        self.events_at(&["v1", "account", "events"], limit).await
+    }
+    async fn events_at(&self, path: &[&str], limit: u8) -> anyhow::Result<Value> {
+        let mut url = self.url(path)?;
         url.query_pairs_mut()
             .append_pair("limit", &limit.to_string());
         let response = self
@@ -704,6 +710,8 @@ impl CloudArgs {
             Cloud::Auth(command) => return auth::run(command, self.json, self.verbose).await,
             Cloud::Token(ref mut args) => &mut args.credentials,
             Cloud::App(ref mut args) => &mut args.credentials,
+            Cloud::Status(ref mut args) => &mut args.credentials,
+            Cloud::Events(ref mut args) => &mut args.credentials,
         };
         self.api_token = credentials.api_token.take();
         self.account = credentials.account.take();
@@ -839,6 +847,12 @@ async fn execute(session: &Session, command: Cloud) -> anyhow::Result<Value> {
     match command {
         Cloud::Auth(_) => unreachable!("handled in run"),
         Cloud::Token(args) => token_command(&client, args.command).await,
+        Cloud::Status(_) => {
+            client
+                .request(Method::GET, &["v1", "account"], None, Kind::Read)
+                .await
+        }
+        Cloud::Events(args) => client.account_events(args.limit).await,
         Cloud::App(CloudAppTarget {
             command: CloudApp::List,
             ..

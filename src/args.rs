@@ -1966,6 +1966,25 @@ pub(crate) enum Cloud {
     Token(CloudTokenArgs),
     /// List apps or manage one and its deployments, executions and configuration.
     App(CloudAppTarget),
+    /// Show the account's plan, any hold stopping its apps, this month's allowances and its apps.
+    Status(CloudStatusArgs),
+    /// List recent account events, such as allowance warnings and holds, newest first.
+    Events(CloudEventsArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct CloudStatusArgs {
+    #[command(flatten)]
+    pub(crate) credentials: CloudCredentials,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct CloudEventsArgs {
+    #[command(flatten)]
+    pub(crate) credentials: CloudCredentials,
+    /// Number of events to show.
+    #[arg(short = 'n', long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=50))]
+    pub(crate) limit: u8,
 }
 
 #[derive(Debug, clap::Subcommand)]
