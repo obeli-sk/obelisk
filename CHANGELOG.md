@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(server)* `[integrations] origins` in `server.toml` lists platform origins that receive the
   calling activity's or webhook's execution ID in the `Obelisk-Int-Execution-Id` request header.
   Origins match on scheme, host and port.
+- *(cloud)* `cloud status` shows the account's plan, a hold stopping its apps, this month's
+  allowances and the apps' states. `cloud events` lists recent account events, such as allowance
+  warnings and holds, newest first.
 
 ### Changed
 

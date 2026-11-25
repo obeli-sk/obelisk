@@ -9,6 +9,7 @@ pub(super) enum Summary {
     Apps,
     Lifecycle,
     Status,
+    Account,
     Events,
     /// The limit when paging forward from `--since`.
     Logs(Option<u16>),
@@ -25,6 +26,8 @@ impl From<&Cloud> for Summary {
     fn from(command: &Cloud) -> Self {
         match command {
             Cloud::Auth(_) => unreachable!("command has its own output"),
+            Cloud::Status(_) => Self::Account,
+            Cloud::Events(_) => Self::Events,
             Cloud::Token(CloudTokenArgs {
                 command: CloudToken::List,
                 ..
@@ -157,6 +160,7 @@ impl Summary {
                 };
                 endpoints(&mut out, &value["app"]["endpoints"], api);
             }
+            Self::Account => account(&mut out, value),
             Self::Events => {
                 if let Some(events) = value["events"]
                     .as_array()
@@ -439,6 +443,103 @@ pub(super) fn endpoints(out: &mut String, endpoints: &Value, api: &str) {
     }
 }
 
+/// Plan, hold, apps, this month's allowances and the latest events.
+fn account(out: &mut String, value: &Value) {
+    let plan = &value["plan"];
+    let _ = writeln!(
+        out,
+        "{} plan, ${} per month",
+        text(plan, "name", "Unknown"),
+        plan["price_usd"]
+    );
+    if !value["hold"].is_null() {
+        let _ = writeln!(
+            out,
+            "Apps stopped: {}",
+            text(&value["hold"], "message", "the account is on hold")
+        );
+    }
+    let apps = value["apps"].as_array().map_or(&[][..], Vec::as_slice);
+    let _ = writeln!(out, "\nApps ({} of {}):", apps.len(), value["apps_allowed"]);
+    if apps.is_empty() {
+        out.push_str("  none\n");
+    }
+    for app in apps {
+        let status = if app["enabled"] == false && app["status"] != "deleting" {
+            "disabled"
+        } else {
+            text(app, "status", "unknown")
+        };
+        let _ = writeln!(out, "  {}: {status}", text(app, "app_name", "?"));
+    }
+    out.push_str("\nAllowances this month:\n");
+    for budget in value["budgets"].as_array().map_or(&[][..], Vec::as_slice) {
+        let kind = text(budget, "kind", "");
+        let (used, allowance) = (
+            budget["used"].as_f64().unwrap_or(0.0),
+            budget["allowance"].as_f64().unwrap_or(0.0),
+        );
+        let percent = if allowance > 0.0 {
+            used / allowance * 100.0
+        } else {
+            0.0
+        };
+        let _ = write!(
+            out,
+            "  {:<16} {} of {} ({percent:.0}%",
+            allowance_label(kind),
+            quantity(kind, used),
+            quantity(kind, allowance)
+        );
+        let _ = match text(budget, "state", "ok") {
+            "ok" => writeln!(out, ")"),
+            state => writeln!(out, ", {state})"),
+        };
+    }
+    if let Some(events) = value["events"].as_array().filter(|e| !e.is_empty()) {
+        out.push_str("\nRecent events:\n");
+        for event in events {
+            let _ = writeln!(
+                out,
+                "  {}  {:<5}  {}",
+                time(&event["created_at"]),
+                text(event, "level", ""),
+                text(event, "message", "")
+            );
+        }
+    }
+}
+
+fn allowance_label(kind: &str) -> &str {
+    match kind {
+        "memory_gb_hours" => "Memory",
+        "vcpu_hours" => "vCPU",
+        "llm" => "LLM",
+        "storage_class_a" => "Writes and lists",
+        "storage_class_b" => "Reads",
+        "stored_bytes" => "Stored data",
+        "transfer_bytes" => "Transfer",
+        other => other,
+    }
+}
+
+fn quantity(kind: &str, value: f64) -> String {
+    match kind {
+        "memory_gb_hours" => format!("{value:.1} GB·h"),
+        "vcpu_hours" => format!("{value:.1} vCPU·h"),
+        "llm" => format!("${value:.2}"),
+        "stored_bytes" | "transfer_bytes" => {
+            let gib = value / f64::from(1u32 << 30);
+            if gib >= 1.0 {
+                format!("{gib:.2} GiB")
+            } else {
+                format!("{:.1} MiB", value / f64::from(1u32 << 20))
+            }
+        }
+        _ => format!("{value:.0}"),
+    }
+}
+
 fn app(out: &mut String, value: &Value) {
     app_with_note(out, value, None);
 }
@@ -706,6 +807,36 @@ mod tests {
         assert_eq!(
             Summary::Events.render(&json!({"events":[]})),
             "No events.\n"
+        );
+    }
+
+    #[test]
+    fn account_status_lists_hold_apps_and_allowances() {
+        let out = Summary::Account.render(&json!({
+            "plan":{"name":"Hobby","price_usd":15},"apps_allowed":4,
+            "hold":{"reason":"budget.storage_class_a","message":"Writes and lists used up.","created_at":1},
+            "from":0,"to":0,
+            "budgets":[
+                {"kind":"storage_class_a","allowance":400_000,"used":400_100,"state":"exhausted"},
+                {"kind":"llm","allowance":4.5,"used":1.2,"state":"ok"},
+                {"kind":"stored_bytes","allowance":5_368_709_120_u64,"used":104_857_600,"state":"ok"}],
+            "apps":[{"app_name":"demo","status":"stopped","enabled":true},{"app_name":"old","status":"stopped","enabled":false}],
+            "events":[{"event_id":1,"created_at":1_762_180_000_000_u64,"level":"info","code":"account.hold.applied","message":"Apps stopped"}]
+        }));
+        assert_eq!(
+            out,
+            "Hobby plan, $15 per month\n\
+             Apps stopped: Writes and lists used up.\n\
+             \n\
+             Apps (2 of 4):\n  demo: stopped\n  old: disabled\n\
+             \n\
+             Allowances this month:\n\
+             \x20 Writes and lists 400100 of 400000 (100%, exhausted)\n\
+             \x20 LLM              $1.20 of $4.50 (27%)\n\
+             \x20 Stored data      100.0 MiB of 5.00 GiB (2%)\n\
+             \n\
+             Recent events:\n\
+             \x20 2025-11-03 14:26:40 UTC  info   Apps stopped\n"
         );
     }
 
