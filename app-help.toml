@@ -4,6 +4,7 @@
 ## Missing required inputs fail at startup so executions do not discover them at runtime.
 ## Required app name; it selects the default SQLite directory. `OBELISK_APP_NAME`, when set, must match.
 ## Names use 4-25 lowercase ASCII letters, digits, or interior hyphens.
+## Interior underscores work locally only; `cloud app push` requires renaming such an app.
 app_name = "my-app"
 
 ## `http_server` names from server.toml that may serve webhooks without credentials.

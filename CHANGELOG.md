@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(server)* A local `app_name` may contain interior underscores, e.g. `demo_agent`. Cloud app names
+  stay DNS labels, so a template can use an underscore to work locally while forcing a rename
+  (in app.toml or with `--app`) before `cloud app push`.
 - **Breaking:** *(server)* Outbound HTTP requests that set an `Obelisk-Int-*` header are denied, with an
   `outbound_http.denied` system event whose `rejected_by` is `reserved_header`. The prefix is
   reserved for headers Obelisk sends to integrations.

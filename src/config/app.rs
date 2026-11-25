@@ -30,7 +30,7 @@ pub(crate) fn resolve_app_config(
 pub(crate) struct AppConfigToml {
     #[schemars(
         length(min = 4, max = 25),
-        regex(pattern = "^[a-z0-9][a-z0-9-]{2,23}[a-z0-9]$")
+        regex(pattern = "^[a-z0-9][a-z0-9_-]{2,23}[a-z0-9]$")
     )]
     pub(crate) app_name: String,
     #[serde(default)]
@@ -115,15 +115,28 @@ enum AppPolicyFormatV1 {
     V1,
 }
 
+fn is_app_name(name: &str, interior: impl Fn(u8) -> bool) -> bool {
+    let edge = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    (4..=25).contains(&name.len())
+        && name.bytes().next().is_some_and(edge)
+        && name.bytes().last().is_some_and(edge)
+        && name.bytes().all(|b| edge(b) || interior(b))
+}
+
+/// Cloud app names and generated names: a DNS label.
 pub(crate) fn validate_app_name(name: &str) -> anyhow::Result<()> {
     ensure!(
-        (4..=25).contains(&name.len())
-            && !name.starts_with('-')
-            && !name.ends_with('-')
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+        is_app_name(name, |b| b == b'-'),
         "invalid app name `{name}`: expected a DNS label (4-25 lowercase ASCII letters, digits, or interior hyphens)"
+    );
+    Ok(())
+}
+
+/// Local servers also accept interior underscores, which templates use to force a rename before a cloud push.
+pub(crate) fn validate_local_app_name(name: &str) -> anyhow::Result<()> {
+    ensure!(
+        is_app_name(name, |b| b == b'-' || b == b'_'),
+        "invalid app name `{name}`: expected 4-25 lowercase ASCII letters, digits, or interior hyphens or underscores"
     );
     Ok(())
 }
@@ -170,7 +183,7 @@ impl AppConfigToml {
         let name = std::env::var("OBELISK_APP_NAME").context(
             "app name is required: pass --app-config, create ./app.toml or set `OBELISK_APP_NAME`",
         )?;
-        validate_app_name(&name)?;
+        validate_local_app_name(&name)?;
         Ok(Self::with_name(name))
     }
 
@@ -250,7 +263,7 @@ impl AppConfigToml {
     }
     /// Validates `app_name`; `OBELISK_APP_NAME`, when set, must select the same app.
     pub(crate) fn verify_app_name(&self) -> anyhow::Result<()> {
-        validate_app_name(&self.app_name)?;
+        validate_local_app_name(&self.app_name)?;
         if let Ok(env) = std::env::var("OBELISK_APP_NAME") {
             ensure!(
                 env == self.app_name,
