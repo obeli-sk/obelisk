@@ -1908,7 +1908,7 @@ pub(crate) struct CloudAppTarget {
 
 #[derive(Debug, clap::Args)]
 pub(crate) struct SelectedApp {
-    /// Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config.
+    /// Selected cloud app name (4-20 characters, no double hyphens); overrides `app_name` of the app config, which is the default.
     #[arg(long, global = true, env = "OBELISK_APP_NAME", value_name = "NAME")]
     pub(crate) app: Option<String>,
 }

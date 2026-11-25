@@ -24,7 +24,7 @@ async fn stage_with_prompt(
     default_deployment: &Path,
 ) -> anyhow::Result<()> {
     let client = session.client()?;
-    let config_path = discover_app_config(app_config)?;
+    let config_path = crate::config::app::resolve_app_config(app_config)?;
     // Like push, ./deployment.toml is staged by default; without it the draft's deployment is kept.
     let deployment = match deployment {
         None if !empty_deployment && default_deployment.is_file() => {
@@ -39,15 +39,10 @@ async fn stage_with_prompt(
         "`--description` requires a deployment manifest or `--empty-deployment`"
     );
     let config = match &config_path {
-        Some((path, _)) => Some(policy(path).await?),
+        Some(path) => Some(policy(path).await?),
         None => None,
     };
-    let name = app_name(
-        app.as_deref()
-            .or_else(|| config.as_ref().map(|c| c.app_name.as_str())),
-    )
-    .await?;
-    let config = config_for_app(&name, config.zip(config_path), false)?;
+    let (name, config) = select_app(app.as_deref(), config.zip(config_path), false).await?;
     let explicit = explicit_values(&values)?;
     ensure!(
         config.is_some()
