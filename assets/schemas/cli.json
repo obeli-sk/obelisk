@@ -1192,7 +1192,7 @@
                 {
                   "name": "--deployment",
                   "short": "d",
-                  "help": "Stage an existing deployment ID, or submit a deployment manifest and stage it; otherwise the draft's deployment is kept. When the app does not exist yet, defaults to ./deployment.toml"
+                  "help": "Stage an existing deployment ID, or submit a deployment manifest and stage it; defaults to ./deployment.toml if present, otherwise the draft's deployment is kept"
                 },
                 {
                   "name": "--empty-deployment",

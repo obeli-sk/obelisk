@@ -25,6 +25,13 @@ async fn stage_with_prompt(
 ) -> anyhow::Result<()> {
     let client = session.client()?;
     let config_path = discover_app_config(app_config)?;
+    // Like push, ./deployment.toml is staged by default; without it the draft's deployment is kept.
+    let deployment = match deployment {
+        None if !empty_deployment && default_deployment.is_file() => {
+            Some(DeploymentSource::File(default_deployment.to_owned()))
+        }
+        deployment => deployment,
+    };
     ensure!(
         description.is_none()
             || matches!(deployment, Some(DeploymentSource::File(_)))
@@ -49,9 +56,9 @@ async fn stage_with_prompt(
             || values.fill
             || values.fill_non_interactive
             || !explicit.is_empty(),
-        "Nothing to stage: ./app.toml not found; pass --app-config, --deployment or values"
+        "Nothing to stage: ./app.toml and ./deployment.toml not found; pass --app-config, --deployment or values"
     );
-    let (mut prepared, existing) = match (deployment, empty_deployment) {
+    let (prepared, existing) = match (deployment, empty_deployment) {
         (Some(DeploymentSource::Id(id)), _) => (None, Some(id.to_string())),
         (Some(DeploymentSource::File(path)), _) => (
             Some(prepare_deployment_manifest_from_disk(&path).await?),
@@ -69,13 +76,10 @@ async fn stage_with_prompt(
             "App {name} does not exist, so it has no deployment to stage"
         );
         // Applying the draft of a new app should bring up the whole app, not an empty deployment.
-        if prepared.is_none() {
-            ensure!(
-                default_deployment.is_file(),
-                "App {name} does not exist and ./deployment.toml was not found; pass `--deployment PATH` or `--empty-deployment`"
-            );
-            prepared = Some(prepare_deployment_manifest_from_disk(default_deployment).await?);
-        }
+        ensure!(
+            prepared.is_some(),
+            "App {name} does not exist and ./deployment.toml was not found; pass `--deployment PATH` or `--empty-deployment`"
+        );
         // A bare app runs an empty deployment, so its API can receive the submission.
         eprintln!("App {name} does not exist; creating it");
         step("new");
@@ -272,6 +276,7 @@ mod tests {
             "new-default",
             "new-without-deployment",
             "config-only",
+            "existing-default",
             "empty",
             "id",
             "manifest-only",
@@ -286,7 +291,8 @@ mod tests {
                 "app_name='demo'\n[cloud]\nmemory.mib=512\n"
             };
             std::fs::write(&app_path, config).unwrap();
-            if scenario != "new-without-deployment" {
+            // Without ./deployment.toml an existing app keeps the draft's deployment.
+            if !matches!(scenario, "new-without-deployment" | "config-only") {
                 std::fs::write(&deployment_path, "").unwrap();
             }
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -331,7 +337,7 @@ mod tests {
             else {
                 panic!("expected `app stage`")
             };
-            // A new app stages ./deployment.toml unless a deployment is given.
+            // ./deployment.toml is staged unless a deployment is given, as with push.
             let result = stage_with_prompt(
                 &session,
                 stage_args,
