@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 
 pub(super) enum Summary {
     App(&'static str),
-    Apps,
+    AppsList,
     Lifecycle,
     Status,
     Account,
@@ -47,7 +47,7 @@ impl From<&Cloud> for Summary {
             Cloud::App(CloudAppTarget {
                 command: CloudApp::List,
                 ..
-            }) => Self::Apps,
+            }) => Self::AppsList,
             Cloud::App(CloudAppTarget { command, .. }) => {
                 let key = match command {
                     CloudApp::Unstage { draft, .. }
@@ -121,13 +121,13 @@ impl Summary {
                 let _ = writeln!(out, "{}", lifecycle_outcome(value));
                 app(&mut out, value);
             }
-            Self::Apps => {
+            Self::AppsList => {
                 if let Some(apps) = value["apps"].as_array().filter(|apps| !apps.is_empty()) {
                     for value in apps {
                         app(&mut out, value);
                     }
                 } else {
-                    out.push_str("No apps. Run `obelisk cloud app new` to create one.\n");
+                    out.push_str("No apps.\n");
                 }
             }
             Self::Status => {

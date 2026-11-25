@@ -1105,35 +1105,11 @@
             },
             {
               "name": "new",
-              "about": "Create a stopped app; apply explicitly to start it",
+              "about": "Create and start a bare app running an empty deployment, failing when the name exists; configure it with `stage` or `push`",
               "options": [
                 {
                   "name": "--app",
                   "help": "Selected cloud app name (4-20 characters, no double hyphens); defaults to `app_name` in the app config"
-                },
-                {
-                  "name": "--app-config",
-                  "short": "a",
-                  "help": "App config path; defaults to ./app.toml if present",
-                  "accepts": {
-                    "path": true
-                  }
-                },
-                {
-                  "name": "--env",
-                  "help": "Set an env var to VALUE, or to the same-named environment variable when only NAME is given"
-                },
-                {
-                  "name": "--secret",
-                  "help": "Set a secret from the same-named environment variable"
-                },
-                {
-                  "name": "--fill",
-                  "help": "Prompt for the remaining declared env vars and secrets; requires a terminal"
-                },
-                {
-                  "name": "--fill-non-interactive",
-                  "help": "Read the remaining declared env vars and secrets from same-named environment variables"
                 },
                 {
                   "name": "--command-id",
@@ -1216,7 +1192,7 @@
                 {
                   "name": "--deployment",
                   "short": "d",
-                  "help": "Stage an existing deployment ID, or submit a deployment manifest and stage it; otherwise the draft's deployment is kept"
+                  "help": "Stage an existing deployment ID, or submit a deployment manifest and stage it; defaults to ./deployment.toml if present, otherwise the draft's deployment is kept"
                 },
                 {
                   "name": "--empty-deployment",
