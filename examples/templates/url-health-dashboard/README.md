@@ -3,11 +3,11 @@
 A cron schedule probes one website every 5 minutes, and a web page shows its uptime, latency
 history and the log of recent probes. It is built from three components:
 
-- `activity/check-url.js` performs one GET request. A network error throws, so Obelisk retries the
+- `src/activity/check-url.js` performs one GET request. A network error throws, so Obelisk retries the
   activity (`max_retries` in `deployment.toml`) before the workflow sees the error.
-- `workflow/check-site.js` is a durable workflow that runs the activity and returns the probed URL with
+- `src/workflow/check-site.js` is a durable workflow that runs the activity and returns the probed URL with
   its outcome, recording an outage once the retries are exhausted. The `[[cron]]` entry in `deployment.toml` schedules it.
-- `webhook/dashboard.js` serves the page. `GET /api/status` lists recent workflow runs through the
+- `src/webhook/dashboard.js` serves the page. `GET /api/status` lists recent workflow runs through the
   Obelisk API and reads their results; `POST /api/check` schedules a probe right away.
 
 Run it from this directory:

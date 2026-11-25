@@ -1,6 +1,6 @@
 [[activity_js]]
 name = "check_url"
-location = "activity/check-url.js"
+location = "src/activity/check-url.js"
 ffqn = "starter:app/activity.check-url"
 params = [{ name = "url", type = "string" }]
 return_type = """result<record {
@@ -21,7 +21,7 @@ methods = ["GET"]
 
 [[workflow_js]]
 name = "check_site"
-location = "workflow/check-site.js"
+location = "src/workflow/check-site.js"
 ffqn = "starter:app/workflow.check-site"
 params = [{ name = "url", type = "string" }]
 return_type = """result<record {
@@ -40,7 +40,7 @@ return_type = """result<record {
 [[webhook_endpoint_js]]
 name = "dashboard"
 http_server = "external"
-location = "webhook/dashboard.js"
+location = "src/webhook/dashboard.js"
 env_vars = [
   { key = "TARGET_URL", value = "https://example.com/" },
   "OBELISK_API_URL",

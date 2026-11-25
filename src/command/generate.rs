@@ -50,17 +50,17 @@ impl StarterTemplate {
             StarterTemplate::UrlHealthDashboard => starter_files!("url-health-dashboard":
                 "app.toml",
                 "deployment.toml",
-                "activity/check-url.js",
-                "workflow/check-site.js",
-                "webhook/dashboard.js",
+                "src/activity/check-url.js",
+                "src/workflow/check-site.js",
+                "src/webhook/dashboard.js",
                 "README.md",
             ),
             StarterTemplate::Minimal => starter_files!("minimal":
                 "app.toml",
                 "deployment.toml",
-                "activity/fetch-status.js",
-                "workflow/run.js",
-                "webhook/handle.js",
+                "src/activity/fetch-status.js",
+                "src/workflow/run.js",
+                "src/webhook/handle.js",
                 "README.md",
             ),
         }
@@ -1322,6 +1322,7 @@ mod tests {
         generate_openapi_schema, generate_server_audit_schema, generate_server_config_schema,
         split_config, write_wit_deps,
     };
+    use crate::config::deployment::prepare_deployment_manifest_from_disk;
     use concepts::PkgFqn;
     use hashbrown::HashMap;
     use std::path::PathBuf;
@@ -1337,12 +1338,16 @@ mod tests {
         let app = std::fs::read_to_string(directory.join("app.toml")).unwrap();
         let parsed: crate::config::app::AppConfigToml = toml::from_str(&app).unwrap();
         assert_eq!(parsed.app_name, "my-cool-app");
-        let deployment = std::fs::read_to_string(directory.join("deployment.toml")).unwrap();
+        let deployment_path = directory.join("deployment.toml");
+        let deployment = std::fs::read_to_string(&deployment_path).unwrap();
         assert!(deployment.contains("starter:app/activity.check-url"));
-        assert!(directory.join("activity/check-url.js").exists());
-        assert!(directory.join("workflow/check-site.js").exists());
-        assert!(directory.join("webhook/dashboard.js").exists());
+        assert!(directory.join("src/activity/check-url.js").is_file());
+        assert!(directory.join("src/workflow/check-site.js").is_file());
+        assert!(directory.join("src/webhook/dashboard.js").is_file());
         assert!(directory.join("README.md").exists());
+        prepare_deployment_manifest_from_disk(&deployment_path)
+            .await
+            .unwrap();
         assert!(
             generate_new(&directory, None, StarterTemplate::default())
                 .await
@@ -1353,16 +1358,21 @@ mod tests {
             app
         );
 
-        generate_new(root.path(), Some("chosen-app"), StarterTemplate::default())
+        generate_new(root.path(), Some("chosen-app"), StarterTemplate::Minimal)
             .await
             .unwrap();
         let new_directory = root.path().join("chosen-app");
         let named_app = std::fs::read_to_string(new_directory.join("app.toml")).unwrap();
         assert!(named_app.starts_with("app_name = \"chosen-app\""));
-        assert!(new_directory.join("webhook/dashboard.js").exists());
+        assert!(new_directory.join("src/activity/fetch-status.js").is_file());
+        assert!(new_directory.join("src/workflow/run.js").is_file());
+        assert!(new_directory.join("src/webhook/handle.js").is_file());
+        prepare_deployment_manifest_from_disk(&new_directory.join("deployment.toml"))
+            .await
+            .unwrap();
         assert!(!root.path().join("app.toml").exists());
         assert!(
-            generate_new(root.path(), Some("chosen-app"), StarterTemplate::default())
+            generate_new(root.path(), Some("chosen-app"), StarterTemplate::Minimal)
                 .await
                 .is_err()
         );
@@ -1416,7 +1426,7 @@ mod tests {
                 assert_ne!(parsed.app_name, name);
                 assert!(parsed.app_name.contains('-'));
                 assert!(directory.join("deployment.toml").exists());
-                assert!(directory.join("webhook/dashboard.js").exists());
+                assert!(directory.join("src/webhook/dashboard.js").is_file());
             }
         }
     }

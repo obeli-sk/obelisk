@@ -1,7 +1,8 @@
 # JavaScript HTTP starter
 
-This app has one webhook, one durable workflow, and one HTTP activity. The webhook calls the
-workflow, which asks the activity to GET `https://example.com/` and returns its status code.
+The webhook in `src/webhook/handle.js` calls the durable workflow in `src/workflow/run.js`.
+The workflow uses the activity in `src/activity/fetch-status.js` to fetch `https://example.com/`
+and return its HTTP status code.
 
 Run it from this directory:
 
