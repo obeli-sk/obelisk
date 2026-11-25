@@ -1,6 +1,6 @@
 [[activity_js]]
 name = "fetch_status"
-location = "activity/fetch-status.js"
+location = "src/activity/fetch-status.js"
 ffqn = "starter:app/activity.fetch-status"
 params = []
 return_type = "result<u32, string>"
@@ -11,7 +11,7 @@ methods = ["GET"]
 
 [[workflow_js]]
 name = "run"
-location = "workflow/run.js"
+location = "src/workflow/run.js"
 ffqn = "starter:app/workflow.run"
 params = []
 return_type = "result<u32, string>"
@@ -19,5 +19,5 @@ return_type = "result<u32, string>"
 [[webhook_endpoint_js]]
 name = "webhook"
 http_server = "external"
-location = "webhook/handle.js"
+location = "src/webhook/handle.js"
 routes = [{ methods = ["GET"], route = "/run" }]
