@@ -82,7 +82,7 @@ fn server_app_discovery_preserves_explicit_paths_and_rejects_invalid_files() {
 }
 
 #[test]
-fn server_and_cloud_enforce_the_same_app_names() {
+fn server_and_cloud_enforce_app_names() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("deployment.toml"), "").unwrap();
     for name in [
@@ -93,6 +93,8 @@ fn server_and_cloud_enforce_the_same_app_names() {
         "Demo",
         "a.b",
         "café",
+        "_demo",
+        "demo_",
     ] {
         std::fs::write(dir.path().join("app.toml"), format!("app_name='{name}'\n")).unwrap();
         for args in [
@@ -115,6 +117,7 @@ fn server_and_cloud_enforce_the_same_app_names() {
         "abcdefghijklmnopqrstuvwxy",
         "system-provisioner",
         "default",
+        "demo_agent",
     ] {
         std::fs::write(dir.path().join("app.toml"), format!("app_name='{name}'\n")).unwrap();
         assert_success(&cli(
@@ -122,6 +125,11 @@ fn server_and_cloud_enforce_the_same_app_names() {
             &["server", "verify", "--skip-db", "-d", "deployment.toml"],
         ));
     }
+    // Templates use an underscore to force a rename before pushing.
+    std::fs::write(dir.path().join("app.toml"), "app_name='demo_agent'\n").unwrap();
+    let output = cli(dir.path(), &["cloud", "app", "status", "--api-token", "test"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("expected a DNS label"));
 }
 
 #[tokio::test]
