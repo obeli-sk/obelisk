@@ -127,7 +127,10 @@ fn server_and_cloud_enforce_app_names() {
     }
     // Templates use an underscore to force a rename before pushing.
     std::fs::write(dir.path().join("app.toml"), "app_name='demo_agent'\n").unwrap();
-    let output = cli(dir.path(), &["cloud", "app", "status", "--api-token", "test"]);
+    let output = cli(
+        dir.path(),
+        &["cloud", "app", "status", "--api-token", "test"],
+    );
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("expected a DNS label"));
 }
