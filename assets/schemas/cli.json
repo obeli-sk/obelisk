@@ -1105,7 +1105,7 @@
             },
             {
               "name": "new",
-              "about": "Create a bare app, failing when the name exists; configure it with `stage` or `push`",
+              "about": "Create and start a bare app running an empty deployment, failing when the name exists; configure it with `stage` or `push`",
               "options": [
                 {
                   "name": "--app",

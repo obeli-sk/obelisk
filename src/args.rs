@@ -2093,7 +2093,8 @@ pub(crate) enum CloudApp {
         #[command(subcommand)]
         command: CloudDb,
     },
-    /// Create a bare app, failing when the name exists; configure it with `stage` or `push`.
+    /// Create and start a bare app running an empty deployment, failing when the name exists;
+    /// configure it with `stage` or `push`.
     New {
         #[command(flatten)]
         selected: SelectedApp,
