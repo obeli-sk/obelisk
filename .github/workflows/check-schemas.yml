@@ -50,7 +50,7 @@ jobs:
           key: wasm-cache-junit-default.xml-${{ runner.os }}-${{ github.run_id }}
           restore-keys: wasm-cache-junit-default.xml-${{ runner.os }}-
 
-      - uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # main, post-v1: adds pr-comment input
+      - uses: kunobi-ninja/kache-action@061011817fd04b0e460f79d6bb3c115b1fc8f029 # main, post-v1: adds pr-comment input
         with:
           pr-comment: false
           save-cache: false
